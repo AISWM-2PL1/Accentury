@@ -1,0 +1,9 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/accentury
+    username: postgres
+    password: local
+  jpa:
+    hibernate:
+      ddl-auto: update    # 개발 단계 한정 — 운영 전에 마이그레이션 도구로 교체
+    open-in-view: false
