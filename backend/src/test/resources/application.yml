@@ -1,0 +1,11 @@
+# 테스트 전용 설정 — Docker PostgreSQL 없이 인메모리 H2로 실행 (CI에서도 통과)
+# PostgreSQL 호환 모드로 방언 차이를 최소화한다.
+spring:
+  datasource:
+    url: jdbc:h2:mem:accentury;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    open-in-view: false

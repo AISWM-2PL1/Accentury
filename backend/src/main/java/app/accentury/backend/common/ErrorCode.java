@@ -20,23 +20,23 @@ public enum ErrorCode {
     SESSION_COMPLETED(HttpStatus.CONFLICT, false, "이미 완료된 테스트입니다."),
 
     // === ITEM_* : 문항 (KAN-10·13·15) ===
-    ITEM_NOT_IN_VERSION(HttpStatus.UNPROCESSABLE_ENTITY, false, "이 테스트 버전에 없는 문항입니다."),
+    ITEM_NOT_IN_VERSION(HttpStatus.UNPROCESSABLE_CONTENT, false, "이 테스트 버전에 없는 문항입니다."),
     ITEM_WRONG_TYPE(HttpStatus.CONFLICT, false, "문항 유형이 올바르지 않습니다."),
 
     // === AUDIO_* : 음성 업로드 (KAN-23) ===
     AUDIO_FORMAT_UNSUPPORTED(HttpStatus.UNSUPPORTED_MEDIA_TYPE, false, "지원하지 않는 오디오 형식입니다. (WAV 16kHz mono)"),
-    AUDIO_TOO_LARGE(HttpStatus.PAYLOAD_TOO_LARGE, false, "녹음 파일이 너무 큽니다. (최대 1MB)"),
-    AUDIO_TOO_LONG(HttpStatus.UNPROCESSABLE_ENTITY, false, "녹음이 너무 깁니다. (최대 10초)"),
-    AUDIO_TOO_QUIET(HttpStatus.UNPROCESSABLE_ENTITY, true, "녹음이 너무 조용합니다. 다시 시도해 주세요."),
+    AUDIO_TOO_LARGE(HttpStatus.CONTENT_TOO_LARGE, false, "녹음 파일이 너무 큽니다. (최대 1MB)"),
+    AUDIO_TOO_LONG(HttpStatus.UNPROCESSABLE_CONTENT, false, "녹음이 너무 깁니다. (최대 10초)"),
+    AUDIO_TOO_QUIET(HttpStatus.UNPROCESSABLE_CONTENT, true, "녹음이 너무 조용합니다. 다시 시도해 주세요."),
 
     // === ANALYSIS_* : AI 분석 (KAN-22·24) ===
     ANALYSIS_TIMEOUT(HttpStatus.SERVICE_UNAVAILABLE, true, "분석이 지연되고 있습니다. 잠시 후 다시 시도해 주세요."),
     ANALYSIS_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, true, "분석 서버에 연결할 수 없습니다."),
-    ANALYSIS_MISREAD(HttpStatus.UNPROCESSABLE_ENTITY, true, "제시된 문장과 다른 내용이 녹음되었습니다."),
+    ANALYSIS_MISREAD(HttpStatus.UNPROCESSABLE_CONTENT, true, "제시된 문장과 다른 내용이 녹음되었습니다."),
 
     // === RESULT_* : 결과 (KAN-25) ===
     RESULT_NOT_READY(HttpStatus.CONFLICT, true, "결과를 준비하고 있습니다."),
-    RESULT_INCOMPLETE(HttpStatus.UNPROCESSABLE_ENTITY, false, "아직 완료하지 않은 문항이 있습니다."),
+    RESULT_INCOMPLETE(HttpStatus.UNPROCESSABLE_CONTENT, false, "아직 완료하지 않은 문항이 있습니다."),
     RESULT_EXPIRED(HttpStatus.GONE, false, "결과 보관 기간(24시간)이 지났습니다. 다시 테스트해 주세요."),
 
     // === RATE_* : 요청 제한 (KAN-28) ===
@@ -45,6 +45,9 @@ public enum ErrorCode {
     // === 공통 ===
     VALIDATION_FAILED(HttpStatus.BAD_REQUEST, false, "요청 값이 올바르지 않습니다."),
     RESOURCE_NOT_FOUND(HttpStatus.NOT_FOUND, false, "요청한 리소스를 찾을 수 없습니다."),
+    METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, false, "지원하지 않는 HTTP 메서드입니다."),
+    MEDIA_TYPE_UNSUPPORTED(HttpStatus.UNSUPPORTED_MEDIA_TYPE, false, "지원하지 않는 요청 형식입니다."),
+    REQUEST_REJECTED(HttpStatus.BAD_REQUEST, false, "요청을 처리할 수 없습니다."),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, true, "일시적인 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
 
     private final HttpStatus status;
