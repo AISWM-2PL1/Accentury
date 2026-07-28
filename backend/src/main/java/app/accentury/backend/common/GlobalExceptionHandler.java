@@ -79,7 +79,8 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         if (request instanceof ServletWebRequest servletWebRequest) {
             HttpServletResponse response = servletWebRequest.getResponse();
             if (response != null && response.isCommitted()) {
-                logger.warn("응답이 이미 커밋된 상태에서 예외 발생 - 무시함: " + ex);
+                log.warn("[{}] 응답이 이미 커밋된 상태에서 예외 발생 - 무시함: {}",
+                        CorrelationIdFilter.current(), ex.toString());
                 return null;
             }
         }
