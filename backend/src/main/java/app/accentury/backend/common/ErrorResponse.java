@@ -1,5 +1,7 @@
 package app.accentury.backend.common;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * 모든 API 오류 응답의 공통 봉투.
  * <p>
@@ -26,7 +28,7 @@ public record ErrorResponse(
         String code,
         String message,
         boolean retryable,
-        Long retryAfterMs,
+        @Nullable Long retryAfterMs,   // 429에서만 값이 있고 그 외 null - 유일한 null 허용 필드
         String correlationId
 ) {
 

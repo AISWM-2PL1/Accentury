@@ -1,5 +1,7 @@
 package app.accentury.backend.common;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * 비즈니스 로직에서 던지는 유일한 예외.
  * <p>
@@ -17,7 +19,7 @@ public class ApiException extends RuntimeException {
     private final ErrorCode code;
 
     /** 요청 제한(429)일 때만 사용 - 재시도 가능 시각까지 남은 ms. 그 외 null */
-    private final Long retryAfterMs;
+    private final @Nullable Long retryAfterMs;
 
     public ApiException(ErrorCode code) {
         this(code, code.defaultMessage(), null);
@@ -27,7 +29,7 @@ public class ApiException extends RuntimeException {
         this(code, message, null);
     }
 
-    private ApiException(ErrorCode code, String message, Long retryAfterMs) {
+    private ApiException(ErrorCode code, String message, @Nullable Long retryAfterMs) {
         super(message);
         this.code = code;
         this.retryAfterMs = retryAfterMs;
@@ -42,7 +44,7 @@ public class ApiException extends RuntimeException {
         return code;
     }
 
-    public Long retryAfterMs() {
+    public @Nullable Long retryAfterMs() {
         return retryAfterMs;
     }
 }

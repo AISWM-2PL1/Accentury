@@ -1,5 +1,6 @@
 package app.accentury.backend.common;
 
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
@@ -72,8 +73,8 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
      * 상태코드는 프레임워크가 정한 값을 그대로 존중한다 (404·405·415·400...).
      */
     @Override
-    protected ResponseEntity<Object> handleExceptionInternal(
-            Exception ex, Object body, HttpHeaders headers, HttpStatusCode statusCode, WebRequest request) {
+    protected @Nullable ResponseEntity<Object> handleExceptionInternal(
+            Exception ex, @Nullable Object body, HttpHeaders headers, HttpStatusCode statusCode, WebRequest request) {
         // 응답이 이미 클라이언트로 나가기 시작했으면 새 응답을 만들지 않는다.
         // 부모 구현의 안전장치 유지 (Codex 리뷰 P2 - 커밋된 응답 훼손 방지)
         if (request instanceof ServletWebRequest servletWebRequest) {
