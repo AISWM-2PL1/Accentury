@@ -7,3 +7,8 @@ spring:
     hibernate:
       ddl-auto: update    # 개발 단계 한정 — 운영 전에 마이그레이션 도구로 교체
     open-in-view: false
+
+# 모든 로그 줄에 correlation ID 포함 — 요청 단위 추적 (KAN-38, Codex 리뷰 P2)
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSS} %5p [%X{correlationId:-}] --- [%15.15t] %-40.40logger{39} : %m%n"

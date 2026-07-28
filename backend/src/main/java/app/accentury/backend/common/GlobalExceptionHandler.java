@@ -6,8 +6,10 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.ServletWebRequest;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
@@ -72,6 +74,16 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @Override
     protected ResponseEntity<Object> handleExceptionInternal(
             Exception ex, Object body, HttpHeaders headers, HttpStatusCode statusCode, WebRequest request) {
+        // 응답이 이미 클라이언트로 나가기 시작했으면 새 응답을 만들지 않는다.
+        // 부모 구현의 안전장치 유지 (Codex 리뷰 P2 - 커밋된 응답 훼손 방지)
+        if (request instanceof ServletWebRequest servletWebRequest) {
+            HttpServletResponse response = servletWebRequest.getResponse();
+            if (response != null && response.isCommitted()) {
+                logger.warn("응답이 이미 커밋된 상태에서 예외 발생 - 무시함: " + ex);
+                return null;
+            }
+        }
+
         ErrorCode code = mapFrameworkStatus(statusCode);
         String message = (ex instanceof MethodArgumentNotValidException manv)
                 ? firstFieldError(manv)
