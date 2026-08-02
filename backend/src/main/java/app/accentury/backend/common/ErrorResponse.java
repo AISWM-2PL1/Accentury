@@ -32,12 +32,16 @@ public record ErrorResponse(
         String correlationId
 ) {
 
-    /** 일반 오류용 - retryAfterMs 없이 생성한다. */
+    /**
+     * 일반 오류용 - retryAfterMs 없이 생성한다.
+     */
     public static ErrorResponse of(String code, String message, boolean retryable, String correlationId) {
         return new ErrorResponse(code, message, retryable, null, correlationId);
     }
 
-    /** 요청 제한(429) 전용 - 재시도 가능 시간까지 담는다. */
+    /**
+     * 요청 제한(429) 전용 - 재시도 가능 시간까지 담는다.
+     */
     public static ErrorResponse rateLimited(String code, String message, long retryAfterMs, String correlationId) {
         return new ErrorResponse(code, message, true, retryAfterMs, correlationId);
     }

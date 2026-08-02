@@ -37,6 +37,7 @@ public enum ErrorCode {
     // === RESULT_* : 결과 (KAN-25) ===
     RESULT_NOT_READY(HttpStatus.CONFLICT, true, "결과를 준비하고 있습니다."),
     RESULT_INCOMPLETE(HttpStatus.UNPROCESSABLE_CONTENT, false, "아직 완료하지 않은 문항이 있습니다."),
+    RESULT_RETAKE_REQUIRED(HttpStatus.CONFLICT, true, "실패한 문항이 있습니다. 다시 녹음해 주세요."),
     RESULT_EXPIRED(HttpStatus.GONE, false, "결과 보관 기간(24시간)이 지났습니다. 다시 테스트해 주세요."),
 
     // === RATE_* : 요청 제한 (KAN-28) ===

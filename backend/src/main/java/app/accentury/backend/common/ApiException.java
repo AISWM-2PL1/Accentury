@@ -18,7 +18,9 @@ public class ApiException extends RuntimeException {
 
     private final ErrorCode code;
 
-    /** 요청 제한(429)일 때만 사용 - 재시도 가능 시각까지 남은 ms. 그 외 null */
+    /**
+     * 요청 제한(429)일 때만 사용 - 재시도 가능 시각까지 남은 ms. 그 외 null
+     */
     private final @Nullable Long retryAfterMs;
 
     public ApiException(ErrorCode code) {
@@ -35,7 +37,9 @@ public class ApiException extends RuntimeException {
         this.retryAfterMs = retryAfterMs;
     }
 
-    /** 요청 제한(KAN-28) 전용 팩토리 */
+    /**
+     * 요청 제한(KAN-28) 전용 팩토리
+     */
     public static ApiException rateLimited(long retryAfterMs) {
         return new ApiException(ErrorCode.RATE_LIMITED, ErrorCode.RATE_LIMITED.defaultMessage(), retryAfterMs);
     }

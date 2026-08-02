@@ -25,14 +25,16 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
  * 깨진 JSON·미지원 메서드(405)·미지원 미디어 타입(415)·없는 경로(404) 등
  * 스프링 프레임워크가 던지는 예외 10여 종을 부모가 올바른 상태코드로 잡아주고,
  * 우리는 {@link #handleExceptionInternal} 하나만 재정의해서 응답 본문을
- * 우리 봉투로 바꾼다. (Codex 리뷰 P1 반영 - 클라이언트 실수가 500으로 새는 문제 차단)
+ * 우리 봉투로 바꾼다.
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
-    /** 비즈니스 예외 - ErrorCode가 상태·retryable을 이미 알고 있다 */
+    /**
+     * 비즈니스 예외 - ErrorCode가 상태·retryable을 이미 알고 있다
+     */
     @ExceptionHandler(ApiException.class)
     public ResponseEntity<ErrorResponse> handleApi(ApiException e) {
         String correlationId = CorrelationIdFilter.current();
@@ -51,7 +53,11 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
                         e.retryAfterMs(), correlationId));
     }
 
-    /** 경로·쿼리 파라미터 타입 불일치 (예: 숫자 자리에 문자) → 400. 부모가 안 잡아주는 케이스 */
+    /**
+     * 경로·쿼리 파라미터 타입 불일치 (예: 숫자 자리에 문자) → 400.
+     * 부모도 상위 타입(TypeMismatchException)으로 잡아주지만,
+     * 여기서 어떤 파라미터가 문제인지 담은 메시지로 바꾼다.
+     */
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     public ResponseEntity<ErrorResponse> handleTypeMismatch(MethodArgumentTypeMismatchException e) {
         return ResponseEntity.status(ErrorCode.VALIDATION_FAILED.status())
@@ -59,7 +65,9 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
                         e.getName() + ": 값의 형식이 올바르지 않습니다."));
     }
 
-    /** 그 외 전부 → 500. 내부 정보는 숨기고 로그에만 남긴다 (NFR-SC-07) */
+    /**
+     * 그 외 전부 → 500. 내부 정보는 숨기고 로그에만 남긴다 (NFR-SC-07)
+     */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleUnexpected(Exception e) {
         log.error("[{}] 예상치 못한 오류", CorrelationIdFilter.current(), e);
@@ -69,14 +77,13 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     /**
      * 부모(ResponseEntityExceptionHandler)가 잡은 모든 프레임워크 예외가
-     * 마지막에 이 메서드를 거친다 - 여기서 본문을 우리 봉투로 교체한다.
+     * 마지막에 이 메서드를 거친다 -> 여기서 본문을 우리 봉투로 교체한다.
      * 상태코드는 프레임워크가 정한 값을 그대로 존중한다 (404·405·415·400...).
      */
     @Override
     protected @Nullable ResponseEntity<Object> handleExceptionInternal(
             Exception ex, @Nullable Object body, HttpHeaders headers, HttpStatusCode statusCode, WebRequest request) {
         // 응답이 이미 클라이언트로 나가기 시작했으면 새 응답을 만들지 않는다.
-        // 부모 구현의 안전장치 유지 (Codex 리뷰 P2 - 커밋된 응답 훼손 방지)
         if (request instanceof ServletWebRequest servletWebRequest) {
             HttpServletResponse response = servletWebRequest.getResponse();
             if (response != null && response.isCommitted()) {
@@ -93,11 +100,16 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return ResponseEntity.status(statusCode).headers(headers).body(envelope(code, message));
     }
 
-    /** 프레임워크가 정한 상태코드 → 우리 오류 사전(ErrorCode)의 코드명 매핑 */
+    /**
+     * 프레임워크가 정한 상태코드 → 우리 오류 사전(ErrorCode)의 코드명 매핑
+     */
     private ErrorCode mapFrameworkStatus(HttpStatusCode status) {
         return switch (status.value()) {
             case 400 -> ErrorCode.VALIDATION_FAILED;
             case 404 -> ErrorCode.RESOURCE_NOT_FOUND;
+            // multipart 크기 초과는 컨트롤러 도달 전에 프레임워크가 MaxUploadSizeExceededException으로
+            // 끊는다 - 이 API에서 413은 음성 업로드(§3.3)뿐이므로 AUDIO_TOO_LARGE로 매핑한다
+            case 413 -> ErrorCode.AUDIO_TOO_LARGE;
             case 405 -> ErrorCode.METHOD_NOT_ALLOWED;
             case 415 -> ErrorCode.MEDIA_TYPE_UNSUPPORTED;
             case 500 -> ErrorCode.INTERNAL_ERROR;
@@ -105,7 +117,9 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         };
     }
 
-    /** @Valid 검증 실패 시 첫 번째 필드 오류를 메시지로 */
+    /**
+     * @Valid 검증 실패 시 첫 번째 필드 오류를 메시지로
+     */
     private String firstFieldError(MethodArgumentNotValidException e) {
         return e.getBindingResult().getFieldErrors().stream()
                 .findFirst()
