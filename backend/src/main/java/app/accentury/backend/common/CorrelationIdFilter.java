@@ -28,8 +28,10 @@ public class CorrelationIdFilter extends OncePerRequestFilter {
     public static final String HEADER = "X-Correlation-Id";
     public static final String MDC_KEY = "correlationId";
 
-    /** 클라이언트가 보낸 ID의 허용 형식 - 영숫자·점·밑줄·하이픈, 최대 64자.
-     *  형식 밖의 값(줄바꿈 등)은 로그 위조에 쓰일 수 있어 무시하고 새로 발급한다. */
+    /**
+     * 클라이언트가 보낸 ID의 허용 형식 - 영숫자·점·밑줄·하이픈, 최대 64자.
+     * 형식 밖의 값(줄바꿈 등)은 로그 위조에 쓰일 수 있어 무시하고 새로 발급한다.
+     */
     private static final Pattern SAFE_ID = Pattern.compile("[A-Za-z0-9._-]{1,64}");
 
     @Override
@@ -50,7 +52,9 @@ public class CorrelationIdFilter extends OncePerRequestFilter {
         }
     }
 
-    /** 예외 핸들러 등에서 현재 요청의 correlation ID를 읽을 때 사용 */
+    /**
+     * 예외 핸들러 등에서 현재 요청의 correlation ID를 읽을 때 사용
+     */
     public static String current() {
         String id = MDC.get(MDC_KEY);
         return id != null ? id : "unknown";
