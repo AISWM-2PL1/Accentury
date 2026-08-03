@@ -41,7 +41,13 @@ class AudioRecorder : PcmSource {
         }
         val buffer = ShortArray(CHUNK_SIZE)
         try {
-            audioRecord.startRecording()
+            try {
+                audioRecord.startRecording()
+            } catch (e: IllegalStateException) {
+                throw CaptureException("녹음 시작 실패 — ${e.message}")
+            } catch (e: SecurityException) {
+                throw CaptureException("녹음 권한 없음 — ${e.message}")
+            }
             while (currentCoroutineContext().isActive) {
                 val read = audioRecord.read(buffer, 0, buffer.size)
                 when {
@@ -50,10 +56,14 @@ class AudioRecorder : PcmSource {
                 }
             }
         } finally {
-            if (audioRecord.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
-                audioRecord.stop()
+            try {
+                if (audioRecord.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                    audioRecord.stop()
+                }
+            } catch (_: IllegalStateException) {
+            } finally {
+                audioRecord.release()
             }
-            audioRecord.release()
         }
     }.flowOn(Dispatchers.IO)
 }

@@ -71,6 +71,32 @@ class RecordingEngineTest {
     }
 
     @Test
+    fun `녹음 시작 전의 정지 요청은 새 녹음에 영향을 주지 않는다`() = runBlocking {
+        val finite = FakeSource(
+            flow { repeat(3) { emit(ShortArray(CHUNK_SIZE)) } },
+        )
+        val engine = RecordingEngine(finite)
+        engine.requestStop()
+
+        val outcome = engine.record {}
+
+        assertTrue(outcome is RecordingEngine.Outcome.Success)
+        outcome as RecordingEngine.Outcome.Success
+        assertFalse(outcome.autoStopped)
+        assertEquals(3 * CHUNK_SIZE, outcome.pcm.size)
+    }
+
+    @Test
+    fun `진행 리포트 경과 시간이 10초를 넘지 않는다`() = runBlocking {
+        val engine = RecordingEngine(infiniteSource())
+        var maxElapsed = 0L
+
+        engine.record { maxElapsed = maxOf(maxElapsed, it.elapsedMs) }
+
+        assertEquals(RecordingEngine.MAX_DURATION_MS, maxElapsed)
+    }
+
+    @Test
     fun `캡처 예외는 Failure로 변환된다`() = runBlocking {
         val failing = FakeSource(
             flow { throw AudioRecorder.CaptureException("녹음 중 권한 회수") },

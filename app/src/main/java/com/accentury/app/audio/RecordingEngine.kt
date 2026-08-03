@@ -3,6 +3,7 @@ package com.accentury.app.audio
 import androidx.annotation.RequiresPermission
 import kotlinx.coroutines.flow.takeWhile
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 class RecordingEngine(private val source: PcmSource = AudioRecorder()) {
 
@@ -18,15 +19,16 @@ class RecordingEngine(private val source: PcmSource = AudioRecorder()) {
         data class Failure(val reason: String) : Outcome
     }
 
-    private val stopRequested = AtomicBoolean(false)
+    private val activeSession = AtomicReference<AtomicBoolean?>(null)
 
     fun requestStop() {
-        stopRequested.set(true)
+        activeSession.get()?.set(true)
     }
 
     @RequiresPermission(android.Manifest.permission.RECORD_AUDIO)
     suspend fun record(onProgress: (Progress) -> Unit): Outcome {
-        stopRequested.set(false)
+        val stopRequested = AtomicBoolean(false)
+        activeSession.set(stopRequested)
         val chunks = ArrayList<ShortArray>()
         var totalSamples = 0
         try {
@@ -37,13 +39,17 @@ class RecordingEngine(private val source: PcmSource = AudioRecorder()) {
                     totalSamples += chunk.size
                     onProgress(
                         Progress(
-                            elapsedMs = totalSamples * 1000L / SAMPLE_RATE,
+                            elapsedMs = minOf(totalSamples, MAX_SAMPLES) * 1000L / SAMPLE_RATE,
                             rms = calculateRms(chunk),
                         ),
                     )
                 }
         } catch (e: AudioRecorder.CaptureException) {
             return Outcome.Failure(e.message ?: "capture error")
+        } catch (e: SecurityException) {
+            return Outcome.Failure("녹음 권한 없음 — ${e.message}")
+        } finally {
+            activeSession.compareAndSet(stopRequested, null)
         }
 
         if (totalSamples == 0) return Outcome.Failure("캡처된 오디오가 없음")
