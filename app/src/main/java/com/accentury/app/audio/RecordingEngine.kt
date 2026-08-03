@@ -4,7 +4,7 @@ import androidx.annotation.RequiresPermission
 import kotlinx.coroutines.flow.takeWhile
 import java.util.concurrent.atomic.AtomicBoolean
 
-class RecordingEngine(private val recorder: AudioRecorder = AudioRecorder()) {
+class RecordingEngine(private val source: PcmSource = AudioRecorder()) {
 
     data class Progress(val elapsedMs: Long, val rms: Double)
 
@@ -30,7 +30,7 @@ class RecordingEngine(private val recorder: AudioRecorder = AudioRecorder()) {
         val chunks = ArrayList<ShortArray>()
         var totalSamples = 0
         try {
-            recorder.recordingFlow()
+            source.recordingFlow()
                 .takeWhile { !stopRequested.get() && totalSamples < MAX_SAMPLES }
                 .collect { chunk ->
                     chunks += chunk

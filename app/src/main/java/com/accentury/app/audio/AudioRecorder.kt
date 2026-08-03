@@ -15,12 +15,16 @@ import kotlin.math.sqrt
 const val SAMPLE_RATE = 16_000
 const val CHUNK_SIZE = 2048
 
-class AudioRecorder {
+interface PcmSource {
+    fun recordingFlow(): Flow<ShortArray>
+}
+
+class AudioRecorder : PcmSource {
 
     class CaptureException(message: String) : RuntimeException(message)
 
     @RequiresPermission(android.Manifest.permission.RECORD_AUDIO)
-    fun recordingFlow(): Flow<ShortArray> = flow {
+    override fun recordingFlow(): Flow<ShortArray> = flow {
         val minBufferSize = AudioRecord.getMinBufferSize(
             SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
         )
