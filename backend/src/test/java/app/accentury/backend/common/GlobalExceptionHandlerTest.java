@@ -34,8 +34,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * API 명세서 §2.3(오류 봉투)·§2.4(오류 코드) 및 KAN-58 AC
  * "존재하지 않는 경로 요청 시 공통 오류 봉투 JSON이 반환된다"를 검증한다.
  * {@code @WebMvcTest} 슬라이스라 Docker·DB 없이 실행된다.
+ * 대상을 ThrowingController로 한정한다 - 프로덕션 컨트롤러(세션 등)가 늘어도
+ * 이 슬라이스가 그 의존성을 요구하지 않도록.
  */
-@WebMvcTest
+@WebMvcTest(GlobalExceptionHandlerTest.ThrowingController.class)
 @Import(GlobalExceptionHandlerTest.ThrowingController.class)
 class GlobalExceptionHandlerTest {
 
