@@ -92,6 +92,19 @@ class SessionServiceTest {
         assertEquals(ErrorCode.SESSION_EXPIRED, e.code());
     }
 
+    @Test
+    void 만료된_토큰은_다른_세션을_가리켜도_403이_아니라_401이다() {
+        // Codex sol 리뷰 P1 - 만료 검사가 ID 비교보다 늦으면, 주기 삭제 전의 만료 토큰만
+        // 403을 받아서 "아직 저장소에 남아 있다"는 사실이 새어 나간다
+        saveSessionExpiredAt(Instant.now().minus(1, ChronoUnit.MINUTES), "st_expired_3");
+        SessionResponse other = service.create(null);
+
+        ApiException e = assertThrows(ApiException.class,
+                () -> service.authenticate(other.sessionId(), "st_expired_3"));
+
+        assertEquals(ErrorCode.SESSION_EXPIRED, e.code());
+    }
+
     // === §2.1 - expires_at + 주기 삭제로 TTL 구현 ===
 
     @Test
