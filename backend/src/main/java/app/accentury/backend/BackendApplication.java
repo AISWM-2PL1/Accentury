@@ -2,8 +2,12 @@ package app.accentury.backend;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication
+@ConfigurationPropertiesScan // AccenturyProperties 등 @ConfigurationProperties 레코드 바인딩
+@EnableScheduling            // 만료 세션 주기 삭제 (SessionService.purgeExpired)
 public class BackendApplication {
 
 	public static void main(String[] args) {
