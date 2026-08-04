@@ -13,3 +13,9 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# === 공통 (모든 파트) ===
+.env
+.env.*
+.omc/
+.idea/
