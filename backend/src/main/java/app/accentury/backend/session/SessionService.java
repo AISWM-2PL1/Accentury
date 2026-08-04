@@ -64,21 +64,21 @@ public class SessionService {
     /**
      * 토큰이 해당 세션의 것인지 검증한다. 이후 인증 필요 API(KAN-10·23·24·25)가 공용으로 쓴다.
      * <ul>
-     *   <li>모르는 토큰 → 401 SESSION_EXPIRED - 만료 후 삭제된 토큰과 구분할 수 없고,
-     *       존재 여부를 구분해서 알려주면 토큰 추측 단서가 된다. 재시작을 유도한다.</li>
-     *   <li>다른 세션의 토큰 → 403 SESSION_FORBIDDEN (§2.1 - 경로 {sessionId}와 토큰 세션 불일치)</li>
-     *   <li>만료된 세션 → 401 SESSION_EXPIRED</li>
+     *   <li>모르는 토큰·만료된 토큰 → 401 SESSION_EXPIRED - 이 둘은 어떤 경로로도 구분되면
+     *       안 된다. 주기 삭제 전후의 만료 토큰이 다른 응답을 받으면 저장소 상태를 추측하는
+     *       단서가 되므로, 만료 검사는 반드시 세션 ID 비교보다 먼저다 (Codex sol 리뷰 P1).</li>
+     *   <li>유효한데 다른 세션의 토큰 → 403 SESSION_FORBIDDEN (§2.1 - 경로 {sessionId}와 토큰 세션 불일치)</li>
      * </ul>
      */
     @Transactional(readOnly = true)
     public TestSession authenticate(String sessionId, String sessionToken) {
         TestSession session = repository.findByTokenHash(SessionTokens.hash(sessionToken))
                 .orElseThrow(() -> new ApiException(ErrorCode.SESSION_EXPIRED));
-        if (!session.id().equals(sessionId)) {
-            throw new ApiException(ErrorCode.SESSION_FORBIDDEN);
-        }
         if (session.isExpired(Instant.now())) {
             throw new ApiException(ErrorCode.SESSION_EXPIRED);
+        }
+        if (!session.id().equals(sessionId)) {
+            throw new ApiException(ErrorCode.SESSION_FORBIDDEN);
         }
         return session;
     }
