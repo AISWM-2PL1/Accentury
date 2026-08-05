@@ -117,6 +117,16 @@ class TestDefinitionRegistryTest {
     }
 
     @Test
+    void 활성_버전의_scoreVersion이_설정과_다르면_기동에_실패한다() {
+        // 세션(설정값 고정)과 정의 응답(seed값)이 서로 다른 채점 버전을 가리키는 배포를 막는다 (Codex sol 리뷰 P2)
+        AccenturyProperties mismatched = new AccenturyProperties("gn-2026.08.1", "sv-9.9",
+                new AccenturyProperties.Session(Duration.ofMinutes(30)));
+        IllegalStateException rejected = assertThrows(IllegalStateException.class,
+                () -> new TestDefinitionRegistry(JsonMapper.builder().build(), mismatched));
+        assertTrue(rejected.getMessage().contains("scoreVersion"), rejected.getMessage());
+    }
+
+    @Test
     void 발행된_seed는_로드되고_미발행_버전은_404다() {
         AccenturyProperties active = new AccenturyProperties("gn-2026.08.1", "sv-0.3",
                 new AccenturyProperties.Session(Duration.ofMinutes(30)));
