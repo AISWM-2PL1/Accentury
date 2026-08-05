@@ -78,8 +78,14 @@ public class TestDefinitionRegistry {
             require(duplicate == null, "testVersion 중복 발행: " + sorted.testVersion());
         }
 
-        require(published.containsKey(properties.testVersion()),
+        PublishedDefinition active = published.get(properties.testVersion());
+        require(active != null,
                 "활성 버전(accentury.test-version=" + properties.testVersion() + ")의 정의 seed가 없다");
+        // 세션은 설정의 scoreVersion으로, 정의 응답은 seed의 scoreVersion으로 고정되므로
+        // 둘이 어긋나면 한 세션이 두 채점 버전에 걸린다 - 기동을 막는다 (Codex sol 리뷰 P2)
+        require(active.definition().scoreVersion().equals(properties.scoreVersion()),
+                "활성 버전의 scoreVersion(" + active.definition().scoreVersion()
+                        + ")이 설정(accentury.score-version=" + properties.scoreVersion() + ")과 다르다");
         log.info("테스트 정의 {}종 발행 완료: {} (활성: {})",
                 published.size(), published.keySet(), properties.testVersion());
     }
