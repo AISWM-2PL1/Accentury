@@ -1,0 +1,70 @@
+package app.accentury.backend.testdefinition;
+
+import com.fasterxml.jackson.annotation.JsonInclude;
+import org.jspecify.annotations.Nullable;
+
+import java.util.List;
+
+/**
+ * 테스트 정의 원본 - seed JSON({@code test-definitions/*.json})과 1:1 (KAN-10).
+ * <p>
+ * 어휘 문항의 {@code correctChoiceId}(정답)까지 들고 있는 서버 내부 모델이다.
+ * 클라이언트 응답은 정답을 뺀 {@link TestDefinitionResponse}로 변환해서 나간다 -
+ * 이 타입을 직접 직렬화해 응답하면 안 된다 (KAN-13 정오 미노출).
+ *
+ * @param testVersion          정의 버전 (예: gn-2026.08.1) - 발행 후 불변 (§5.4)
+ * @param scoreVersion         이 정의를 채점할 점수 버전 (sv-0.3, KAN-21)
+ * @param dialect              대상 방언 - MVP는 GYEONGNAM 고정 (KAN-8 범위 제외)
+ * @param estimatedDurationSec 예상 소요 시간 (§3.2)
+ * @param items                문항 10개 = VOICE 5 + VOCABULARY 5, seq 순서 고정
+ */
+public record TestDefinition(
+        String testVersion,
+        String scoreVersion,
+        String dialect,
+        int estimatedDurationSec,
+        List<Item> items) {
+
+    public enum ItemType { VOICE, VOCABULARY }
+
+    /**
+     * 문항 하나. 유형별 필드 소유가 다르다 - VOICE는 {@code maxDurationMs}·{@code guideF0},
+     * VOCABULARY는 {@code choices}·{@code correctChoiceId}. 소유 규칙은 발행 검증이 강제한다.
+     */
+    public record Item(
+            String itemId,
+            int seq,
+            ItemType type,
+            String prompt,
+            @Nullable Integer maxDurationMs,
+            @Nullable GuideF0 guideF0,
+            @Nullable List<Choice> choices,
+            @Nullable String correctChoiceId) {
+    }
+
+    /**
+     * 사전 산출된 예측 F0 가이드 곡선 (§3.2, 산출: KAN-17 / 렌더링: KAN-54).
+     * <p>
+     * 개발 시점에 AI 파이프라인으로 뽑는 정적 데이터다 - 런타임 생성·서버 호출 없음.
+     * 현재 seed의 곡선은 KAN-17 미착수 상태의 임시 더미이고, 정본 산출물이 나오면
+     * 새 testVersion으로 교체한다 (KAN-26 버전 불변 원칙).
+     *
+     * @param unit            semitone - 화자 음역 정규화 단위
+     * @param frameIntervalMs 시간축 샘플링 간격
+     * @param values          정규화된 semitone 배열
+     * @param bandLow         optional 허용 밴드 하한 - 있으면 values와 길이가 같아야 한다
+     * @param bandHigh        optional 허용 밴드 상한
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record GuideF0(
+            String unit,
+            int frameIntervalMs,
+            List<Double> values,
+            @Nullable List<Double> bandLow,
+            @Nullable List<Double> bandHigh) {
+    }
+
+    /** 4지선다 선택지. 정오 정보는 없다 - 정답은 문항의 {@code correctChoiceId}에만 있다 */
+    public record Choice(String choiceId, String text) {
+    }
+}
