@@ -72,7 +72,7 @@ class SessionApiTest {
                 .andReturn().getResponse().getContentAsString();
         Instant after = Instant.now();
 
-        Instant expiresAt = Instant.parse(objectMapper.readTree(body).get("expiresAt").asText());
+        Instant expiresAt = Instant.parse(objectMapper.readTree(body).get("expiresAt").asString());
         Duration ttl = Duration.ofMinutes(30);
         assertTrue(!expiresAt.isBefore(before.plus(ttl)) && !expiresAt.isAfter(after.plus(ttl)),
                 "expiresAt은 요청 시각 + 30분이어야 한다: " + expiresAt);
@@ -85,8 +85,8 @@ class SessionApiTest {
         JsonNode first = createSession();
         JsonNode second = createSession();
 
-        assertNotEquals(first.get("sessionId").asText(), second.get("sessionId").asText());
-        assertNotEquals(first.get("sessionToken").asText(), second.get("sessionToken").asText());
+        assertNotEquals(first.get("sessionId").asString(), second.get("sessionId").asString());
+        assertNotEquals(first.get("sessionToken").asString(), second.get("sessionToken").asString());
     }
 
     // === 검증 실패 - 공통 오류 봉투 400 (§2.3·§2.4) ===
