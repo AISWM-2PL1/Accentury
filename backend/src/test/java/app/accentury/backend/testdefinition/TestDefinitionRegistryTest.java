@@ -1,0 +1,170 @@
+package app.accentury.backend.testdefinition;
+
+import app.accentury.backend.common.AccenturyProperties;
+import app.accentury.backend.common.ApiException;
+import app.accentury.backend.common.ErrorCode;
+import org.junit.jupiter.api.Test;
+import tools.jackson.databind.json.JsonMapper;
+
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * 발행 전 검증의 단위 명세 (KAN-10 AC·명세서 §6).
+ * <p>
+ * 유효한 정의를 한 곳씩 망가뜨려 발행 거부(기동 실패)를 확인한다.
+ * KAN-26 관리자 발행 API가 이 검증을 그대로 가져간다.
+ */
+class TestDefinitionRegistryTest {
+
+    @Test
+    void 유효한_정의는_검증을_통과한다() {
+        TestDefinitionRegistry.validate(valid());
+    }
+
+    // === KAN-10 AC - 모든 VOICE 문항에 guideF0 포함, 누락 시 발행 거부 ===
+
+    @Test
+    void VOICE_문항에_guideF0가_없으면_발행_거부다() {
+        TestDefinition broken = withItem(valid(), "v3",
+                item -> new TestDefinition.Item(item.itemId(), item.seq(), item.type(), item.prompt(),
+                        item.maxDurationMs(), null, null, null));
+        IllegalStateException rejected =
+                assertThrows(IllegalStateException.class, () -> TestDefinitionRegistry.validate(broken));
+        assertTrue(rejected.getMessage().contains("guideF0"), rejected.getMessage());
+    }
+
+    @Test
+    void 허용_밴드_길이가_values와_다르면_발행_거부다() {
+        TestDefinition broken = withItem(valid(), "v1",
+                item -> new TestDefinition.Item(item.itemId(), item.seq(), item.type(), item.prompt(),
+                        item.maxDurationMs(),
+                        new TestDefinition.GuideF0("semitone", 10, List.of(0.1, 0.2, 0.3), List.of(-1.0), null),
+                        null, null));
+        assertThrows(IllegalStateException.class, () -> TestDefinitionRegistry.validate(broken));
+    }
+
+    // === §6 - 모든 VOCABULARY 문항에 정답 존재 ===
+
+    @Test
+    void VOCABULARY_문항에_정답이_없으면_발행_거부다() {
+        TestDefinition broken = withItem(valid(), "w2",
+                item -> new TestDefinition.Item(item.itemId(), item.seq(), item.type(), item.prompt(),
+                        null, null, item.choices(), null));
+        IllegalStateException rejected =
+                assertThrows(IllegalStateException.class, () -> TestDefinitionRegistry.validate(broken));
+        assertTrue(rejected.getMessage().contains("정답"), rejected.getMessage());
+    }
+
+    @Test
+    void 정답이_선택지_밖이면_발행_거부다() {
+        TestDefinition broken = withItem(valid(), "w2",
+                item -> new TestDefinition.Item(item.itemId(), item.seq(), item.type(), item.prompt(),
+                        null, null, item.choices(), "w9z"));
+        assertThrows(IllegalStateException.class, () -> TestDefinitionRegistry.validate(broken));
+    }
+
+    // === 문항 구성 확정 (2026-07-27) - 음성 5 + 어휘 5, seq 고정 ===
+
+    @Test
+    void 음성5_어휘5_구성이_아니면_발행_거부다() {
+        List<TestDefinition.Item> items = new ArrayList<>(valid().items());
+        items.removeIf(item -> item.itemId().equals("v5"));
+        items.add(vocabulary("w6", 9));
+        assertThrows(IllegalStateException.class,
+                () -> TestDefinitionRegistry.validate(withItems(valid(), items)));
+    }
+
+    @Test
+    void seq가_1부터_연속하지_않으면_발행_거부다() {
+        TestDefinition broken = withItem(valid(), "w5",
+                item -> new TestDefinition.Item(item.itemId(), 12, item.type(), item.prompt(),
+                        null, null, item.choices(), item.correctChoiceId()));
+        assertThrows(IllegalStateException.class, () -> TestDefinitionRegistry.validate(broken));
+    }
+
+    @Test
+    void itemId가_중복되면_발행_거부다() {
+        TestDefinition broken = withItem(valid(), "v2",
+                item -> new TestDefinition.Item("v1", item.seq(), item.type(), item.prompt(),
+                        item.maxDurationMs(), item.guideF0(), null, null));
+        assertThrows(IllegalStateException.class, () -> TestDefinitionRegistry.validate(broken));
+    }
+
+    // === §6 - 경북 정의는 MVP에서 활성화 불가 ===
+
+    @Test
+    void 경남이_아닌_정의는_발행_거부다() {
+        TestDefinition gyeongbuk = new TestDefinition("gb-2026.08.1", "sv-0.3", "GYEONGBUK", 240, valid().items());
+        IllegalStateException rejected =
+                assertThrows(IllegalStateException.class, () -> TestDefinitionRegistry.validate(gyeongbuk));
+        assertTrue(rejected.getMessage().contains("경남"), rejected.getMessage());
+    }
+
+    // === 레지스트리 기동 검사 ===
+
+    @Test
+    void 활성_버전의_seed가_없으면_기동에_실패한다() {
+        AccenturyProperties noSuchVersion = new AccenturyProperties("gn-9999.99.9", "sv-0.3",
+                new AccenturyProperties.Session(Duration.ofMinutes(30)));
+        assertThrows(IllegalStateException.class,
+                () -> new TestDefinitionRegistry(JsonMapper.builder().build(), noSuchVersion));
+    }
+
+    @Test
+    void 발행된_seed는_로드되고_미발행_버전은_404다() {
+        AccenturyProperties active = new AccenturyProperties("gn-2026.08.1", "sv-0.3",
+                new AccenturyProperties.Session(Duration.ofMinutes(30)));
+        TestDefinitionRegistry registry = new TestDefinitionRegistry(JsonMapper.builder().build(), active);
+
+        assertEquals("gn-2026.08.1", registry.get("gn-2026.08.1").response().testVersion());
+        ApiException notFound =
+                assertThrows(ApiException.class, () -> registry.get("gn-0000.00.0"));
+        assertEquals(ErrorCode.RESOURCE_NOT_FOUND, notFound.code());
+    }
+
+    // === 픽스처 ===
+
+    /** 정본 구성과 같은 5+5·seq 교차 정의. 각 테스트가 한 곳씩 망가뜨린다 */
+    private static TestDefinition valid() {
+        List<TestDefinition.Item> items = new ArrayList<>();
+        for (int i = 1; i <= 5; i++) {
+            items.add(voice("v" + i, i * 2 - 1));
+            items.add(vocabulary("w" + i, i * 2));
+        }
+        return new TestDefinition("gn-2026.08.1", "sv-0.3", "GYEONGNAM", 240, items);
+    }
+
+    private static TestDefinition.Item voice(String itemId, int seq) {
+        return new TestDefinition.Item(itemId, seq, TestDefinition.ItemType.VOICE, "밥 뭇나?", 10000,
+                new TestDefinition.GuideF0("semitone", 10, List.of(-0.8, 0.3, 2.8), null, null), null, null);
+    }
+
+    private static TestDefinition.Item vocabulary(String itemId, int seq) {
+        List<TestDefinition.Choice> choices = List.of(
+                new TestDefinition.Choice(itemId + "a", "부추"),
+                new TestDefinition.Choice(itemId + "b", "미나리"),
+                new TestDefinition.Choice(itemId + "c", "쑥갓"),
+                new TestDefinition.Choice(itemId + "d", "시금치"));
+        return new TestDefinition.Item(itemId, seq, TestDefinition.ItemType.VOCABULARY,
+                "'정구지'는 표준어로 무엇일까요?", null, null, choices, itemId + "a");
+    }
+
+    private static TestDefinition withItems(TestDefinition base, List<TestDefinition.Item> items) {
+        return new TestDefinition(base.testVersion(), base.scoreVersion(), base.dialect(),
+                base.estimatedDurationSec(), items);
+    }
+
+    private static TestDefinition withItem(TestDefinition base, String itemId,
+                                           java.util.function.UnaryOperator<TestDefinition.Item> change) {
+        List<TestDefinition.Item> items = base.items().stream()
+                .map(item -> item.itemId().equals(itemId) ? change.apply(item) : item)
+                .toList();
+        return withItems(base, items);
+    }
+}
