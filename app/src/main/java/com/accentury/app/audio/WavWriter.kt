@@ -8,16 +8,18 @@ import java.nio.ByteOrder
 object WavWriter {
 
     fun write(file: File, pcm: ShortArray, sampleRate: Int = SAMPLE_RATE) {
-        val byteData = ByteArray(pcm.size * 2)
-        ByteBuffer.wrap(byteData)
+        FileOutputStream(file).use { out -> out.write(toWavBytes(pcm, sampleRate)) }
+    }
+
+    /** 업로드는 파일을 거치지 않고 메모리에서 바로 멀티파트로 실어 보낸다 (KAN-88). */
+    fun toWavBytes(pcm: ShortArray, sampleRate: Int = SAMPLE_RATE): ByteArray {
+        val wav = ByteArray(44 + pcm.size * 2)
+        header(pcm.size * 2, sampleRate).copyInto(wav)
+        ByteBuffer.wrap(wav, 44, pcm.size * 2)
             .order(ByteOrder.LITTLE_ENDIAN)
             .asShortBuffer()
             .put(pcm)
-
-        FileOutputStream(file).use { out ->
-            out.write(header(byteData.size, sampleRate))
-            out.write(byteData)
-        }
+        return wav
     }
 
     private fun header(pcmByteCount: Int, sampleRate: Int): ByteArray {

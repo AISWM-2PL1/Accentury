@@ -63,6 +63,39 @@ class WavWriterTest {
     }
 
     @Test
+    fun `toWavBytes는 파일로 쓴 것과 완전히 같은 바이트를 만든다`() {
+        val pcm = ShortArray(1_000) { (it * 7 - 500).toShort() }
+        val file = File.createTempFile("wav_test", ".wav")
+
+        WavWriter.write(file, pcm)
+        val fromFile = file.readBytes()
+        file.delete()
+
+        assertArrayEquals(fromFile, WavWriter.toWavBytes(pcm))
+    }
+
+    @Test
+    fun `toWavBytes는 헤더 44바이트 뒤에 PCM을 리틀엔디언으로 담는다`() {
+        val pcm = shortArrayOf(0, 1000, -1000, Short.MAX_VALUE, Short.MIN_VALUE)
+
+        val bytes = WavWriter.toWavBytes(pcm)
+
+        assertEquals(44 + pcm.size * 2, bytes.size)
+        assertEquals("RIFF", String(bytes, 0, 4))
+        assertEquals("data", String(bytes, 36, 4))
+        val bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+        assertEquals(SAMPLE_RATE, bb.getInt(24))
+        assertEquals(pcm.size * 2, bb.getInt(40))
+
+        val restored = ShortArray(pcm.size)
+        ByteBuffer.wrap(bytes, 44, pcm.size * 2)
+            .order(ByteOrder.LITTLE_ENDIAN)
+            .asShortBuffer()
+            .get(restored)
+        assertArrayEquals(pcm, restored)
+    }
+
+    @Test
     fun `PCM 데이터가 손실 없이 기록된다`() {
         val pcm = shortArrayOf(0, 1000, -1000, Short.MAX_VALUE, Short.MIN_VALUE)
         val file = File.createTempFile("wav_test", ".wav")
