@@ -72,6 +72,20 @@ class UploadRateLimitApiTest {
     }
 
     @Test
+    void 인코딩이나_matrix_파라미터_경로로도_제한을_우회할_수_없다() throws Exception {
+        // MVC는 %72ecording과 recording;x=1을 모두 recording으로 라우팅한다 -
+        // 필터도 같은 정규화로 매칭해야 한다 (Codex sol 리뷰 P1)
+        SessionHandle session = createSession();
+        mockMvc.perform(upload(session, "evade-1", "9.9.9.5")).andExpect(status().isAccepted());
+        mockMvc.perform(upload(session, "evade-2", "9.9.9.5")).andExpect(status().isAccepted());
+
+        mockMvc.perform(uploadAt(session, "evade-3", "9.9.9.5", "%72ecording"))
+                .andExpect(status().isTooManyRequests());
+        mockMvc.perform(uploadAt(session, "evade-4", "9.9.9.5", "recording;x=1"))
+                .andExpect(status().isTooManyRequests());
+    }
+
+    @Test
     void 다른_IP는_제한에_걸리지_않는다() throws Exception {
         SessionHandle session = createSession();
         mockMvc.perform(upload(session, "fill-1", "9.9.9.2")).andExpect(status().isAccepted());
@@ -96,12 +110,24 @@ class UploadRateLimitApiTest {
     }
 
     private RequestBuilder upload(SessionHandle session, String idempotencyKey, String clientIp) {
-        return upload(session, idempotencyKey, clientIp, null);
+        return uploadAt(session, idempotencyKey, clientIp, "recording");
+    }
+
+    private RequestBuilder uploadAt(SessionHandle session, String idempotencyKey, String clientIp,
+                                    String lastSegment) {
+        return upload(session, idempotencyKey, clientIp, null, lastSegment);
     }
 
     private RequestBuilder upload(SessionHandle session, String idempotencyKey, String clientIp,
                                   @Nullable String origin) {
-        var builder = multipart("/v0/sessions/" + session.id() + "/voice-items/v1/recording")
+        return upload(session, idempotencyKey, clientIp, origin, "recording");
+    }
+
+    private RequestBuilder upload(SessionHandle session, String idempotencyKey, String clientIp,
+                                  @Nullable String origin, String lastSegment) {
+        // URI.create - 문자열 템플릿은 %72 같은 사전 인코딩을 재인코딩해 raw URI 재현이 안 된다
+        var builder = multipart(java.net.URI.create(
+                "/v0/sessions/" + session.id() + "/voice-items/v1/" + lastSegment))
                 .file(new MockMultipartFile("audio", "recording.wav", "audio/wav",
                         WavFixtures.standardWav(3000)))
                 .file(new MockMultipartFile("meta", "", "application/json",
