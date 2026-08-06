@@ -1,0 +1,58 @@
+name: Test
+
+on:
+  pull_request:
+
+# 경로 필터는 워크플로 레벨 paths가 아니라 job 레벨 if 스킵으로 처리한다.
+# 워크플로 레벨 paths는 미실행 시 required check가 Expected 상태로 남아 병합을 영구히 잠그지만,
+# if로 스킵된 job은 통과로 취급되어 Ruleset required check와 안전하게 결합된다.
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      app: ${{ steps.filter.outputs.app }}
+      backend: ${{ steps.filter.outputs.backend }}
+    steps:
+      # pull_request 이벤트에서는 checkout 없이 GitHub API로 변경 파일을 조회한다
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            app:
+              - 'app/**'
+              - 'gradle/**'
+              - 'build.gradle.kts'
+              - 'settings.gradle.kts'
+              - 'gradle.properties'
+              - '.github/workflows/test.yml'
+            backend:
+              - 'backend/**'
+              - '.github/workflows/test.yml'
+
+  app-test:
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew :app:testDebugUnitTest
+
+  backend-test:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+      # 백엔드 테스트는 H2 인메모리로 실행 - Docker DB 불필요
+      - run: ./gradlew test
+        working-directory: backend
