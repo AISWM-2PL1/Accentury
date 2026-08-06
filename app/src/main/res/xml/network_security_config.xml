@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 개발 하네스가 에뮬레이터에서 호스트의 http 서버(10.0.2.2)로 업로드한다. 그 주소에만 평문 허용. -->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>
