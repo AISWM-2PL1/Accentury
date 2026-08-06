@@ -109,7 +109,7 @@ fun RecordingScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(80.dp))
     }
 }
 
@@ -118,7 +118,7 @@ private fun CurveLane(label: String) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(80.dp)
+            .height(240.dp)
             .border(1.dp, Color.Gray),
         contentAlignment = Alignment.Center,
     ) {
