@@ -1,0 +1,169 @@
+package com.accentury.app.upload
+
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import java.io.IOException
+import java.util.UUID
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+
+// 서버 계약(KAN-23/KAN-58)에 묶인 값들. 계약이 바뀌면 여기만 고친다.
+private const val PATH_SESSIONS = "v0/sessions"
+private const val PATH_AUDIO = "audio"
+private const val PART_AUDIO = "audio"
+private const val PART_ITEM_ID = "itemId"
+private const val PART_IDEMPOTENCY_KEY = "idempotencyKey"
+private const val PART_DURATION_MS = "recordedDurationMs"
+private const val AUDIO_FILE_NAME = "recording.wav"
+private const val AUDIO_MEDIA_TYPE = "audio/wav"
+private const val HEADER_AUTHORIZATION = "Authorization"
+private const val HEADER_CORRELATION_ID = "X-Correlation-Id"
+private const val BEARER_PREFIX = "Bearer "
+
+private const val STATUS_REQUEST_TIMEOUT = 408
+private const val STATUS_TOO_MANY_REQUESTS = 429
+
+sealed interface UploadResult {
+
+    data class Accepted(val analysisJobId: String) : UploadResult
+
+    data class Rejected(
+        val code: String?,
+        val message: String?,
+        val retryable: Boolean,
+        val retryAfterMs: Long?,
+    ) : UploadResult
+
+    /** 응답이 아예 오지 않은 전송 실패. 의미상 항상 재시도 가능. */
+    data class TransportError(val reason: String) : UploadResult
+}
+
+interface UploadClient {
+    suspend fun upload(sessionId: String, sessionToken: String, request: UploadRequest): UploadResult
+}
+
+class OkHttpUploadClient(
+    baseUrl: String,
+    private val client: OkHttpClient = OkHttpClient(),
+) : UploadClient {
+
+    private val baseUrl: HttpUrl = baseUrl.toHttpUrl()
+
+    private val json = Json { ignoreUnknownKeys = true }
+
+    override suspend fun upload(
+        sessionId: String,
+        sessionToken: String,
+        request: UploadRequest,
+    ): UploadResult = try {
+        client.await(buildRequest(sessionId, sessionToken, request)).use { response ->
+            val body = withContext(Dispatchers.IO) { response.body.string() }
+            toResult(response.code, body)
+        }
+    } catch (e: IOException) {
+        UploadResult.TransportError(e.message ?: e.javaClass.simpleName)
+    }
+
+    private fun buildRequest(
+        sessionId: String,
+        sessionToken: String,
+        request: UploadRequest,
+    ): Request {
+        val url = baseUrl.newBuilder()
+            .addPathSegments(PATH_SESSIONS)
+            .addPathSegment(sessionId)
+            .addPathSegment(PATH_AUDIO)
+            .build()
+        val body = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart(
+                PART_AUDIO,
+                AUDIO_FILE_NAME,
+                request.wavBytes.toRequestBody(AUDIO_MEDIA_TYPE.toMediaType()),
+            )
+            .addFormDataPart(PART_ITEM_ID, request.itemId)
+            .addFormDataPart(PART_IDEMPOTENCY_KEY, request.attemptId)
+            .addFormDataPart(PART_DURATION_MS, request.durationMs.toString())
+            .build()
+        return Request.Builder()
+            .url(url)
+            .post(body)
+            .header(HEADER_AUTHORIZATION, BEARER_PREFIX + sessionToken)
+            .header(HEADER_CORRELATION_ID, UUID.randomUUID().toString())
+            .build()
+    }
+
+    private fun toResult(status: Int, body: String): UploadResult {
+        if (status in 200..299) {
+            // 계약상 202지만 다른 2xx도 analysisJobId만 있으면 받아들인다.
+            val jobId = runCatching { json.decodeFromString<AcceptedBody>(body).analysisJobId }
+                .getOrNull()
+                ?.takeIf { it.isNotBlank() }
+            return if (jobId != null) {
+                UploadResult.Accepted(jobId)
+            } else {
+                // 업로드는 접수됐지만 폴링할 ID가 없다. idempotencyKey가 중복 접수를 막아주므로 재시도로 회수 가능.
+                UploadResult.Rejected(
+                    code = null,
+                    message = "성공 응답($status) 본문에서 analysisJobId를 읽지 못함",
+                    retryable = true,
+                    retryAfterMs = null,
+                )
+            }
+        }
+        val envelope = runCatching { json.decodeFromString<ErrorEnvelope>(body) }.getOrNull()
+        return UploadResult.Rejected(
+            code = envelope?.code,
+            message = envelope?.message ?: "오류 봉투 없는 응답($status)",
+            // 봉투가 없으면 재시도 여부를 서버가 알려주지 않으므로 상태 코드로 판단한다.
+            retryable = envelope?.retryable ?: isRetryableStatus(status),
+            retryAfterMs = envelope?.retryAfterMs,
+        )
+    }
+
+    private fun isRetryableStatus(status: Int): Boolean =
+        status >= 500 || status == STATUS_REQUEST_TIMEOUT || status == STATUS_TOO_MANY_REQUESTS
+}
+
+@Serializable
+private data class AcceptedBody(val analysisJobId: String)
+
+@Serializable
+private data class ErrorEnvelope(
+    val code: String? = null,
+    val message: String? = null,
+    val retryable: Boolean,
+    val retryAfterMs: Long? = null,
+    val correlationId: String? = null,
+)
+
+// enqueue는 OkHttp 디스패처 스레드에서 돌기 때문에 호출자 스레드를 막지 않는다.
+private suspend fun OkHttpClient.await(request: Request): Response =
+    suspendCancellableCoroutine { continuation ->
+        val call = newCall(request)
+        continuation.invokeOnCancellation { call.cancel() }
+        call.enqueue(
+            object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    if (!continuation.isCancelled) continuation.resumeWithException(e)
+                }
+
+                override fun onResponse(call: Call, response: Response) {
+                    continuation.resume(response) { _, _, _ -> response.close() }
+                }
+            },
+        )
+    }
