@@ -66,7 +66,8 @@ record WavAudio(int sampleRate, int channels, int bitsPerSample, long durationMs
                 }
             }
 
-            require(audioFormat != null && dataSize != null);
+            // 샘플이 하나도 없는 헤더뿐인 파일은 녹음이 아니다 (Codex sol 리뷰 P2)
+            require(audioFormat != null && dataSize != null && dataSize > 0);
             require(audioFormat == PCM);
             require(sampleRate > 0 && channels > 0 && bitsPerSample >= 8 && bitsPerSample % 8 == 0);
 

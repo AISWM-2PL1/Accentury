@@ -60,6 +60,12 @@ class WavAudioTest {
     }
 
     @Test
+    void data_청크가_비어_있으면_거부한다() {
+        // 헤더만 있고 샘플이 0개인 파일 (Codex sol 리뷰 P2)
+        assertUnsupported(WavFixtures.standardWav(0));
+    }
+
+    @Test
     void data_청크가_없으면_거부한다() {
         // fmt 청크까지만 남긴다 (12 + 8 + 16 = 36바이트)
         assertUnsupported(Arrays.copyOf(WavFixtures.standardWav(1000), 36));

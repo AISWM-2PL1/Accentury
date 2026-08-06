@@ -1,4 +1,11 @@
 spring:
+  # 업로드 오디오가 디스크에 닿지 않게 한다 (FR-DP-01, Codex sol 리뷰 P1)
+  # file-size-threshold >= max-request-size라 모든 파트가 메모리에서 처리되고 임시파일이 생기지 않는다
+  servlet:
+    multipart:
+      max-file-size: 1MB        # §3.3 오디오 상한과 일치 - 초과는 413 AUDIO_TOO_LARGE로 매핑된다
+      max-request-size: 2MB     # audio + meta + multipart 오버헤드
+      file-size-threshold: 2MB
   datasource:
     url: jdbc:postgresql://localhost:5432/accentury
     username: postgres
