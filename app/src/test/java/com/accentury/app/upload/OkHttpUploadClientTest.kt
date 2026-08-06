@@ -1,10 +1,19 @@
 package com.accentury.app.upload
 
+import com.accentury.app.audio.ClientQuality
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.double
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -19,6 +28,7 @@ class OkHttpUploadClientTest {
         itemId = "item-42",
         wavBytes = ByteArray(64) { it.toByte() },
         durationMs = 3_210L,
+        clientQuality = ClientQuality(rms = 0.11, peak = 0.83, silenceRatio = 0.12, clipped = false),
     )
 
     @Before
@@ -35,6 +45,13 @@ class OkHttpUploadClientTest {
 
     private fun client() = OkHttpUploadClient(server.url("/").toString())
 
+    /** multipart 본문에서 meta 파트의 JSON만 뽑아 파싱한다. */
+    private fun metaPartOf(body: String): JsonObject {
+        val part = body.split("\r\n--").first { it.contains("""name="meta"""") }
+        val payload = part.substring(part.indexOf('{'), part.lastIndexOf('}') + 1)
+        return Json.parseToJsonElement(payload).jsonObject
+    }
+
     @Test
     fun `202 응답이면 analysisJobId를 파싱해 Accepted를 반환한다`() = runTest {
         server.enqueue(
@@ -47,7 +64,7 @@ class OkHttpUploadClientTest {
     }
 
     @Test
-    fun `요청에 4개 파트와 인증 헤더가 실리고 idempotencyKey는 attemptId와 같다`() = runTest {
+    fun `itemId는 경로에 실리고 Idempotency-Key 헤더는 attemptId와 같다`() = runTest {
         server.enqueue(
             MockResponse().setResponseCode(202).setBody("""{"analysisJobId":"aj_123"}"""),
         )
@@ -56,20 +73,50 @@ class OkHttpUploadClientTest {
 
         val recorded = server.takeRequest()
         assertEquals("POST", recorded.method)
-        assertEquals("/v0/sessions/sess-1/audio", recorded.path)
+        assertEquals("/v0/sessions/sess-1/voice-items/item-42/recording", recorded.path)
         assertEquals("Bearer token-1", recorded.getHeader("Authorization"))
+        assertEquals("attempt-abc", recorded.getHeader("Idempotency-Key"))
         assertTrue(recorded.getHeader("X-Correlation-Id")!!.isNotBlank())
         assertTrue(recorded.getHeader("Content-Type")!!.startsWith("multipart/form-data"))
+    }
 
-        val body = recorded.body.readUtf8()
+    @Test
+    fun `본문은 audio와 meta 두 파트뿐이고 평면 파트는 없다`() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(202).setBody("""{"analysisJobId":"aj_123"}"""),
+        )
+
+        client().upload("sess-1", "token-1", request)
+
+        val body = server.takeRequest().body.readUtf8()
         assertTrue(body.contains("""name="audio"; filename="recording.wav""""))
         assertTrue(body.contains("audio/wav"))
-        assertTrue(body.contains("""name="itemId""""))
-        assertTrue(body.contains("item-42"))
-        assertTrue(body.contains("""name="idempotencyKey""""))
-        assertTrue(body.contains("attempt-abc"))
-        assertTrue(body.contains("""name="recordedDurationMs""""))
-        assertTrue(body.contains("3210"))
+        assertTrue(body.contains("""name="meta""""))
+        assertTrue(body.contains("application/json"))
+        assertEquals(2, Regex("Content-Disposition").findAll(body).count())
+
+        // KAN-88 티켓이 잘못 지시했던 평면 파트들. 정본에는 없어야 한다.
+        assertFalse(body.contains("""name="itemId""""))
+        assertFalse(body.contains("""name="idempotencyKey""""))
+        assertFalse(body.contains("""name="recordedDurationMs""""))
+    }
+
+    @Test
+    fun `meta 파트에 durationMs와 clientQuality 4필드가 실린다`() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(202).setBody("""{"analysisJobId":"aj_123"}"""),
+        )
+
+        client().upload("sess-1", "token-1", request)
+
+        val meta = metaPartOf(server.takeRequest().body.readUtf8())
+        assertEquals(3_210L, meta["durationMs"]!!.jsonPrimitive.long)
+
+        val quality = meta["clientQuality"]!!.jsonObject
+        assertEquals(0.11, quality["rms"]!!.jsonPrimitive.double, 1e-9)
+        assertEquals(0.83, quality["peak"]!!.jsonPrimitive.double, 1e-9)
+        assertEquals(0.12, quality["silenceRatio"]!!.jsonPrimitive.double, 1e-9)
+        assertFalse(quality["clipped"]!!.jsonPrimitive.boolean)
     }
 
     @Test
