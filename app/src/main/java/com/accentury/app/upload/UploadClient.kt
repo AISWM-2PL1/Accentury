@@ -77,7 +77,7 @@ class OkHttpUploadClient(
         UploadResult.TransportError(e.message ?: e.javaClass.simpleName)
     }
 
-    private fun buildRequest(
+    private fun buildRequest( //어디로, 어떤 방법으로, 어떤 헤더를 가지고, 어떤 형식으로 보낼지 정해주는 일. 주문서 짜주는 느낌
         sessionId: String,
         sessionToken: String,
         request: UploadRequest,
@@ -154,7 +154,7 @@ private data class ErrorEnvelope(
 private suspend fun OkHttpClient.await(request: Request): Response =
     suspendCancellableCoroutine { continuation ->
         val call = newCall(request)
-        continuation.invokeOnCancellation { call.cancel() }
+        continuation.invokeOnCancellation { call.cancel() } // 코루틴 취소 -> http 호출을 끊어버림
         call.enqueue(
             object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
