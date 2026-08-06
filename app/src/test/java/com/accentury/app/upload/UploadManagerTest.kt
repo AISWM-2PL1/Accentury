@@ -239,4 +239,83 @@ class UploadManagerTest {
         assertEquals(UploadState.Done("aj_1"), manager.uploads.value["at-1"])
         assertEquals(null, manager.uploads.value["at-unknown"])
     }
+
+    @Test
+    fun `discard한 Failed 건은 상태와 원본이 사라지고 같은 키로 다시 enqueue할 수 있다`() = withManager { fake, manager ->
+        manager.enqueue(requestOf("at-1"))
+        advanceUntilIdle()
+        fake.respond("at-1", UploadResult.TransportError("network down"))
+        advanceUntilIdle()
+        assertEquals(UploadState.Failed(true, "network down"), manager.uploads.value["at-1"])
+
+        manager.discard("at-1")
+        assertEquals(null, manager.uploads.value["at-1"])
+
+        // 원본이 풀렸으므로 retry는 보낼 바이트가 없다.
+        manager.retry("at-1")
+        advanceUntilIdle()
+        assertEquals(1, fake.callsFor("at-1"))
+        assertEquals(null, manager.uploads.value["at-1"])
+
+        // 폐기는 시도 자체를 버리는 것이라 같은 키의 새 enqueue는 다시 받는다.
+        manager.enqueue(requestOf("at-1"))
+        advanceUntilIdle()
+        assertEquals(2, fake.callsFor("at-1"))
+        assertEquals(UploadState.InFlight, manager.uploads.value["at-1"])
+    }
+
+    @Test
+    fun `discard는 진행 중 전송을 끊고 뒤늦은 응답도 상태를 되살리지 못한다`() = withManager { fake, manager ->
+        manager.enqueue(requestOf("at-1"))
+        advanceUntilIdle()
+        assertEquals(UploadState.InFlight, manager.uploads.value["at-1"])
+
+        manager.discard("at-1")
+        advanceUntilIdle()
+        assertEquals(null, manager.uploads.value["at-1"])
+
+        fake.respond("at-1", UploadResult.Accepted("aj_late"))
+        advanceUntilIdle()
+
+        assertEquals(null, manager.uploads.value["at-1"])
+    }
+
+    @Test
+    fun `clearAll은 상태가 섞인 여러 건을 전부 지우고 진행 중 건도 되살아나지 않는다`() = withManager { fake, manager ->
+        manager.enqueue(requestOf("at-done"))
+        manager.enqueue(requestOf("at-failed", itemId = "item-2"))
+        manager.enqueue(requestOf("at-inflight", itemId = "item-3"))
+        advanceUntilIdle()
+        fake.respond("at-done", UploadResult.Accepted("aj_1"))
+        fake.respond("at-failed", UploadResult.TransportError("network down"))
+        advanceUntilIdle()
+        assertEquals(3, manager.uploads.value.size)
+
+        manager.clearAll()
+        advanceUntilIdle()
+        assertTrue(manager.uploads.value.isEmpty())
+
+        fake.respond("at-inflight", UploadResult.Accepted("aj_late"))
+        advanceUntilIdle()
+
+        assertTrue(manager.uploads.value.isEmpty())
+    }
+
+    @Test
+    fun `clearAll 후 새 enqueue는 정상 동작한다`() = withManager { fake, manager ->
+        manager.enqueue(requestOf("at-1"))
+        advanceUntilIdle()
+        manager.clearAll()
+        advanceUntilIdle()
+
+        manager.enqueue(requestOf("at-2", itemId = "item-2"))
+        advanceUntilIdle()
+        assertEquals(UploadState.InFlight, manager.uploads.value["at-2"])
+
+        fake.respond("at-2", UploadResult.Accepted("aj_2"))
+        advanceUntilIdle()
+
+        assertEquals(UploadState.Done("aj_2"), manager.uploads.value["at-2"])
+        assertEquals(1, manager.uploads.value.size)
+    }
 }
