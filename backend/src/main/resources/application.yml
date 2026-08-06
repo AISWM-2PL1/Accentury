@@ -20,3 +20,9 @@ accentury:
   score-version: sv-0.3
   session:
     ttl: 30m    # 토큰 수명 — 테스트 소요 5분의 여유 배수 (명세서 §2.1·§7)
+  analysis:
+    poll-after-ms: 800    # 상태 폴링 간격 - 서버가 통제, 부하 상승 시 상향 (명세서 §5.3)
+  upload:
+    rate-limit-per-minute: 30    # IP당 분당 업로드 상한 - 부하 테스트 후 확정 (명세서 §7, KAN-28)
+  cors:
+    allowed-origins: []    # 스탠드얼론 웹 테스트(KAN-31) 오리진 - 웹 배포 시 지정 (명세서 §2.5)
