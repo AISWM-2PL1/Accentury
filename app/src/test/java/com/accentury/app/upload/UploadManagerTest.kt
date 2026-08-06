@@ -36,6 +36,12 @@ class UploadManagerTest {
             gates.remove(attemptId)
         }
 
+        /** UploadResult 대신 예외를 흘리는 클라이언트 구현을 흉내 낸다. */
+        fun failWith(attemptId: String, error: Throwable) {
+            gates.getOrPut(attemptId) { CompletableDeferred() }.completeExceptionally(error)
+            gates.remove(attemptId)
+        }
+
         fun callsFor(attemptId: String): Int = received.count { it.attemptId == attemptId }
     }
 
@@ -158,6 +164,62 @@ class UploadManagerTest {
 
         assertEquals(1, fake.callsFor("at-1"))
         assertEquals(UploadState.Done("aj_1"), manager.uploads.value["at-1"])
+    }
+
+    @Test
+    fun `실패한 키에 다른 바이트로 enqueue해도 무시되고 retry는 원본 바이트를 보낸다`() = withManager { fake, manager ->
+        val original = requestOf("at-1")
+        val originalBytes = original.wavBytes.copyOf()
+
+        manager.enqueue(original)
+        advanceUntilIdle()
+        fake.respond("at-1", UploadResult.TransportError("network down"))
+        advanceUntilIdle()
+        assertEquals(UploadState.Failed(true, "network down"), manager.uploads.value["at-1"])
+
+        // 같은 멱등 키에 다른 payload를 붙이려는 시도는 상태도 호출 횟수도 건드리지 못한다.
+        manager.enqueue(original.copy(wavBytes = ByteArray(32) { 0x7F }))
+        advanceUntilIdle()
+        assertEquals(1, fake.callsFor("at-1"))
+        assertEquals(UploadState.Failed(true, "network down"), manager.uploads.value["at-1"])
+
+        manager.retry("at-1")
+        advanceUntilIdle()
+
+        assertEquals(2, fake.callsFor("at-1"))
+        assertTrue(originalBytes.contentEquals(fake.received.last().wavBytes))
+    }
+
+    @Test
+    fun `enqueue 후 호출자가 배열을 바꿔도 재전송 바이트는 스냅샷 그대로다`() = withManager { fake, manager ->
+        val original = requestOf("at-1")
+        val snapshot = original.wavBytes.copyOf()
+
+        manager.enqueue(original)
+        advanceUntilIdle()
+        original.wavBytes.fill(0x7F) // 호출자가 버퍼를 재사용하는 상황
+
+        assertTrue(snapshot.contentEquals(fake.received.first().wavBytes))
+
+        fake.respond("at-1", UploadResult.TransportError("network down"))
+        advanceUntilIdle()
+        manager.retry("at-1")
+        advanceUntilIdle()
+
+        assertEquals(2, fake.callsFor("at-1"))
+        assertTrue(snapshot.contentEquals(fake.received.last().wavBytes))
+    }
+
+    @Test
+    fun `클라이언트가 예외를 던지면 InFlight로 남지 않고 재시도 가능한 Failed가 된다`() = withManager { fake, manager ->
+        manager.enqueue(requestOf("at-1"))
+        advanceUntilIdle()
+        assertEquals(UploadState.InFlight, manager.uploads.value["at-1"])
+
+        fake.failWith("at-1", RuntimeException("unexpected boom"))
+        advanceUntilIdle()
+
+        assertEquals(UploadState.Failed(true, "unexpected boom"), manager.uploads.value["at-1"])
     }
 
     @Test
