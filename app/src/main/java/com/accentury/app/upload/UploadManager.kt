@@ -70,6 +70,11 @@ class UploadManager(
      *
      * 폐기 후 같은 attemptId로 [enqueue]하면 새 시도로 다시 받는다.
      * 폐기는 시도 자체를 버리는 것이므로 멱등 키를 다시 열어주는 게 맞다.
+     *
+     * ⚠️ 단, 폐기 직전 전송이 이미 서버에 도달했을 수 있다. 그 경우 같은 키의 재요청에는
+     * 서버 멱등 규칙(명세서 §5.2)이 기존 작업을 반환하므로, **폐기된 키를 새 녹음(다른
+     * 바이트)에 재사용하면 새 녹음이 옛 analysisJobId에 조용히 묶인다.** 새 시도는 항상
+     * 새 attemptId를 발급할 것. (호출처는 KAN-100 브리지에서 생긴다 — 현재 하네스는 clearAll만 사용)
      */
     fun discard(attemptId: String) {
         synchronized(lock) {
