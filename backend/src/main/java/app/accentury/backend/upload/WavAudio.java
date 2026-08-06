@@ -31,7 +31,10 @@ record WavAudio(int sampleRate, int channels, int bitsPerSample, long durationMs
         try {
             ByteBuffer buf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
             require(readTag(buf).equals("RIFF"));
-            buf.getInt();   // RIFF 전체 크기 - data 청크 크기를 쓰므로 참조하지 않는다
+            // 컨테이너 크기는 실제 파일 크기와 일치해야 한다 - 어긋난 파일은 디코더마다
+            // RIFF 경계 해석이 갈려 분석 단계에서야 실패한다 (Codex sol 리뷰 P2)
+            long riffSize = Integer.toUnsignedLong(buf.getInt());
+            require(riffSize == bytes.length - 8L);
             require(readTag(buf).equals("WAVE"));
 
             Integer audioFormat = null;
