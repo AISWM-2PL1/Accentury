@@ -24,6 +24,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -36,6 +37,7 @@ import com.accentury.app.audio.AudioQuality
 import com.accentury.app.audio.WavWriter
 import com.accentury.app.bridge.ItemAttempt
 import com.accentury.app.bridge.assembleItemResult
+import com.accentury.app.intro.IntroScreen
 import com.accentury.app.recording.RecordingScreen
 import com.accentury.app.recording.RecordingViewModel
 import com.accentury.app.ui.theme.AccenturyTheme
@@ -71,7 +73,17 @@ class MainActivity : ComponentActivity() {
         setContent {
             AccenturyTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    PermissionGate(modifier = Modifier.padding(innerPadding))
+                    // 인트로 → [시작하기] → 마이크 권한 게이트 순서 (KAN-97).
+                    // 회전 등 구성 변경으로 인트로가 다시 뜨면 안 되므로 rememberSaveable로 남긴다.
+                    var started by rememberSaveable { mutableStateOf(false) }
+                    if (started) {
+                        PermissionGate(modifier = Modifier.padding(innerPadding))
+                    } else {
+                        IntroScreen(
+                            onStart = { started = true },
+                            modifier = Modifier.padding(innerPadding),
+                        )
+                    }
                 }
             }
         }
