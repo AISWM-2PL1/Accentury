@@ -72,6 +72,14 @@ class WavAudioTest {
     }
 
     @Test
+    void 프레임_단위로_나누어떨어지지_않는_data는_거부한다() {
+        // 16-bit mono인데 data가 1바이트 - 완결된 샘플이 없는 깨진 파일 (Codex sol 리뷰 P2)
+        byte[] wav = Arrays.copyOf(WavFixtures.standardWav(0), 45);
+        ByteBuffer.wrap(wav).order(ByteOrder.LITTLE_ENDIAN).putInt(40, 1);
+        assertUnsupported(wav);
+    }
+
+    @Test
     void 선언된_청크_크기가_실제보다_크면_거부한다() {
         byte[] wav = WavFixtures.standardWav(1000);
         ByteBuffer.wrap(wav).order(ByteOrder.LITTLE_ENDIAN).putInt(40, Integer.MAX_VALUE);

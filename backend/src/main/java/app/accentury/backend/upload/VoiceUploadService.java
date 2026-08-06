@@ -113,9 +113,11 @@ public class VoiceUploadService {
         }
 
         try {
+            // durationMs는 클라이언트 신고값(meta)이 아니라 서버가 WAV에서 계산한 값을
+            // 전달한다 - 신고값이 실제와 다르면 분석이 엉뚱한 메타를 받는다 (Codex sol 리뷰 P2)
             dispatcher.dispatch(new AnalysisDispatcher.AnalysisRequest(
                     job.id(), session.id(), itemId, session.testVersion(), session.scoreVersion(),
-                    meta.requiredDurationMs(), audioBytes));
+                    wav.durationMs(), audioBytes));
         } catch (RuntimeException e) {
             // 전달 실패를 PROCESSING으로 두면 오디오가 없어 영영 끝나지 않는다 (FR-DP-01) -
             // 재녹음(새 키)을 유도하는 RETRYABLE_FAILED로 전이하고 503을 준다 (Codex sol 리뷰 P1).
