@@ -34,7 +34,9 @@ fun RecordingScreen(
     questionText: String,
     questionIndex: Int,
     totalQuestions: Int,
-    onNext: (attemptId: String, durationMs: Long) -> Unit,
+    // quality는 Review 상태에만 있고 뷰모델은 넘어가는 즉시 reset되므로, 호출자가 나중에 되물을 수 없다.
+    // 브리지 계약(KAN-89)이 qualityStatus를 요구해서 여기서 함께 넘긴다.
+    onNext: (attemptId: String, durationMs: Long, quality: QualityStatus) -> Unit,
     onExit: () -> Unit,
     viewModel: RecordingViewModel = viewModel(),
 ) {
@@ -92,7 +94,7 @@ fun RecordingScreen(
                         Button(
                             enabled = s.canProceed,
                             onClick = {
-                                onNext(s.attemptId, s.durationMs)
+                                onNext(s.attemptId, s.durationMs, s.quality)
                                 viewModel.reset()
                             },
                         ) { Text("다음") }
