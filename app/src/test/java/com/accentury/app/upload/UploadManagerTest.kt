@@ -1,17 +1,24 @@
 package com.accentury.app.upload
 
 import com.accentury.app.audio.ClientQuality
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
+import java.util.concurrent.CyclicBarrier
+import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class UploadManagerTest {
@@ -22,13 +29,26 @@ class UploadManagerTest {
 
         private val gates = mutableMapOf<String, CompletableDeferred<UploadResult>>()
 
+        private val swallowCancellation = mutableSetOf<String>()
+
         override suspend fun upload(
             sessionId: String,
             sessionToken: String,
             request: UploadRequest,
         ): UploadResult {
             received += request
-            return gates.getOrPut(request.attemptId) { CompletableDeferred() }.await()
+            val gate = gates.getOrPut(request.attemptId) { CompletableDeferred() }
+            return try {
+                gate.await()
+            } catch (e: CancellationException) {
+                // 취소를 흘리지 않는 클라이언트 구현. 취소된 코루틴이 결과를 들고 publish까지 도달한다.
+                if (request.attemptId in swallowCancellation) UploadResult.Accepted("aj_zombie") else throw e
+            }
+        }
+
+        /** 이 키의 전송은 취소를 삼키고 성공 결과를 들고 돌아온다. 늦은 완료 경합을 결정론적으로 만든다. */
+        fun swallowCancellationFor(attemptId: String) {
+            swallowCancellation += attemptId
         }
 
         /** 테스트가 응답 시점을 정한다. 응답 뒤 게이트를 비워 재시도는 새로 대기하게 한다. */
@@ -318,4 +338,107 @@ class UploadManagerTest {
         assertEquals(UploadState.Done("aj_2"), manager.uploads.value["at-2"])
         assertEquals(1, manager.uploads.value.size)
     }
+
+    @Test
+    fun `discard 후 다시 enqueue하면 옛 전송의 늦은 완료가 새 시도의 원본을 지우지 못한다`() =
+        withManager { fake, manager ->
+            fake.swallowCancellationFor("at-1")
+
+            manager.enqueue(requestOf("at-1"))
+            advanceUntilIdle()
+            assertEquals(1, fake.callsFor("at-1"))
+
+            // 폐기 직후 같은 키로 새 시도를 연다. 옛 코루틴은 아직 취소 재개를 돌리지 않았다.
+            manager.discard("at-1")
+            manager.enqueue(requestOf("at-1"))
+            assertEquals(UploadState.InFlight, manager.uploads.value["at-1"])
+
+            // 여기서 옛 코루틴이 Done을 들고 publish에 도달한다. 새 시도의 Job이 아니므로 버려져야 한다.
+            advanceUntilIdle()
+            assertEquals(2, fake.callsFor("at-1"))
+            assertEquals(UploadState.InFlight, manager.uploads.value["at-1"])
+
+            // 새 시도의 원본이 남아 있어야 재시도가 같은 바이트를 다시 보낼 수 있다.
+            fake.respond("at-1", UploadResult.TransportError("network down"))
+            advanceUntilIdle()
+            assertEquals(UploadState.Failed(true, "network down"), manager.uploads.value["at-1"])
+
+            manager.retry("at-1")
+            advanceUntilIdle()
+            assertEquals(3, fake.callsFor("at-1"))
+            assertEquals(UploadState.InFlight, manager.uploads.value["at-1"])
+        }
+
+    /** 응답을 기다리지 않는 클라이언트. 경합 테스트에서 여러 스레드가 동시에 쓰므로 가변 상태를 두지 않는다. */
+    private class ImmediateUploadClient : UploadClient {
+        override suspend fun upload(
+            sessionId: String,
+            sessionToken: String,
+            request: UploadRequest,
+        ): UploadResult = UploadResult.Accepted("aj-${request.attemptId}")
+    }
+
+    /**
+     * 스레드 경합은 가상 시간으로 재현할 수 없어 실제 디스패처와 실제 스레드를 쓴다.
+     * enqueue와 clearAll을 CyclicBarrier로 정면 충돌시키고, 매 회차마다 폐기 불변식을 확인한다:
+     * 진행 중 전송이 모두 끝난 뒤 originals에 남은 키는 uploads가 추적하는 키의 부분집합이어야 한다.
+     * (enqueue의 "상태 등록 → 원본 보관 → 전송 시작"이 원자적이지 않으면
+     *  폐기 이후에 시작된 업로드가 originals에 WAV 바이트를 영구히 남긴다.)
+     */
+    @Test
+    fun `enqueue와 clearAll이 경합해도 폐기된 시도의 원본이 남지 않는다`() {
+        val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+        val manager = UploadManager(
+            ImmediateUploadClient(),
+            scope,
+            sessionId = "sess-1",
+            sessionToken = "token-1",
+        )
+        try {
+            repeat(300) { round ->
+                val attemptId = "at-$round"
+                val barrier = CyclicBarrier(2)
+                val enqueuer = thread {
+                    barrier.await()
+                    manager.enqueue(requestOf(attemptId))
+                }
+                val clearer = thread {
+                    barrier.await()
+                    manager.clearAll()
+                }
+                enqueuer.join()
+                clearer.join()
+                awaitNoInFlight(manager, round)
+
+                val tracked = manager.uploads.value.keys
+                val retained = manager.retainedOriginalKeys()
+                assertTrue(
+                    "round=$round 폐기된 원본이 남았다: retained=$retained tracked=$tracked",
+                    tracked.containsAll(retained),
+                )
+                manager.clearAll()
+            }
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    private fun awaitNoInFlight(manager: UploadManager, round: Int) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (manager.uploads.value.values.any { it is UploadState.InFlight }) {
+            if (System.nanoTime() > deadline) fail("round=$round 업로드가 InFlight에서 멈췄다")
+            Thread.sleep(1)
+        }
+    }
+
+    /** originals는 구현 세부라 공개하지 않는다. 폐기 불변식만 확인하려고 매니저의 락을 잡고 들여다본다. */
+    private fun UploadManager.retainedOriginalKeys(): Set<String> {
+        val lock = readPrivateField("lock")
+        @Suppress("UNCHECKED_CAST")
+        val originals = readPrivateField("originals") as Map<String, *>
+        return synchronized(lock) { originals.keys.toSet() }
+    }
+
+    private fun UploadManager.readPrivateField(name: String): Any =
+        UploadManager::class.java.getDeclaredField(name).also { it.isAccessible = true }.get(this)!!
 }

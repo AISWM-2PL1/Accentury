@@ -116,7 +116,6 @@ private fun RecordingHarness(modifier: Modifier = Modifier) {
     // 자식 하나가 실패하면 형제 업로드까지 같이 죽는다. SupervisorJob으로 업로드끼리 격리하고
     // 직렬화·바이트 처리는 UI 스레드 밖(Default)에서 돌린다. 회전 시 취소되는 건 하네스라 감수한다.
     val uploadScope = remember { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
-    DisposableEffect(uploadScope) { onDispose { uploadScope.cancel() } }
 
     val uploadManager = remember(uploadScope) {
         UploadManager(
@@ -125,6 +124,14 @@ private fun RecordingHarness(modifier: Modifier = Modifier) {
             sessionId = DEV_SESSION_ID,
             sessionToken = DEV_SESSION_TOKEN,
         )
+    }
+    // 스코프만 취소하면 register~start 사이의 시도가 InFlight·원본으로 남을 수 있다.
+    // clearAll을 먼저 불러 음성 바이트·상태를 확정 폐기한 뒤 스코프를 내린다 (FR-DP-02).
+    DisposableEffect(uploadScope) {
+        onDispose {
+            uploadManager.clearAll()
+            uploadScope.cancel()
+        }
     }
     // UploadState는 itemId를 들고 있지 않아, 실패 표시에 쓸 문항 라벨은 하네스가 따로 기억한다.
     val labels = remember(uploadScope) { mutableStateMapOf<String, String>() }
