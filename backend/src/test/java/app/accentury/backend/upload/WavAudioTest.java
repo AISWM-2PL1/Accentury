@@ -38,8 +38,10 @@ class WavAudioTest {
         buf.put("LIST".getBytes(StandardCharsets.US_ASCII)).putInt(4)
                 .put("INFO".getBytes(StandardCharsets.US_ASCII));
         buf.put(standard, 12, standard.length - 12);
+        byte[] wav = buf.array();
+        ByteBuffer.wrap(wav).order(ByteOrder.LITTLE_ENDIAN).putInt(4, wav.length - 8);
 
-        assertEquals(1000, WavAudio.parse(buf.array()).durationMs());
+        assertEquals(1000, WavAudio.parse(wav).durationMs());
     }
 
     @Test
@@ -72,10 +74,19 @@ class WavAudioTest {
     }
 
     @Test
+    void RIFF_크기가_실제_파일_크기와_다르면_거부한다() {
+        byte[] wav = WavFixtures.standardWav(1000);
+        ByteBuffer.wrap(wav).order(ByteOrder.LITTLE_ENDIAN).putInt(4, 100);
+        assertUnsupported(wav);
+    }
+
+    @Test
     void 프레임_단위로_나누어떨어지지_않는_data는_거부한다() {
         // 16-bit mono인데 data가 1바이트 - 완결된 샘플이 없는 깨진 파일 (Codex sol 리뷰 P2)
         byte[] wav = Arrays.copyOf(WavFixtures.standardWav(0), 45);
-        ByteBuffer.wrap(wav).order(ByteOrder.LITTLE_ENDIAN).putInt(40, 1);
+        ByteBuffer.wrap(wav).order(ByteOrder.LITTLE_ENDIAN)
+                .putInt(4, wav.length - 8)  // RIFF 크기는 정합하게 두고 프레임 정렬만 망가뜨린다
+                .putInt(40, 1);
         assertUnsupported(wav);
     }
 
