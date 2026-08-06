@@ -34,8 +34,10 @@ public record AccenturyProperties(String testVersion, String scoreVersion, Sessi
     /**
      * @param pollAfterMs 다음 상태 조회까지 클라이언트가 기다릴 시간 - 서버가 통제하고,
      *                    부하 상승 시 값을 올려 폴링 압력을 줄인다 (§5.3)
+     * @param retention   분석 작업 보존 기간 - 세션·결과와 같은 24시간 (§5.5)
      */
-    public record Analysis(@DefaultValue("800") long pollAfterMs) {
+    public record Analysis(@DefaultValue("800") long pollAfterMs,
+                           @DefaultValue("24h") Duration retention) {
     }
 
     /**
