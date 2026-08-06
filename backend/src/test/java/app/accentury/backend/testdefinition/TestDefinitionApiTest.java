@@ -84,6 +84,8 @@ class TestDefinitionApiTest {
             assertEquals("semitone", guideF0.get("unit").asString());
             assertEquals(10, guideF0.get("frameIntervalMs").asInt());
             assertTrue(guideF0.get("values").size() > 0, "guideF0.values는 비어 있으면 안 된다");
+            // guideF0는 응답이 내부 타입을 재사용하므로 필드가 늘면 그대로 노출된다 - 정확히 3개(밴드 없는 현 seed 기준)로 고정
+            assertEquals(3, guideF0.size(), "guideF0 필드가 늘었다: " + guideF0.propertyNames());
             // VOICE 문항은 정확히 6개 필드 - choices·정답 없음
             assertEquals(6, item.size(), "VOICE 문항 필드가 늘었다: " + item.propertyNames());
         }
