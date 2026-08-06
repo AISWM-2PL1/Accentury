@@ -9,11 +9,14 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.server.RequestPath;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.util.ServletRequestPathUtils;
+import org.springframework.web.util.pattern.PathPattern;
+import org.springframework.web.util.pattern.PathPatternParser;
 import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
-import java.util.regex.Pattern;
 
 /**
  * 업로드 요청 제한을 multipart 해석 <b>전에</b> 집행하는 필터 (Codex sol 리뷰 P2).
@@ -32,8 +35,8 @@ import java.util.regex.Pattern;
  */
 class UploadRateLimitFilter extends OncePerRequestFilter {
 
-    private static final Pattern RECORDING_PATH =
-            Pattern.compile("/v0/sessions/[^/]+/voice-items/[^/]+/recording");
+    private static final PathPattern RECORDING_PATH =
+            PathPatternParser.defaultInstance.parse("/v0/sessions/*/voice-items/*/recording");
 
     private final UploadRateLimiter rateLimiter;
     private final ObjectMapper objectMapper;
@@ -46,8 +49,7 @@ class UploadRateLimitFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
-        if ("POST".equals(request.getMethod())
-                && RECORDING_PATH.matcher(request.getRequestURI()).matches()) {
+        if ("POST".equals(request.getMethod()) && matchesRecordingPath(request)) {
             try {
                 rateLimiter.check(ClientIps.from(request));
             } catch (ApiException e) {
@@ -56,6 +58,18 @@ class UploadRateLimitFilter extends OncePerRequestFilter {
             }
         }
         filterChain.doFilter(request, response);
+    }
+
+    /**
+     * MVC 라우팅과 같은 정규화(세그먼트 디코딩, matrix 파라미터 제거)로 매칭한다 -
+     * raw URI 정규식은 {@code %72ecording}, {@code ;x=1} 같은 변형으로 컨트롤러에는
+     * 닿으면서 제한만 피해 갈 수 있다 (Codex sol 리뷰 P1).
+     */
+    private static boolean matchesRecordingPath(HttpServletRequest request) {
+        RequestPath path = ServletRequestPathUtils.hasParsedRequestPath(request)
+                ? ServletRequestPathUtils.getParsedRequestPath(request)
+                : ServletRequestPathUtils.parseAndCache(request);
+        return RECORDING_PATH.matches(path.pathWithinApplication());
     }
 
     /** 429 + Retry-After + 공통 오류 봉투 - GlobalExceptionHandler의 429 응답과 같은 형태다 */
