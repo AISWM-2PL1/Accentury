@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.accentury.app.audio.AudioQuality
 import com.accentury.app.audio.WavWriter
 import com.accentury.app.recording.RecordingScreen
 import com.accentury.app.recording.RecordingViewModel
@@ -145,6 +146,7 @@ private fun RecordingHarness(modifier: Modifier = Modifier) {
                                 itemId = "item_$itemNumber",
                                 wavBytes = WavWriter.toWavBytes(pcm),
                                 durationMs = durationMs,
+                                clientQuality = AudioQuality.measure(pcm),
                             ),
                         )
                     }

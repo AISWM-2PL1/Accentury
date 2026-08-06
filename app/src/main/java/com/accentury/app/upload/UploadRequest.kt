@@ -1,10 +1,13 @@
 package com.accentury.app.upload
 
+import com.accentury.app.audio.ClientQuality
+
 data class UploadRequest(
     val attemptId: String,
     val itemId: String,
     val wavBytes: ByteArray,
     val durationMs: Long,
+    val clientQuality: ClientQuality,
 ) {
     // ByteArray는 기본 equals가 참조 비교라 data class 자동 구현을 쓸 수 없다.
     override fun equals(other: Any?): Boolean {
@@ -13,6 +16,7 @@ data class UploadRequest(
         return attemptId == other.attemptId &&
             itemId == other.itemId &&
             durationMs == other.durationMs &&
+            clientQuality == other.clientQuality &&
             wavBytes.contentEquals(other.wavBytes)
     }
 
@@ -20,6 +24,7 @@ data class UploadRequest(
         var result = attemptId.hashCode()
         result = 31 * result + itemId.hashCode()
         result = 31 * result + durationMs.hashCode()
+        result = 31 * result + clientQuality.hashCode()
         result = 31 * result + wavBytes.contentHashCode()
         return result
     }

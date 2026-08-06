@@ -1,5 +1,6 @@
 package com.accentury.app.upload
 
+import com.accentury.app.audio.ClientQuality
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -50,6 +51,7 @@ class UploadManagerTest {
         itemId = itemId,
         wavBytes = ByteArray(32) { (it + attemptId.length).toByte() },
         durationMs = 2_000L,
+        clientQuality = ClientQuality(rms = 0.11, peak = 0.83, silenceRatio = 0.12, clipped = false),
     )
 
     /**

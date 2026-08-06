@@ -1,5 +1,6 @@
 package com.accentury.app.upload
 
+import com.accentury.app.audio.ClientQuality
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -20,16 +21,17 @@ import java.util.UUID
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-// 서버 계약(KAN-23/KAN-58)에 묶인 값들. 계약이 바뀌면 여기만 고친다.
+// 서버 계약(API 명세서 §3.3 / KAN-23)에 묶인 값들. 계약이 바뀌면 여기만 고친다.
 private const val PATH_SESSIONS = "v0/sessions"
-private const val PATH_AUDIO = "audio"
+private const val PATH_VOICE_ITEMS = "voice-items"
+private const val PATH_RECORDING = "recording"
 private const val PART_AUDIO = "audio"
-private const val PART_ITEM_ID = "itemId"
-private const val PART_IDEMPOTENCY_KEY = "idempotencyKey"
-private const val PART_DURATION_MS = "recordedDurationMs"
+private const val PART_META = "meta"
 private const val AUDIO_FILE_NAME = "recording.wav"
 private const val AUDIO_MEDIA_TYPE = "audio/wav"
+private const val META_MEDIA_TYPE = "application/json"
 private const val HEADER_AUTHORIZATION = "Authorization"
+private const val HEADER_IDEMPOTENCY_KEY = "Idempotency-Key"
 private const val HEADER_CORRELATION_ID = "X-Correlation-Id"
 private const val BEARER_PREFIX = "Bearer "
 
@@ -85,8 +87,14 @@ class OkHttpUploadClient(
         val url = baseUrl.newBuilder()
             .addPathSegments(PATH_SESSIONS)
             .addPathSegment(sessionId)
-            .addPathSegment(PATH_AUDIO)
+            .addPathSegment(PATH_VOICE_ITEMS)
+            .addPathSegment(request.itemId)
+            .addPathSegment(PATH_RECORDING)
             .build()
+        val meta = json.encodeToString(
+            MetaPart.serializer(),
+            MetaPart(durationMs = request.durationMs, clientQuality = request.clientQuality),
+        )
         val body = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart(
@@ -94,14 +102,14 @@ class OkHttpUploadClient(
                 AUDIO_FILE_NAME,
                 request.wavBytes.toRequestBody(AUDIO_MEDIA_TYPE.toMediaType()),
             )
-            .addFormDataPart(PART_ITEM_ID, request.itemId)
-            .addFormDataPart(PART_IDEMPOTENCY_KEY, request.attemptId)
-            .addFormDataPart(PART_DURATION_MS, request.durationMs.toString())
+            .addFormDataPart(PART_META, null, meta.toRequestBody(META_MEDIA_TYPE.toMediaType()))
             .build()
         return Request.Builder()
             .url(url)
             .post(body)
             .header(HEADER_AUTHORIZATION, BEARER_PREFIX + sessionToken)
+            // 비용이 발생하는 POST라 중복 접수를 막는다 (§2.2). 재시도해도 같은 attemptId를 쓴다.
+            .header(HEADER_IDEMPOTENCY_KEY, request.attemptId)
             .header(HEADER_CORRELATION_ID, UUID.randomUUID().toString())
             .build()
     }
@@ -137,6 +145,10 @@ class OkHttpUploadClient(
     private fun isRetryableStatus(status: Int): Boolean =
         status >= 500 || status == STATUS_REQUEST_TIMEOUT || status == STATUS_TOO_MANY_REQUESTS
 }
+
+/** multipart의 meta 파트 본문(§3.3). audio와 함께 둘 다 필수다. */
+@Serializable
+private data class MetaPart(val durationMs: Long, val clientQuality: ClientQuality)
 
 @Serializable
 private data class AcceptedBody(val analysisJobId: String)
