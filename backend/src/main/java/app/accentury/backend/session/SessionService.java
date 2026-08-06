@@ -70,6 +70,20 @@ public class SessionService {
      *   <li>유효한데 다른 세션의 토큰 → 403 SESSION_FORBIDDEN (§2.1 - 경로 {sessionId}와 토큰 세션 불일치)</li>
      * </ul>
      */
+    /**
+     * {@code Authorization: Bearer {token}} 헤더로 인증한다 (§2.1, §2.2) -
+     * 인증 필요 API(KAN-23, 24, 15, 16, 25)의 공용 진입점.
+     * 헤더 부재나 형식 오류도 401 SESSION_EXPIRED다 - 미인증과 만료를 구분해주지 않는다.
+     */
+    @Transactional(readOnly = true)
+    public TestSession authenticateBearer(String sessionId, @Nullable String authorizationHeader) {
+        if (authorizationHeader == null
+                || !authorizationHeader.regionMatches(true, 0, "Bearer ", 0, 7)) {
+            throw new ApiException(ErrorCode.SESSION_EXPIRED);
+        }
+        return authenticate(sessionId, authorizationHeader.substring(7).strip());
+    }
+
     @Transactional(readOnly = true)
     public TestSession authenticate(String sessionId, String sessionToken) {
         TestSession session = repository.findByTokenHash(SessionTokens.hash(sessionToken))

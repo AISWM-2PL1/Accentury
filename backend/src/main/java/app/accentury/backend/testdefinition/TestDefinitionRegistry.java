@@ -100,6 +100,22 @@ public class TestDefinitionRegistry {
         return found;
     }
 
+    /**
+     * 세션 버전의 문항을 유형까지 검증해 찾는다 - 제출 API 공용 (KAN-23 업로드, KAN-15 답안).
+     * 버전에 없는 문항은 422 ITEM_NOT_IN_VERSION, 유형이 다르면 409 ITEM_WRONG_TYPE (§3.3).
+     */
+    public TestDefinition.Item requireItem(String testVersion, String itemId,
+                                           TestDefinition.ItemType expectedType) {
+        TestDefinition.Item item = get(testVersion).definition().items().stream()
+                .filter(candidate -> candidate.itemId().equals(itemId))
+                .findFirst()
+                .orElseThrow(() -> new ApiException(ErrorCode.ITEM_NOT_IN_VERSION));
+        if (item.type() != expectedType) {
+            throw new ApiException(ErrorCode.ITEM_WRONG_TYPE);
+        }
+        return item;
+    }
+
     private static Resource[] loadSeeds() {
         try {
             return new PathMatchingResourcePatternResolver().getResources(SEED_PATTERN);

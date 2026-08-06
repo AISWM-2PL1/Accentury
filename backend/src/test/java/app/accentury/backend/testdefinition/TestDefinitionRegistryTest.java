@@ -110,8 +110,7 @@ class TestDefinitionRegistryTest {
 
     @Test
     void 활성_버전의_seed가_없으면_기동에_실패한다() {
-        AccenturyProperties noSuchVersion = new AccenturyProperties("gn-9999.99.9", "sv-0.3",
-                new AccenturyProperties.Session(Duration.ofMinutes(30)));
+        AccenturyProperties noSuchVersion = props("gn-9999.99.9", "sv-0.3");
         assertThrows(IllegalStateException.class,
                 () -> new TestDefinitionRegistry(JsonMapper.builder().build(), noSuchVersion));
     }
@@ -119,8 +118,7 @@ class TestDefinitionRegistryTest {
     @Test
     void 활성_버전의_scoreVersion이_설정과_다르면_기동에_실패한다() {
         // 세션(설정값 고정)과 정의 응답(seed값)이 서로 다른 채점 버전을 가리키는 배포를 막는다 (Codex sol 리뷰 P2)
-        AccenturyProperties mismatched = new AccenturyProperties("gn-2026.08.1", "sv-9.9",
-                new AccenturyProperties.Session(Duration.ofMinutes(30)));
+        AccenturyProperties mismatched = props("gn-2026.08.1", "sv-9.9");
         IllegalStateException rejected = assertThrows(IllegalStateException.class,
                 () -> new TestDefinitionRegistry(JsonMapper.builder().build(), mismatched));
         assertTrue(rejected.getMessage().contains("scoreVersion"), rejected.getMessage());
@@ -128,8 +126,7 @@ class TestDefinitionRegistryTest {
 
     @Test
     void 발행된_seed는_로드되고_미발행_버전은_404다() {
-        AccenturyProperties active = new AccenturyProperties("gn-2026.08.1", "sv-0.3",
-                new AccenturyProperties.Session(Duration.ofMinutes(30)));
+        AccenturyProperties active = props("gn-2026.08.1", "sv-0.3");
         TestDefinitionRegistry registry = new TestDefinitionRegistry(JsonMapper.builder().build(), active);
 
         assertEquals("gn-2026.08.1", registry.get("gn-2026.08.1").response().testVersion());
@@ -139,6 +136,15 @@ class TestDefinitionRegistryTest {
     }
 
     // === 픽스처 ===
+
+    /** 레지스트리 기동 검사용 설정. 업로드, CORS 등 무관한 항목은 기본값과 같게 둔다 */
+    private static AccenturyProperties props(String testVersion, String scoreVersion) {
+        return new AccenturyProperties(testVersion, scoreVersion,
+                new AccenturyProperties.Session(Duration.ofMinutes(30)),
+                new AccenturyProperties.Analysis(800),
+                new AccenturyProperties.Upload(30),
+                new AccenturyProperties.Cors(List.of()));
+    }
 
     /** 정본 구성과 같은 5+5·seq 교차 정의. 각 테스트가 한 곳씩 망가뜨린다 */
     private static TestDefinition valid() {

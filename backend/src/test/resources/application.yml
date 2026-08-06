@@ -16,3 +16,9 @@ accentury:
   score-version: sv-0.3
   session:
     ttl: 30m
+  analysis:
+    poll-after-ms: 800
+  upload:
+    rate-limit-per-minute: 10000    # 업로드 API 테스트가 걸리지 않게 넉넉히 - 제한 동작은 전용 테스트에서 검증
+  cors:
+    allowed-origins: ["https://web.test"]    # CORS 테스트용 오리진
