@@ -112,9 +112,20 @@ public class VoiceUploadService {
                     .orElseThrow(() -> e);
         }
 
-        dispatcher.dispatch(new AnalysisDispatcher.AnalysisRequest(
-                job.id(), session.id(), itemId, session.testVersion(), session.scoreVersion(),
-                meta.requiredDurationMs(), audioBytes));
+        try {
+            dispatcher.dispatch(new AnalysisDispatcher.AnalysisRequest(
+                    job.id(), session.id(), itemId, session.testVersion(), session.scoreVersion(),
+                    meta.requiredDurationMs(), audioBytes));
+        } catch (RuntimeException e) {
+            // 전달 실패를 PROCESSING으로 두면 오디오가 없어 영영 끝나지 않는다 (FR-DP-01) -
+            // 재녹음(새 키)을 유도하는 RETRYABLE_FAILED로 전이하고 503을 준다 (Codex sol 리뷰 P1).
+            // 같은 키의 재전송은 이 상태를 그대로 돌려받아 새 시도로 넘어갈 수 있다.
+            // 저장과 전달 사이에 프로세스가 죽어 PROCESSING으로 남는 경우의 정리(타임아웃)는 KAN-24가 맡는다
+            job.markRetryableFailed();
+            repository.save(job);
+            log.warn("분석 전달 실패 jobId={} itemId={}", job.id(), itemId, e);
+            throw new ApiException(ErrorCode.ANALYSIS_UNAVAILABLE);
+        }
 
         // 오디오 바이트는 여기서 참조가 끝난다 - 로그 포함 어디에도 남기지 않는다 (§2.6)
         log.info("음성 업로드 접수 sessionId={} itemId={} attempt={} jobId={}",

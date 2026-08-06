@@ -69,6 +69,15 @@ public class AnalysisJob {
         this.createdAt = createdAt;
     }
 
+    /**
+     * 전달 실패 시 재녹음(새 시도)을 유도하는 상태로 전이한다 (§3.4).
+     * 오디오를 저장하지 않으므로(FR-DP-01) 서버가 같은 시도를 재시도할 수 없다 -
+     * 상세한 상태 전이 관리는 KAN-24에서 구현한다.
+     */
+    public void markRetryableFailed() {
+        this.status = AnalysisJobStatus.RETRYABLE_FAILED;
+    }
+
     public String id() {
         return id;
     }
