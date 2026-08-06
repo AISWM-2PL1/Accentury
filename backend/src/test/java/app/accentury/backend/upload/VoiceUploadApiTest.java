@@ -178,6 +178,18 @@ class VoiceUploadApiTest {
     }
 
     @Test
+    void meta가_JSON_null이면_500이_아니라_400이다() throws Exception {
+        SessionHandle session = createSession();
+
+        mockMvc.perform(multipart(url(session, "v1"))
+                        .file(audioPart(WavFixtures.standardWav(3000))).file(metaPart("null"))
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + session.token())
+                        .header("Idempotency-Key", "null-meta"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
+    @Test
     void clientQuality_필드가_빠지면_400이다() throws Exception {
         SessionHandle session = createSession();
         String missingSilenceRatio = """

@@ -71,7 +71,11 @@ record WavAudio(int sampleRate, int channels, int bitsPerSample, long durationMs
             require(audioFormat == PCM);
             require(sampleRate > 0 && channels > 0 && bitsPerSample >= 8 && bitsPerSample % 8 == 0);
 
-            long bytesPerSecond = (long) sampleRate * channels * (bitsPerSample / 8);
+            // 프레임(샘플 x 채널) 단위로 나누어떨어지지 않는 data는 깨진 파일이다 (Codex sol 리뷰 P2)
+            long frameSize = (long) channels * (bitsPerSample / 8);
+            require(dataSize % frameSize == 0);
+
+            long bytesPerSecond = frameSize * sampleRate;
             return new WavAudio(sampleRate, channels, bitsPerSample, dataSize * 1000 / bytesPerSecond);
         } catch (BufferUnderflowException | IllegalArgumentException e) {
             throw new ApiException(ErrorCode.AUDIO_FORMAT_UNSUPPORTED);

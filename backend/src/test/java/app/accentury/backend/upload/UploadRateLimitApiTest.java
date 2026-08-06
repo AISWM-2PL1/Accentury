@@ -89,6 +89,8 @@ class UploadRateLimitApiTest {
                         VALID_META.getBytes(StandardCharsets.UTF_8)))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + session.token())
                 .header("Idempotency-Key", idempotencyKey)
-                .header("X-Forwarded-For", clientIp);
+                // 첫 값은 클라이언트 위조분, 마지막 값이 프록시가 붙인 실제 IP다 -
+                // 제한이 마지막 값을 기준으로 걸리는지까지 함께 검증한다
+                .header("X-Forwarded-For", "203.0.113.99, " + clientIp);
     }
 }
