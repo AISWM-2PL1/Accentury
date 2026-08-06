@@ -27,9 +27,10 @@ import java.util.UUID;
 /**
  * 음성 업로드의 검증 파이프라인과 분석 작업 생성 (KAN-23, API 명세서 §3.3).
  * <p>
- * 검증 순서: 요청 제한 -> 세션 인증 -> 문항 -> meta -> 오디오. 전부 통과해야
- * 작업이 만들어지고, 오디오는 {@link AnalysisDispatcher}로 넘어간 뒤 이 요청
- * 스코프와 함께 소멸한다 - 어디에도 저장하지 않는다 (FR-DP-01).
+ * 검증 순서: 세션 인증 -> 문항 -> meta -> 오디오. 전부 통과해야 작업이 만들어지고,
+ * 오디오는 {@link AnalysisDispatcher}로 넘어간 뒤 이 요청 스코프와 함께 소멸한다 -
+ * 어디에도 저장하지 않는다 (FR-DP-01). IP 요청 제한은 본문이 파싱되기 전에
+ * {@link UploadRateLimitFilter}가 먼저 끊는다.
  */
 @Service
 public class VoiceUploadService {
@@ -46,7 +47,6 @@ public class VoiceUploadService {
 
     private static final int MAX_IDEMPOTENCY_KEY_LENGTH = 100;
 
-    private final UploadRateLimiter rateLimiter;
     private final SessionService sessionService;
     private final TestDefinitionRegistry registry;
     private final AnalysisJobRepository repository;
@@ -54,11 +54,9 @@ public class VoiceUploadService {
     private final ObjectMapper objectMapper;
     private final AccenturyProperties properties;
 
-    public VoiceUploadService(UploadRateLimiter rateLimiter, SessionService sessionService,
-                              TestDefinitionRegistry registry, AnalysisJobRepository repository,
-                              AnalysisDispatcher dispatcher, ObjectMapper objectMapper,
-                              AccenturyProperties properties) {
-        this.rateLimiter = rateLimiter;
+    public VoiceUploadService(SessionService sessionService, TestDefinitionRegistry registry,
+                              AnalysisJobRepository repository, AnalysisDispatcher dispatcher,
+                              ObjectMapper objectMapper, AccenturyProperties properties) {
         this.sessionService = sessionService;
         this.registry = registry;
         this.repository = repository;
@@ -69,9 +67,7 @@ public class VoiceUploadService {
 
     VoiceUploadResponse upload(String sessionId, String itemId,
                                @Nullable String authorization, @Nullable String idempotencyKey,
-                               @Nullable MultipartFile audio, @Nullable String metaJson,
-                               String clientIp) {
-        rateLimiter.check(clientIp);
+                               @Nullable MultipartFile audio, @Nullable String metaJson) {
         TestSession session = sessionService.authenticateBearer(sessionId, authorization);
         String key = requireIdempotencyKey(idempotencyKey);
         TestDefinition.Item item =
