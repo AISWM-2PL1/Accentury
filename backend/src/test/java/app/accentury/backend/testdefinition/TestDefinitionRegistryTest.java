@@ -141,7 +141,7 @@ class TestDefinitionRegistryTest {
     private static AccenturyProperties props(String testVersion, String scoreVersion) {
         return new AccenturyProperties(testVersion, scoreVersion,
                 new AccenturyProperties.Session(Duration.ofMinutes(30)),
-                new AccenturyProperties.Analysis(800),
+                new AccenturyProperties.Analysis(800, Duration.ofHours(24)),
                 new AccenturyProperties.Upload(30),
                 new AccenturyProperties.Cors(List.of()));
     }
