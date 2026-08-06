@@ -80,6 +80,18 @@ class WavAudioTest {
     }
 
     @Test
+    void byteRate나_blockAlign이_파생값과_다르면_거부한다() {
+        // 16kHz mono 16-bit이면 byteRate=32000, blockAlign=2여야 한다 (Codex sol 리뷰 P2)
+        byte[] wrongByteRate = WavFixtures.standardWav(1000);
+        ByteBuffer.wrap(wrongByteRate).order(ByteOrder.LITTLE_ENDIAN).putInt(28, 999);
+        assertUnsupported(wrongByteRate);
+
+        byte[] wrongBlockAlign = WavFixtures.standardWav(1000);
+        ByteBuffer.wrap(wrongBlockAlign).order(ByteOrder.LITTLE_ENDIAN).putShort(32, (short) 4);
+        assertUnsupported(wrongBlockAlign);
+    }
+
+    @Test
     void 선언된_청크_크기가_실제보다_크면_거부한다() {
         byte[] wav = WavFixtures.standardWav(1000);
         ByteBuffer.wrap(wav).order(ByteOrder.LITTLE_ENDIAN).putInt(40, Integer.MAX_VALUE);

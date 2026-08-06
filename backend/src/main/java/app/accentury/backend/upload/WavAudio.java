@@ -38,6 +38,8 @@ record WavAudio(int sampleRate, int channels, int bitsPerSample, long durationMs
             int sampleRate = 0;
             int channels = 0;
             int bitsPerSample = 0;
+            int byteRate = 0;
+            int blockAlign = 0;
             Long dataSize = null;
 
             // 청크 순회 - fmt와 data 사이에 다른 청크(LIST 등)가 있어도 건너뛴다
@@ -50,8 +52,8 @@ record WavAudio(int sampleRate, int channels, int bitsPerSample, long durationMs
                     audioFormat = Short.toUnsignedInt(buf.getShort());
                     channels = Short.toUnsignedInt(buf.getShort());
                     sampleRate = buf.getInt();
-                    buf.getInt();    // byteRate
-                    buf.getShort();  // blockAlign
+                    byteRate = buf.getInt();
+                    blockAlign = Short.toUnsignedInt(buf.getShort());
                     bitsPerSample = Short.toUnsignedInt(buf.getShort());
                     skip(buf, chunkSize - 16);
                 } else if (chunkId.equals("data")) {
@@ -74,6 +76,9 @@ record WavAudio(int sampleRate, int channels, int bitsPerSample, long durationMs
             // 프레임(샘플 x 채널) 단위로 나누어떨어지지 않는 data는 깨진 파일이다 (Codex sol 리뷰 P2)
             long frameSize = (long) channels * (bitsPerSample / 8);
             require(dataSize % frameSize == 0);
+            // 선언 필드끼리 어긋난 헤더는 디코더마다 해석이 갈린다 - 파생값과 일치해야 한다 (Codex sol 리뷰 P2)
+            require(blockAlign == frameSize);
+            require(byteRate == frameSize * sampleRate);
 
             long bytesPerSecond = frameSize * sampleRate;
             return new WavAudio(sampleRate, channels, bitsPerSample, dataSize * 1000 / bytesPerSecond);

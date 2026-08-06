@@ -1,5 +1,6 @@
 package app.accentury.backend.upload;
 
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -58,6 +59,19 @@ class UploadRateLimitApiTest {
     }
 
     @Test
+    void 조기_429에도_CORS_헤더가_붙는다() throws Exception {
+        // 웹 클라이언트가 429 본문과 Retry-After를 읽으려면 필터의 조기 응답에도
+        // Access-Control-Allow-Origin이 있어야 한다 (Codex sol 리뷰 P2)
+        SessionHandle session = createSession();
+        mockMvc.perform(upload(session, "cors-1", "9.9.9.4")).andExpect(status().isAccepted());
+        mockMvc.perform(upload(session, "cors-2", "9.9.9.4")).andExpect(status().isAccepted());
+
+        mockMvc.perform(upload(session, "cors-3", "9.9.9.4", "https://web.test"))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "https://web.test"));
+    }
+
+    @Test
     void 다른_IP는_제한에_걸리지_않는다() throws Exception {
         SessionHandle session = createSession();
         mockMvc.perform(upload(session, "fill-1", "9.9.9.2")).andExpect(status().isAccepted());
@@ -82,7 +96,12 @@ class UploadRateLimitApiTest {
     }
 
     private RequestBuilder upload(SessionHandle session, String idempotencyKey, String clientIp) {
-        return multipart("/v0/sessions/" + session.id() + "/voice-items/v1/recording")
+        return upload(session, idempotencyKey, clientIp, null);
+    }
+
+    private RequestBuilder upload(SessionHandle session, String idempotencyKey, String clientIp,
+                                  @Nullable String origin) {
+        var builder = multipart("/v0/sessions/" + session.id() + "/voice-items/v1/recording")
                 .file(new MockMultipartFile("audio", "recording.wav", "audio/wav",
                         WavFixtures.standardWav(3000)))
                 .file(new MockMultipartFile("meta", "", "application/json",
@@ -92,5 +111,9 @@ class UploadRateLimitApiTest {
                 // 첫 값은 클라이언트 위조분, 마지막 값이 프록시가 붙인 실제 IP다 -
                 // 제한이 마지막 값을 기준으로 걸리는지까지 함께 검증한다
                 .header("X-Forwarded-For", "203.0.113.99, " + clientIp);
+        if (origin != null) {
+            builder = builder.header(HttpHeaders.ORIGIN, origin);
+        }
+        return builder;
     }
 }
