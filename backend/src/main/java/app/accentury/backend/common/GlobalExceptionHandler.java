@@ -3,6 +3,7 @@ package app.accentury.backend.common;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
@@ -33,6 +34,16 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     /**
+     * 오류 응답은 어떤 캐시에도 저장하지 않는다.
+     * <p>
+     * 404, 405, 410은 캐시 지시자가 없으면 휴리스틱 캐싱 대상이고(RFC 9110 §15.1),
+     * 이 API의 정상 응답은 공유 캐시를 명시적으로 초대한다 (§3.2 - public, immutable, 1년).
+     * 그 앞에 CDN이 서면, 배포 중 신규 버전 요청이 구 인스턴스에 닿아 받은 404가 눌러앉아
+     * 정상 사용자에게 반복 재생될 수 있다 (Claude 리뷰 P2).
+     */
+    private static final CacheControl NO_STORE = CacheControl.noStore();
+
+    /**
      * 비즈니스 예외 - ErrorCode가 상태·retryable을 이미 알고 있다
      */
     @ExceptionHandler(ApiException.class)
@@ -48,6 +59,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
         return ResponseEntity.status(e.code().status())
                 .headers(headers)
+                .cacheControl(NO_STORE)
                 .body(new ErrorResponse(
                         e.code().name(), e.getMessage(), e.code().retryable(),
                         e.retryAfterMs(), correlationId));
@@ -61,6 +73,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     public ResponseEntity<ErrorResponse> handleTypeMismatch(MethodArgumentTypeMismatchException e) {
         return ResponseEntity.status(ErrorCode.VALIDATION_FAILED.status())
+                .cacheControl(NO_STORE)
                 .body(envelope(ErrorCode.VALIDATION_FAILED,
                         e.getName() + ": 값의 형식이 올바르지 않습니다."));
     }
@@ -72,6 +85,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     public ResponseEntity<ErrorResponse> handleUnexpected(Exception e) {
         log.error("[{}] 예상치 못한 오류", CorrelationIdFilter.current(), e);
         return ResponseEntity.status(ErrorCode.INTERNAL_ERROR.status())
+                .cacheControl(NO_STORE)
                 .body(envelope(ErrorCode.INTERNAL_ERROR, ErrorCode.INTERNAL_ERROR.defaultMessage()));
     }
 
@@ -97,7 +111,9 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         String message = (ex instanceof MethodArgumentNotValidException manv)
                 ? firstFieldError(manv)
                 : code.defaultMessage();
-        return ResponseEntity.status(statusCode).headers(headers).body(envelope(code, message));
+        // headers()는 빌더 내부로 복사하므로, 프레임워크가 넘긴 헤더를 건드리지 않고 지시자를 얹는다
+        return ResponseEntity.status(statusCode).headers(headers).cacheControl(NO_STORE)
+                .body(envelope(code, message));
     }
 
     /**

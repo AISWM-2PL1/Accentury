@@ -185,6 +185,21 @@ class GlobalExceptionHandlerTest {
                 .andExpect(jsonPath("$.code").value("MEDIA_TYPE_UNSUPPORTED"));
     }
 
+    // === 오류 봉투는 캐시되지 않는다 (Claude 리뷰 P2) ===
+
+    @Test
+    void 오류_응답에는_캐시_금지_지시자가_붙는다() throws Exception {
+        // 404, 405, 410은 지시자가 없으면 휴리스틱 캐싱 대상이다 (RFC 9110 §15.1).
+        // ApiException 경로와 프레임워크 예외 경로가 서로 다른 메서드로 나가므로 둘 다 확인한다
+        mockMvc.perform(get("/test/expired"))
+                .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")));
+        mockMvc.perform(get("/no-such-path"))
+                .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")));
+        mockMvc.perform(post("/test/expired"))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(header().string(HttpHeaders.CACHE_CONTROL, containsString("no-store")));
+    }
+
     // === 우리 잘못 → 500, 내부 정보는 숨긴다 (NFR-SC-07) ===
 
     @Test

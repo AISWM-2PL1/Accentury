@@ -1,5 +1,6 @@
 package app.accentury.backend.testdefinition;
 
+import app.accentury.backend.common.AccenturyProperties;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -9,7 +10,9 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 import static org.hamcrest.Matchers.aMapWithSize;
 import static org.hamcrest.Matchers.containsString;
@@ -33,20 +36,32 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 class TestDefinitionApiTest {
 
-    private static final String ACTIVE = "/v0/tests/gn-2026.08.1";
-
     @Autowired
     private MockMvc mockMvc;
 
     @Autowired
     private ObjectMapper objectMapper;
 
+    /**
+     * 활성 버전은 설정({@code accentury.test-version})이 정본이다.
+     * <p>
+     * 경로를 리터럴로 박으면, 구 seed가 계속 발행 상태로 남는 설계(KAN-26 버전 불변) 때문에
+     * 버전을 로테이션해도 테스트가 조용히 통과하면서 은퇴한 seed만 검사하게 된다 (Claude 리뷰 P3).
+     */
+    @Autowired
+    private AccenturyProperties properties;
+
+    private String activePath() {
+        return "/v0/tests/" + properties.testVersion();
+    }
+
     @Test
     void 활성_버전_조회는_200과_명세의_5개_최상위_필드를_반환한다() throws Exception {
-        mockMvc.perform(get(ACTIVE))
+        mockMvc.perform(get(activePath()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.testVersion").value("gn-2026.08.1"))
-                .andExpect(jsonPath("$.scoreVersion").value("sv-0.3"))
+                // 응답의 두 버전은 seed에서 오고 설정에서 오지 않는다 - 일치는 기동 검사가 강제한다
+                .andExpect(jsonPath("$.testVersion").value(properties.testVersion()))
+                .andExpect(jsonPath("$.scoreVersion").value(properties.scoreVersion()))
                 .andExpect(jsonPath("$.dialect").value("GYEONGNAM"))
                 .andExpect(jsonPath("$.estimatedDurationSec").value(240))
                 .andExpect(jsonPath("$.items.length()").value(10))
@@ -84,10 +99,11 @@ class TestDefinitionApiTest {
             assertEquals("semitone", guideF0.get("unit").asString());
             assertEquals(10, guideF0.get("frameIntervalMs").asInt());
             assertTrue(guideF0.get("values").size() > 0, "guideF0.values는 비어 있으면 안 된다");
-            // guideF0는 응답이 내부 타입을 재사용하므로 필드가 늘면 그대로 노출된다 - 정확히 3개(밴드 없는 현 seed 기준)로 고정
-            assertEquals(3, guideF0.size(), "guideF0 필드가 늘었다: " + guideF0.propertyNames());
-            // VOICE 문항은 정확히 6개 필드 - choices·정답 없음
-            assertEquals(6, item.size(), "VOICE 문항 필드가 늘었다: " + item.propertyNames());
+            // 허용 밴드는 KAN-17이 산출하면 들어온다 - 그때 이 가드가 울리면 안 된다
+            assertProperties(guideF0, "guideF0",
+                    Set.of("unit", "frameIntervalMs", "values"), Set.of("bandLow", "bandHigh"));
+            assertProperties(item, "VOICE 문항",
+                    Set.of("itemId", "seq", "type", "prompt", "maxDurationMs", "guideF0"));
         }
         assertEquals(5, voiceCount);
     }
@@ -102,13 +118,14 @@ class TestDefinitionApiTest {
                 continue;
             }
             vocabularyCount++;
-            // 어휘 문항은 정확히 5개 필드 - 정답·음성 필드 없음
-            assertEquals(5, item.size(), "VOCABULARY 문항 필드가 늘었다: " + item.propertyNames());
+            // 정답이나 음성 필드가 붙으면 안 된다
+            assertProperties(item, "VOCABULARY 문항",
+                    Set.of("itemId", "seq", "type", "prompt", "choices"));
             JsonNode choices = item.get("choices");
             assertEquals(4, choices.size(), "어휘 문항은 4지선다다 (SRS 확정)");
             for (JsonNode choice : choices) {
-                // 선택지는 choiceId·text 뿐 - 정오 표시가 있으면 안 된다 (KAN-13 정오 미노출)
-                assertEquals(2, choice.size(), "선택지 필드가 늘었다: " + choice.propertyNames());
+                // 정오 표시가 있으면 안 된다 (KAN-13 정오 미노출)
+                assertProperties(choice, "선택지", Set.of("choiceId", "text"));
             }
         }
         assertEquals(5, vocabularyCount);
@@ -116,7 +133,7 @@ class TestDefinitionApiTest {
 
     @Test
     void 응답_어디에도_정답과_기준_음성_필드가_없다() throws Exception {
-        String body = mockMvc.perform(get(ACTIVE))
+        String body = mockMvc.perform(get(activePath()))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
         // KAN-10 AC - 정답(correctChoiceId) 미포함
@@ -129,14 +146,14 @@ class TestDefinitionApiTest {
 
     @Test
     void 버전_경로는_ETag와_불변_캐싱을_지원한다() throws Exception {
-        MvcResult first = mockMvc.perform(get(ACTIVE))
+        MvcResult first = mockMvc.perform(get(activePath()))
                 .andExpect(status().isOk())
                 .andExpect(header().exists("ETag"))
                 .andExpect(header().string("Cache-Control", containsString("immutable")))
                 .andReturn();
 
         String etag = first.getResponse().getHeader("ETag");
-        mockMvc.perform(get(ACTIVE).header("If-None-Match", etag))
+        mockMvc.perform(get(activePath()).header("If-None-Match", etag))
                 .andExpect(status().isNotModified())
                 .andExpect(content().string(""));
     }
@@ -164,7 +181,7 @@ class TestDefinitionApiTest {
 
     @Test
     void 신규_발행_후에도_이전_버전_정의는_계속_제공된다() throws Exception {
-        // 활성 버전은 gn-2026.08.1이지만, 먼저 발행된 gn-2026.07.0에 고정된 세션도
+        // 활성 버전이 아니지만, 먼저 발행된 gn-2026.07.0에 고정된 세션도
         // 자기 정의를 계속 받는다 - 활성 전환이 진행 중 세션에 영향을 주지 않는다 (KAN-26 AC)
         mockMvc.perform(get("/v0/tests/gn-2026.07.0"))
                 .andExpect(status().isOk())
@@ -175,15 +192,47 @@ class TestDefinitionApiTest {
     // === KAN-10 요구 - 미발행·경북 콘텐츠는 외부에 제공하지 않는다 ===
 
     @Test
-    void 미발행_버전은_404_공통_오류_봉투다() throws Exception {
+    void 미발행_버전은_404_공통_오류_봉투이고_캐시되지_않는다() throws Exception {
         mockMvc.perform(get("/v0/tests/gb-2026.08.1"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("RESOURCE_NOT_FOUND"))
-                .andExpect(jsonPath("$.correlationId").exists());
+                .andExpect(jsonPath("$.correlationId").exists())
+                // 200이 공유 캐시를 초대하는 경로다 - 배포 중 잠깐 난 404가 CDN에 눌러앉으면
+                // 정상 사용자에게 반복 재생된다 (Claude 리뷰 P2)
+                .andExpect(header().string("Cache-Control", containsString("no-store")));
+    }
+
+    /**
+     * 응답에 허용 목록 밖의 필드가 없는지 확인한다.
+     * <p>
+     * {@link TestDefinitionResponse}가 내부 타입({@code TestDefinition.GuideF0}, {@code Choice})을
+     * 그대로 재사용하므로, 내부에 필드가 늘면 응답으로 그대로 새어 나간다. 필드 개수로 고정하면
+     * 계획된 추가(KAN-17 허용 밴드)에도 깨져서 정상 작업을 막으므로, 이름 기준으로 막는다
+     * (Claude 리뷰 P3).
+     *
+     * @param required 반드시 있어야 하는 필드
+     * @param optional 있어도 되는 필드 - 아직 발행되지 않아 현 seed에는 없을 수 있다
+     */
+    private static void assertProperties(JsonNode node, String what,
+                                         Set<String> required, Set<String> optional) {
+        Set<String> actual = new LinkedHashSet<>(node.propertyNames());
+
+        Set<String> missing = new LinkedHashSet<>(required);
+        missing.removeAll(actual);
+        assertTrue(missing.isEmpty(), what + " 필드가 빠졌다: " + missing);
+
+        Set<String> leaked = new LinkedHashSet<>(actual);
+        leaked.removeAll(required);
+        leaked.removeAll(optional);
+        assertTrue(leaked.isEmpty(), what + "에 허용되지 않은 필드가 노출됐다: " + leaked);
+    }
+
+    private static void assertProperties(JsonNode node, String what, Set<String> required) {
+        assertProperties(node, what, required, Set.of());
     }
 
     private JsonNode fetchActiveItems() throws Exception {
-        String body = mockMvc.perform(get(ACTIVE))
+        String body = mockMvc.perform(get(activePath()))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
         return objectMapper.readTree(body).get("items");

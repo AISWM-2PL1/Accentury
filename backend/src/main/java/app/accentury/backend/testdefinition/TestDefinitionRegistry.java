@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.stereotype.Component;
+import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
@@ -107,10 +108,18 @@ public class TestDefinitionRegistry {
         }
     }
 
+    /**
+     * seed 하나를 읽는다. 실패는 어느 파일이 문제인지 알려주고 기동을 멈춘다.
+     * <p>
+     * {@link IOException}은 스트림 열기 실패, {@link JacksonException}은 파싱 실패다 -
+     * Jackson 3의 파싱 실패는 unchecked라 함께 잡지 않으면 여기를 그냥 지나친다.
+     * Jackson 예외 메시지는 소스를 가리므로({@code INCLUDE_SOURCE_IN_LOCATION} 기본 off)
+     * 파일 정보는 이 래핑에만 남는다 (Claude 리뷰 P3).
+     */
     private static TestDefinition read(ObjectMapper objectMapper, Resource seed) {
         try {
             return objectMapper.readValue(seed.getInputStream(), TestDefinition.class);
-        } catch (IOException e) {
+        } catch (JacksonException | IOException e) {
             throw new IllegalStateException("테스트 정의 seed를 읽을 수 없다: " + seed.getDescription(), e);
         }
     }
