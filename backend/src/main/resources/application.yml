@@ -28,8 +28,17 @@ accentury:
   session:
     ttl: 30m    # 토큰 수명 - 테스트 소요 5분의 여유 배수 (명세서 §2.1, §7)
   analysis:
-    poll-after-ms: 800    # 상태 폴링 간격 - 서버가 통제, 부하 상승 시 상향 (명세서 §5.3)
-    retention: 24h        # 분석 작업 보존 기간 - 세션, 결과와 동일 (명세서 §5.5)
+    poll-after-ms: 800               # 상태 폴링 간격 - 서버가 통제, 부하 상승 시 상향 (명세서 §5.3)
+    congested-poll-after-ms: 3000    # 혼잡 시 폴링 간격 - 분석이 밀릴 때 폴링 증폭을 막는다 (명세서 §5.3, KAN-24)
+    congestion-threshold: 30         # 혼잡 판정 - 진행 중 분석 전달이 이 건수 이상이면 간격 상향
+    retention: 24h                   # 분석 작업 보존 기간 - 세션, 결과와 동일 (명세서 §5.5)
+    processing-timeout: 60s          # 실행 잔류 한도 - 실행 시작 후 이 시간을 넘기면 RETRYABLE_FAILED(ANALYSIS_TIMEOUT) (KAN-24)
+    queued-timeout: 5m               # 큐 유실 한도 - 실행을 시작 못 한 채 이 시간이 지나면 정리 (프로세스 사망 대비).
+                                     # 정상 큐 소진(수 분)보다 길고, 세션 TTL(30분) 안에 복구가 보이도록 그보다 짧다
+    # ai-base-url: http://localhost:8000    # AI 서버(FastAPI, 명세서 §4.1) - 미설정이면 전달하지 않는 개발 모드 (KAN-22·36 배포 시 지정)
+    ai-timeout: 10s                  # AI 호출 연결·읽기 타임아웃 - 추론 P95 3초의 여유 배수
+    ai-retries: 2                    # AI 일시 장애(연결 실패, 5xx) 재전송 횟수 - 전달 시점에만 가능 (FR-DP-01)
+    dispatch-concurrency: 4          # 분석 전달 워커 수 - GPU 동시 슬롯을 넘지 않게 (명세서 §5.3)
   upload:
     rate-limit-per-minute: 30    # IP당 분당 업로드 상한 - 부하 테스트 후 확정 (명세서 §7, KAN-28)
   cors:
