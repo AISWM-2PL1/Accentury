@@ -10,6 +10,8 @@ function setSearch(search: string) {
 afterEach(() => {
   delete window.AccenturyBridge
   setSearch('')
+  // 진행 화면 분기 테스트가 fetch를 스텁한다. 실패로 중단돼도 다음 테스트에 새지 않게 여기서 되돌린다
+  vi.unstubAllGlobals()
 })
 
 describe('App — 스큐 판정 분기', () => {
@@ -27,6 +29,46 @@ describe('App — 스큐 판정 분기', () => {
     render(<App />)
     expect(screen.getByText('앱 업데이트가 필요해요')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '시작하기' })).not.toBeInTheDocument()
+  })
+})
+
+describe('App — 문항 진행 화면 개발용 통로 (KAN-99, 정식 결선은 KAN-100)', () => {
+  it('?screen=test면 정의를 조회해 문항 진행 화면을 띄운다', async () => {
+    setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0&screen=test&testVersion=gn-2026.08.1`)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          testVersion: 'gn-2026.08.1',
+          scoreVersion: 'sv-0.3',
+          dialect: 'GYEONGNAM',
+          estimatedDurationSec: 180,
+          items: [
+            {
+              itemId: 'item-1',
+              seq: 1,
+              type: 'VOICE',
+              prompt: '어서 오이소',
+              maxDurationMs: 10_000,
+              guideF0: { unit: 'semitone', frameIntervalMs: 10, values: [0, 1] },
+            },
+          ],
+        }),
+      })),
+    )
+
+    render(<App />)
+
+    expect(await screen.findByText('어서 오이소')).toBeInTheDocument()
+    expect(screen.getByText('1/1')).toBeInTheDocument()
+  })
+
+  it('screen 파라미터가 없으면 기존대로 인트로다', () => {
+    setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0`)
+    render(<App />)
+    expect(screen.getByRole('button', { name: '시작하기' })).toBeInTheDocument()
   })
 })
 
