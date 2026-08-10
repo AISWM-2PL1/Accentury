@@ -15,21 +15,6 @@ spring:
       ddl-auto: update    # 개발 단계 한정 - 운영 전에 마이그레이션 도구로 교체
     open-in-view: false
 
-# OpenAPI 3.1 문서 + Swagger UI (명세서 §2)
-# 문서: http://localhost:8080/swagger-ui.html, 원본 JSON: http://localhost:8080/v3/api-docs
-# 프로토타입이라 기본 노출이다. 외부 배포 시에는 enabled를 false로 내리거나 접근을 막는다.
-springdoc:
-  api-docs:
-    path: /v3/api-docs
-    version: openapi_3_1    # ErrorResponse.retryAfterMs의 nullable 표현이 3.0과 다르다
-  swagger-ui:
-    path: /swagger-ui.html
-    tags-sorter: alpha            # 태그 번호가 호출 순서라 정렬해야 순서대로 보인다
-    operations-sorter: method
-    display-request-duration: true
-    doc-expansion: none           # 처음에 태그만 접힌 채로 보여 전체 구조가 한눈에 들어온다
-  default-produces-media-type: application/json
-
 # 모든 로그 줄에 correlation ID 포함 - 요청 단위 추적 (KAN-38, Codex 리뷰 P2)
 logging:
   pattern:
