@@ -1,10 +1,10 @@
 package app.accentury.backend.session;
 
+import app.accentury.backend.IntegrationTest;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
@@ -25,9 +25,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * <p>
  * H2 인메모리로 전체 스택(컨트롤러→서비스→JPA)을 검증한다 - Docker 불필요.
  */
-@SpringBootTest
 @AutoConfigureMockMvc
-class SessionApiTest {
+class SessionApiTest extends IntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;

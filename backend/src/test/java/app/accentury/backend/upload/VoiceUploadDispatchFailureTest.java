@@ -1,12 +1,12 @@
 package app.accentury.backend.upload;
 
+import app.accentury.backend.IntegrationTest;
 import app.accentury.backend.analysis.AnalysisDispatcher;
 import app.accentury.backend.analysis.AnalysisJobRepository;
 import app.accentury.backend.analysis.AnalysisJobStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Bean;
@@ -34,9 +34,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 오디오를 저장하지 않으므로(FR-DP-01) 실패한 시도를 서버가 재시도할 수 없다 -
  * 작업을 PROCESSING으로 남기지 않고 RETRYABLE_FAILED로 전이해 재녹음을 유도한다.
  */
-@SpringBootTest
 @AutoConfigureMockMvc
-class VoiceUploadDispatchFailureTest {
+class VoiceUploadDispatchFailureTest extends IntegrationTest {
 
     @TestConfiguration
     static class FailingDispatcherConfig {

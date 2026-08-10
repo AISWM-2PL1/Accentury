@@ -5,6 +5,7 @@ import jakarta.validation.constraints.NotBlank;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -39,6 +40,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 @WebMvcTest(GlobalExceptionHandlerTest.ThrowingController.class)
 @Import(GlobalExceptionHandlerTest.ThrowingController.class)
+// 슬라이스라 IntegrationTest를 상속하지 않는다 - 프로파일만 직접 맞춘다
+@ActiveProfiles("test")
 class GlobalExceptionHandlerTest {
 
     @Autowired

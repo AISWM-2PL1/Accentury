@@ -1,11 +1,11 @@
 package app.accentury.backend.testdefinition;
 
+import app.accentury.backend.IntegrationTest;
 import app.accentury.backend.common.AccenturyProperties;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -32,9 +32,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 인증 없이 호출한다 (§2.1 - 인증 불필요 엔드포인트).
  * 구버전 픽스처 {@code gn-2026.07.0}은 테스트 classpath에만 있는 seed다.
  */
-@SpringBootTest
 @AutoConfigureMockMvc
-class TestDefinitionApiTest {
+class TestDefinitionApiTest extends IntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;

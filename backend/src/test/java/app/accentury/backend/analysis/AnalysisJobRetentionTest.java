@@ -1,8 +1,8 @@
 package app.accentury.backend.analysis;
 
+import app.accentury.backend.IntegrationTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -11,8 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** 분석 작업 보존 기간 정리의 명세 (KAN-23, 명세서 §5.5 - 24시간, Codex sol 리뷰 P2) */
-@SpringBootTest
-class AnalysisJobRetentionTest {
+class AnalysisJobRetentionTest extends IntegrationTest {
 
     @Autowired
     private AnalysisJobRepository repository;
