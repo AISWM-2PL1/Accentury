@@ -12,6 +12,7 @@ jobs:
     outputs:
       app: ${{ steps.filter.outputs.app }}
       backend: ${{ steps.filter.outputs.backend }}
+      web: ${{ steps.filter.outputs.web }}
     steps:
       # pull_request 이벤트에서는 checkout 없이 GitHub API로 변경 파일을 조회한다
       - uses: dorny/paths-filter@v3
@@ -27,6 +28,9 @@ jobs:
               - '.github/workflows/test.yml'
             backend:
               - 'backend/**'
+              - '.github/workflows/test.yml'
+            web:
+              - 'web/**'
               - '.github/workflows/test.yml'
 
   app-test:
@@ -56,3 +60,22 @@ jobs:
       # 백엔드 테스트는 H2 인메모리로 실행 - Docker DB 불필요
       - run: ./gradlew test
         working-directory: backend
+
+  web-test:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm test
+      # tsc --noEmit + vite build — 타입 오류와 번들 실패를 PR에서 잡는다
+      - run: npm run build
