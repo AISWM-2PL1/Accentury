@@ -1,9 +1,13 @@
 package com.accentury.app
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -30,13 +34,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.accentury.app.audio.AudioQuality
 import com.accentury.app.audio.WavWriter
 import com.accentury.app.bridge.ItemAttempt
 import com.accentury.app.bridge.assembleItemResult
+import com.accentury.app.permission.MicPermissionController
+import com.accentury.app.permission.MicPermissionState
 import com.accentury.app.recording.RecordingScreen
 import com.accentury.app.recording.RecordingViewModel
 import com.accentury.app.ui.theme.AccenturyTheme
@@ -96,32 +106,104 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/**
+ * 마이크 권한 게이트 (KAN-98). 거부하면 테스트를 시작할 수 없다 — 부분 응시 없음 (2026-07-27 확정).
+ * 판단 로직은 [MicPermissionController]에 있고, 여기는 Android API 결선(팝업·설정 딥링크·
+ * ON_RESUME 재확인)과 상태별 화면만 담당한다. 문구 확정 전이라 무디자인이다 (KAN-97 방식 준용).
+ */
 @Composable
 private fun PermissionGate(modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    var granted by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-                PackageManager.PERMISSION_GRANTED,
-        )
+    // 이 컴포지션은 항상 MainActivity 안에서 돈다 — 게이트는 Activity 없이 열릴 수 없다.
+    val activity = checkNotNull(LocalActivity.current)
+
+    fun isGranted(): Boolean =
+        ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+
+    // remember만 쓰면 회전·재생성에 Denied/PermanentlyDenied가 증발해 안내 화면부터 다시
+    // 시작한다 — 영구 거부의 "설정 딥링크만" 경로를 잃지 않도록 저장하고, 복원은 실제
+    // 권한과 대조한다 (프로세스 사망 중 설정 변경 가능).
+    val controller = rememberSaveable(saver = MicPermissionController.saver(::isGranted)) {
+        MicPermissionController(initiallyGranted = isGranted())
     }
+
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { granted = it }
+    ) { granted ->
+        // 거부 직후의 rationale 값이 영구 거부 판별 기준이다 — 결과 도착 시점에 읽어야 한다.
+        controller.onPermissionResult(
+            granted = granted,
+            canAskAgain = ActivityCompat.shouldShowRequestPermissionRationale(
+                activity,
+                Manifest.permission.RECORD_AUDIO,
+            ),
+        )
+    }
 
-    if (granted) {
-        RecordingHarness(modifier = modifier)
-    } else {
-        Column(
-            modifier = modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text("발음 분석에 마이크가 필요해요")
-            Text("음성은 분석 즉시 삭제돼요")
-            Button(onClick = { launcher.launch(Manifest.permission.RECORD_AUDIO) }) {
-                Text("마이크 허용")
-            }
+    // 설정 앱에서 허용하고 돌아오면 재시작 없이 통과해야 한다 — ON_RESUME마다 재확인한다.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) controller.onReturnedToApp(isGranted())
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    when (controller.state) {
+        MicPermissionState.Granted -> RecordingHarness(modifier = modifier)
+
+        MicPermissionState.Rationale -> GateScreen(
+            headline = "발음 분석에 마이크가 필요해요",
+            supporting = "음성은 분석 즉시 삭제돼요",
+            buttonLabel = "마이크 허용",
+            onButtonClick = { launcher.launch(Manifest.permission.RECORD_AUDIO) },
+            modifier = modifier,
+        )
+
+        MicPermissionState.Denied -> GateScreen(
+            headline = "마이크를 허용해야 시작할 수 있어요",
+            supporting = "발음을 들어야 분석할 수 있어요 · 음성은 분석 즉시 삭제돼요",
+            buttonLabel = "다시 허용하기",
+            onButtonClick = { launcher.launch(Manifest.permission.RECORD_AUDIO) },
+            modifier = modifier,
+        )
+
+        MicPermissionState.PermanentlyDenied -> GateScreen(
+            headline = "설정에서 마이크를 허용해 주세요",
+            supporting = "권한 창을 더 띄울 수 없어요 · 설정에서 허용하면 이어서 시작할 수 있어요",
+            buttonLabel = "설정 열기",
+            onButtonClick = {
+                context.startActivity(
+                    Intent(
+                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.fromParts("package", context.packageName, null),
+                    ),
+                )
+            },
+            modifier = modifier,
+        )
+    }
+}
+
+@Composable
+private fun GateScreen(
+    headline: String,
+    supporting: String,
+    buttonLabel: String,
+    onButtonClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(headline)
+        Text(supporting)
+        Button(onClick = onButtonClick) {
+            Text(buttonLabel)
         }
     }
 }
