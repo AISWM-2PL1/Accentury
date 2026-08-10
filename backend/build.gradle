@@ -18,6 +18,9 @@ repositories {
 }
 
 dependencies {
+	// OpenAPI 3.1 문서 + Swagger UI.
+	// springdoc 2.x는 Spring Boot 3 전용이라 여기서는 못 쓴다 - Boot 4 지원은 3.x부터다.
+	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.1.0'
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
@@ -30,7 +33,7 @@ dependencies {
 	testImplementation 'org.springframework.boot:spring-boot-starter-validation-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
 	testCompileOnly 'org.projectlombok:lombok'
-	// 테스트는 Docker DB 없이 돌아야 한다 (CI 대비) — 인메모리 H2 사용 (Codex 리뷰 P1 반영)
+	// 테스트는 Docker DB 없이 돌아야 한다 (CI 대비) - 인메모리 H2 사용 (Codex 리뷰 P1 반영)
 	testRuntimeOnly 'com.h2database:h2'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 	testAnnotationProcessor 'org.projectlombok:lombok'

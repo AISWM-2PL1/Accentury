@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 발행 전 검증의 단위 명세 (KAN-10 AC·명세서 §6).
+ * 발행 전 검증의 단위 명세 (KAN-10 AC와 명세서 §6).
  * <p>
  * 유효한 정의를 한 곳씩 망가뜨려 발행 거부(기동 실패)를 확인한다.
  * KAN-26 관리자 발행 API가 이 검증을 그대로 가져간다.
@@ -33,18 +33,30 @@ class TestDefinitionRegistryTest {
     void VOICE_문항에_guideF0가_없으면_발행_거부다() {
         TestDefinition broken = withItem(valid(), "v3",
                 item -> new TestDefinition.Item(item.itemId(), item.seq(), item.type(), item.prompt(),
-                        item.maxDurationMs(), null, null, null));
+                        null, null, null));
         IllegalStateException rejected =
                 assertThrows(IllegalStateException.class, () -> TestDefinitionRegistry.validate(broken));
         assertTrue(rejected.getMessage().contains("guideF0"), rejected.getMessage());
     }
 
     @Test
+    void 허용_밴드가_없으면_발행_거부다() {
+        // bandLow와 bandHigh는 required다 (2026-08-09 확정, §3.2, §6)
+        TestDefinition broken = withItem(valid(), "v2",
+                item -> new TestDefinition.Item(item.itemId(), item.seq(), item.type(), item.prompt(),
+                        new TestDefinition.GuideF0("semitone", 10, List.of(0.1, 0.2, 0.3), null, null),
+                        null, null));
+        IllegalStateException rejected =
+                assertThrows(IllegalStateException.class, () -> TestDefinitionRegistry.validate(broken));
+        assertTrue(rejected.getMessage().contains("bandLow"), rejected.getMessage());
+    }
+
+    @Test
     void 허용_밴드_길이가_values와_다르면_발행_거부다() {
         TestDefinition broken = withItem(valid(), "v1",
                 item -> new TestDefinition.Item(item.itemId(), item.seq(), item.type(), item.prompt(),
-                        item.maxDurationMs(),
-                        new TestDefinition.GuideF0("semitone", 10, List.of(0.1, 0.2, 0.3), List.of(-1.0), null),
+                        new TestDefinition.GuideF0("semitone", 10, List.of(0.1, 0.2, 0.3),
+                                List.of(-1.0), List.of(1.6, 1.7, 1.8)),
                         null, null));
         assertThrows(IllegalStateException.class, () -> TestDefinitionRegistry.validate(broken));
     }
@@ -55,7 +67,7 @@ class TestDefinitionRegistryTest {
     void VOCABULARY_문항에_정답이_없으면_발행_거부다() {
         TestDefinition broken = withItem(valid(), "w2",
                 item -> new TestDefinition.Item(item.itemId(), item.seq(), item.type(), item.prompt(),
-                        null, null, item.choices(), null));
+                        null, item.choices(), null));
         IllegalStateException rejected =
                 assertThrows(IllegalStateException.class, () -> TestDefinitionRegistry.validate(broken));
         assertTrue(rejected.getMessage().contains("정답"), rejected.getMessage());
@@ -65,7 +77,7 @@ class TestDefinitionRegistryTest {
     void 정답이_선택지_밖이면_발행_거부다() {
         TestDefinition broken = withItem(valid(), "w2",
                 item -> new TestDefinition.Item(item.itemId(), item.seq(), item.type(), item.prompt(),
-                        null, null, item.choices(), "w9z"));
+                        null, item.choices(), "w9z"));
         assertThrows(IllegalStateException.class, () -> TestDefinitionRegistry.validate(broken));
     }
 
@@ -84,7 +96,7 @@ class TestDefinitionRegistryTest {
     void seq가_1부터_연속하지_않으면_발행_거부다() {
         TestDefinition broken = withItem(valid(), "w5",
                 item -> new TestDefinition.Item(item.itemId(), 12, item.type(), item.prompt(),
-                        null, null, item.choices(), item.correctChoiceId()));
+                        null, item.choices(), item.correctChoiceId()));
         assertThrows(IllegalStateException.class, () -> TestDefinitionRegistry.validate(broken));
     }
 
@@ -92,7 +104,7 @@ class TestDefinitionRegistryTest {
     void itemId가_중복되면_발행_거부다() {
         TestDefinition broken = withItem(valid(), "v2",
                 item -> new TestDefinition.Item("v1", item.seq(), item.type(), item.prompt(),
-                        item.maxDurationMs(), item.guideF0(), null, null));
+                        item.guideF0(), null, null));
         assertThrows(IllegalStateException.class, () -> TestDefinitionRegistry.validate(broken));
     }
 
@@ -146,7 +158,7 @@ class TestDefinitionRegistryTest {
                 new AccenturyProperties.Cors(List.of()));
     }
 
-    /** 정본 구성과 같은 5+5·seq 교차 정의. 각 테스트가 한 곳씩 망가뜨린다 */
+    /** 정본 구성과 같은 5+5와 seq 교차 정의. 각 테스트가 한 곳씩 망가뜨린다 */
     private static TestDefinition valid() {
         List<TestDefinition.Item> items = new ArrayList<>();
         for (int i = 1; i <= 5; i++) {
@@ -157,8 +169,10 @@ class TestDefinitionRegistryTest {
     }
 
     private static TestDefinition.Item voice(String itemId, int seq) {
-        return new TestDefinition.Item(itemId, seq, TestDefinition.ItemType.VOICE, "밥 뭇나?", 10000,
-                new TestDefinition.GuideF0("semitone", 10, List.of(-0.8, 0.3, 2.8), null, null), null, null);
+        // 허용 밴드는 required (2026-08-09 확정) - values와 같은 길이의 상한과 하한
+        return new TestDefinition.Item(itemId, seq, TestDefinition.ItemType.VOICE, "밥 뭇나?",
+                new TestDefinition.GuideF0("semitone", 10, List.of(-0.8, 0.3, 2.8),
+                        List.of(-2.3, -1.2, 1.3), List.of(0.7, 1.8, 4.3)), null, null);
     }
 
     private static TestDefinition.Item vocabulary(String itemId, int seq) {
@@ -168,7 +182,7 @@ class TestDefinitionRegistryTest {
                 new TestDefinition.Choice(itemId + "c", "쑥갓"),
                 new TestDefinition.Choice(itemId + "d", "시금치"));
         return new TestDefinition.Item(itemId, seq, TestDefinition.ItemType.VOCABULARY,
-                "'정구지'는 표준어로 무엇일까요?", null, null, choices, itemId + "a");
+                "'정구지'는 표준어로 무엇일까요?", null, choices, itemId + "a");
     }
 
     private static TestDefinition withItems(TestDefinition base, List<TestDefinition.Item> items) {

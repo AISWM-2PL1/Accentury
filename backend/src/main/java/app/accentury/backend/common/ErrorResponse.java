@@ -1,5 +1,6 @@
 package app.accentury.backend.common;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -24,11 +25,31 @@ import org.jspecify.annotations.Nullable;
  * @param retryAfterMs  재시도 가능 시각까지 남은 시간(ms). 요청 제한(429)에서만 사용, 그 외에는 null
  * @param correlationId 요청 추적 ID - CorrelationIdFilter가 부여한 값
  */
+@Schema(description = """
+        모든 오류 응답의 공통 형식. 엔드포인트와 무관하게 오류 본문은 항상 이 구조다.""")
 public record ErrorResponse(
+        @Schema(description = """
+                오류 코드. 도메인별 네임스페이스로 나뉜다.
+                `SESSION_*` / `ITEM_*` / `AUDIO_*` / `ANALYSIS_*` / `RESULT_*` / `RATE_*` + 공통.
+                클라이언트 분기는 HTTP 상태가 아니라 이 값으로 한다.""",
+                example = "AUDIO_TOO_QUIET")
         String code,
+
+        @Schema(description = "사용자에게 그대로 보여줄 수 있는 한국어 설명",
+                example = "녹음이 너무 조용합니다. 다시 시도해 주세요.")
         String message,
+
+        @Schema(description = "같은 요청을 다시 보내면 성공할 가능성이 있는지", example = "true")
         boolean retryable,
-        @Nullable Long retryAfterMs,   // 429에서만 값이 있고 그 외 null - 유일한 null 허용 필드
+
+        // 429에서만 값이 있고 그 외 null - 유일한 null 허용 필드
+        @Nullable
+        @Schema(description = "재시도 가능 시각까지 남은 시간(ms). 요청 제한(429)에서만 값이 있고 그 외에는 null이다.",
+                example = "1200", nullable = true)
+        Long retryAfterMs,
+
+        @Schema(description = "요청 추적 ID. 서버 로그에서 같은 요청을 찾는 키다.",
+                example = "c_8f2a1b3c-4d5e-6f70-8a9b-0c1d2e3f4a5b")
         String correlationId
 ) {
 

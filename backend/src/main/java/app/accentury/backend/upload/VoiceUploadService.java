@@ -21,7 +21,6 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.time.Instant;
-import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -44,6 +43,12 @@ public class VoiceUploadService {
     static final int SAMPLE_RATE = 16_000;
     static final int CHANNELS = 1;
     static final int BITS_PER_SAMPLE = 16;
+
+    /**
+     * 문항당 업로드 시도 상한 (§2.5, §5.1, 2026-08-09 확정) - GPU 비용 보호.
+     * 업로드 전 로컬 재녹음은 서버에 도달하지 않으므로 세지 않는다 (§5.7).
+     */
+    static final int MAX_ATTEMPTS_PER_ITEM = 5;
 
     private static final int MAX_IDEMPOTENCY_KEY_LENGTH = 100;
 
@@ -70,8 +75,8 @@ public class VoiceUploadService {
                                @Nullable MultipartFile audio, @Nullable String metaJson) {
         TestSession session = sessionService.authenticateBearer(sessionId, authorization);
         String key = requireIdempotencyKey(idempotencyKey);
-        TestDefinition.Item item =
-                registry.requireItem(session.testVersion(), itemId, TestDefinition.ItemType.VOICE);
+        // 반환값은 쓰지 않는다 - 없는 문항(422)과 유형 불일치(409)를 여기서 끊는 것이 목적이다
+        registry.requireItem(session.testVersion(), itemId, TestDefinition.ItemType.VOICE);
         VoiceUploadMeta meta = VoiceUploadMeta.parse(objectMapper, metaJson);
         byte[] audioBytes = requireAudio(audio);
 
@@ -80,10 +85,9 @@ public class VoiceUploadService {
                 || wav.bitsPerSample() != BITS_PER_SAMPLE) {
             throw new ApiException(ErrorCode.AUDIO_FORMAT_UNSUPPORTED);
         }
-        // 길이의 정본은 서버가 계산한 값이다. 상한은 문항 정의(KAN-10)가 정하고,
-        // VOICE 문항의 maxDurationMs는 발행 검증이 보장한다
-        int maxDurationMs = Objects.requireNonNull(item.maxDurationMs());
-        if (wav.durationMs() > maxDurationMs) {
+        // 길이의 정본은 클라이언트 신고값이 아니라 서버가 WAV에서 계산한 값이다.
+        // 상한은 전 문항 공통 상수다 - 앱의 자동 종료와 같은 값이어야 하므로 문항별로 두지 않는다
+        if (wav.durationMs() > TestDefinition.VOICE_MAX_DURATION_MS) {
             throw new ApiException(ErrorCode.AUDIO_TOO_LONG);
         }
 
@@ -95,8 +99,18 @@ public class VoiceUploadService {
         }
 
         // 동시 업로드가 같은 번호를 받을 수 있지만 attempt는 표시용이라 무해하다 -
-        // 채점 대상 선정(§5.1)은 createdAt 기준이고, 중복 분석 방지는 유니크 제약이 맡는다
-        int attempt = (int) repository.countBySessionIdAndItemId(session.id(), itemId) + 1;
+        // 채점 대상 선정(§5.1)은 createdAt 기준이고, 중복 분석 방지는 유니크 제약이 맡는다.
+        // 전달조차 못 한 작업(RETRYABLE_FAILED)은 AI 자원을 쓰지 않았으므로 세지 않는다 -
+        // 상한의 목적이 GPU 비용 보호인데, 서버 장애로 예산이 깎이면 5회 연속 장애 시
+        // 사용자 잘못 없이 retryable=false인 429로 문항이 영구 차단된다
+        int attempt = (int) repository.countBySessionIdAndItemIdAndStatusNot(
+                session.id(), itemId, AnalysisJobStatus.RETRYABLE_FAILED) + 1;
+        // 상한 검사는 멱등 재전송 판별 뒤다 - 같은 키의 재전송은 상한과 무관하게 저장된
+        // 작업을 돌려받는다 (§5.2). 동시 신규 업로드 경합으로 드물게 상한을 넘겨 저장될 수
+        // 있지만 초과분은 1건이라 프로토타입에서는 허용한다
+        if (attempt > MAX_ATTEMPTS_PER_ITEM) {
+            throw new ApiException(ErrorCode.RATE_RETAKE_EXCEEDED);
+        }
         AnalysisJob job = new AnalysisJob("a_" + UUID.randomUUID(), session.id(), itemId, attempt,
                 key, AnalysisJobStatus.PROCESSING, Instant.now());
         try {

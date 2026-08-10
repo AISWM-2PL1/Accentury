@@ -9,7 +9,7 @@ import java.util.HexFormat;
 import java.util.UUID;
 
 /**
- * 세션 ID·토큰 생성과 해시 (KAN-9).
+ * 세션 ID와 토큰 생성, 해시 (KAN-9).
  * <p>
  * 토큰은 의미 없는 난수(불투명 토큰)라서 서버 저장소 없이는 아무 정보도 담지 않는다 (§2.1).
  */
@@ -36,7 +36,7 @@ final class SessionTokens {
         return "st_" + BASE64_URL.encodeToString(bytes);
     }
 
-    /** 저장·조회용 SHA-256 해시 (hex 64자). 토큰 원문은 DB에 넣지 않는다 (§2.1) */
+    /** 저장과 조회용 SHA-256 해시 (hex 64자). 토큰 원문은 DB에 넣지 않는다 (§2.1) */
     static String hash(String token) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");

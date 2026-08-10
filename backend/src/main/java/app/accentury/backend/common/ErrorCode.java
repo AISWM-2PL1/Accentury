@@ -8,7 +8,7 @@ import org.springframework.http.HttpStatus;
  * App-Backend API 명세서 §2.4 - 도메인별 네임스페이스로 나뉜다:
  * SESSION_* / ITEM_* / AUDIO_* / ANALYSIS_* / RESULT_* / RATE_* + 공통.
  * <p>
- * 각 코드는 자기의 HTTP 상태·재시도 가능 여부·기본 메시지를 스스로 알고 있어서,
+ * 각 코드는 자기의 HTTP 상태와 재시도 가능 여부, 기본 메시지를 스스로 알고 있어서,
  * 던지는 쪽은 {@code throw new ApiException(ErrorCode.SESSION_EXPIRED)} 한 줄이면 된다.
  * 지금은 각 네임스페이스의 대표 코드만 있고, API를 개발하면서 필요한 코드를 추가한다.
  */
@@ -19,7 +19,7 @@ public enum ErrorCode {
     SESSION_FORBIDDEN(HttpStatus.FORBIDDEN, false, "이 세션에 접근할 수 없습니다."),
     SESSION_COMPLETED(HttpStatus.CONFLICT, false, "이미 완료된 테스트입니다."),
 
-    // === ITEM_* : 문항 (KAN-10·13·15) ===
+    // === ITEM_* : 문항 (KAN-10, 13, 15) ===
     ITEM_NOT_IN_VERSION(HttpStatus.UNPROCESSABLE_CONTENT, false, "이 테스트 버전에 없는 문항입니다."),
     ITEM_WRONG_TYPE(HttpStatus.CONFLICT, false, "문항 유형이 올바르지 않습니다."),
 
@@ -29,7 +29,7 @@ public enum ErrorCode {
     AUDIO_TOO_LONG(HttpStatus.UNPROCESSABLE_CONTENT, false, "녹음이 너무 깁니다. (최대 10초)"),
     AUDIO_TOO_QUIET(HttpStatus.UNPROCESSABLE_CONTENT, true, "녹음이 너무 조용합니다. 다시 시도해 주세요."),
 
-    // === ANALYSIS_* : AI 분석 (KAN-22·24) ===
+    // === ANALYSIS_* : AI 분석 (KAN-22, 24) ===
     ANALYSIS_TIMEOUT(HttpStatus.SERVICE_UNAVAILABLE, true, "분석이 지연되고 있습니다. 잠시 후 다시 시도해 주세요."),
     ANALYSIS_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, true, "분석 서버에 연결할 수 없습니다."),
     ANALYSIS_MISREAD(HttpStatus.UNPROCESSABLE_CONTENT, true, "제시된 문장과 다른 내용이 녹음되었습니다."),
@@ -40,8 +40,10 @@ public enum ErrorCode {
     RESULT_RETAKE_REQUIRED(HttpStatus.CONFLICT, true, "실패한 문항이 있습니다. 다시 녹음해 주세요."),
     RESULT_EXPIRED(HttpStatus.GONE, false, "결과 보관 기간(24시간)이 지났습니다. 다시 테스트해 주세요."),
 
-    // === RATE_* : 요청 제한 (KAN-28) ===
+    // === RATE_* : 요청 제한 (KAN-23, KAN-28) ===
     RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, true, "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요."),
+    // 시간이 지나도 풀리지 않는 상한이므로 retryable=false - RATE_LIMITED와 다르다
+    RATE_RETAKE_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, false, "이 문항의 업로드 횟수 상한을 넘었습니다. (최대 5회)"),
 
     // === 공통 ===
     VALIDATION_FAILED(HttpStatus.BAD_REQUEST, false, "요청 값이 올바르지 않습니다."),

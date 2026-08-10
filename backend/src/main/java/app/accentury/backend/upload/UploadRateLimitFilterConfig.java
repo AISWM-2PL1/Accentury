@@ -9,7 +9,7 @@ import tools.jackson.databind.ObjectMapper;
  * {@link UploadRateLimitFilter} 등록 (KAN-23).
  * <p>
  * 서블릿 URL 패턴은 경로 중간 와일드카드를 지원하지 않으므로 {@code /v0/sessions/*}로
- * 걸고 정확한 매칭(voice-items recording POST)은 필터 내부 정규식이 한다.
+ * 걸고 정확한 매칭(voice-items recording POST)은 필터가 MVC와 같은 {@code PathPattern}으로 한다.
  */
 @Configuration
 class UploadRateLimitFilterConfig {

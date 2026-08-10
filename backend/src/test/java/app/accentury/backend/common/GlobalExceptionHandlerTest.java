@@ -31,9 +31,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * "어떤 예외가 터지면 어떤 응답이 나가는가"의 실행 가능한 명세.
  * <p>
- * API 명세서 §2.3(오류 봉투)·§2.4(오류 코드) 및 KAN-58 AC
+ * API 명세서 §2.3(오류 봉투)과 §2.4(오류 코드) 및 KAN-58 AC
  * "존재하지 않는 경로 요청 시 공통 오류 봉투 JSON이 반환된다"를 검증한다.
- * {@code @WebMvcTest} 슬라이스라 Docker·DB 없이 실행된다.
+ * {@code @WebMvcTest} 슬라이스라 Docker와 DB 없이 실행된다.
  * 대상을 ThrowingController로 한정한다 - 프로덕션 컨트롤러(세션 등)가 늘어도
  * 이 슬라이스가 그 의존성을 요구하지 않도록.
  */
@@ -85,7 +85,7 @@ class GlobalExceptionHandlerTest {
         }
     }
 
-    // === ApiException → ErrorCode가 정한 상태·봉투 ===
+    // === ApiException → ErrorCode가 정한 상태와 봉투 ===
 
     @Test
     void 비즈니스_예외는_ErrorCode의_상태와_기본_메시지로_변환된다() throws Exception {
@@ -111,7 +111,7 @@ class GlobalExceptionHandlerTest {
                 .andExpect(jsonPath("$.retryable").value(false));
     }
 
-    // === 429 - Retry-After 헤더 (§2.2, KAN-28·34) ===
+    // === 429 - Retry-After 헤더 (§2.2, KAN-28, 34) ===
 
     @Test
     void 요청_제한은_429와_Retry_After_헤더를_반환한다() throws Exception {

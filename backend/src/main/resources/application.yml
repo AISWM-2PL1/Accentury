@@ -12,24 +12,39 @@ spring:
     password: local
   jpa:
     hibernate:
-      ddl-auto: update    # 개발 단계 한정 — 운영 전에 마이그레이션 도구로 교체
+      ddl-auto: update    # 개발 단계 한정 - 운영 전에 마이그레이션 도구로 교체
     open-in-view: false
 
-# 모든 로그 줄에 correlation ID 포함 — 요청 단위 추적 (KAN-38, Codex 리뷰 P2)
+# OpenAPI 3.1 문서 + Swagger UI (명세서 §2)
+# 문서: http://localhost:8080/swagger-ui.html, 원본 JSON: http://localhost:8080/v3/api-docs
+# 프로토타입이라 기본 노출이다. 외부 배포 시에는 enabled를 false로 내리거나 접근을 막는다.
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+    version: openapi_3_1    # ErrorResponse.retryAfterMs의 nullable 표현이 3.0과 다르다
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha            # 태그 번호가 호출 순서라 정렬해야 순서대로 보인다
+    operations-sorter: method
+    display-request-duration: true
+    doc-expansion: none           # 처음에 태그만 접힌 채로 보여 전체 구조가 한눈에 들어온다
+  default-produces-media-type: application/json
+
+# 모든 로그 줄에 correlation ID 포함 - 요청 단위 추적 (KAN-38, Codex 리뷰 P2)
 logging:
   pattern:
     console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSS} %5p [%X{correlationId:-}] --- [%15.15t] %-40.40logger{39} : %m%n"
 
-# 활성 테스트·점수 버전 — 세션은 생성 시점 버전에 고정 (명세서 §5.4)
-# 프로토타입은 설정 파일로 관리, 버전 발행·활성 전환은 KAN-26에서 DB로 이동
+# 활성 테스트와 점수 버전 - 세션은 생성 시점 버전에 고정 (명세서 §5.4)
+# 프로토타입은 설정 파일로 관리, 버전 발행과 활성 전환은 KAN-26에서 DB로 이동
 accentury:
   test-version: gn-2026.08.1
   score-version: sv-0.3
   session:
-    ttl: 30m    # 토큰 수명 — 테스트 소요 5분의 여유 배수 (명세서 §2.1·§7)
+    ttl: 30m    # 토큰 수명 - 테스트 소요 5분의 여유 배수 (명세서 §2.1, §7)
   analysis:
     poll-after-ms: 800    # 상태 폴링 간격 - 서버가 통제, 부하 상승 시 상향 (명세서 §5.3)
-    retention: 24h        # 분석 작업 보존 기간 - 세션·결과와 동일 (명세서 §5.5)
+    retention: 24h        # 분석 작업 보존 기간 - 세션, 결과와 동일 (명세서 §5.5)
   upload:
     rate-limit-per-minute: 30    # IP당 분당 업로드 상한 - 부하 테스트 후 확정 (명세서 §7, KAN-28)
   cors:

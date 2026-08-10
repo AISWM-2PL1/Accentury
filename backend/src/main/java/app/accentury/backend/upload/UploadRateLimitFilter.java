@@ -76,6 +76,8 @@ class UploadRateLimitFilter extends OncePerRequestFilter {
     private void writeRateLimited(HttpServletResponse response, ApiException e) throws IOException {
         Long retryAfterMs = e.retryAfterMs();
         response.setStatus(e.code().status().value());
+        // 오류 응답 전역 캐시 금지 - GlobalExceptionHandler의 NO_STORE와 같은 규칙
+        response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
         if (retryAfterMs != null) {
             // 초 단위 올림 - GlobalExceptionHandler와 동일 규칙 (KAN-28, KAN-34)
             response.setHeader(HttpHeaders.RETRY_AFTER, String.valueOf((retryAfterMs + 999) / 1000));

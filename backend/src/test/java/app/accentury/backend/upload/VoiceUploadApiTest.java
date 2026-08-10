@@ -78,6 +78,28 @@ class VoiceUploadApiTest {
     }
 
     @Test
+    void 문항당_업로드_시도_상한은_5회다() throws Exception {
+        // §2.5, §5.1 (2026-08-09 확정) - GPU 비용 보호. 업로드 전 로컬 재녹음은 세지 않는다
+        SessionHandle session = createSession();
+        for (int i = 1; i <= 5; i++) {
+            mockMvc.perform(upload(session, "v4", "cap-" + i))
+                    .andExpect(status().isAccepted())
+                    .andExpect(jsonPath("$.attempt").value(i));
+        }
+
+        mockMvc.perform(upload(session, "v4", "cap-6"))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.code").value("RATE_RETAKE_EXCEEDED"))
+                // 시간이 지나도 풀리지 않는 상한이라 retryable=false - RATE_LIMITED와 다르다
+                .andExpect(jsonPath("$.retryable").value(false));
+
+        // 같은 키의 재전송은 상한과 무관하게 저장된 작업을 돌려받는다 (§5.2)
+        mockMvc.perform(upload(session, "v4", "cap-5"))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.attempt").value(5));
+    }
+
+    @Test
     void 같은_Idempotency_Key_재전송은_작업을_중복_생성하지_않는다() throws Exception {
         SessionHandle session = createSession();
         String firstJobId = uploadAndGetJobId(session, "v3", "same-key");
@@ -230,13 +252,13 @@ class VoiceUploadApiTest {
     void 오디오가_1MB를_넘으면_413_AUDIO_TOO_LARGE다() throws Exception {
         // 33초 분량 = 약 1.06MB - 크기 검사(413)가 길이 검사(422)보다 먼저다
         mockMvc.perform(upload(createSession(), "v1", "too-large", WavFixtures.standardWav(33_000)))
-                .andExpect(status().isPayloadTooLarge())
+                .andExpect(status().isContentTooLarge())
                 .andExpect(jsonPath("$.code").value("AUDIO_TOO_LARGE"));
     }
 
     @Test
     void 문항_최대_길이를_넘으면_422_AUDIO_TOO_LONG이다() throws Exception {
-        // v1의 maxDurationMs = 10000 (seed) - 11초는 크기(352KB)는 통과하고 길이에서 걸린다
+        // 상한은 전 문항 공통 상수 VOICE_MAX_DURATION_MS(10초) - 11초는 크기(352KB)는 통과하고 길이에서 걸린다
         mockMvc.perform(upload(createSession(), "v1", "too-long", WavFixtures.standardWav(11_000)))
                 .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.code").value("AUDIO_TOO_LONG"));

@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * <p>
  * 필터 단독 단위 테스트 - 스프링 컨텍스트 없이 실행된다.
  * 실제 MVC 경로에 필터가 끼는 것은 GlobalExceptionHandlerTest가
- * 응답 헤더·봉투의 correlationId로 함께 검증한다.
+ * 응답 헤더와 봉투의 correlationId로 함께 검증한다.
  */
 class CorrelationIdFilterTest {
 
@@ -41,7 +41,7 @@ class CorrelationIdFilterTest {
 
         String issued = response.getHeader(CorrelationIdFilter.HEADER);
         assertThat(issued).startsWith("c_");
-        assertThat(mdcDuringChain.get()).isEqualTo(issued); // 컨트롤러·서비스가 찍는 로그에 같은 ID
+        assertThat(mdcDuringChain.get()).isEqualTo(issued); // 컨트롤러와 서비스가 찍는 로그에 같은 ID
     }
 
     @Test

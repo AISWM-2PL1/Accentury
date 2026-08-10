@@ -4,5 +4,5 @@ services:
     environment:
       POSTGRES_DB: accentury
       POSTGRES_PASSWORD: local
-    # 127.0.0.1 바인딩 — 같은 네트워크의 다른 기기가 개발 DB에 접근하지 못하게 (Codex 리뷰 P1)
+    # 127.0.0.1 바인딩 - 같은 네트워크의 다른 기기가 개발 DB에 접근하지 못하게 (Codex 리뷰 P1)
     ports: ["127.0.0.1:5432:5432"]
