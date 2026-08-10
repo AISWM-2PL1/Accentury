@@ -1,9 +1,9 @@
 package app.accentury.backend.upload;
 
+import app.accentury.backend.IntegrationTest;
 import app.accentury.backend.analysis.AnalysisJobRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -32,9 +32,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * <p>
  * 요청 제한은 전용 컨텍스트가 필요해 {@link UploadRateLimitApiTest}에서 따로 검증한다.
  */
-@SpringBootTest
 @AutoConfigureMockMvc
-class VoiceUploadApiTest {
+class VoiceUploadApiTest extends IntegrationTest {
 
     private static final String VALID_META = """
             {"durationMs": 3000,

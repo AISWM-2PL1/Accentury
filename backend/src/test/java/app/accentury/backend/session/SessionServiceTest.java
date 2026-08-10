@@ -1,11 +1,11 @@
 package app.accentury.backend.session;
 
+import app.accentury.backend.IntegrationTest;
 import app.accentury.backend.common.ApiException;
 import app.accentury.backend.common.ErrorCode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 
 import java.lang.reflect.Field;
 import java.time.Instant;
@@ -22,8 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * 세션 토큰의 보안 시맨틱 검증 (KAN-9 AC, API 명세서 §2.1).
  */
-@SpringBootTest
-class SessionServiceTest {
+class SessionServiceTest extends IntegrationTest {
 
     @Autowired
     private SessionService service;

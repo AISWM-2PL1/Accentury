@@ -1,5 +1,6 @@
 package app.accentury.backend.upload;
 
+import app.accentury.backend.IntegrationTest;
 import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,7 +32,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 @SpringBootTest(properties = "accentury.upload.rate-limit-per-minute=2")
 @AutoConfigureMockMvc
-class UploadRateLimitApiTest {
+class UploadRateLimitApiTest extends IntegrationTest {
 
     private static final String VALID_META = """
             {"durationMs": 3000,

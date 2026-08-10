@@ -1,0 +1,23 @@
+# 테스트 전용 "차이"만 담는다 (프로파일: test).
+#
+# 파일 이름이 main의 application.yml과 달라서 통째 대체가 아니라 덮어쓰기다 -
+# 여기 없는 설정은 main 값을 그대로 물려받는다. 값을 복사해 두면 main이 바뀔 때
+# 조용히 갈라져 테스트가 실제 배포 설정을 검증하지 못하게 되므로 중복을 두지 않는다.
+#
+# 프로파일 활성화는 IntegrationTest(@ActiveProfiles)가 맡는다.
+spring:
+  # Docker PostgreSQL 없이 인메모리 H2로 실행 (CI에서도 통과).
+  # PostgreSQL 호환 모드로 방언 차이를 최소화한다.
+  datasource:
+    url: jdbc:h2:mem:accentury;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+
+accentury:
+  upload:
+    rate-limit-per-minute: 10000    # 업로드 API 테스트가 걸리지 않게 넉넉히 - 제한 동작은 전용 테스트에서 검증
+  cors:
+    allowed-origins: ["https://web.test"]    # CORS 테스트용 오리진
