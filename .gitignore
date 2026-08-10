@@ -19,3 +19,4 @@ local.properties
 .env.*
 .omc/
 .idea/
+.vscode/
