@@ -4,7 +4,7 @@ import app.accentury.backend.analysis.AnalysisDispatcher;
 import app.accentury.backend.analysis.AnalysisJob;
 import app.accentury.backend.analysis.AnalysisJobRepository;
 import app.accentury.backend.analysis.AnalysisJobStatus;
-import app.accentury.backend.common.AccenturyProperties;
+import app.accentury.backend.analysis.PollIntervals;
 import app.accentury.backend.common.ApiException;
 import app.accentury.backend.common.ErrorCode;
 import app.accentury.backend.session.SessionService;
@@ -57,17 +57,17 @@ public class VoiceUploadService {
     private final AnalysisJobRepository repository;
     private final AnalysisDispatcher dispatcher;
     private final ObjectMapper objectMapper;
-    private final AccenturyProperties properties;
+    private final PollIntervals pollIntervals;
 
     public VoiceUploadService(SessionService sessionService, TestDefinitionRegistry registry,
                               AnalysisJobRepository repository, AnalysisDispatcher dispatcher,
-                              ObjectMapper objectMapper, AccenturyProperties properties) {
+                              ObjectMapper objectMapper, PollIntervals pollIntervals) {
         this.sessionService = sessionService;
         this.registry = registry;
         this.repository = repository;
         this.dispatcher = dispatcher;
         this.objectMapper = objectMapper;
-        this.properties = properties;
+        this.pollIntervals = pollIntervals;
     }
 
     VoiceUploadResponse upload(String sessionId, String itemId,
@@ -92,7 +92,7 @@ public class VoiceUploadService {
         }
 
         // 같은 키의 재전송은 저장된 작업을 그대로 반환한다 - 분석 중복 생성 없음 (§5.2)
-        long pollAfterMs = properties.analysis().pollAfterMs();
+        long pollAfterMs = pollIntervals.pollAfterMs();
         var existing = repository.findBySessionIdAndItemIdAndIdempotencyKey(session.id(), itemId, key);
         if (existing.isPresent()) {
             return VoiceUploadResponse.from(existing.get(), pollAfterMs);
@@ -100,11 +100,11 @@ public class VoiceUploadService {
 
         // 동시 업로드가 같은 번호를 받을 수 있지만 attempt는 표시용이라 무해하다 -
         // 채점 대상 선정(§5.1)은 createdAt 기준이고, 중복 분석 방지는 유니크 제약이 맡는다.
-        // 전달조차 못 한 작업(RETRYABLE_FAILED)은 AI 자원을 쓰지 않았으므로 세지 않는다 -
-        // 상한의 목적이 GPU 비용 보호인데, 서버 장애로 예산이 깎이면 5회 연속 장애 시
-        // 사용자 잘못 없이 retryable=false인 429로 문항이 영구 차단된다
-        int attempt = (int) repository.countBySessionIdAndItemIdAndStatusNot(
-                session.id(), itemId, AnalysisJobStatus.RETRYABLE_FAILED) + 1;
+        // AI에 도달하지 못한 전달 실패(ANALYSIS_UNAVAILABLE)만 예산에서 뺀다 - 서버 장애로
+        // 예산이 깎이면 5회 연속 장애 시 사용자 잘못 없이 문항이 영구 차단되기 때문이다.
+        // 반대로 AI가 분석까지 한 판정 실패(AUDIO_TOO_QUIET 등)는 GPU를 썼으므로 센다 (Codex sol 리뷰 P1)
+        int attempt = (int) repository.countAiConsumingAttempts(
+                session.id(), itemId, ErrorCode.ANALYSIS_UNAVAILABLE.name()) + 1;
         // 상한 검사는 멱등 재전송 판별 뒤다 - 같은 키의 재전송은 상한과 무관하게 저장된
         // 작업을 돌려받는다 (§5.2). 동시 신규 업로드 경합으로 드물게 상한을 넘겨 저장될 수
         // 있지만 초과분은 1건이라 프로토타입에서는 허용한다
@@ -132,8 +132,8 @@ public class VoiceUploadService {
             // 전달 실패를 PROCESSING으로 두면 오디오가 없어 영영 끝나지 않는다 (FR-DP-01) -
             // 재녹음(새 키)을 유도하는 RETRYABLE_FAILED로 전이하고 503을 준다 (Codex sol 리뷰 P1).
             // 같은 키의 재전송은 이 상태를 그대로 돌려받아 새 시도로 넘어갈 수 있다.
-            // 저장과 전달 사이에 프로세스가 죽어 PROCESSING으로 남는 경우의 정리(타임아웃)는 KAN-24가 맡는다
-            job.markRetryableFailed();
+            // 저장과 전달 사이에 프로세스가 죽어 PROCESSING으로 남는 경우는 AnalysisJobTimeout이 정리한다
+            job.markRetryableFailed(ErrorCode.ANALYSIS_UNAVAILABLE.name());
             repository.save(job);
             log.warn("분석 전달 실패 jobId={} itemId={}", job.id(), itemId, e);
             throw new ApiException(ErrorCode.ANALYSIS_UNAVAILABLE);

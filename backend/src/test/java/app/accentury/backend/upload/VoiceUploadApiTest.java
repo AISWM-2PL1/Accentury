@@ -2,6 +2,8 @@ package app.accentury.backend.upload;
 
 import app.accentury.backend.IntegrationTest;
 import app.accentury.backend.analysis.AnalysisJobRepository;
+import app.accentury.backend.analysis.AnalysisJobStatus;
+import app.accentury.backend.analysis.AnalysisJobTransitions;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -47,6 +49,9 @@ class VoiceUploadApiTest extends IntegrationTest {
 
     @Autowired
     private AnalysisJobRepository analysisJobRepository;
+
+    @Autowired
+    private AnalysisJobTransitions analysisJobTransitions;
 
     // === 정상 흐름 ===
 
@@ -96,6 +101,22 @@ class VoiceUploadApiTest extends IntegrationTest {
         mockMvc.perform(upload(session, "v4", "cap-5"))
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.attempt").value(5));
+    }
+
+    @Test
+    void AI가_분석한_판정_실패도_시도_상한에_포함된다() throws Exception {
+        // 상한의 목적이 GPU 비용 보호다 - AI가 분석까지 한 실패(AUDIO_TOO_QUIET 등)를 빼면
+        // 불량 녹음 반복으로 상한을 무한 우회한다 (Codex sol 리뷰 P1). 전달 실패가 안 세지는
+        // 쪽은 VoiceUploadDispatchFailureTest가 검증한다
+        SessionHandle session = createSession();
+        for (int i = 1; i <= 5; i++) {
+            String jobId = uploadAndGetJobId(session, "v5", "judged-" + i);
+            analysisJobTransitions.fail(jobId, AnalysisJobStatus.RETRYABLE_FAILED, "AUDIO_TOO_QUIET");
+        }
+
+        mockMvc.perform(upload(session, "v5", "judged-6"))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.code").value("RATE_RETAKE_EXCEEDED"));
     }
 
     @Test

@@ -1,5 +1,6 @@
 package app.accentury.backend.common;
 
+import org.jspecify.annotations.Nullable;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
@@ -32,12 +33,38 @@ public record AccenturyProperties(String testVersion, String scoreVersion, Sessi
     }
 
     /**
-     * @param pollAfterMs 다음 상태 조회까지 클라이언트가 기다릴 시간 - 서버가 통제하고,
-     *                    부하 상승 시 값을 올려 폴링 압력을 줄인다 (§5.3)
-     * @param retention   분석 작업 보존 기간 - 세션, 결과와 같은 24시간 (§5.5)
+     * @param pollAfterMs          다음 상태 조회까지 클라이언트가 기다릴 시간 - 서버가 통제하고,
+     *                             부하 상승 시 값을 올려 폴링 압력을 줄인다 (§5.3)
+     * @param congestedPollAfterMs 혼잡 판정 시의 폴링 간격 - 분석이 밀리면 폴링이 부하를
+     *                             증폭하므로(§5.3 - 대기 체류 20배) 서버가 스스로 간격을 올린다 (KAN-24)
+     * @param congestionThreshold  혼잡 판정 기준 - 진행 중(in-flight) 분석 전달 건수가
+     *                             이 값 이상이면 {@code congestedPollAfterMs}를 반환한다
+     * @param retention            분석 작업 보존 기간 - 세션, 결과와 같은 24시간 (§5.5)
+     * @param processingTimeout    실행 잔류 한도 - 워커가 실행을 시작하고도(startedAt) 종결을
+     *                             못 남긴 작업을 이 시간 뒤 RETRYABLE_FAILED로 정리한다 (KAN-24).
+     *                             AI 호출 재시도 전체 소요(aiTimeout x 시도 횟수 + 대기)보다 길어야 한다.
+     *                             큐 대기 시간은 세지 않는다 (Codex sol 리뷰 P1)
+     * @param queuedTimeout        큐 유실 한도 - 실행을 시작하지 못한 채 이 시간이 지난 작업의
+     *                             정리. 접수와 실행 사이 프로세스 사망 대비다. 정상 큐 소진
+     *                             시간보다 길게, 복구가 사용자에게 보이도록 세션 TTL보다는
+     *                             짧게 잡는다 (Codex sol 리뷰 P2)
+     * @param aiBaseUrl            AI 분석 서버(FastAPI) 주소 (§4.1). 미설정이면 분석을 전달하지
+     *                             않는 개발 모드다 - 작업은 PROCESSING으로 남다가 타임아웃 처리된다
+     * @param aiTimeout            AI 호출의 연결과 읽기 타임아웃 - 추론 P95 3초의 여유 배수
+     * @param aiRetries            AI 일시 장애(연결 실패, 5xx)의 재전송 횟수 - 오디오가 메모리에
+     *                             살아 있는 전달 시점에만 가능하다 (FR-DP-01, KAN-24 재큐잉)
+     * @param dispatchConcurrency  분석 전달 워커 수 - GPU 동시 슬롯(§5.3)을 넘지 않게 잡는다
      */
     public record Analysis(@DefaultValue("800") long pollAfterMs,
-                           @DefaultValue("24h") Duration retention) {
+                           @DefaultValue("3000") long congestedPollAfterMs,
+                           @DefaultValue("30") int congestionThreshold,
+                           @DefaultValue("24h") Duration retention,
+                           @DefaultValue("60s") Duration processingTimeout,
+                           @DefaultValue("5m") Duration queuedTimeout,
+                           @Nullable String aiBaseUrl,
+                           @DefaultValue("10s") Duration aiTimeout,
+                           @DefaultValue("2") int aiRetries,
+                           @DefaultValue("4") int dispatchConcurrency) {
     }
 
     /**
