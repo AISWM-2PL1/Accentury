@@ -9,9 +9,12 @@ import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.UUID;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * AI 전달 워커의 종결 규칙 (KAN-24).
@@ -189,10 +192,37 @@ class HttpAnalysisDispatcherTest extends IntegrationTest {
         AnalysisJob job = saveProcessingJob();
         ScriptedClient client = new ScriptedClient()
                 .then(new AiAnalysisClient.Completed(78, "OK", "rmvpe-0.2", "sv-0.3"));
+        // 실행 중의 in-flight를 실행기 안에서 관측한다 - 시작 전 0, 종결 후 0만 보면
+        // started() 누락(혼잡 감지 무력화)이 통과해 버린다 (Codex 리뷰)
+        AtomicInteger duringRun = new AtomicInteger(-1);
 
-        new HttpAnalysisDispatcher(client, new SyncTaskExecutor(), transitions, backlog, 0, 0)
-                .dispatch(request(job));
+        new HttpAnalysisDispatcher(client, task -> {
+            duringRun.set(backlog.inFlight());
+            task.run();
+        }, transitions, backlog, 0, 0).dispatch(request(job));
 
+        assertEquals(1, duringRun.get());
+        assertEquals(0, backlog.inFlight());
+    }
+
+    @Test
+    void 제출이_거절돼도_백로그가_복귀한다() {
+        // 큐 포화(RejectedExecutionException) 경로 - 여기서 카운터가 새면 실제 부하가
+        // 빠진 뒤에도 inFlight가 임계치 위에 남아 pollAfterMs가 3000에 고정된다 (§5.3 규칙 1)
+        AnalysisBacklog backlog = new AnalysisBacklog();
+        AnalysisJob job = saveProcessingJob();
+        AtomicInteger atRejection = new AtomicInteger(-1);
+        HttpAnalysisDispatcher dispatcher = new HttpAnalysisDispatcher(new ScriptedClient(),
+                task -> {
+                    atRejection.set(backlog.inFlight());
+                    throw new RejectedExecutionException("큐 포화 시뮬레이션");
+                },
+                transitions, backlog, 0, 0);
+
+        // 예외는 업로드 요청 스레드로 그대로 올라가야 업로드가 503으로 종결할 수 있다 (§3.3)
+        assertThrows(RejectedExecutionException.class, () -> dispatcher.dispatch(request(job)));
+
+        assertEquals(1, atRejection.get());
         assertEquals(0, backlog.inFlight());
     }
 

@@ -1,6 +1,7 @@
 package app.accentury.backend.analysis;
 
 import app.accentury.backend.IntegrationTest;
+import app.accentury.backend.common.AccenturyProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
@@ -26,6 +27,9 @@ class AnalysisJobTimeoutTest extends IntegrationTest {
     @Autowired
     private AnalysisJobTimeout timeout;
 
+    @Autowired
+    private AccenturyProperties properties;
+
     @Test
     void 실행_잔류만_ANALYSIS_TIMEOUT으로_종결된다() {
         Instant now = Instant.now();
@@ -45,8 +49,10 @@ class AnalysisJobTimeoutTest extends IntegrationTest {
 
     @Test
     void 큐_대기는_오래돼도_실행_잔류_한도로_폐기되지_않는다() {
-        // 접수 후 2분이 지났지만 실행을 시작하지 않았다 = 큐에서 기다리는 중이라 정상이다
-        save("a_to-queued", "v1", Instant.now().minus(Duration.ofMinutes(2)));
+        // 큐 유실 한도 직전까지 기다렸지만 실행을 시작하지 않았다 = 큐에서 기다리는 중이라
+        // 정상이다. 한도 바로 아래를 잡아 경계를 고정한다 (실행 잔류 한도 60s보다는 길다)
+        save("a_to-queued", "v1",
+                Instant.now().minus(properties.analysis().queuedTimeout()).plusSeconds(60));
 
         timeout.failStuckJobs();
 
@@ -55,8 +61,11 @@ class AnalysisJobTimeoutTest extends IntegrationTest {
 
     @Test
     void 큐_유실은_예산에서_빠지는_ANALYSIS_UNAVAILABLE로_종결된다() {
-        // 30분 넘게 실행을 시작하지 못했다 = 접수와 실행 사이 프로세스 사망으로 큐가 유실된 것
-        save("a_to-lost", "v1", Instant.now().minus(Duration.ofMinutes(31)));
+        // 큐 유실 한도(queued-timeout)를 막 넘겼다 = 접수와 실행 사이 프로세스 사망으로
+        // 큐가 유실된 것. 한도는 설정이 정본이라 값을 복사하지 않는다 (Codex 리뷰 - 구 30분
+        // 하드코딩이 5m으로 바뀐 설정과 어긋난 채 남아 경계가 검증되지 않았다)
+        save("a_to-lost", "v1",
+                Instant.now().minus(properties.analysis().queuedTimeout()).minusSeconds(60));
 
         timeout.failStuckJobs();
 

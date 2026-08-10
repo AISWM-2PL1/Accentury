@@ -27,8 +27,8 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
 
     private static final Logger log = LoggerFactory.getLogger(HttpAnalysisDispatcher.class);
 
-    /** 재전송 대기의 기본 단위 - n번째 재전송 전에 n배로 기다린다 */
-    private static final long RETRY_BACKOFF_MS = 300;
+    /** 재전송 대기의 기본 단위 - n번째 재전송 전에 n배로 기다린다. 설정 검증({@link AnalysisDispatchConfig})이 참조한다 */
+    static final long RETRY_BACKOFF_MS = 300;
 
     private final AiAnalysisClient client;
     private final TaskExecutor executor;
@@ -59,11 +59,16 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
         String requestScoped = MDC.get(CorrelationIdFilter.MDC_KEY);
         String correlationId = requestScoped != null ? requestScoped : "c_" + UUID.randomUUID();
         backlog.started();
+        // 복귀는 finally로 - RuntimeException만 잡으면 스레드 생성 불가(OOM) 같은 Error에서
+        // 카운터가 새고, 누적 30건이면 pollAfterMs가 3000에 영구 고정된다 (Codex 리뷰)
+        boolean submitted = false;
         try {
             executor.execute(() -> run(request, correlationId));
-        } catch (RuntimeException e) {
-            backlog.finished();
-            throw e;
+            submitted = true;
+        } finally {
+            if (!submitted) {
+                backlog.finished();
+            }
         }
     }
 
@@ -81,8 +86,15 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
         } catch (RuntimeException e) {
             // 종결을 놓치면 사용자는 타임아웃 스위퍼까지 대기 화면에 묶인다 - 어떤 예외도 종결로 바꾼다
             log.error("분석 전달 워커 실패 jobId={}", request.analysisJobId(), e);
-            transitions.fail(request.analysisJobId(), AnalysisJobStatus.RETRYABLE_FAILED,
-                    ErrorCode.INTERNAL_ERROR.name());
+            try {
+                transitions.fail(request.analysisJobId(), AnalysisJobStatus.RETRYABLE_FAILED,
+                        ErrorCode.INTERNAL_ERROR.name());
+            } catch (RuntimeException failure) {
+                // 종결 저장까지 실패하면 삼키고 스위퍼에 맡긴다 - 여기서 던지면 인라인 실행기
+                // 경로에서 dispatch()의 복귀와 겹쳐 백로그가 이중 감소한다 (Codex 리뷰)
+                log.error("종결 저장 실패 - 타임아웃 스위퍼가 마무리한다 jobId={}",
+                        request.analysisJobId(), failure);
+            }
         } finally {
             MDC.remove(CorrelationIdFilter.MDC_KEY);
             backlog.finished();

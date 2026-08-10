@@ -21,8 +21,8 @@ import java.net.http.HttpClient;
 class AnalysisDispatchConfig {
 
     /**
-     * 워커 수를 넘는 전달 요청의 대기 한도. 넘치면 제출이 거절되고 업로드가 503으로
-     * 끝난다 - 무한 큐로 받았다가 타임아웃으로 전부 버리는 것보다 일찍 미는 쪽을 택한다.
+     * 워커 수를 넘는 전달 요청의 대기 한도. 넘치면 제출이 거절되고 업로드가 503으로 끝난다.
+     * 무한 큐로 받았다가 타임아웃으로 전부 버리는 것보다 일찍 미는 쪽을 택한다.
      * 동시 응시 1,000명의 GPU 대기(약 50슬롯, §5.3)를 여유 있게 덮는 크기다.
      */
     private static final int QUEUE_CAPACITY = 200;
@@ -46,6 +46,17 @@ class AnalysisDispatchConfig {
         String aiBaseUrl = properties.analysis().aiBaseUrl();
         if (aiBaseUrl == null || aiBaseUrl.isBlank()) {
             return new NoopAnalysisDispatcher();
+        }
+        int retries = properties.analysis().aiRetries();
+        // 실행 잔류 한도(processing-timeout)는 AI 재전송 최악 소요보다 길어야 한다 - 짧으면
+        // 살아 있는 워커의 작업을 스위퍼가 먼저 종결해, 이미 버려진 작업에 GPU를 쓰고 성공
+        // 결과까지 폐기한다. 문서(AccenturyProperties)로만 있던 관계를 기동 시점에 강제한다
+        long worstCaseMs = properties.analysis().aiTimeout().toMillis() * (retries + 1)
+                + HttpAnalysisDispatcher.RETRY_BACKOFF_MS * retries * (retries + 1) / 2;
+        if (properties.analysis().processingTimeout().toMillis() <= worstCaseMs) {
+            throw new IllegalStateException("processing-timeout("
+                    + properties.analysis().processingTimeout() + ")이 AI 재전송 최악 소요("
+                    + worstCaseMs + "ms)보다 짧다 - ai-timeout, ai-retries와 함께 조정해야 한다");
         }
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(
                 HttpClient.newBuilder().connectTimeout(properties.analysis().aiTimeout()).build());
