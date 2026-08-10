@@ -45,6 +45,23 @@ class WavAudioTest {
     }
 
     @Test
+    void 홀수_크기_청크의_패딩_바이트를_건너뛴다() {
+        // RIFF 규격 - 홀수 크기 청크 뒤에는 1바이트 패딩이 붙는다.
+        // 건너뛰지 않으면 다음 청크 경계가 1바이트 밀려 정상 파일을 415로 거부한다
+        byte[] standard = WavFixtures.standardWav(1000);
+        ByteBuffer buf = ByteBuffer.allocate(standard.length + 12).order(ByteOrder.LITTLE_ENDIAN);
+        buf.put(standard, 0, 12);
+        buf.put("LIST".getBytes(StandardCharsets.US_ASCII)).putInt(3)
+                .put("INF".getBytes(StandardCharsets.US_ASCII))
+                .put((byte) 0);     // 홀수(3바이트) 청크의 패딩
+        buf.put(standard, 12, standard.length - 12);
+        byte[] wav = buf.array();
+        ByteBuffer.wrap(wav).order(ByteOrder.LITTLE_ENDIAN).putInt(4, wav.length - 8);
+
+        assertEquals(1000, WavAudio.parse(wav).durationMs());
+    }
+
+    @Test
     void WAV가_아닌_바이트는_거부한다() {
         assertUnsupported("이것은 WAV가 아닙니다".getBytes(StandardCharsets.UTF_8));
     }

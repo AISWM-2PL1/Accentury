@@ -212,6 +212,37 @@ class VoiceUploadApiTest {
     }
 
     @Test
+    void durationMs가_없거나_양수가_아니면_400이다() throws Exception {
+        // 4개 clientQuality 필드와 함께 durationMs도 필수다 (2026-08-06 확정, §3.3)
+        SessionHandle session = createSession();
+        String quality = """
+                "clientQuality": {"rms": 0.11, "peak": 0.83, "silenceRatio": 0.12, "clipped": false}""";
+
+        String[] broken = {
+                "{" + quality + "}",                    // 누락
+                "{\"durationMs\": null, " + quality + "}",
+                "{\"durationMs\": 0, " + quality + "}",
+                "{\"durationMs\": -1, " + quality + "}",
+        };
+        for (int i = 0; i < broken.length; i++) {
+            mockMvc.perform(multipart(url(session, "v1"))
+                            .file(audioPart(WavFixtures.standardWav(3000))).file(metaPart(broken[i]))
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + session.token())
+                            .header("Idempotency-Key", "bad-duration-" + i))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+        }
+    }
+
+    @Test
+    void Idempotency_Key가_100자를_넘으면_400이다() throws Exception {
+        // 컬럼 길이가 100이라 검증이 없으면 저장 시점에 500이 된다
+        mockMvc.perform(upload(createSession(), "v1", "k".repeat(101)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
+    @Test
     void clientQuality_필드가_빠지면_400이다() throws Exception {
         SessionHandle session = createSession();
         String missingSilenceRatio = """

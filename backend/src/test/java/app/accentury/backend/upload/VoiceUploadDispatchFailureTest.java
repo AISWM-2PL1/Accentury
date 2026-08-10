@@ -53,11 +53,15 @@ class VoiceUploadDispatchFailureTest {
 
         volatile boolean failing = true;
 
+        /** 전달에 성공한 마지막 요청 - 분석으로 실제로 넘어간 값을 확인한다 */
+        volatile AnalysisRequest lastDispatched;
+
         @Override
         public void dispatch(AnalysisRequest request) {
             if (failing) {
                 throw new IllegalStateException("AI 연결 실패 시뮬레이션");
             }
+            lastDispatched = request;
         }
     }
 
@@ -175,6 +179,28 @@ class VoiceUploadDispatchFailureTest {
                 .andExpect(status().isTooManyRequests())
                 .andExpect(jsonPath("$.code").value("RATE_RETAKE_EXCEEDED"))
                 .andExpect(jsonPath("$.retryable").value(false));
+    }
+
+    @Test
+    void 분석에_넘기는_길이는_meta_신고값이_아니라_WAV_계산값이다() throws Exception {
+        // 신고값을 그대로 넘기면 분석이 엉뚱한 메타를 받는다 (Codex sol 리뷰 P2) -
+        // 길이 제한(§3.3)과 마찬가지로 정본은 서버가 WAV 헤더에서 계산한 값이다
+        SessionHandle session = createSession();
+        dispatcher.failing = false;
+
+        String lyingMeta = """
+                {"durationMs": 9999,
+                 "clientQuality": {"rms": 0.11, "peak": 0.83, "silenceRatio": 0.12, "clipped": false}}""";
+        mockMvc.perform(multipart("/v0/sessions/" + session.id() + "/voice-items/v1/recording")
+                        .file(new MockMultipartFile("audio", "recording.wav", "audio/wav",
+                                WavFixtures.standardWav(3000)))
+                        .file(new MockMultipartFile("meta", "", "application/json",
+                                lyingMeta.getBytes(StandardCharsets.UTF_8)))
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + session.token())
+                        .header("Idempotency-Key", "lying-duration"))
+                .andExpect(status().isAccepted());
+
+        assertEquals(3000, dispatcher.lastDispatched.durationMs());
     }
 
     // === 헬퍼 ===

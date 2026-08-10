@@ -77,4 +77,34 @@ class UploadRateLimiterTest {
 
         assertDoesNotThrow(() -> limiter.check("1.2.3.4"));
     }
+
+    @Test
+    void 정리는_지나간_윈도우만_지운다() {
+        // 무계정 웹이라 IP 키가 무한히 쌓이는 것을 막는 것이 정리의 목적이다
+        SteppingClock clock = new SteppingClock();
+        UploadRateLimiter limiter = new UploadRateLimiter(2, clock);
+        limiter.check("1.2.3.4");
+
+        clock.advance(Duration.ofSeconds(61));
+        limiter.check("5.6.7.8");
+        assertEquals(2, limiter.trackedIps());
+
+        limiter.evictExpired();
+
+        assertEquals(1, limiter.trackedIps(), "만료된 1.2.3.4만 사라지고 활성인 5.6.7.8은 남아야 한다");
+    }
+
+    @Test
+    void 정리가_활성_윈도우의_카운트를_잃지_않는다() {
+        // 정리가 과하게 지우면 한도에 걸린 IP가 즉시 풀려 제한이 무력화된다
+        SteppingClock clock = new SteppingClock();
+        UploadRateLimiter limiter = new UploadRateLimiter(2, clock);
+        limiter.check("1.2.3.4");
+        limiter.check("1.2.3.4");
+
+        clock.advance(Duration.ofSeconds(30));
+        limiter.evictExpired();
+
+        assertThrows(ApiException.class, () -> limiter.check("1.2.3.4"));
+    }
 }

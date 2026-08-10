@@ -60,4 +60,12 @@ public class UploadRateLimiter {
         Instant cutoff = clock.instant().minus(WINDOW);
         windows.entrySet().removeIf(entry -> entry.getValue().start().isBefore(cutoff));
     }
+
+    /**
+     * 추적 중인 IP 수 - 정리가 실제로 맵을 줄이는지 확인하는 관찰점이다.
+     * 정리는 판정에 영향을 주지 않아(만료 윈도우는 check가 이미 무시한다) 동작으로는 드러나지 않는다.
+     */
+    int trackedIps() {
+        return windows.size();
+    }
 }
