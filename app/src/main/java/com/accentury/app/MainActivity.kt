@@ -24,6 +24,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,6 +44,9 @@ import com.accentury.app.upload.OkHttpUploadClient
 import com.accentury.app.upload.UploadManager
 import com.accentury.app.upload.UploadRequest
 import com.accentury.app.upload.UploadStatusBar
+import com.accentury.app.web.WebViewHost
+import com.accentury.app.web.buildWebUrl
+import com.accentury.app.web.webOrigin
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -71,7 +75,21 @@ class MainActivity : ComponentActivity() {
         setContent {
             AccenturyTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    PermissionGate(modifier = Modifier.padding(innerPadding))
+                    // 인트로(웹) → [시작하기] 브리지 → 마이크 권한 게이트 순서 (KAN-97).
+                    // 인트로는 ux-ui.md §7 정본대로 WebView 원격 로드다 — 웹의 [시작하기]가
+                    // AccenturyBridge.requestMicPermission()을 호출하면 게이트로 전환한다.
+                    // 회전 등 구성 변경으로 인트로가 다시 뜨면 안 되므로 rememberSaveable로 남긴다.
+                    var started by rememberSaveable { mutableStateOf(false) }
+                    if (started) {
+                        PermissionGate(modifier = Modifier.padding(innerPadding))
+                    } else {
+                        WebViewHost(
+                            url = buildWebUrl(BuildConfig.WEB_URL, BuildConfig.VERSION_NAME),
+                            allowedOrigins = setOfNotNull(webOrigin(BuildConfig.WEB_URL)),
+                            onRequestMicPermission = { started = true },
+                            modifier = Modifier.padding(innerPadding),
+                        )
+                    }
                 }
             }
         }
