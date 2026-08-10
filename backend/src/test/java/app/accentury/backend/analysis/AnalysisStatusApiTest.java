@@ -1,6 +1,7 @@
 package app.accentury.backend.analysis;
 
 import app.accentury.backend.IntegrationTest;
+import app.accentury.backend.common.AccenturyProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -46,6 +47,12 @@ class AnalysisStatusApiTest extends IntegrationTest {
 
     @Autowired
     private AnalysisStatusService service;
+
+    @Autowired
+    private AnalysisBacklog backlog;
+
+    @Autowired
+    private AccenturyProperties properties;
 
     // === 일괄 조회 (§3.4) ===
 
@@ -169,6 +176,42 @@ class AnalysisStatusApiTest extends IntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + session.token()))
                 .andExpect(status().isOk())
                 .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"));
+    }
+
+    // === 혼잡 시 폴링 간격 (§5.3 규칙 1, KAN-24 AC) ===
+
+    @Test
+    void 혼잡하면_모든_상태_응답의_pollAfterMs가_상향된다() throws Exception {
+        // 판정 규칙 자체는 PollIntervalsTest가 검증한다 - 여기서는 백로그부터 API 응답까지의
+        // 배선을 확인한다. 이 배선이 끊기면 서버가 간격을 올려도 클라이언트에 전달되지 않아
+        // 혼잡 시 폴링 증폭(§5.3 - 요청 20배)을 막을 수 없다.
+        SessionHandle session = createSession();
+        AnalysisJob job = saveJob(session, "v1", 1, Instant.now());
+        // 임계치·간격은 설정이 정본이다 - 값을 복사하면 설정 변경 시 엉뚱한 이유로 깨진다.
+        // 공유 빈을 직접 올리므로 이 테스트는 다른 테스트와 병렬 실행하면 안 된다 (finally 복원)
+        int threshold = properties.analysis().congestionThreshold();
+        int congested = (int) properties.analysis().congestedPollAfterMs();
+        int base = (int) properties.analysis().pollAfterMs();
+        for (int i = 0; i < threshold; i++) {
+            backlog.started();
+        }
+        try {
+            mockMvc.perform(statuses(session))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.pollAfterMs").value(congested));
+            mockMvc.perform(get(url(session) + "/" + job.id())
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + session.token()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.pollAfterMs").value(congested));
+        } finally {
+            for (int i = 0; i < threshold; i++) {
+                backlog.finished();
+            }
+        }
+
+        // 밀림이 풀리면 즉시 기준 간격으로 돌아온다
+        mockMvc.perform(statuses(session))
+                .andExpect(jsonPath("$.pollAfterMs").value(base));
     }
 
     // === 채점 대상 선정 (§5.1, KAN-24 AC - KAN-25가 소비) ===

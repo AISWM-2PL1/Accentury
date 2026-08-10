@@ -1,5 +1,7 @@
 package app.accentury.backend.analysis;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * BE -> AI 분석 호출의 경계 (KAN-24, API 명세서 §4.1).
  * <p>
@@ -56,7 +58,7 @@ public interface AiAnalysisClient {
 
         private final Kind kind;
 
-        public AiUnavailableException(String message, Kind kind, Throwable cause) {
+        public AiUnavailableException(String message, Kind kind, @Nullable Throwable cause) {
             super(message, cause);
             this.kind = kind;
         }

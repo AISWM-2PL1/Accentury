@@ -22,7 +22,10 @@ public interface AnalysisJobRepository extends JpaRepository<AnalysisJob, String
     Optional<AnalysisJob> findBySessionIdAndItemIdAndIdempotencyKey(
             String sessionId, String itemId, String idempotencyKey);
 
-    /** 다음 attempt 번호 계산용 (§5.1) */
+    /**
+     * 세션·문항의 전체 시도 행 수 - 테스트 검증용. attempt 번호와 시도 상한 판정은
+     * {@link #countAiConsumingAttempts}가 정본이다 (§5.1 - 전달 실패는 세지 않는다).
+     */
     long countBySessionIdAndItemId(String sessionId, String itemId);
 
     /**
@@ -31,12 +34,14 @@ public interface AnalysisJobRepository extends JpaRepository<AnalysisJob, String
      * AI가 실제로 분석한 뒤의 판정 실패(AUDIO_TOO_QUIET 등)는 GPU를 썼으므로 센다 -
      * 상태만 보고 RETRYABLE_FAILED 전부를 빼면 불량 녹음 반복이 상한을 우회한다
      * (Codex sol 리뷰 P1). 타임아웃(ANALYSIS_TIMEOUT)은 도달 여부가 불확실하므로 센다.
+     * errorCode가 null인 행은 예산에 포함한다(coalesce) - 3치 논리로는 null 비교가
+     * UNKNOWN이 되어 행이 조용히 환급되는 쪽으로 샌다 (Codex 리뷰).
      */
     @Query("""
             select count(j) from AnalysisJob j
              where j.sessionId = :sessionId and j.itemId = :itemId
                and not (j.status = app.accentury.backend.analysis.AnalysisJobStatus.RETRYABLE_FAILED
-                        and j.errorCode = :undeliveredErrorCode)
+                        and coalesce(j.errorCode, '') = :undeliveredErrorCode)
             """)
     long countAiConsumingAttempts(@Param("sessionId") String sessionId,
                                   @Param("itemId") String itemId,

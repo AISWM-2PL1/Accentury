@@ -14,6 +14,11 @@ spring:
     hibernate:
       ddl-auto: update    # 개발 단계 한정 - 운영 전에 마이그레이션 도구로 교체
     open-in-view: false
+  task:
+    execution:
+      mode: force    # analysisExecutor(4워커 AI 전달 풀) 정의가 applicationTaskExecutor 자동
+                     # 구성을 밀어내지 않게 강제한다 - 밀리면 MVC 비동기가 무제한 스레드로
+                     # 떨어지고, 미래의 @Async가 AI 전달 풀에 얹힌다 (Codex 리뷰)
 
 # 모든 로그 줄에 correlation ID 포함 - 요청 단위 추적 (KAN-38, Codex 리뷰 P2)
 logging:

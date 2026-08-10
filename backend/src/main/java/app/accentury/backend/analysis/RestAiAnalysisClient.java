@@ -82,6 +82,12 @@ class RestAiAnalysisClient implements AiAnalysisClient {
             throw new AiUnavailableException("AI 5xx 응답: " + statusCode,
                     AiUnavailableException.Kind.SERVER_ERROR, null);
         }
+        if (statusCode == HttpStatus.TOO_MANY_REQUESTS.value()) {
+            // 과부하 셰딩 - 도달은 했지만 추론 전에 거절됐다. GPU 미소모이므로 미도달과 같은
+            // 예산 취급이어야 서버 사정만으로 시도 상한(§2.5)이 깎이지 않는다 (Codex 리뷰)
+            throw new AiUnavailableException("AI 과부하 응답: 429",
+                    AiUnavailableException.Kind.UNREACHED, null);
+        }
 
         AnalyzeResponse parsed;
         try {
@@ -96,12 +102,20 @@ class RestAiAnalysisClient implements AiAnalysisClient {
         }
         if (statusCode == HttpStatus.UNPROCESSABLE_CONTENT.value()
                 && parsed != null && "FAILED".equals(parsed.status())) {
-            // 판정 코드가 없으면 원인 불명 - 재녹음으로 해결된다는 근거가 없으므로 비재시도다
-            String code = parsed.quality() != null && parsed.quality().code() != null
-                    ? parsed.quality().code() : ErrorCode.INTERNAL_ERROR.name();
-            boolean retryable = Boolean.TRUE.equals(parsed.retryable())
-                    && !ErrorCode.INTERNAL_ERROR.name().equals(code);
-            return new Rejected(code, retryable);
+            String rawCode = parsed.quality() != null ? parsed.quality().code() : null;
+            ErrorCode code = knownErrorCode(rawCode);
+            if (code == null) {
+                // 판정 코드가 없거나 계약(§2.4)에 없는 코드다 - 재녹음으로 해결된다는 근거가
+                // 없어 비재시도이고, 미검증 문자열을 DB 컬럼(40자)과 클라이언트로 흘리지
+                // 않는다 (Codex 리뷰 - "OK"나 모르는 코드가 error.code로 나가면 안 된다)
+                log.error("AI 판정 코드가 계약에 없다 code={}", rawCode);
+                return new Rejected(ErrorCode.INTERNAL_ERROR.name(), false);
+            }
+            // AI가 retryable을 생략하면 코드 정의(§2.4)의 기본값을 따른다 - 생략을 false로
+            // 읽으면 AUDIO_TOO_QUIET가 재녹음 불가로 굳어 문항이 막힌다 (Codex 리뷰)
+            boolean retryable = parsed.retryable() != null ? parsed.retryable()
+                    : code.retryable();
+            return new Rejected(code.name(), retryable && code != ErrorCode.INTERNAL_ERROR);
         }
 
         log.error("AI 응답이 계약(§4.1)과 다르다 status={} body.status={}",
@@ -130,6 +144,18 @@ class RestAiAnalysisClient implements AiAnalysisClient {
                 ? parsed.quality().code() : "OK";
         return new Completed(parsed.intonationScore(), qualityCode,
                 parsed.modelVersion(), parsed.scoreVersion());
+    }
+
+    /** §2.4에 정의된 코드만 판정으로 인정한다 - 모르는 코드는 null */
+    private static @Nullable ErrorCode knownErrorCode(@Nullable String code) {
+        if (code == null) {
+            return null;
+        }
+        try {
+            return ErrorCode.valueOf(code);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     private static boolean isTimeout(ResourceAccessException e) {

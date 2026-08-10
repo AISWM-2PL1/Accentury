@@ -22,9 +22,12 @@ public class AnalysisBacklog {
         inFlight.incrementAndGet();
     }
 
-    /** 종결 - 성공이든 실패든 워커가 작업을 놓는 시점 */
+    /**
+     * 종결 - 성공이든 실패든 워커가 작업을 놓는 시점. 0 밑으로는 내려가지 않는다 -
+     * 이중 복귀가 음수로 쌓이면 혼잡 감지가 조용히 무력화된다 (Codex 리뷰)
+     */
     public void finished() {
-        inFlight.decrementAndGet();
+        inFlight.updateAndGet(n -> n > 0 ? n - 1 : 0);
     }
 
     public int inFlight() {

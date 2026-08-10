@@ -154,7 +154,7 @@ class TestDefinitionRegistryTest {
         return new AccenturyProperties(testVersion, scoreVersion,
                 new AccenturyProperties.Session(Duration.ofMinutes(30)),
                 new AccenturyProperties.Analysis(800, 3000, 30, Duration.ofHours(24),
-                        Duration.ofSeconds(60), Duration.ofMinutes(30), null, Duration.ofSeconds(10), 2, 4),
+                        Duration.ofSeconds(60), Duration.ofMinutes(5), null, Duration.ofSeconds(10), 2, 4),
                 new AccenturyProperties.Upload(30),
                 new AccenturyProperties.Cors(List.of()));
     }

@@ -11,6 +11,7 @@ import tools.jackson.databind.ObjectMapper;
 import java.net.SocketTimeoutException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -73,6 +74,48 @@ class RestAiAnalysisClientTest {
                 assertInstanceOf(AiAnalysisClient.Rejected.class, client.analyze(request(), "c_test"));
         assertEquals("AUDIO_TOO_QUIET", rejected.errorCode());
         assertTrue(rejected.retryable());
+    }
+
+    @Test
+    void retryable이_생략된_판정은_코드_정의의_기본값을_따른다() {
+        server.expect(requestTo("http://ai.test/internal/v0/analyze"))
+                .andRespond(withStatus(HttpStatus.UNPROCESSABLE_CONTENT).body("""
+                        { "status": "FAILED", "quality": { "code": "AUDIO_TOO_QUIET" } }
+                        """).contentType(MediaType.APPLICATION_JSON));
+
+        AiAnalysisClient.Rejected rejected =
+                assertInstanceOf(AiAnalysisClient.Rejected.class, client.analyze(request(), "c_test"));
+        // §2.4에서 AUDIO_TOO_QUIET는 재녹음으로 해결되는 코드다 - 생략을 false로 읽으면
+        // 재녹음이 도움이 되는 실패가 FAILED로 굳어 문항이 막힌다 (Codex 리뷰)
+        assertEquals("AUDIO_TOO_QUIET", rejected.errorCode());
+        assertTrue(rejected.retryable());
+    }
+
+    @Test
+    void 계약에_없는_판정_코드는_비재시도_INTERNAL_ERROR로_끊는다() {
+        server.expect(requestTo("http://ai.test/internal/v0/analyze"))
+                .andRespond(withStatus(HttpStatus.UNPROCESSABLE_CONTENT).body("""
+                        { "status": "FAILED", "quality": { "code": "OK" }, "retryable": true }
+                        """).contentType(MediaType.APPLICATION_JSON));
+
+        AiAnalysisClient.Rejected rejected =
+                assertInstanceOf(AiAnalysisClient.Rejected.class, client.analyze(request(), "c_test"));
+        // "OK"는 오류 코드가 아니다 - 미검증 문자열을 DB 컬럼(40자)과 error.code로 흘리지 않는다
+        assertEquals("INTERNAL_ERROR", rejected.errorCode());
+        assertFalse(rejected.retryable());
+    }
+
+    @Test
+    void 과부하_429는_예산에서_빠지는_일시_장애로_구분된다() {
+        server.expect(requestTo("http://ai.test/internal/v0/analyze"))
+                .andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS));
+
+        AiAnalysisClient.AiUnavailableException e =
+                assertThrows(AiAnalysisClient.AiUnavailableException.class,
+                        () -> client.analyze(request(), "c_test"));
+        // 추론 전에 거절된 셰딩이라 GPU 미소모다 - 서버 사정만으로 시도 상한(§2.5)이
+        // 깎이면 안 되므로 미도달(UNREACHED)과 같은 예산 취급이어야 한다 (Codex 리뷰)
+        assertEquals(AiAnalysisClient.AiUnavailableException.Kind.UNREACHED, e.kind());
     }
 
     @Test
