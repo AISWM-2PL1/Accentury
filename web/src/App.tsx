@@ -1,5 +1,12 @@
 import { IntroScreen } from './intro/IntroScreen'
 import { isBridgeCompatible } from './bridge/bridge'
+import { TestFlowScreen } from './progress/TestFlowScreen'
+
+/**
+ * 백엔드 오리진. 에뮬레이터에서 호스트의 백엔드를 가리키는 주소를 개발 기본값으로 둔다
+ * (앱의 `DEV_BASE_URL`과 같은 값). 배포 도메인은 환경변수로 주입한다.
+ */
+const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://10.0.2.2:8080'
 
 /**
  * 진입 분기 — 화면을 그리기 전에 브리지 버전 스큐부터 판정한다 (webview-layer.md §5).
@@ -10,6 +17,20 @@ export default function App() {
   if (!isBridgeCompatible(window.location.search)) {
     return <UpdateRequiredScreen />
   }
+
+  /*
+   * `?screen=test&testVersion=...` — 문항 진행 화면(KAN-99)으로 들어가는 개발·검증용 통로다.
+   * 정식 진입은 인트로 [시작하기] → 네이티브 권한 게이트 → 문항 진행으로 이어져야 하는데,
+   * 그 화면 전환 결선이 KAN-100 몫이라 아직 없다. 그때까지 이 화면을 사람이 직접 열어 볼
+   * 방법이 필요해서 둔 분기이고, KAN-100이 정식 결선을 붙이면 지운다.
+   * testVersion을 쿼리로 받는 것도 임시다 — 정본은 세션 생성(KAN-9) 응답이고, 그 값이
+   * 웹까지 오는 경로가 아직 미확정이다(fetchTestDefinition 헤더 주석의 열린 질문).
+   */
+  const params = new URLSearchParams(window.location.search)
+  if (params.get('screen') === 'test') {
+    return <TestFlowScreen apiBase={API_BASE} testVersion={params.get('testVersion') ?? ''} />
+  }
+
   return <IntroScreen />
 }
 
