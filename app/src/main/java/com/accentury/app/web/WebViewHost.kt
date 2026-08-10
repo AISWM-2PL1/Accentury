@@ -18,12 +18,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -55,23 +51,17 @@ fun WebViewHost(
     modifier: Modifier = Modifier,
     timeoutMs: Long = LOAD_TIMEOUT_MS,
 ) {
-    var loadState by remember { mutableStateOf<WebLoadState>(WebLoadState.Loading) }
-    // 재시도마다 1씩 올려 key()로 WebView를 처음부터 새로 만든다 — 실패한 WebView의
-    // 내부 상태(오류 페이지 등)를 이어받지 않기 위해서다.
-    var attempt by remember { mutableIntStateOf(0) }
+    // 상태 전이 규칙은 WebLoadController에 모여 있다(JVM 테스트 대상). 여기는 결선만 한다.
+    val controller = remember { WebLoadController() }
 
-    if (loadState == WebLoadState.Failed) {
-        LoadFailureScreen(
-            onRetry = {
-                attempt += 1
-                loadState = WebLoadState.Loading
-            },
-            modifier = modifier,
-        )
+    if (controller.state == WebLoadState.Failed) {
+        LoadFailureScreen(onRetry = controller::retry, modifier = modifier)
         return
     }
 
-    key(attempt) {
+    // attempt가 바뀌면 key()가 WebView를 처음부터 새로 만든다 — 실패한 WebView의
+    // 내부 상태(오류 페이지 등)를 이어받지 않기 위해서다.
+    key(controller.attempt) {
         Box(modifier = modifier.fillMaxSize()) {
             AndroidView(
                 factory = { context ->
@@ -100,9 +90,7 @@ fun WebViewHost(
                             }
 
                             override fun onPageFinished(view: WebView, url: String?) {
-                                // 오류 콜백이 먼저 Failed를 찍었으면 덮어쓰지 않는다
-                                // (크롬 오류 페이지도 onPageFinished를 쏜다).
-                                if (loadState == WebLoadState.Loading) loadState = WebLoadState.Ready
+                                controller.onPageFinished()
                             }
 
                             override fun onReceivedError(
@@ -111,7 +99,7 @@ fun WebViewHost(
                                 error: WebResourceError,
                             ) {
                                 // 서브리소스 하나 실패로 화면 전체를 접지 않는다 — 메인 프레임만.
-                                if (request.isForMainFrame) loadState = WebLoadState.Failed
+                                if (request.isForMainFrame) controller.onMainFrameError()
                             }
 
                             override fun onReceivedHttpError(
@@ -119,7 +107,7 @@ fun WebViewHost(
                                 request: WebResourceRequest,
                                 errorResponse: WebResourceResponse,
                             ) {
-                                if (request.isForMainFrame) loadState = WebLoadState.Failed
+                                if (request.isForMainFrame) controller.onMainFrameError()
                             }
                         }
 
@@ -138,16 +126,16 @@ fun WebViewHost(
                 },
                 onRelease = { it.destroy() },
             )
-            if (loadState == WebLoadState.Loading) {
+            if (controller.state == WebLoadState.Loading) {
                 LoadingScreen()
             }
         }
 
         // 자체 타임아웃 (§6) — onPageFinished가 오지 않는 실패(끊긴 연결에서의 무한 대기 등)를
         // 오류 콜백 대신 시간으로 잡는다. attempt가 바뀌면 타이머도 새로 시작된다.
-        LaunchedEffect(attempt) {
+        LaunchedEffect(controller.attempt) {
             delay(timeoutMs)
-            if (loadState == WebLoadState.Loading) loadState = WebLoadState.Failed
+            controller.onTimeout()
         }
     }
 }
