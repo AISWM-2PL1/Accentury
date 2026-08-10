@@ -55,7 +55,9 @@ class UploadRateLimitApiTest {
                 .andExpect(jsonPath("$.code").value("RATE_LIMITED"))
                 .andExpect(jsonPath("$.retryable").value(true))
                 .andExpect(jsonPath("$.retryAfterMs").isNumber())
-                .andExpect(header().exists(HttpHeaders.RETRY_AFTER));
+                .andExpect(header().exists(HttpHeaders.RETRY_AFTER))
+                // 필터가 직접 쓰는 조기 429도 오류 응답 전역 캐시 금지 규칙을 따른다
+                .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"));
     }
 
     @Test

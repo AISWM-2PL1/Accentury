@@ -118,7 +118,7 @@ class SessionServiceTest {
         assertTrue(repository.findById(alive.sessionId()).isPresent(), "유효 세션은 남아야 한다");
     }
 
-    // === KAN-9 AC - 사용자 계정·광고 식별자를 저장하지 않는다 ===
+    // === KAN-9 AC - 사용자 계정과 광고 식별자를 저장하지 않는다 ===
 
     @Test
     void 세션에는_개인_식별_컬럼이_없다() {
@@ -129,7 +129,7 @@ class SessionServiceTest {
 
         Set<String> actual = Stream.of(TestSession.class.getDeclaredFields())
                 .map(Field::getName)
-                .filter(name -> !name.startsWith("$"))   // 프록시·계측 필드 제외
+                .filter(name -> !name.startsWith("$"))   // 프록시와 계측 필드 제외
                 .collect(Collectors.toSet());
 
         assertEquals(allowed, actual);

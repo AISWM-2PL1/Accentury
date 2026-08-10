@@ -23,7 +23,7 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
  * 클라이언트는 항상 같은 형태의 JSON을 받는다.
  * <p>
  * {@link ResponseEntityExceptionHandler}를 상속하는 이유:
- * 깨진 JSON·미지원 메서드(405)·미지원 미디어 타입(415)·없는 경로(404) 등
+ * 깨진 JSON, 미지원 메서드(405), 미지원 미디어 타입(415), 없는 경로(404) 등
  * 스프링 프레임워크가 던지는 예외 10여 종을 부모가 올바른 상태코드로 잡아주고,
  * 우리는 {@link #handleExceptionInternal} 하나만 재정의해서 응답 본문을
  * 우리 봉투로 바꾼다.
@@ -36,15 +36,15 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     /**
      * 오류 응답은 어떤 캐시에도 저장하지 않는다.
      * <p>
-     * 404, 405, 410은 캐시 지시자가 없으면 휴리스틱 캐싱 대상이고(RFC 9110 §15.1),
-     * 이 API의 정상 응답은 공유 캐시를 명시적으로 초대한다 (§3.2 - public, immutable, 1년).
-     * 그 앞에 CDN이 서면, 배포 중 신규 버전 요청이 구 인스턴스에 닿아 받은 404가 눌러앉아
-     * 정상 사용자에게 반복 재생될 수 있다 (Claude 리뷰 P2).
+     * 404, 405, 410은 캐시 지시자가 없으면 휴리스틱 캐싱 대상이다(RFC 9110 §15.1).
+     * 정상 응답이 1년 immutable로 캐싱되는 API라(§3.2 - CDN 미도입 확정으로 private,
+     * KAN-101 종결), 배포 중 잠깐 난 404가 캐시에 눌러앉으면 정상 사용자에게
+     * 반복 재생될 수 있다 (Claude 리뷰 P2).
      */
     private static final CacheControl NO_STORE = CacheControl.noStore();
 
     /**
-     * 비즈니스 예외 - ErrorCode가 상태·retryable을 이미 알고 있다
+     * 비즈니스 예외 - ErrorCode가 상태와 retryable을 이미 알고 있다
      */
     @ExceptionHandler(ApiException.class)
     public ResponseEntity<ErrorResponse> handleApi(ApiException e) {
@@ -53,7 +53,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
         HttpHeaders headers = new HttpHeaders();
         if (e.retryAfterMs() != null) {
-            // 429 응답에 재시도 가능 시간 제공 (KAN-28·34 - 초 단위 올림)
+            // 429 응답에 재시도 가능 시간 제공 (KAN-28, 34 - 초 단위 올림)
             headers.set(HttpHeaders.RETRY_AFTER, String.valueOf((e.retryAfterMs() + 999) / 1000));
         }
 
@@ -66,7 +66,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     }
 
     /**
-     * 경로·쿼리 파라미터 타입 불일치 (예: 숫자 자리에 문자) → 400.
+     * 경로와 쿼리 파라미터 타입 불일치 (예: 숫자 자리에 문자) → 400.
      * 부모도 상위 타입(TypeMismatchException)으로 잡아주지만,
      * 여기서 어떤 파라미터가 문제인지 담은 메시지로 바꾼다.
      */
@@ -92,7 +92,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     /**
      * 부모(ResponseEntityExceptionHandler)가 잡은 모든 프레임워크 예외가
      * 마지막에 이 메서드를 거친다 -> 여기서 본문을 우리 봉투로 교체한다.
-     * 상태코드는 프레임워크가 정한 값을 그대로 존중한다 (404·405·415·400...).
+     * 상태코드는 프레임워크가 정한 값을 그대로 존중한다 (404, 405, 415, 400...).
      */
     @Override
     protected @Nullable ResponseEntity<Object> handleExceptionInternal(

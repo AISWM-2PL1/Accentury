@@ -29,7 +29,7 @@ public record TestDefinitionResponse(
                 definition.items().stream().map(Item::from).toList());
     }
 
-    /** 유형별 미소유 필드(VOICE의 choices, VOCABULARY의 maxDurationMs·guideF0)는 직렬화에서 빠진다 */
+    /** 유형별 미소유 필드(VOICE의 choices, VOCABULARY의 maxDurationMs와 guideF0)는 직렬화에서 빠진다 */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record Item(
             String itemId,
@@ -41,8 +41,13 @@ public record TestDefinitionResponse(
             @Nullable List<TestDefinition.Choice> choices) {
 
         static Item from(TestDefinition.Item item) {
+            // 정의에는 없는 필드다 - 전 문항 공통 상수를 응답에서 채운다. 클라이언트 계약(§3.2)은
+            // 문항별 값을 유지하므로, 나중에 문항별로 열더라도 응답 형태는 바뀌지 않는다
+            Integer maxDurationMs = item.type() == TestDefinition.ItemType.VOICE
+                    ? TestDefinition.VOICE_MAX_DURATION_MS
+                    : null;
             return new Item(item.itemId(), item.seq(), item.type(), item.prompt(),
-                    item.maxDurationMs(), item.guideF0(), item.choices());
+                    maxDurationMs, item.guideF0(), item.choices());
         }
     }
 }

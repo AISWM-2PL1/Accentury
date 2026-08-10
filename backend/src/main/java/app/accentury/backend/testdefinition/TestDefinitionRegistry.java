@@ -25,12 +25,13 @@ import java.util.Set;
 /**
  * 발행된 테스트 정의의 저장소 (KAN-10).
  * <p>
- * 프로토타입의 "발행"은 classpath seed({@code test-definitions/*.json}) 로드다 -
- * KAN-26이 "CMS 없이 JSON seed"를 명시했다. 관리자 발행 API·DB 이관·롤백은 KAN-26에서 한다.
- * 시작 시 전부 로드·검증하므로 유효하지 않은 정의가 있으면 서버가 뜨지 않는다
- * (발행 거부 - KAN-10 AC·명세서 §6). 로드 후에는 불변이라 잠금 없이 읽는다.
+ * 프로토타입의 "발행"은 classpath seed({@code test-definitions/*.json}) 로드다.
+ * 발행 입력은 DB로 확정됐다(2026-08-09, 명세서 §6) - KAN-26에서 seed/마이그레이션 기반
+ * DB 발행과 활성 전환으로 이관하며, 그때 JSON 파일 로드 경로와 파일명 검증은 폐기한다.
+ * 시작 시 전부 로드하고 검증하므로 유효하지 않은 정의가 있으면 서버가 뜨지 않는다
+ * (발행 거부 - KAN-10 AC와 명세서 §6). 로드 후에는 불변이라 잠금 없이 읽는다.
  * <p>
- * 미발행·경북 콘텐츠는 여기 실리지 않으므로 외부에 나갈 수 없다 (KAN-10 요구).
+ * 미발행과 경북 콘텐츠는 여기 실리지 않으므로 외부에 나갈 수 없다 (KAN-10 요구).
  */
 @Component
 public class TestDefinitionRegistry {
@@ -52,7 +53,7 @@ public class TestDefinitionRegistry {
     private final Map<String, PublishedDefinition> published = new HashMap<>();
 
     /**
-     * @param definition 정답 포함 원본 - 서버 내부용 (KAN-15 답안 저장·KAN-21 채점)
+     * @param definition 정답 포함 원본 - 서버 내부용 (KAN-15 답안 저장, KAN-21 채점)
      * @param response   정답 제외 공개용 - 그대로 직렬화해 응답한다
      * @param etag       응답 본문 SHA-256의 강한 ETag - 버전 경로가 불변이라 재검증은 항상 304다 (§3.2)
      */
@@ -148,7 +149,7 @@ public class TestDefinitionRegistry {
     }
 
     /**
-     * 발행 전 검증 (명세서 §6·KAN-10 AC). 실패는 {@link IllegalStateException} - 서버 기동 중단.
+     * 발행 전 검증 (명세서 §6, KAN-10 AC). 실패는 {@link IllegalStateException} - 서버 기동 중단.
      * KAN-26이 관리자 발행 API를 만들면 이 검증을 그대로 가져간다.
      */
     static void validate(TestDefinition definition) {
@@ -184,16 +185,14 @@ public class TestDefinitionRegistry {
             }
         }
         require(voice == VOICE_COUNT && vocabulary == VOCABULARY_COUNT,
-                "문항 구성이 음성 " + VOICE_COUNT + "·어휘 " + VOCABULARY_COUNT
-                        + "이 아니다: 음성 " + voice + "·어휘 " + vocabulary);
+                "문항 구성이 음성 " + VOICE_COUNT + ", 어휘 " + VOCABULARY_COUNT
+                        + "이 아니다: 음성 " + voice + ", 어휘 " + vocabulary);
         for (int seq = 1; seq <= items.size(); seq++) {
             require(seqs.contains(seq), "seq는 1부터 연속이어야 한다: " + seq + " 누락");
         }
     }
 
     private static void validateVoice(TestDefinition.Item item) {
-        require(item.maxDurationMs() != null && item.maxDurationMs() > 0,
-                "VOICE 문항에 maxDurationMs가 필요하다: " + item.itemId());
         require(item.choices() == null && item.correctChoiceId() == null,
                 "VOICE 문항에 어휘 필드가 있다: " + item.itemId());
 
@@ -203,14 +202,15 @@ public class TestDefinitionRegistry {
         require(guideF0.frameIntervalMs() > 0, "guideF0.frameIntervalMs는 양수여야 한다: " + item.itemId());
         require(guideF0.values() != null && !guideF0.values().isEmpty(),
                 "guideF0.values가 비어 있다: " + item.itemId());
-        require(guideF0.bandLow() == null || guideF0.bandLow().size() == guideF0.values().size(),
-                "guideF0.bandLow 길이가 values와 다르다: " + item.itemId());
-        require(guideF0.bandHigh() == null || guideF0.bandHigh().size() == guideF0.values().size(),
-                "guideF0.bandHigh 길이가 values와 다르다: " + item.itemId());
+        // 허용 밴드는 required다 (2026-08-09 확정, §3.2, §6) - 없으면 발행 거부
+        require(guideF0.bandLow() != null && guideF0.bandLow().size() == guideF0.values().size(),
+                "guideF0.bandLow가 없거나 길이가 values와 다르다: " + item.itemId());
+        require(guideF0.bandHigh() != null && guideF0.bandHigh().size() == guideF0.values().size(),
+                "guideF0.bandHigh가 없거나 길이가 values와 다르다: " + item.itemId());
     }
 
     private static void validateVocabulary(TestDefinition.Item item) {
-        require(item.maxDurationMs() == null && item.guideF0() == null,
+        require(item.guideF0() == null,
                 "VOCABULARY 문항에 음성 필드가 있다: " + item.itemId());
 
         List<TestDefinition.Choice> choices = item.choices();

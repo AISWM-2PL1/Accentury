@@ -11,7 +11,7 @@ import java.time.Instant;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 분석 작업 보존 기간 정리 (API 명세서 §5.5 - 세션·결과는 24시간 후 파기, Codex sol 리뷰 P2).
+ * 분석 작업 보존 기간 정리 (API 명세서 §5.5 - 세션과 결과는 24시간 후 파기, Codex sol 리뷰 P2).
  * <p>
  * 세션 삭제(30분 TTL)와 연동하지 않고 createdAt 기준 자체 수명을 갖는다 - 작업 상태는
  * 세션 만료 후에도 결과 보존 기간(24시간, KAN-25) 동안 남아 있어야 한다.

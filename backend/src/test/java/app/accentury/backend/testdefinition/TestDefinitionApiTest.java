@@ -69,12 +69,12 @@ class TestDefinitionApiTest {
                 .andExpect(jsonPath("$").value(aMapWithSize(5)));
     }
 
-    // === KAN-10 AC - VOICE 5문항·VOCABULARY 5문항이 구분되고 순서가 고정된다 ===
+    // === KAN-10 AC - VOICE 5문항과 VOCABULARY 5문항이 구분되고 순서가 고정된다 ===
 
     @Test
     void 음성5_어휘5가_seq_순서로_교차_출제된다() throws Exception {
         JsonNode items = fetchActiveItems();
-        // KAN-10 정본 표 - 출제 순서는 음성·어휘 교차 (v1→w1→...→v5→w5)
+        // KAN-10 정본 표 - 출제 순서는 음성과 어휘 교차 (v1→w1→...→v5→w5)
         List<String> expectedOrder = List.of("v1", "w1", "v2", "w2", "v3", "w3", "v4", "w4", "v5", "w5");
         for (int i = 0; i < expectedOrder.size(); i++) {
             JsonNode item = items.get(i);
@@ -94,14 +94,18 @@ class TestDefinitionApiTest {
                 continue;
             }
             voiceCount++;
+            // 정의 원본에는 없고 응답에서 서버 상수로 채우는 값이다 - 계약(§3.2)은 문항별 필드를 유지한다.
+            // 리터럴로 두어 상수가 바뀌면 클라이언트 계약 변경으로 드러나게 한다 (KAN-23)
             assertEquals(10000, item.get("maxDurationMs").asInt(), "음성 문항은 최대 10초다 (KAN-23)");
             JsonNode guideF0 = item.get("guideF0");
             assertEquals("semitone", guideF0.get("unit").asString());
             assertEquals(10, guideF0.get("frameIntervalMs").asInt());
             assertTrue(guideF0.get("values").size() > 0, "guideF0.values는 비어 있으면 안 된다");
-            // 허용 밴드는 KAN-17이 산출하면 들어온다 - 그때 이 가드가 울리면 안 된다
+            // 허용 밴드는 required다 (2026-08-09 확정, §3.2, §6) - 발행 검증이 길이까지 강제한다
+            assertEquals(guideF0.get("values").size(), guideF0.get("bandLow").size());
+            assertEquals(guideF0.get("values").size(), guideF0.get("bandHigh").size());
             assertProperties(guideF0, "guideF0",
-                    Set.of("unit", "frameIntervalMs", "values"), Set.of("bandLow", "bandHigh"));
+                    Set.of("unit", "frameIntervalMs", "values", "bandLow", "bandHigh"));
             assertProperties(item, "VOICE 문항",
                     Set.of("itemId", "seq", "type", "prompt", "maxDurationMs", "guideF0"));
         }
@@ -142,7 +146,7 @@ class TestDefinitionApiTest {
         assertFalse(body.contains("referenceAudio"), "기준 음성 필드는 범위 제외다 (KAN-12)");
     }
 
-    // === §3.2 - 불변·Cache-Control: immutable, ETag 지원 ===
+    // === §3.2 - 불변, Cache-Control: immutable, ETag 지원 ===
 
     @Test
     void 버전_경로는_ETag와_불변_캐싱을_지원한다() throws Exception {
@@ -150,6 +154,8 @@ class TestDefinitionApiTest {
                 .andExpect(status().isOk())
                 .andExpect(header().exists("ETag"))
                 .andExpect(header().string("Cache-Control", containsString("immutable")))
+                // 공유 캐시 미사용 - CDN 미도입 확정으로 public이 아니라 private다 (2026-08-09, KAN-101)
+                .andExpect(header().string("Cache-Control", containsString("private")))
                 .andReturn();
 
         String etag = first.getResponse().getHeader("ETag");
@@ -189,7 +195,7 @@ class TestDefinitionApiTest {
                 .andExpect(jsonPath("$.items.length()").value(10));
     }
 
-    // === KAN-10 요구 - 미발행·경북 콘텐츠는 외부에 제공하지 않는다 ===
+    // === KAN-10 요구 - 미발행과 경북 콘텐츠는 외부에 제공하지 않는다 ===
 
     @Test
     void 미발행_버전은_404_공통_오류_봉투이고_캐시되지_않는다() throws Exception {
@@ -197,8 +203,8 @@ class TestDefinitionApiTest {
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("RESOURCE_NOT_FOUND"))
                 .andExpect(jsonPath("$.correlationId").exists())
-                // 200이 공유 캐시를 초대하는 경로다 - 배포 중 잠깐 난 404가 CDN에 눌러앉으면
-                // 정상 사용자에게 반복 재생된다 (Claude 리뷰 P2)
+                // 404는 지시자가 없으면 휴리스틱 캐싱 대상이다(RFC 9110 §15.1) - 정상 응답이
+                // 1년 immutable인 API라 캐시에 눌러앉은 오류는 반복 재생된다 (Claude 리뷰 P2)
                 .andExpect(header().string("Cache-Control", containsString("no-store")));
     }
 
@@ -206,15 +212,12 @@ class TestDefinitionApiTest {
      * 응답에 허용 목록 밖의 필드가 없는지 확인한다.
      * <p>
      * {@link TestDefinitionResponse}가 내부 타입({@code TestDefinition.GuideF0}, {@code Choice})을
-     * 그대로 재사용하므로, 내부에 필드가 늘면 응답으로 그대로 새어 나간다. 필드 개수로 고정하면
-     * 계획된 추가(KAN-17 허용 밴드)에도 깨져서 정상 작업을 막으므로, 이름 기준으로 막는다
-     * (Claude 리뷰 P3).
+     * 그대로 재사용하므로, 내부에 필드가 늘면 응답으로 그대로 새어 나간다.
+     * 필드 개수 고정 대신 이름 기준으로 막는다 (Claude 리뷰 P3).
      *
-     * @param required 반드시 있어야 하는 필드
-     * @param optional 있어도 되는 필드 - 아직 발행되지 않아 현 seed에는 없을 수 있다
+     * @param required 반드시 있어야 하는 필드 - 이 밖의 필드는 노출로 간주한다
      */
-    private static void assertProperties(JsonNode node, String what,
-                                         Set<String> required, Set<String> optional) {
+    private static void assertProperties(JsonNode node, String what, Set<String> required) {
         Set<String> actual = new LinkedHashSet<>(node.propertyNames());
 
         Set<String> missing = new LinkedHashSet<>(required);
@@ -223,12 +226,7 @@ class TestDefinitionApiTest {
 
         Set<String> leaked = new LinkedHashSet<>(actual);
         leaked.removeAll(required);
-        leaked.removeAll(optional);
         assertTrue(leaked.isEmpty(), what + "에 허용되지 않은 필드가 노출됐다: " + leaked);
-    }
-
-    private static void assertProperties(JsonNode node, String what, Set<String> required) {
-        assertProperties(node, what, required, Set.of());
     }
 
     private JsonNode fetchActiveItems() throws Exception {

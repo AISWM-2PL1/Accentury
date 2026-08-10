@@ -58,7 +58,7 @@ class SessionApiTest {
 
     @Test
     void 바디_없이도_세션이_생성된다() throws Exception {
-        // §3.1 - campaignToken·client 모두 optional. 웹(KAN-31)은 아무 정보 없이 시작할 수 있다
+        // §3.1 - campaignToken과 client 모두 optional. 웹(KAN-31)은 아무 정보 없이 시작할 수 있다
         mockMvc.perform(post("/v0/sessions"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.sessionId").value(startsWith("s_")));
@@ -89,7 +89,7 @@ class SessionApiTest {
         assertNotEquals(first.get("sessionToken").asString(), second.get("sessionToken").asString());
     }
 
-    // === 검증 실패 - 공통 오류 봉투 400 (§2.3·§2.4) ===
+    // === 검증 실패 - 공통 오류 봉투 400 (§2.3, §2.4) ===
 
     @Test
     void 목록에_없는_platform은_400_VALIDATION_FAILED다() throws Exception {
@@ -102,7 +102,7 @@ class SessionApiTest {
 
     @Test
     void 형식_밖의_campaignToken은_400이다() throws Exception {
-        // 저장되는 값이므로 안전한 문자만 - 로그 위조·인코딩 문제 차단
+        // 저장되는 값이므로 안전한 문자만 - 로그 위조와 인코딩 문제 차단
         mockMvc.perform(post("/v0/sessions")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{ \"campaignToken\": \"한글 토큰!\" }"))

@@ -14,7 +14,7 @@ import java.time.Instant;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 익명 세션의 생성·인증·만료 정리 (KAN-9).
+ * 익명 세션의 생성과 인증, 만료 정리 (KAN-9).
  * <p>
  * 세션 저장소는 PostgreSQL이다 (2026-07-30 확정, §2.1) - {@code expires_at} 컬럼 +
  * 요청 시 만료 검사 + 주기 삭제로 TTL을 구현한다. Redis 전환은 BE 다중 인스턴스
@@ -62,15 +62,6 @@ public class SessionService {
     }
 
     /**
-     * 토큰이 해당 세션의 것인지 검증한다. 이후 인증 필요 API(KAN-10·23·24·25)가 공용으로 쓴다.
-     * <ul>
-     *   <li>모르는 토큰·만료된 토큰 → 401 SESSION_EXPIRED - 이 둘은 어떤 경로로도 구분되면
-     *       안 된다. 주기 삭제 전후의 만료 토큰이 다른 응답을 받으면 저장소 상태를 추측하는
-     *       단서가 되므로, 만료 검사는 반드시 세션 ID 비교보다 먼저다 (Codex sol 리뷰 P1).</li>
-     *   <li>유효한데 다른 세션의 토큰 → 403 SESSION_FORBIDDEN (§2.1 - 경로 {sessionId}와 토큰 세션 불일치)</li>
-     * </ul>
-     */
-    /**
      * {@code Authorization: Bearer {token}} 헤더로 인증한다 (§2.1, §2.2) -
      * 인증 필요 API(KAN-23, 24, 15, 16, 25)의 공용 진입점.
      * 헤더 부재나 형식 오류도 401 SESSION_EXPIRED다 - 미인증과 만료를 구분해주지 않는다.
@@ -84,6 +75,15 @@ public class SessionService {
         return authenticate(sessionId, authorizationHeader.substring(7).strip());
     }
 
+    /**
+     * 토큰이 해당 세션의 것인지 검증한다.
+     * <ul>
+     *   <li>모르는 토큰과 만료된 토큰 → 401 SESSION_EXPIRED - 이 둘은 어떤 경로로도 구분되면
+     *       안 된다. 주기 삭제 전후의 만료 토큰이 다른 응답을 받으면 저장소 상태를 추측하는
+     *       단서가 되므로, 만료 검사는 반드시 세션 ID 비교보다 먼저다 (Codex sol 리뷰 P1).</li>
+     *   <li>유효한데 다른 세션의 토큰 → 403 SESSION_FORBIDDEN (§2.1 - 경로 {sessionId}와 토큰 세션 불일치)</li>
+     * </ul>
+     */
     @Transactional(readOnly = true)
     public TestSession authenticate(String sessionId, String sessionToken) {
         TestSession session = repository.findByTokenHash(SessionTokens.hash(sessionToken))
