@@ -3,6 +3,7 @@ package app.accentury.backend.testdefinition;
 import app.accentury.backend.common.AccenturyProperties;
 import app.accentury.backend.common.ApiException;
 import app.accentury.backend.common.ErrorCode;
+import app.accentury.backend.scoring.ScorePolicyRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.Resource;
@@ -60,10 +61,16 @@ public class TestDefinitionRegistry {
     public record PublishedDefinition(TestDefinition definition, TestDefinitionResponse response, String etag) {
     }
 
-    public TestDefinitionRegistry(ObjectMapper objectMapper, AccenturyProperties properties) {
+    public TestDefinitionRegistry(ObjectMapper objectMapper, AccenturyProperties properties,
+                                  ScorePolicyRegistry scorePolicies) {
         for (Resource seed : loadSeeds()) {
             TestDefinition definition = read(objectMapper, seed);
             validate(definition);
+            // scoreVersion 참조 유효 검증 (§6, KAN-21) - 활성 버전만 보면 비활성 정의에 고정된
+            // 세션이 완료 시점에 500을 맞는다. 발행되는 모든 정의를 본다 (Codex sol 리뷰 P2)
+            require(scorePolicies.isPublished(definition.scoreVersion()),
+                    "정의가 참조하는 scoreVersion(" + definition.scoreVersion()
+                            + ")의 점수 정책 seed가 없다: " + definition.testVersion());
             requireMatchingFilename(seed, definition);
 
             // 응답은 seq 오름차순 고정 (KAN-10 AC - 순서 고정). seed 순서에 의존하지 않는다

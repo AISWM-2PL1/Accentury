@@ -3,6 +3,7 @@ package app.accentury.backend.testdefinition;
 import app.accentury.backend.common.AccenturyProperties;
 import app.accentury.backend.common.ApiException;
 import app.accentury.backend.common.ErrorCode;
+import app.accentury.backend.scoring.ScorePolicyRegistry;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -123,23 +124,44 @@ class TestDefinitionRegistryTest {
     @Test
     void 활성_버전의_seed가_없으면_기동에_실패한다() {
         AccenturyProperties noSuchVersion = props("gn-9999.99.9", "sv-0.3");
+        // 픽스처가 던지는 예외까지 assertThrows에 잡히면 검사를 잃은 회귀도 통과한다 - 람다 밖에서 만든다
+        ScorePolicyRegistry policies = policies();
         assertThrows(IllegalStateException.class,
-                () -> new TestDefinitionRegistry(JsonMapper.builder().build(), noSuchVersion));
+                () -> new TestDefinitionRegistry(JsonMapper.builder().build(), noSuchVersion, policies));
     }
 
     @Test
     void 활성_버전의_scoreVersion이_설정과_다르면_기동에_실패한다() {
         // 세션(설정값 고정)과 정의 응답(seed값)이 서로 다른 채점 버전을 가리키는 배포를 막는다 (Codex sol 리뷰 P2)
         AccenturyProperties mismatched = props("gn-2026.08.1", "sv-9.9");
+        ScorePolicyRegistry policies = policies();
         IllegalStateException rejected = assertThrows(IllegalStateException.class,
-                () -> new TestDefinitionRegistry(JsonMapper.builder().build(), mismatched));
+                () -> new TestDefinitionRegistry(JsonMapper.builder().build(), mismatched, policies));
         assertTrue(rejected.getMessage().contains("scoreVersion"), rejected.getMessage());
+    }
+
+    @Test
+    void 정의가_참조하는_scoreVersion의_정책이_없으면_기동에_실패한다() {
+        // scoreVersion 참조 유효 검증 (§6, KAN-21) - 활성이 아닌 정의라도 참조가 끊기면 발행 거부.
+        // 정책 seed는 classpath 고정이라, 참조 실패 상황은 조회를 막은 레지스트리로 재현한다
+        ScorePolicyRegistry noPolicies = new ScorePolicyRegistry(
+                JsonMapper.builder().build(), props("gn-2026.08.1", "sv-0.3")) {
+            @Override
+            public boolean isPublished(String scoreVersion) {
+                return false;
+            }
+        };
+        IllegalStateException rejected = assertThrows(IllegalStateException.class,
+                () -> new TestDefinitionRegistry(JsonMapper.builder().build(),
+                        props("gn-2026.08.1", "sv-0.3"), noPolicies));
+        assertTrue(rejected.getMessage().contains("점수 정책"), rejected.getMessage());
     }
 
     @Test
     void 발행된_seed는_로드되고_미발행_버전은_404다() {
         AccenturyProperties active = props("gn-2026.08.1", "sv-0.3");
-        TestDefinitionRegistry registry = new TestDefinitionRegistry(JsonMapper.builder().build(), active);
+        TestDefinitionRegistry registry =
+                new TestDefinitionRegistry(JsonMapper.builder().build(), active, policies());
 
         assertEquals("gn-2026.08.1", registry.get("gn-2026.08.1").response().testVersion());
         ApiException notFound =
@@ -148,6 +170,11 @@ class TestDefinitionRegistryTest {
     }
 
     // === 픽스처 ===
+
+    /** 실제 seed(sv-0.3)를 로드한 점수 정책 레지스트리 - 정의의 scoreVersion 참조 검증에 쓰인다 */
+    private static ScorePolicyRegistry policies() {
+        return new ScorePolicyRegistry(JsonMapper.builder().build(), props("gn-2026.08.1", "sv-0.3"));
+    }
 
     /** 레지스트리 기동 검사용 설정. 업로드, CORS 등 무관한 항목은 기본값과 같게 둔다 */
     private static AccenturyProperties props(String testVersion, String scoreVersion) {
