@@ -124,6 +124,20 @@ class TestFlowController private constructor(
     }
 
     /**
+     * 대응 업로드가 없는 대기 시도를 걷어낸다. 복원 직후 한 번 부른다.
+     *
+     * 실제로 지우는 건 프로세스 사망 복원 경로다: 대기 시도는 saver가 살리지만 업로드는 메모리
+     * (UploadManager)에만 있어 함께 사라진다 — 남겨두면 [onUploadsChanged]가 영영 조립하지 못할
+     * 가짜 대기가 된다. 그 문항은 웹이 결과를 받지 못한 채로 남아 [녹음 화면 다시 열기]로 다시
+     * 요청하는 쪽이 정본이다.
+     *
+     * 회전은 업로드를 든 ViewModel이 살아남아 키가 그대로이므로 아무것도 지우지 않는다.
+     */
+    fun pruneAttemptsWithoutUpload(knownAttemptIds: Set<String>) {
+        pendingAttempts.keys.retainAll(knownAttemptIds)
+    }
+
+    /**
      * 업로드 상태가 바뀔 때마다 부른다. 완료된 시도만 [ItemResult]로 조립해 반환하고 대기 목록에서
      * 지운다 — 같은 시도를 두 번 내보내지 않는다(웹은 문항당 결과 1회를 전제로 진행한다).
      * 진행 중·실패는 남겨 둔다: 재시도가 성공하면 그때 실려 나간다.

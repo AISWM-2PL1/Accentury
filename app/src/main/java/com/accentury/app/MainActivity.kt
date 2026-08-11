@@ -26,7 +26,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -54,18 +53,13 @@ import com.accentury.app.recording.RecordingViewModel
 import com.accentury.app.testflow.TestFlowController
 import com.accentury.app.testflow.TestFlowPhase
 import com.accentury.app.ui.theme.AccenturyTheme
-import com.accentury.app.upload.OkHttpUploadClient
-import com.accentury.app.upload.UploadManager
 import com.accentury.app.upload.UploadRequest
 import com.accentury.app.upload.UploadStatusBar
+import com.accentury.app.upload.UploadViewModel
 import com.accentury.app.web.TestEntry
 import com.accentury.app.web.WebViewHost
 import com.accentury.app.web.buildWebUrl
 import com.accentury.app.web.webOrigin
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 
 // 에뮬레이터에서 호스트 머신을 가리키는 주소. 실기기 테스트는 이 값만 바꾸면 된다.
 private const val DEV_BASE_URL = "http://10.0.2.2:8080"
@@ -118,31 +112,19 @@ private fun TestFlow(modifier: Modifier = Modifier) {
     val flow = rememberSaveable(saver = TestFlowController.saver()) { TestFlowController() }
 
     // 업로드는 테스트 phase 전체를 산다 — 녹음 화면이 내려가도 전송은 계속돼야 하고, 실패한 건은
-    // 웹으로 돌아간 뒤에도 상태 바에서 재시도할 수 있어야 한다.
-    // SupervisorJob으로 업로드끼리 격리하고(하나가 실패해도 형제를 죽이지 않는다) 직렬화·바이트
-    // 처리는 UI 스레드 밖(Default)에서 돌린다.
-    val uploadScope = remember { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
+    // 웹으로 돌아간 뒤에도 상태 바에서 재시도할 수 있어야 한다. 회전(Activity 재생성)도 넘겨야
+    // 해서 소유자는 ViewModel이다 (UploadViewModel 주석).
+    val uploadViewModel: UploadViewModel = viewModel(
+        factory = UploadViewModel.factory(DEV_BASE_URL, DEV_SESSION_ID, DEV_SESSION_TOKEN),
+    )
+    val uploads by uploadViewModel.uploads.collectAsStateWithLifecycle()
 
-    val uploadManager = remember(uploadScope) {
-        UploadManager(
-            client = OkHttpUploadClient(DEV_BASE_URL),
-            scope = uploadScope,
-            sessionId = DEV_SESSION_ID,
-            sessionToken = DEV_SESSION_TOKEN,
-        )
+    // 복원된 대기 시도 중 대응 업로드가 없는 건을 한 번만 걷어낸다. 회전은 ViewModel이 살아남아
+    // 업로드 키가 그대로라 아무것도 지워지지 않고, 프로세스 사망 복원에서는 전부 정리된다.
+    // 아래 결과 소비 이펙트보다 먼저 등록돼(둘 다 메인 스레드) 가짜 대기를 먼저 걷어낸다.
+    LaunchedEffect(Unit) {
+        flow.pruneAttemptsWithoutUpload(uploadViewModel.uploads.value.keys)
     }
-    // 스코프만 취소하면 register~start 사이의 시도가 InFlight·원본으로 남을 수 있다.
-    // clearAll을 먼저 불러 음성 바이트·상태를 확정 폐기한 뒤 스코프를 내린다 (FR-DP-02).
-    DisposableEffect(uploadScope) {
-        onDispose {
-            uploadManager.clearAll()
-            uploadScope.cancel()
-        }
-    }
-
-    // UploadState는 itemId를 들고 있지 않아, 실패 표시에 쓸 문항 라벨은 여기서 따로 기억한다.
-    val labels = remember(uploadScope) { mutableStateMapOf<String, String>() }
-    val uploads by uploadManager.uploads.collectAsStateWithLifecycle()
 
     // 결과를 웹에 넣으려면 evaluateJavascript를 부를 인스턴스가 필요하다.
     // 로드 실패 화면·재시도 구간에는 WebView가 아예 없으므로 nullable이다.
@@ -214,8 +196,7 @@ private fun TestFlow(modifier: Modifier = Modifier) {
                             // [녹음 화면 다시 열기]로 다시 녹음하게 한다.
                             flow.onRecordingExit()
                         } else {
-                            labels[attemptId] = "${phase.start.itemNumber}번 문항"
-                            uploadManager.enqueue(
+                            uploadViewModel.enqueue(
                                 UploadRequest(
                                     attemptId = attemptId,
                                     itemId = phase.start.itemId,
@@ -223,6 +204,7 @@ private fun TestFlow(modifier: Modifier = Modifier) {
                                     durationMs = durationMs,
                                     clientQuality = AudioQuality.measure(pcm),
                                 ),
+                                label = "${phase.start.itemNumber}번 문항",
                             )
                             // 업로드 완료를 기다리지 않고 웹으로 돌아간다 — 결과는 준비되는 대로
                             // 위의 LaunchedEffect가 따로 실어 보낸다.
@@ -242,15 +224,14 @@ private fun TestFlow(modifier: Modifier = Modifier) {
 
         UploadStatusBar(
             uploads = uploads,
-            labelOf = { attemptId -> labels[attemptId] ?: "문항" },
-            onRetry = uploadManager::retry,
+            labelOf = uploadViewModel::labelOf,
+            onRetry = uploadViewModel::retry,
             onEndTest = {
                 // 남아 있는 음성 바이트를 전부 폐기하고 인트로로 되돌린다 (FR-DP-02).
                 // 컨트롤러의 대기 시도는 남지만 업로드가 사라져 결과로 조립되지 않는다 — 다시
                 // 시작하면 웹이 결과를 받지 못한 문항부터 다시 요청하므로 진행은 어긋나지 않는다.
                 viewModel.reset()
-                uploadManager.clearAll()
-                labels.clear()
+                uploadViewModel.clearAll()
                 startRequested = false
                 testEntered = false
             },

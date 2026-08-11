@@ -290,6 +290,63 @@ class TestFlowControllerTest {
     }
 
     @Test
+    fun `업로드가 남아 있는 시도는 정리에서 살아남아 결과가 된다 - 회전 경로`() {
+        val controller = TestFlowController()
+        controller.onStartVoiceItem(voiceItem(itemId = "item_1"), micGranted = true)
+        controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
+
+        val restored = rotate(controller)
+        restored.pruneAttemptsWithoutUpload(setOf("at_1"))
+
+        val results = restored.onUploadsChanged(mapOf("at_1" to UploadState.Done("job_1")))
+        assertEquals(listOf("item_1"), results.map { it.itemId })
+    }
+
+    @Test
+    fun `업로드가 사라진 시도는 걷어낸다 - 프로세스 사망 복원의 가짜 대기`() {
+        val controller = TestFlowController()
+        controller.onStartVoiceItem(voiceItem(itemId = "item_1"), micGranted = true)
+        controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
+
+        val restored = rotate(controller)
+        restored.pruneAttemptsWithoutUpload(emptySet())
+
+        // 뒤늦게 같은 키의 완료가 들어와도 이 시도는 다시 살아나지 않는다.
+        assertTrue(restored.onUploadsChanged(mapOf("at_1" to UploadState.Done("job_1"))).isEmpty())
+    }
+
+    @Test
+    fun `정리는 아는 시도만 남긴다 - 섞여 있어도 등록 순서를 지킨다`() {
+        val controller = TestFlowController()
+        listOf("item_1", "item_2", "item_3").forEachIndexed { index, itemId ->
+            controller.onStartVoiceItem(voiceItem(itemId = itemId, number = index + 1), micGranted = true)
+            controller.onRecordingFinished("at_${index + 1}", durationMs = 3_000, quality = QualityStatus.NORMAL)
+        }
+
+        controller.pruneAttemptsWithoutUpload(setOf("at_1", "at_3"))
+
+        val results = controller.onUploadsChanged(
+            mapOf(
+                "at_1" to UploadState.Done("job_1"),
+                "at_2" to UploadState.Done("job_2"),
+                "at_3" to UploadState.Done("job_3"),
+            ),
+        )
+        assertEquals(listOf("at_1", "at_3"), results.map { it.attemptId })
+    }
+
+    @Test
+    fun `정리는 지금 덮여 있는 화면을 건드리지 않는다`() {
+        val controller = TestFlowController()
+        val start = voiceItem()
+        controller.onStartVoiceItem(start, micGranted = true)
+
+        controller.pruneAttemptsWithoutUpload(emptySet())
+
+        assertEquals(TestFlowPhase.Recording(start), controller.phase)
+    }
+
+    @Test
     fun `저장값이 깨져 있으면 복원하지 않는다 - 새 컨트롤러로 시작한다`() {
         assertNull(with(TestFlowController.saver()) { restore("{not json") })
     }
