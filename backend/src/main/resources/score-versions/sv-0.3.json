@@ -1,0 +1,12 @@
+{
+  "scoreVersion": "sv-0.3",
+  "intonationWeight": 2,
+  "vocabularyWeight": 1,
+  "tiers": [
+    { "code": "OUTSIDER", "name": "외지인", "rank": 1, "minScore": 0 },
+    { "code": "TRAVELER", "name": "여행객", "rank": 2, "minScore": 20 },
+    { "code": "WANNABE", "name": "사투리 호소인", "rank": 3, "minScore": 40 },
+    { "code": "HONORARY", "name": "명예주민", "rank": 4, "minScore": 60 },
+    { "code": "NATIVE", "name": "경남 토박이", "rank": 5, "minScore": 80 }
+  ]
+}
