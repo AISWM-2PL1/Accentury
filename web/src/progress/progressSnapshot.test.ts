@@ -5,6 +5,7 @@ import {
   clearSnapshot,
   restoreProgress,
   saveSnapshot,
+  snapshotKey,
   type SnapshotStorage,
 } from './progressSnapshot'
 import type { TestDefinition, TestItem } from './testDefinition'
@@ -213,6 +214,47 @@ describe('복원 거부 — 믿을 수 없는 스냅샷은 폐기한다', () => 
     clearSnapshot(storage)
 
     expect(restoreProgress(storage, tenItemDefinition())).toBeNull()
+  })
+})
+
+describe('세션 격리 — 다른 세션의 스냅샷은 재생 대상이 아니다 (KAN-99 지적 이관분)', () => {
+  it('sessionId가 다르면 복원하지 않는다', () => {
+    const storage = fakeStorage()
+    saveSnapshot(storage, submitCount(createProgressState(tenItemDefinition()), 3), TEST_VERSION, 'sess-1')
+
+    expect(restoreProgress(storage, tenItemDefinition(), 'sess-2')).toBeNull()
+  })
+
+  it('같은 sessionId면 그대로 복원한다', () => {
+    const storage = fakeStorage()
+    const before = submitCount(createProgressState(tenItemDefinition()), 3)
+    saveSnapshot(storage, before, TEST_VERSION, 'sess-1')
+
+    expect(restoreProgress(storage, tenItemDefinition(), 'sess-1')).toEqual(before)
+  })
+
+  it('sessionId 없는 저장(과도기)과 세션별 저장은 서로 섞이지 않는다', () => {
+    const storage = fakeStorage()
+    saveSnapshot(storage, submitCount(createProgressState(tenItemDefinition()), 1), TEST_VERSION)
+
+    expect(restoreProgress(storage, tenItemDefinition(), 'sess-1')).toBeNull()
+    expect(currentItem(restoreProgress(storage, tenItemDefinition())!)?.itemId).toBe('item-2')
+  })
+
+  it('한 세션을 지워도 다른 세션의 진행은 남는다', () => {
+    const storage = fakeStorage()
+    saveSnapshot(storage, submitCount(createProgressState(tenItemDefinition()), 2), TEST_VERSION, 'sess-1')
+    saveSnapshot(storage, submitCount(createProgressState(tenItemDefinition()), 5), TEST_VERSION, 'sess-2')
+
+    clearSnapshot(storage, 'sess-1')
+
+    expect(restoreProgress(storage, tenItemDefinition(), 'sess-1')).toBeNull()
+    expect(currentItem(restoreProgress(storage, tenItemDefinition(), 'sess-2')!)?.itemId).toBe('item-6')
+  })
+
+  it('키는 접두사 뒤에 sessionId를 붙인 형태다 (sessionId가 없으면 접두사 그대로)', () => {
+    expect(snapshotKey()).toBe(PROGRESS_SNAPSHOT_KEY)
+    expect(snapshotKey('sess-1')).toBe(`${PROGRESS_SNAPSHOT_KEY}:sess-1`)
   })
 })
 

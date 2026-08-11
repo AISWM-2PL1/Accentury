@@ -1,6 +1,6 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { PROGRESS_SNAPSHOT_KEY, type SnapshotStorage } from './progressSnapshot'
+import { snapshotKey, type SnapshotStorage } from './progressSnapshot'
 import type { TestDefinition, TestItem } from './testDefinition'
 import { useTestProgress } from './useTestProgress'
 
@@ -42,9 +42,10 @@ interface SpyStorage extends SnapshotStorage {
   writes: string[]
 }
 
-function spyStorage(initial?: string): SpyStorage {
+/** @param initialKey 초기 스냅샷을 심을 키. 세션 격리 테스트에서만 기본값 밖의 값을 준다 */
+function spyStorage(initial?: string, initialKey = snapshotKey()): SpyStorage {
   const map = new Map<string, string>()
-  if (initial !== undefined) map.set(PROGRESS_SNAPSHOT_KEY, initial)
+  if (initial !== undefined) map.set(initialKey, initial)
   const writes: string[] = []
   return {
     writes,
@@ -57,8 +58,11 @@ function spyStorage(initial?: string): SpyStorage {
   }
 }
 
-function snapshotOf(storage: SpyStorage): { testVersion: string; submittedItemIds: string[] } | null {
-  const raw = storage.getItem(PROGRESS_SNAPSHOT_KEY)
+function snapshotOf(
+  storage: SpyStorage,
+  sessionId = '',
+): { testVersion: string; submittedItemIds: string[] } | null {
+  const raw = storage.getItem(snapshotKey(sessionId))
   return raw === null ? null : JSON.parse(raw)
 }
 
@@ -176,6 +180,41 @@ describe('submit — 진행과 저장', () => {
     }
 
     expect(snapshotOf(storage)?.submittedItemIds).toHaveLength(10)
+  })
+})
+
+describe('세션 격리 — 스냅샷은 세션 키에 묶인다', () => {
+  it('다른 세션 키에 있는 스냅샷은 복원하지 않는다', () => {
+    const storage = spyStorage(
+      JSON.stringify({ testVersion: TEST_VERSION, submittedItemIds: ['item-1', 'item-2'] }),
+      snapshotKey('sess-1'),
+    )
+
+    const { result } = renderHook(() => useTestProgress(tenItemDefinition(), storage, 'sess-2'))
+
+    expect(result.current.current?.itemId).toBe('item-1')
+  })
+
+  it('같은 세션 키의 스냅샷은 그대로 이어받는다', () => {
+    const storage = spyStorage(
+      JSON.stringify({ testVersion: TEST_VERSION, submittedItemIds: ['item-1', 'item-2'] }),
+      snapshotKey('sess-1'),
+    )
+
+    const { result } = renderHook(() => useTestProgress(tenItemDefinition(), storage, 'sess-1'))
+
+    expect(result.current.current?.itemId).toBe('item-3')
+  })
+
+  it('제출과 이탈 저장 모두 세션 키로 나간다', () => {
+    const storage = spyStorage()
+    const { result } = renderHook(() => useTestProgress(tenItemDefinition(), storage, 'sess-1'))
+
+    act(() => result.current.submit('item-1'))
+    act(() => goHidden())
+
+    expect(snapshotOf(storage, 'sess-1')?.submittedItemIds).toEqual(['item-1'])
+    expect(snapshotOf(storage)).toBeNull()
   })
 })
 

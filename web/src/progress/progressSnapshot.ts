@@ -28,11 +28,29 @@ import { createProgressState, submitItem, type ProgressState } from './progressM
 import type { TestDefinition } from './testDefinition'
 
 /**
- * 저장 키. 같은 오리진에 다른 기능이 쓰는 키와 섞이지 않도록 접두사를 둔다.
- * 세션이 바뀌어도 키는 같다 — 진행 중인 테스트는 한 번에 하나뿐이고,
- * 세션이 바뀐 경우는 testVersion 대조로 걸러진다.
+ * 저장 키의 접두사. 같은 오리진에 다른 기능이 쓰는 키와 섞이지 않게 한다.
+ * sessionId가 없는 과도기에는 이 값이 곧 키다 ([snapshotKey] 참고).
  */
 export const PROGRESS_SNAPSHOT_KEY = 'accentury:progress'
+
+/**
+ * 세션별 저장 키.
+ *
+ * 왜 키를 나누나: 스냅샷은 한 세션의 진행 기록이고, 다른 세션의 기록은 애초에 만나지 않는 편이
+ * 맞다. 같은 키를 공유하면 세션 A의 스냅샷이 세션 B에서 재생 시도 대상이 되고, 걸러지든
+ * 통과하든 남의 진행을 건드린 것이 된다.
+ *
+ * 왜 testVersion 대조처럼 "폐기"하지 않나: 폐기는 남의 스냅샷을 지우는 일이다. 세션 A가
+ * 백그라운드에서 살아 있는데 세션 B가 그 진행을 지울 권리는 없다. 버전 대조는 같은 키를
+ * 나눠 쓰던 시절의 방어이므로 그대로 두되(같은 세션에서 정의가 갈린 경우는 여전히 폐기 대상),
+ * 세션 격리는 키 차원에서 한다.
+ *
+ * @param sessionId 세션 식별자. 빈 문자열이면 접두사만 쓴다 — 세션 클라이언트(KAN-9) 결선 전까지
+ *   웹에 sessionId가 오지 않는 과도기라, 그때는 예전처럼 키 하나를 쓰고 testVersion 대조로 버틴다
+ */
+export function snapshotKey(sessionId = ''): string {
+  return sessionId === '' ? PROGRESS_SNAPSHOT_KEY : `${PROGRESS_SNAPSHOT_KEY}:${sessionId}`
+}
 
 /**
  * 이 모듈이 저장소에 요구하는 최소 인터페이스.
@@ -63,14 +81,20 @@ interface ProgressSnapshot {
  * 저장 시점(백그라운드 진입 직전)에 화면이 죽는다. 잃는 것은 "복귀 시 복원"뿐이다.
  *
  * @param testVersion 진행 중인 세션의 정의 버전 (상태 머신은 이 값을 들고 있지 않아 따로 받는다)
+ * @param sessionId 저장 키를 가르는 세션 식별자 ([snapshotKey])
  */
-export function saveSnapshot(storage: SnapshotStorage, state: ProgressState, testVersion: string): void {
+export function saveSnapshot(
+  storage: SnapshotStorage,
+  state: ProgressState,
+  testVersion: string,
+  sessionId = '',
+): void {
   const snapshot: ProgressSnapshot = {
     testVersion,
     submittedItemIds: state.items.filter((_, index) => state.submitted[index]).map((item) => item.itemId),
   }
   try {
-    storage.setItem(PROGRESS_SNAPSHOT_KEY, JSON.stringify(snapshot))
+    storage.setItem(snapshotKey(sessionId), JSON.stringify(snapshot))
   } catch {
     // 저장소가 막힌 환경(시크릿 모드·쿼터 초과). 복원을 포기할 뿐 진행은 계속된다.
   }
@@ -88,8 +112,12 @@ export function saveSnapshot(storage: SnapshotStorage, state: ProgressState, tes
  * 달리 호출자가 방금 받아 온 자기 입력이고, 손상된 정의로는 복원이든 새 시작이든 어차피
  * 진행할 수 없다. 여기서 null로 감추면 호출자가 새로 시작하려다 같은 예외를 다시 만난다.
  */
-export function restoreProgress(storage: SnapshotStorage, definition: TestDefinition): ProgressState | null {
-  const snapshot = readSnapshot(storage)
+export function restoreProgress(
+  storage: SnapshotStorage,
+  definition: TestDefinition,
+  sessionId = '',
+): ProgressState | null {
+  const snapshot = readSnapshot(storage, sessionId)
   if (snapshot === null) return null
 
   // 세션이 만료돼 새 버전으로 다시 시작한 경우. itemId가 우연히 겹치면 남의 진행을
@@ -111,9 +139,9 @@ export function restoreProgress(storage: SnapshotStorage, definition: TestDefini
  * 저장된 진행을 지운다. 테스트를 끝냈거나 새로 시작할 때 호출한다.
  * 삭제가 실패해도 무시한다 — 남은 스냅샷은 다음 저장이 덮어쓰거나 testVersion 대조에서 걸러진다.
  */
-export function clearSnapshot(storage: SnapshotStorage): void {
+export function clearSnapshot(storage: SnapshotStorage, sessionId = ''): void {
   try {
-    storage.removeItem(PROGRESS_SNAPSHOT_KEY)
+    storage.removeItem(snapshotKey(sessionId))
   } catch {
     // 저장소가 막힌 환경. 지울 수 없어도 복원 경로가 스스로 방어한다.
   }
@@ -125,10 +153,10 @@ export function clearSnapshot(storage: SnapshotStorage): void {
  * 여기서 보는 것은 "재생을 시도할 수 있는 형태인가"까지다. 내용이 말이 되는지(순서·존재 여부)는
  * 재생이 상태 머신 가드로 판정하므로 중복해서 검사하지 않는다.
  */
-function readSnapshot(storage: SnapshotStorage): ProgressSnapshot | null {
+function readSnapshot(storage: SnapshotStorage, sessionId: string): ProgressSnapshot | null {
   let raw: string | null
   try {
-    raw = storage.getItem(PROGRESS_SNAPSHOT_KEY)
+    raw = storage.getItem(snapshotKey(sessionId))
   } catch {
     return null
   }

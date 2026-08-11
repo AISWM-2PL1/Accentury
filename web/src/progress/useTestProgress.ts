@@ -59,21 +59,26 @@ function defaultStorage(): SnapshotStorage {
   }
 }
 
+/**
+ * @param sessionId 스냅샷을 세션별로 가르는 식별자 (progressSnapshot의 [snapshotKey]).
+ *   기본값이 빈 문자열인 것은 KAN-9 세션 클라이언트 결선 전 과도기라서다.
+ */
 export function useTestProgress(
   definition: TestDefinition,
   storage: SnapshotStorage = defaultStorage(),
+  sessionId = '',
 ): UseTestProgressResult {
   // lazy initializer — 마운트당 한 번만 복원을 시도한다. 매 렌더 복원하면 방금 진행한 상태를
   // 스냅샷으로 덮어써 되감기가 된다.
   const [state, setState] = useState<ProgressState>(
-    () => restoreProgress(storage, definition) ?? createProgressState(definition),
+    () => restoreProgress(storage, definition, sessionId) ?? createProgressState(definition),
   )
 
   // 저장 시점(제출·화면 이탈)에 필요한 최신 값들. ref에 모아두는 이유: 상태가 바뀔 때마다
   // visibilitychange 리스너를 떼었다 붙였다 하지 않기 위해서다. 이탈 직전에 리스너가 없는
   // 순간이 생기면 그 진행이 통째로 날아간다.
-  const latest = useRef({ state, storage, testVersion: definition.testVersion })
-  latest.current = { state, storage, testVersion: definition.testVersion }
+  const latest = useRef({ state, storage, testVersion: definition.testVersion, sessionId })
+  latest.current = { state, storage, testVersion: definition.testVersion, sessionId }
 
   const submit = useCallback((itemId: string) => {
     const previous = latest.current.state
@@ -83,13 +88,18 @@ export function useTestProgress(
     if (next === previous) return
 
     latest.current.state = next
-    saveSnapshot(latest.current.storage, next, latest.current.testVersion)
+    saveSnapshot(latest.current.storage, next, latest.current.testVersion, latest.current.sessionId)
     setState(next)
   }, [])
 
   useEffect(() => {
     const persist = () => {
-      saveSnapshot(latest.current.storage, latest.current.state, latest.current.testVersion)
+      saveSnapshot(
+        latest.current.storage,
+        latest.current.state,
+        latest.current.testVersion,
+        latest.current.sessionId,
+      )
     }
     // 백그라운드 진입 신호. WebView가 뒤로 밀린 뒤 OS가 렌더러를 죽여도 여기까지는 실행된다.
     const onVisibilityChange = () => {

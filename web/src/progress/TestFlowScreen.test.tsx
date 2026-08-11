@@ -1,8 +1,9 @@
-import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen } from '@testing-library/react'
+import { StrictMode } from 'react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TestFlowScreen } from './TestFlowScreen'
 import type { FetchLike } from './fetchTestDefinition'
-import { PROGRESS_SNAPSHOT_KEY, type SnapshotStorage } from './progressSnapshot'
+import { snapshotKey, type SnapshotStorage } from './progressSnapshot'
 import type { TestDefinition, TestItem } from './testDefinition'
 
 const TEST_VERSION = 'gn-2026.08.1'
@@ -56,20 +57,73 @@ function memoryStorage(): SnapshotStorage {
   }
 }
 
-function renderScreen(fetchImpl: FetchLike, storage: SnapshotStorage = memoryStorage()) {
+interface RenderOptions {
+  storage?: SnapshotStorage
+  sessionId?: string
+  /** StrictMode로 감쌀지. 마운트 effect 이중 실행을 재현할 때만 켠다 */
+  strict?: boolean
+}
+
+function renderScreen(fetchImpl: FetchLike, { storage, sessionId, strict }: RenderOptions = {}) {
   return render(
-    <TestFlowScreen apiBase={API_BASE} testVersion={TEST_VERSION} storage={storage} fetchImpl={fetchImpl} />,
+    <TestFlowScreen
+      apiBase={API_BASE}
+      testVersion={TEST_VERSION}
+      sessionId={sessionId}
+      storage={storage ?? memoryStorage()}
+      fetchImpl={fetchImpl}
+    />,
+    strict === true ? { wrapper: StrictMode } : undefined,
   )
 }
 
-/**
- * 현재 문항의 임시 [다음] 버튼을 누른다.
- * `element.click()`이 아니라 fireEvent를 쓰는 이유: fireEvent는 act로 감싸 리렌더까지
- * 흘려보내므로, 클릭 직후 동기적으로 다음 문항을 단언할 수 있다.
- */
-function tapNext() {
-  fireEvent.click(screen.getByRole('button', { name: '다음' }))
+/** 네이티브 브리지가 붙은 앱 환경. 돌려주는 spy가 startVoiceItem 호출을 받는다 */
+function stubBridge() {
+  const startVoiceItem = vi.fn()
+  window.AccenturyBridge = {
+    requestMicPermission: vi.fn(),
+    startVoiceItem,
+    getContractVersion: () => 1,
+  }
+  return startVoiceItem
 }
+
+/*
+ * 첫 음성 문항이 브리지 판정까지 끝내기를 기다리는 두 입구.
+ * 문항 문구만 기다리면 안 되는 이유: 정의 로딩과 전환 호출은 서로 다른 커밋이라, 문구가 뜬
+ * 시점에는 아직 "녹음 화면을 여는 중"이고 판정 결과(대기 뷰냐 폴백이냐)가 나오기 전이다.
+ */
+const findRecordingWait = () => screen.findByText('녹음 화면에서 진행 중…')
+const findDevSubmit = () => screen.findByRole('button', { name: '제출 (개발용)' })
+
+/** 네이티브가 녹음을 마치고 결과를 돌려주는 상황 */
+function deliverResult(itemId: string) {
+  act(() => {
+    window.AccenturyWeb!.onItemResult(
+      JSON.stringify({
+        itemId,
+        attemptId: `attempt-${itemId}`,
+        analysisJobId: `job-${itemId}`,
+        durationMs: 3_200,
+        qualityStatus: 'NORMAL',
+      }),
+    )
+  })
+}
+
+/**
+ * 브리지가 없는 환경에서 현재 문항을 한 칸 진행시킨다 — 음성은 개발용 제출 버튼,
+ * 어휘는 보기 버튼이다. fireEvent를 쓰는 이유는 act로 감싸 리렌더까지 흘려보내기 위해서다.
+ */
+function advance() {
+  const devSubmit = screen.queryByRole('button', { name: '제출 (개발용)' })
+  fireEvent.click(devSubmit ?? screen.getByRole('button', { name: '보기1' }))
+}
+
+afterEach(() => {
+  delete window.AccenturyBridge
+  delete window.AccenturyWeb
+})
 
 describe('정의 로딩', () => {
   it('로딩 중 안내를 보이다가 첫 문항으로 전환된다', async () => {
@@ -115,20 +169,20 @@ describe('문항 진행', () => {
 
   it('유형 뱃지가 문항 유형을 따라간다', async () => {
     renderScreen(okFetch())
-    await screen.findByText('음성 문항 1')
+    await findDevSubmit()
     expect(screen.getByText('🎤 음성 문항')).toBeInTheDocument()
 
-    tapNext()
+    advance()
 
     expect(await screen.findByText('어휘 문항 2')).toBeInTheDocument()
     expect(screen.getByText('📝 단어 문항')).toBeInTheDocument()
   })
 
-  it('[다음]을 누르면 다음 문항과 2/10이 된다', async () => {
+  it('제출을 통지하면 다음 문항과 2/10이 된다', async () => {
     renderScreen(okFetch())
-    await screen.findByText('음성 문항 1')
+    await findDevSubmit()
 
-    tapNext()
+    advance()
 
     expect(screen.getByText('어휘 문항 2')).toBeInTheDocument()
     expect(screen.getByText('2/10')).toBeInTheDocument()
@@ -137,31 +191,180 @@ describe('문항 진행', () => {
 
   it('마지막 문항을 제출하면 분석 대기 자리 표시로 넘어간다', async () => {
     renderScreen(okFetch())
-    await screen.findByText('음성 문항 1')
+    await findDevSubmit()
 
-    for (let i = 0; i < 10; i += 1) tapNext()
+    for (let i = 0; i < 10; i += 1) advance()
 
     expect(screen.getByText('분석 대기 화면 (KAN-14 예정)')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '다음' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '제출 (개발용)' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '보기1' })).not.toBeInTheDocument()
   })
 
   it('진행 중 저장된 스냅샷으로 다시 열면 그 문항에서 이어진다', async () => {
     const storage = memoryStorage()
-    const { unmount } = renderScreen(okFetch(), storage)
-    await screen.findByText('음성 문항 1')
-    tapNext()
-    tapNext()
+    const { unmount } = renderScreen(okFetch(), { storage })
+    await findDevSubmit()
+    advance()
+    advance()
     unmount()
 
-    expect(JSON.parse(storage.getItem(PROGRESS_SNAPSHOT_KEY)!).submittedItemIds).toEqual([
-      'item-1',
-      'item-2',
-    ])
+    expect(JSON.parse(storage.getItem(snapshotKey())!).submittedItemIds).toEqual(['item-1', 'item-2'])
 
-    renderScreen(okFetch(), storage)
+    renderScreen(okFetch(), { storage })
 
     expect(await screen.findByText('음성 문항 3')).toBeInTheDocument()
     expect(screen.getByText('3/10')).toBeInTheDocument()
+  })
+})
+
+describe('VOICE 문항 — 네이티브 녹음 화면 전환 (KAN-100)', () => {
+  it('음성 문항에 들어가면 문항 컨텍스트를 실어 네이티브 전환을 호출한다', async () => {
+    const startVoiceItem = stubBridge()
+    renderScreen(okFetch())
+    await findRecordingWait()
+
+    expect(startVoiceItem).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(startVoiceItem.mock.calls[0][0])).toEqual({
+      itemId: 'item-1',
+      prompt: '음성 문항 1',
+      itemNumber: 1,
+      totalItems: 10,
+      maxDurationMs: 10_000,
+    })
+  })
+
+  it('네이티브가 결과를 돌려주면 다음 문항으로 넘어간다', async () => {
+    stubBridge()
+    renderScreen(okFetch())
+    await findRecordingWait()
+
+    deliverResult('item-1')
+
+    expect(screen.getByText('어휘 문항 2')).toBeInTheDocument()
+    expect(screen.getByText('2/10')).toBeInTheDocument()
+  })
+
+  it('다음 음성 문항에서는 그 문항의 순번으로 다시 호출한다', async () => {
+    const startVoiceItem = stubBridge()
+    renderScreen(okFetch())
+    await findRecordingWait()
+
+    deliverResult('item-1')
+    fireEvent.click(screen.getByRole('button', { name: '보기1' })) // 어휘 문항 2
+
+    expect(await screen.findByText('음성 문항 3')).toBeInTheDocument()
+    expect(startVoiceItem).toHaveBeenCalledTimes(2)
+    expect(JSON.parse(startVoiceItem.mock.calls[1][0])).toMatchObject({ itemId: 'item-3', itemNumber: 3 })
+  })
+
+  it('StrictMode에서도 같은 문항을 두 번 알리지 않는다', async () => {
+    const startVoiceItem = stubBridge()
+    renderScreen(okFetch(), { strict: true })
+    await findRecordingWait()
+
+    expect(startVoiceItem).toHaveBeenCalledTimes(1)
+  })
+
+  it('[녹음 화면 다시 열기]로 같은 문항 전환을 다시 요청할 수 있다 (나가기 이탈 복구)', async () => {
+    // 네이티브 [나가기] 이탈은 웹에 통지되지 않는다 — 대기 뷰의 재진입 버튼이 유일한 복구 통로다.
+    const startVoiceItem = stubBridge()
+    renderScreen(okFetch())
+    await findRecordingWait()
+
+    fireEvent.click(screen.getByRole('button', { name: '녹음 화면 다시 열기' }))
+
+    expect(startVoiceItem).toHaveBeenCalledTimes(2)
+    expect(JSON.parse(startVoiceItem.mock.calls[1][0])).toMatchObject({ itemId: 'item-1' })
+  })
+
+  it('상태 머신이 거부하는 결과 통지는 진행을 움직이지 않는다', async () => {
+    stubBridge()
+    renderScreen(okFetch())
+    await findRecordingWait()
+
+    deliverResult('item-7') // 순서 위반
+    deliverResult('item-1')
+    deliverResult('item-1') // 중복
+
+    expect(screen.getByText('어휘 문항 2')).toBeInTheDocument()
+    expect(screen.getByText('2/10')).toBeInTheDocument()
+  })
+
+  it('브리지가 없으면(브라우저 단독) 안내와 개발용 제출 버튼을 남긴다', async () => {
+    renderScreen(okFetch())
+    await findDevSubmit()
+
+    expect(screen.getByText('녹음 화면을 열 수 없어요 (앱 밖에서 실행 중)')).toBeInTheDocument()
+    expect(screen.queryByText('녹음 화면에서 진행 중…')).not.toBeInTheDocument()
+
+    advance()
+
+    expect(screen.getByText('어휘 문항 2')).toBeInTheDocument()
+  })
+
+  it('화면을 떠나면 결과 수신자를 해제한다', async () => {
+    stubBridge()
+    const { unmount } = renderScreen(okFetch())
+    await findRecordingWait()
+    expect(window.AccenturyWeb).toBeDefined()
+
+    unmount()
+
+    expect(window.AccenturyWeb).toBeUndefined()
+  })
+})
+
+describe('VOCABULARY 문항 — 보기 선택 (정식 구현은 KAN-13)', () => {
+  it('보기 목록을 그리고, 고르면 다음 문항으로 넘어간다', async () => {
+    stubBridge()
+    renderScreen(okFetch())
+    await findRecordingWait()
+    deliverResult('item-1')
+
+    expect(screen.getByText('어휘 문항 2')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '보기1' }))
+
+    expect(await screen.findByText('음성 문항 3')).toBeInTheDocument()
+    expect(screen.getByText('3/10')).toBeInTheDocument()
+  })
+
+  it('어휘 문항에서는 네이티브 전환을 부르지 않는다', async () => {
+    const startVoiceItem = stubBridge()
+    renderScreen(okFetch())
+    await findRecordingWait()
+    deliverResult('item-1')
+
+    expect(screen.getByText('어휘 문항 2')).toBeInTheDocument()
+    expect(startVoiceItem).toHaveBeenCalledTimes(1) // 문항 1의 호출 그대로
+  })
+})
+
+describe('세션 격리 — 다른 세션의 진행을 이어받지 않는다', () => {
+  it('sessionId를 주면 그 세션 키에 저장한다', async () => {
+    const storage = memoryStorage()
+    renderScreen(okFetch(), { storage, sessionId: 'sess-1' })
+    await findDevSubmit()
+
+    advance()
+
+    expect(storage.getItem(snapshotKey('sess-1'))).not.toBeNull()
+    expect(storage.getItem(snapshotKey())).toBeNull()
+  })
+
+  it('다른 세션의 스냅샷이 남아 있어도 처음부터 시작한다', async () => {
+    const storage = memoryStorage()
+    const { unmount } = renderScreen(okFetch(), { storage, sessionId: 'sess-1' })
+    await findDevSubmit()
+    advance()
+    advance()
+    unmount()
+
+    renderScreen(okFetch(), { storage, sessionId: 'sess-2' })
+
+    expect(await screen.findByText('음성 문항 1')).toBeInTheDocument()
+    expect(screen.getByText('1/10')).toBeInTheDocument()
+    // 세션 1의 기록은 지워지지 않는다 — 남의 진행을 폐기할 권리가 없다는 것이 키 분리의 이유다
+    expect(storage.getItem(snapshotKey('sess-1'))).not.toBeNull()
   })
 })
 
@@ -172,9 +375,9 @@ describe('폴링 부재 — 문항 진행 중에는 요청이 없다 (KAN-14 규
     vi.stubGlobal('fetch', globalFetch)
     try {
       renderScreen(fetchImpl)
-      await screen.findByText('음성 문항 1')
+      await findDevSubmit()
 
-      for (let i = 0; i < 10; i += 1) tapNext()
+      for (let i = 0; i < 10; i += 1) advance()
 
       expect(fetchImpl).toHaveBeenCalledTimes(1)
       expect(globalFetch).not.toHaveBeenCalled()
