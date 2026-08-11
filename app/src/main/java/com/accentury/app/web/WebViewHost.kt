@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.accentury.app.BuildConfig
+import com.accentury.app.bridge.VoiceItemStart
 import kotlinx.coroutines.delay
 
 /** 원격 웹 로드의 세 상태. Failed로 가는 길은 명시 오류 콜백과 자체 타임아웃 두 갈래다. */
@@ -48,6 +49,7 @@ fun WebViewHost(
     url: String,
     allowedOrigins: Set<String>,
     onRequestMicPermission: () -> Unit,
+    onStartVoiceItem: (VoiceItemStart) -> Unit,
     modifier: Modifier = Modifier,
     timeoutMs: Long = LOAD_TIMEOUT_MS,
 ) {
@@ -118,6 +120,7 @@ fun WebViewHost(
                                 // 실행 시점의 현재 URL로 재검증 — 로드 중 리다이렉트돼 있어도 안전하다.
                                 isCurrentUrlAllowed = { isAllowedWebUrl(this.url, allowedOrigins) },
                                 onRequestMicPermission = onRequestMicPermission,
+                                onStartVoiceItem = onStartVoiceItem,
                             ),
                             "AccenturyBridge",
                         )

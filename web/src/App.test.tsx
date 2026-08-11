@@ -76,7 +76,11 @@ describe('IntroScreen — [시작하기] 결선', () => {
   it('탭하면 네이티브 권한 게이트 브리지를 호출한다 (AC 3)', () => {
     setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0`)
     const fn = vi.fn()
-    window.AccenturyBridge = { requestMicPermission: fn, getContractVersion: () => 1 }
+    window.AccenturyBridge = {
+      requestMicPermission: fn,
+      startVoiceItem: vi.fn(),
+      getContractVersion: () => 1,
+    }
     render(<App />)
     screen.getByRole('button', { name: '시작하기' }).click()
     expect(fn).toHaveBeenCalledTimes(1)
