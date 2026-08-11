@@ -33,6 +33,50 @@ class WebConfigTest {
         assertTrue(url.contains("app=1.0"))
     }
 
+    // --- buildWebUrl: 테스트 진입 URL 조립 (KAN-100) ---
+
+    @Test
+    fun `테스트 진입 URL은 스큐 파라미터에 screen test testVersion sessionId를 잇는다`() {
+        assertEquals(
+            "https://web.example.com?bridge=$BRIDGE_CONTRACT_VERSION&app=1.0" +
+                "&screen=test&testVersion=gn-2026.08.1&sessionId=dev-session",
+            buildWebUrl(
+                base = "https://web.example.com",
+                appVersionName = "1.0",
+                testEntry = TestEntry(testVersion = "gn-2026.08.1", sessionId = "dev-session"),
+            ),
+        )
+    }
+
+    @Test
+    fun `testEntry가 없으면 인트로 URL과 완전히 같다`() {
+        assertEquals(
+            buildWebUrl("https://web.example.com", "1.0"),
+            buildWebUrl("https://web.example.com", "1.0", testEntry = null),
+        )
+    }
+
+    @Test
+    fun `세션 값에 든 구분자는 인코딩돼 쿼리 구조를 깨뜨리지 않는다`() {
+        val url = buildWebUrl(
+            base = "https://web.example.com",
+            appVersionName = "1.0",
+            // 서버가 발급하는 값이라 형식을 앱이 보증하지 않는다 — 파라미터를 덧붙이는 꼴이 되면 안 된다.
+            testEntry = TestEntry(testVersion = "gn 2026&x=1", sessionId = "s/1?2"),
+        )
+        assertTrue(url.contains("&testVersion=gn+2026%26x%3D1&"))
+        assertTrue(url.endsWith("&sessionId=s%2F1%3F2"))
+    }
+
+    @Test
+    fun `기존 쿼리가 있는 base에도 테스트 진입 파라미터를 잇는다`() {
+        assertEquals(
+            "https://web.example.com?env=dev&bridge=$BRIDGE_CONTRACT_VERSION&app=1.0" +
+                "&screen=test&testVersion=v1&sessionId=s1",
+            buildWebUrl("https://web.example.com?env=dev", "1.0", TestEntry("v1", "s1")),
+        )
+    }
+
     // --- webOrigin: allowlist 비교 입력 정규화 (§7) ---
 
     @Test

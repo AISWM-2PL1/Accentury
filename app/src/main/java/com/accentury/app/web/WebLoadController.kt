@@ -38,6 +38,15 @@ class WebLoadController {
         if (state == WebLoadState.Loading) state = WebLoadState.Failed
     }
 
+    /**
+     * 같은 WebView에서 다른 URL 로드를 시작했다 (인트로 → 테스트 진입, KAN-100).
+     * 앞 페이지가 Ready였다고 다음 페이지를 로드 완료로 볼 수는 없다 — 다시 Loading으로 내려야
+     * 로딩 화면이 전환 중의 앞 페이지를 덮고, 타임아웃도 새 로드를 대상으로 다시 걸린다.
+     */
+    fun onNavigationStarted() {
+        state = WebLoadState.Loading
+    }
+
     /** [다시 시도] — attempt를 올려 WebView를 새로 만들고 처음부터 로드한다. */
     fun retry() {
         attempt += 1
