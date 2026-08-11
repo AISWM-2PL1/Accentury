@@ -11,10 +11,13 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
+import { installItemResultReceiver } from '../bridge/bridge'
 import { fetchTestDefinition, type FetchLike } from './fetchTestDefinition'
 import type { SnapshotStorage } from './progressSnapshot'
 import type { TestDefinition, TestItem } from './testDefinition'
 import { useTestProgress } from './useTestProgress'
+import { VocabularyItemScreen } from './VocabularyItemScreen'
+import { VoiceItemScreen } from './VoiceItemScreen'
 
 /** 유형 뱃지 문구. 인트로의 "🎤 음성 / 📝 단어" 표기와 같은 어휘를 쓴다 */
 const TYPE_BADGE: Record<TestItem['type'], string> = {
@@ -36,8 +39,10 @@ const SCREEN_STYLE = {
 export interface TestFlowScreenProps {
   /** 백엔드 오리진. 출처 결정은 호출자 몫이다 (fetchTestDefinition 헤더 주석의 열린 질문) */
   apiBase: string
-  /** 세션에 고정된 정의 버전. 정식 출처는 KAN-100에서 확정된다 */
+  /** 세션에 고정된 정의 버전. 네이티브가 진입 쿼리로 실어 준다 (App.tsx) */
   testVersion: string
+  /** 진행 스냅샷을 세션별로 가르는 식별자. KAN-9 결선 전까지는 빈 문자열이 온다 */
+  sessionId?: string
   /** 스냅샷 저장소. 기본값(localStorage)은 훅이 정한다 */
   storage?: SnapshotStorage
   /** 주입용 fetch (테스트용) */
@@ -49,7 +54,13 @@ type LoadState =
   | { status: 'error'; message: string }
   | { status: 'ready'; definition: TestDefinition }
 
-export function TestFlowScreen({ apiBase, testVersion, storage, fetchImpl }: TestFlowScreenProps) {
+export function TestFlowScreen({
+  apiBase,
+  testVersion,
+  sessionId = '',
+  storage,
+  fetchImpl,
+}: TestFlowScreenProps) {
   const [load, setLoad] = useState<LoadState>({ status: 'loading' })
   // [다시 시도]는 이 값을 올려 로딩 이펙트를 다시 돌린다. 재시도 로직을 fetch 쪽에 두지 않은 채
   // 사용자가 재시도 주체가 되게 하는 방식이다 (fetchTestDefinition 주석 참고).
@@ -98,12 +109,40 @@ export function TestFlowScreen({ apiBase, testVersion, storage, fetchImpl }: Tes
     )
   }
 
-  // 정의가 바뀌면(=다른 세션) 진행도 처음부터여야 하므로 훅 상태째로 갈아끼운다.
-  return <TestRunner key={load.definition.testVersion} definition={load.definition} storage={storage} />
+  // 세션이나 정의가 바뀌면 진행도 처음부터여야 하므로 훅 상태째로 갈아끼운다.
+  return (
+    <TestRunner
+      key={`${sessionId}:${load.definition.testVersion}`}
+      definition={load.definition}
+      sessionId={sessionId}
+      storage={storage}
+    />
+  )
 }
 
-function TestRunner({ definition, storage }: { definition: TestDefinition; storage?: SnapshotStorage }) {
-  const { state, current, progress, submit } = useTestProgress(definition, storage)
+function TestRunner({
+  definition,
+  sessionId,
+  storage,
+}: {
+  definition: TestDefinition
+  sessionId: string
+  storage?: SnapshotStorage
+}) {
+  const { state, current, progress, submit } = useTestProgress(definition, storage, sessionId)
+
+  /*
+   * 네이티브 → 웹 결과 수신 지점. 화면이 살아 있는 동안 한 번만 설치한다 — 문항마다 갈아끼우면
+   * 전환 도중에 결과가 들어왔을 때 받을 사람이 없는 순간이 생긴다.
+   *
+   * 받은 itemId를 그대로 상태 머신에 넘긴다. 지금 문항인지·이미 제출했는지·순서를 건너뛰지
+   * 않았는지는 submitItem의 가드가 이미 판정하므로, 같은 검증을 여기서 되풀이하지 않는다
+   * (규칙이 두 곳에 생기면 언젠가 어긋난다).
+   *
+   * attemptId·analysisJobId·durationMs·qualityStatus는 이 티켓에 쓸 곳이 없다 —
+   * 분석 폴링(KAN-14)이 쓸 값이라, 지금은 통지만 받고 버린다.
+   */
+  useEffect(() => installItemResultReceiver((result) => submit(result.itemId)), [submit])
 
   // 마지막 문항까지 제출됨. 분석 대기 화면(KAN-14)은 아직 없어 자리만 잡아 둔다 —
   // 폴링·복구 UX는 그 티켓에서 이 자리에 붙는다.
@@ -136,22 +175,25 @@ function TestRunner({ definition, storage }: { definition: TestDefinition; stora
         {progress.current}/{progress.total}
       </p>
       <p style={{ fontSize: '13px', margin: 0 }}>{TYPE_BADGE[current.type]}</p>
-      <h1 style={{ fontSize: '20px', fontWeight: 600, margin: 0 }}>{current.prompt}</h1>
       {/*
-        임시 [다음] — 제출 완료 통지가 들어올 자리다. 실제로는 네이티브 녹음 화면(KAN-87)이나
-        어휘 선택 화면이 답을 받고 돌아오면서 이 통지를 보내야 하고, 그 결선이 KAN-100이다.
-        그때 이 버튼은 통째로 사라진다.
+        본문은 유형이 정한다. 두 화면 모두 문항이 바뀔 때 새로 마운트되도록 itemId를 key로 준다 —
+        음성 화면은 그 마운트가 곧 "네이티브에 전환을 알리는" 시점이다.
       */}
-      <button
-        type="button"
-        onClick={() => submit(current.itemId)}
-        style={{ minHeight: '48px', minWidth: '120px', fontSize: '16px', marginTop: '8px', cursor: 'pointer' }}
-      >
-        다음
-      </button>
-      <p style={{ fontSize: '12px', margin: 0, color: '#666' }}>
-        임시 버튼입니다 — 실제 녹음·단어 선택 화면 연결은 KAN-100에서 붙습니다.
-      </p>
+      {current.type === 'VOICE' ? (
+        <VoiceItemScreen
+          key={current.itemId}
+          item={current}
+          itemNumber={progress.current}
+          totalItems={progress.total}
+          onDevSubmitted={() => submit(current.itemId)}
+        />
+      ) : (
+        <VocabularyItemScreen
+          key={current.itemId}
+          item={current}
+          onSubmitted={() => submit(current.itemId)}
+        />
+      )}
     </main>
   )
 }

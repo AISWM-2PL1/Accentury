@@ -19,16 +19,26 @@ export default function App() {
   }
 
   /*
-   * `?screen=test&testVersion=...` — 문항 진행 화면(KAN-99)으로 들어가는 개발·검증용 통로다.
-   * 정식 진입은 인트로 [시작하기] → 네이티브 권한 게이트 → 문항 진행으로 이어져야 하는데,
-   * 그 화면 전환 결선이 KAN-100 몫이라 아직 없다. 그때까지 이 화면을 사람이 직접 열어 볼
-   * 방법이 필요해서 둔 분기이고, KAN-100이 정식 결선을 붙이면 지운다.
-   * testVersion을 쿼리로 받는 것도 임시다 — 정본은 세션 생성(KAN-9) 응답이고, 그 값이
-   * 웹까지 오는 경로가 아직 미확정이다(fetchTestDefinition 헤더 주석의 열린 질문).
+   * `?screen=test&testVersion=...&sessionId=...` — 문항 진행 화면의 **정식 진입 쿼리**다.
+   * 인트로 [시작하기] → 네이티브 마이크 권한 게이트(KAN-98)를 통과한 뒤, 네이티브가 이 쿼리를
+   * 붙여(기존 bridge·app 파라미터에 더해) WebView를 다시 로드하는 것이 정상 경로다.
+   * 그 조립은 네이티브 결선(KAN-100 Stage 4) 몫이고, 웹 쪽 계약은 여기까지다.
+   * 브라우저 단독 개발에서도 같은 URL을 손으로 열면 같은 화면에 들어간다 — 개발용 통로를
+   * 따로 두지 않는 이유다(경로가 갈리면 개발에서 통과한 것이 앱에서 통과한다는 보장이 없다).
    */
   const params = new URLSearchParams(window.location.search)
   if (params.get('screen') === 'test') {
-    return <TestFlowScreen apiBase={API_BASE} testVersion={params.get('testVersion') ?? ''} />
+    return (
+      <TestFlowScreen
+        apiBase={API_BASE}
+        testVersion={params.get('testVersion') ?? ''}
+        /*
+         * 세션 클라이언트(KAN-9) 결선 전까지는 네이티브가 sessionId를 모를 수 있다. 그때는 빈
+         * 문자열이 내려가고 진행 스냅샷이 세션별로 나뉘지 않는다 — 과도기의 알려진 한계다.
+         */
+        sessionId={params.get('sessionId') ?? ''}
+      />
+    )
   }
 
   return <IntroScreen />
