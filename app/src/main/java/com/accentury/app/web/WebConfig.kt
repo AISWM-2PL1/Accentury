@@ -17,14 +17,38 @@ const val BRIDGE_CONTRACT_VERSION = 1
 const val LOAD_TIMEOUT_MS = 8_000L
 
 /**
+ * 테스트 진입 파라미터 (KAN-100). 시작 게이트(KAN-98)를 통과한 뒤의 정식 진입 URL에만 붙는다 —
+ * 웹은 `screen=test`를 보고 인트로 대신 문항 진행 화면으로 들어간다 (web/src/App.tsx).
+ *
+ * @property testVersion 세션에 고정된 정의 버전. 웹이 `GET /v0/tests/{testVersion}`으로 정의를 받는다
+ * @property sessionId 진행 스냅샷을 세션별로 가르는 식별자. 업로드가 붙는 세션과 같은 값이어야 한다
+ */
+data class TestEntry(val testVersion: String, val sessionId: String)
+
+/**
  * WebView가 로드할 최종 URL. 브리지 버전과 앱 버전을 쿼리로 실어 보낸다 —
  * 스큐 판정의 주체는 웹이므로(§5) 앱은 자기 버전을 알리기만 하면 된다.
+ *
+ * [testEntry]가 있으면 테스트 진입 URL, 없으면 인트로 URL이다. 두 URL을 한 함수로 묶은 이유:
+ * 스큐 파라미터는 어느 쪽에도 빠지면 안 되는데(빠지면 웹이 업데이트 안내를 띄운다) 조립을
+ * 나누면 한쪽만 고치는 실수가 생긴다.
  */
-fun buildWebUrl(base: String, appVersionName: String): String {
+fun buildWebUrl(base: String, appVersionName: String, testEntry: TestEntry? = null): String {
     val separator = if ('?' in base) '&' else '?'
-    val encodedApp = URLEncoder.encode(appVersionName, Charsets.UTF_8.name())
-    return "$base${separator}bridge=$BRIDGE_CONTRACT_VERSION&app=$encodedApp"
+    val query = StringBuilder("bridge=$BRIDGE_CONTRACT_VERSION&app=${encodeQueryValue(appVersionName)}")
+    if (testEntry != null) {
+        query.append("&screen=test")
+        query.append("&testVersion=${encodeQueryValue(testEntry.testVersion)}")
+        query.append("&sessionId=${encodeQueryValue(testEntry.sessionId)}")
+    }
+    return "$base$separator$query"
 }
+
+/**
+ * 값에 든 `&`·`=`·공백이 쿼리 구조를 깨뜨리지 않게 한다. 앱 버전은 물론 서버가 발급하는
+ * testVersion·sessionId도 형식을 앱이 정하지 않으므로 전부 거쳐 간다.
+ */
+private fun encodeQueryValue(value: String): String = URLEncoder.encode(value, Charsets.UTF_8.name())
 
 /**
  * URL의 origin(스킴://호스트[:포트])을 뽑는다. http(s)가 아니거나(javascript: 등)

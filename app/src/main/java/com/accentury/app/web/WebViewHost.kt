@@ -19,6 +19,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,6 +43,11 @@ sealed interface WebLoadState {
  * 크롬 기본 오류 페이지를 사용자에게 절대 노출하지 않는다 — 실패가 감지되면 WebView를
  * 통째로 걷어내고 네이티브 오류 화면으로 바꾼다. 오프라인 동작이 목표가 아니라
  * (테스트 자체가 서버 필수) "실패의 질"이 목표다.
+ *
+ * [url]이 바뀌면 같은 WebView에서 이어 로드한다 (인트로 → 테스트 진입, KAN-100).
+ *
+ * @param onWebViewCreated 결과를 웹으로 주입하려면(evaluateJavascript) 상위가 인스턴스를 알아야 한다
+ * @param onWebViewReleased 해제된 인스턴스. 상위가 들고 있는 참조를 놓을 자리다
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -52,6 +58,8 @@ fun WebViewHost(
     onStartVoiceItem: (VoiceItemStart) -> Unit,
     modifier: Modifier = Modifier,
     timeoutMs: Long = LOAD_TIMEOUT_MS,
+    onWebViewCreated: (WebView) -> Unit = {},
+    onWebViewReleased: (WebView) -> Unit = {},
 ) {
     // 상태 전이 규칙은 WebLoadController에 모여 있다(JVM 테스트 대상). 여기는 결선만 한다.
     val controller = remember { WebLoadController() }
@@ -64,6 +72,11 @@ fun WebViewHost(
     // attempt가 바뀌면 key()가 WebView를 처음부터 새로 만든다 — 실패한 WebView의
     // 내부 상태(오류 페이지 등)를 이어받지 않기 위해서다.
     key(controller.attempt) {
+        // 실제로 로드를 건 URL. update 블록은 리컴포지션마다 도는데 매번 loadUrl하면 로드가
+        // 끝나지 않으므로, 값이 달라졌을 때만 다시 건다. 컴포지션에서 읽지 않아 이 쓰기가
+        // 리컴포지션을 부르지도 않는다. attempt가 바뀌면 함께 초기화돼 새 WebView가 다시 로드한다.
+        val loadedUrl = remember { mutableStateOf<String?>(null) }
+
         Box(modifier = modifier.fillMaxSize()) {
             AndroidView(
                 factory = { context ->
@@ -124,10 +137,22 @@ fun WebViewHost(
                             ),
                             "AccenturyBridge",
                         )
-                        loadUrl(url)
+                        // 첫 로드도 update가 건다 — 로드 지점이 하나여야 "url이 곧 화면"이 유지된다.
+                        onWebViewCreated(this)
                     }
                 },
-                onRelease = { it.destroy() },
+                update = { view ->
+                    if (loadedUrl.value != url) {
+                        loadedUrl.value = url
+                        controller.onNavigationStarted()
+                        view.loadUrl(url)
+                    }
+                },
+                // 참조를 먼저 놓게 한 뒤 파괴한다 — 상위가 파괴된 WebView를 붙들 틈을 주지 않는다.
+                onRelease = {
+                    onWebViewReleased(it)
+                    it.destroy()
+                },
             )
             if (controller.state == WebLoadState.Loading) {
                 LoadingScreen()
@@ -135,8 +160,8 @@ fun WebViewHost(
         }
 
         // 자체 타임아웃 (§6) — onPageFinished가 오지 않는 실패(끊긴 연결에서의 무한 대기 등)를
-        // 오류 콜백 대신 시간으로 잡는다. attempt가 바뀌면 타이머도 새로 시작된다.
-        LaunchedEffect(controller.attempt) {
+        // 오류 콜백 대신 시간으로 잡는다. attempt나 url이 바뀌면 타이머도 새로 시작된다.
+        LaunchedEffect(controller.attempt, url) {
             delay(timeoutMs)
             controller.onTimeout()
         }
