@@ -1,14 +1,46 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   appBridgeVersion,
+  installItemResultReceiver,
   isBridgeCompatible,
   REQUIRED_BRIDGE_VERSION,
   requestMicPermission,
+  startVoiceItem,
+  type AccenturyBridge,
+  type VoiceItemStart,
 } from './bridge'
+import type { ItemResult } from './itemResult'
 
 afterEach(() => {
   delete window.AccenturyBridge
+  delete window.AccenturyWeb
 })
+
+/** 계약을 다 갖춘 브리지 대역. 각 테스트는 관심 있는 메서드만 갈아끼운다. */
+function fakeBridge(overrides: Partial<AccenturyBridge> = {}): AccenturyBridge {
+  return {
+    requestMicPermission: vi.fn(),
+    startVoiceItem: vi.fn(),
+    getContractVersion: () => REQUIRED_BRIDGE_VERSION,
+    ...overrides,
+  }
+}
+
+const voiceStart: VoiceItemStart = {
+  itemId: 'item_1',
+  prompt: '마! 니 어데 가노?',
+  itemNumber: 1,
+  totalItems: 10,
+  maxDurationMs: 15_000,
+}
+
+const itemResult: ItemResult = {
+  itemId: 'item_1',
+  attemptId: 'at-1',
+  analysisJobId: 'aj_1',
+  durationMs: 4_200,
+  qualityStatus: 'NORMAL',
+}
 
 describe('appBridgeVersion — 앱이 URL로 실어 보낸 버전 파싱', () => {
   it('정수 버전을 읽는다', () => {
@@ -44,12 +76,81 @@ describe('isBridgeCompatible — 판단 주체는 웹 (§5)', () => {
 describe('requestMicPermission — graceful degrade', () => {
   it('브리지가 있으면 호출하고 true를 돌려준다', () => {
     const fn = vi.fn()
-    window.AccenturyBridge = { requestMicPermission: fn, getContractVersion: () => 1 }
+    window.AccenturyBridge = fakeBridge({ requestMicPermission: fn })
     expect(requestMicPermission()).toBe(true)
     expect(fn).toHaveBeenCalledTimes(1)
   })
 
   it('브리지가 없으면(브라우저 단독 실행) 크래시 없이 false를 돌려준다', () => {
     expect(requestMicPermission()).toBe(false)
+  })
+})
+
+describe('startVoiceItem — 문항 컨텍스트를 JSON으로 넘긴다', () => {
+  it('브리지가 있으면 직렬화해 호출하고 true를 돌려준다', () => {
+    const fn = vi.fn()
+    window.AccenturyBridge = fakeBridge({ startVoiceItem: fn })
+
+    expect(startVoiceItem(voiceStart)).toBe(true)
+    expect(fn).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(fn.mock.calls[0][0])).toEqual(voiceStart)
+  })
+
+  it('브리지가 없으면 크래시 없이 false를 돌려준다', () => {
+    expect(startVoiceItem(voiceStart)).toBe(false)
+  })
+
+  it('메서드만 없는 구버전 앱에서도 false다 (계약이 어긋나도 죽지 않는다)', () => {
+    window.AccenturyBridge = {
+      requestMicPermission: vi.fn(),
+      getContractVersion: () => REQUIRED_BRIDGE_VERSION,
+    } as unknown as AccenturyBridge
+
+    expect(startVoiceItem(voiceStart)).toBe(false)
+  })
+})
+
+describe('installItemResultReceiver — 네이티브 → 웹 수신 지점', () => {
+  it('설치하면 네이티브 호출이 검증을 거쳐 handler로 온다', () => {
+    const handler = vi.fn()
+    installItemResultReceiver(handler)
+
+    window.AccenturyWeb?.onItemResult(JSON.stringify(itemResult))
+
+    expect(handler).toHaveBeenCalledTimes(1)
+    expect(handler).toHaveBeenCalledWith(itemResult)
+  })
+
+  it('불량 payload는 조용히 버린다 — handler도, 예외도 없다', () => {
+    const handler = vi.fn()
+    installItemResultReceiver(handler)
+
+    expect(() => window.AccenturyWeb?.onItemResult('{oops')).not.toThrow()
+    expect(() => window.AccenturyWeb?.onItemResult('{"itemId":"item_1"}')).not.toThrow()
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  it('해제하면 설치 전 상태로 돌아간다', () => {
+    const handler = vi.fn()
+    const dispose = installItemResultReceiver(handler)
+    dispose()
+
+    expect(window.AccenturyWeb).toBeUndefined()
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  it('덧씌운 수신자를 해제하면 먼저 있던 수신자가 되살아난다', () => {
+    const first = vi.fn()
+    const second = vi.fn()
+    installItemResultReceiver(first)
+    const disposeSecond = installItemResultReceiver(second)
+
+    window.AccenturyWeb?.onItemResult(JSON.stringify(itemResult))
+    expect(second).toHaveBeenCalledTimes(1)
+    expect(first).not.toHaveBeenCalled()
+
+    disposeSecond()
+    window.AccenturyWeb?.onItemResult(JSON.stringify(itemResult))
+    expect(first).toHaveBeenCalledTimes(1)
   })
 })

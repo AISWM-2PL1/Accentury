@@ -97,6 +97,8 @@ class MainActivity : ComponentActivity() {
                             url = buildWebUrl(BuildConfig.WEB_URL, BuildConfig.VERSION_NAME),
                             allowedOrigins = setOfNotNull(webOrigin(BuildConfig.WEB_URL)),
                             onRequestMicPermission = { started = true },
+                            // 녹음 화면 전환 결선은 Stage 4 몫이다. 여기서는 계약만 채운다.
+                            onStartVoiceItem = {},
                             modifier = Modifier.padding(innerPadding),
                         )
                     }
