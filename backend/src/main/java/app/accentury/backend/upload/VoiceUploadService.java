@@ -7,26 +7,30 @@ import app.accentury.backend.analysis.AnalysisJobStatus;
 import app.accentury.backend.analysis.PollIntervals;
 import app.accentury.backend.common.ApiException;
 import app.accentury.backend.common.ErrorCode;
+import app.accentury.backend.common.IdempotencyKeys;
 import app.accentury.backend.session.SessionService;
 import app.accentury.backend.session.TestSession;
+import app.accentury.backend.session.TestSessionRepository;
 import app.accentury.backend.testdefinition.TestDefinition;
 import app.accentury.backend.testdefinition.TestDefinitionRegistry;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.time.Instant;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
  * 음성 업로드의 검증 파이프라인과 분석 작업 생성 (KAN-23, API 명세서 §3.3).
  * <p>
- * 검증 순서: 세션 인증 -> 문항 -> meta -> 오디오. 전부 통과해야 작업이 만들어지고,
+ * 검증 순서: 세션 인증 -> 멱등 키 -> 문항 -> meta -> 오디오 -> (잠금) 완료 가드 ->
+ * 멱등 판별 -> 시도 상한. 전부 통과해야 작업이 만들어지고,
  * 오디오는 {@link AnalysisDispatcher}로 넘어간 뒤 이 요청 스코프와 함께 소멸한다 -
  * 어디에도 저장하지 않는다 (FR-DP-01). IP 요청 제한은 본문이 파싱되기 전에
  * {@link UploadRateLimitFilter}가 먼저 끊는다.
@@ -50,31 +54,34 @@ public class VoiceUploadService {
      */
     static final int MAX_ATTEMPTS_PER_ITEM = 5;
 
-    private static final int MAX_IDEMPOTENCY_KEY_LENGTH = 100;
-
     private final SessionService sessionService;
     private final TestDefinitionRegistry registry;
     private final AnalysisJobRepository repository;
+    private final TestSessionRepository sessionRepository;
     private final AnalysisDispatcher dispatcher;
     private final ObjectMapper objectMapper;
     private final PollIntervals pollIntervals;
+    private final TransactionTemplate transactionTemplate;
 
     public VoiceUploadService(SessionService sessionService, TestDefinitionRegistry registry,
-                              AnalysisJobRepository repository, AnalysisDispatcher dispatcher,
-                              ObjectMapper objectMapper, PollIntervals pollIntervals) {
+                              AnalysisJobRepository repository, TestSessionRepository sessionRepository,
+                              AnalysisDispatcher dispatcher, ObjectMapper objectMapper,
+                              PollIntervals pollIntervals, TransactionTemplate transactionTemplate) {
         this.sessionService = sessionService;
         this.registry = registry;
         this.repository = repository;
+        this.sessionRepository = sessionRepository;
         this.dispatcher = dispatcher;
         this.objectMapper = objectMapper;
         this.pollIntervals = pollIntervals;
+        this.transactionTemplate = transactionTemplate;
     }
 
     VoiceUploadResponse upload(String sessionId, String itemId,
                                @Nullable String authorization, @Nullable String idempotencyKey,
                                @Nullable MultipartFile audio, @Nullable String metaJson) {
         TestSession session = sessionService.authenticateBearer(sessionId, authorization);
-        String key = requireIdempotencyKey(idempotencyKey);
+        String key = IdempotencyKeys.require(idempotencyKey);
         // 반환값은 쓰지 않는다 - 없는 문항(422)과 유형 불일치(409)를 여기서 끊는 것이 목적이다
         registry.requireItem(session.testVersion(), itemId, TestDefinition.ItemType.VOICE);
         VoiceUploadMeta meta = VoiceUploadMeta.parse(objectMapper, metaJson);
@@ -91,35 +98,50 @@ public class VoiceUploadService {
             throw new ApiException(ErrorCode.AUDIO_TOO_LONG);
         }
 
-        // 같은 키의 재전송은 저장된 작업을 그대로 반환한다 - 분석 중복 생성 없음 (§5.2)
+        // 완료 가드부터 작업 저장까지 세션 행 잠금 아래 한 트랜잭션이다 (KAN-15에서 완료
+        // 상태 도입, Codex sol 리뷰 P2) - 잠금이 없으면 /complete(KAN-16)가 검사와 저장
+        // 사이에 끼어들어 확정된 세션이 GPU를 소모한다. 동시 업로드도 이 잠금으로
+        // 직렬화되므로 (session_id, item_id, idempotency_key) 유니크 제약은 마지막
+        // 안전망이고, attempt 번호와 시도 상한 판정도 경합 없이 정확하다
         long pollAfterMs = pollIntervals.pollAfterMs();
-        var existing = repository.findBySessionIdAndItemIdAndIdempotencyKey(session.id(), itemId, key);
-        if (existing.isPresent()) {
-            return VoiceUploadResponse.from(existing.get(), pollAfterMs);
-        }
-
-        // 동시 업로드가 같은 번호를 받을 수 있지만 attempt는 표시용이라 무해하다 -
-        // 채점 대상 선정(§5.1)은 createdAt 기준이고, 중복 분석 방지는 유니크 제약이 맡는다.
-        // AI에 도달하지 못한 전달 실패(ANALYSIS_UNAVAILABLE)만 예산에서 뺀다 - 서버 장애로
-        // 예산이 깎이면 5회 연속 장애 시 사용자 잘못 없이 문항이 영구 차단되기 때문이다.
-        // 반대로 AI가 분석까지 한 판정 실패(AUDIO_TOO_QUIET 등)는 GPU를 썼으므로 센다 (Codex sol 리뷰 P1)
-        int attempt = (int) repository.countAiConsumingAttempts(
-                session.id(), itemId, ErrorCode.ANALYSIS_UNAVAILABLE.name()) + 1;
-        // 상한 검사는 멱등 재전송 판별 뒤다 - 같은 키의 재전송은 상한과 무관하게 저장된
-        // 작업을 돌려받는다 (§5.2). 동시 신규 업로드 경합으로 드물게 상한을 넘겨 저장될 수
-        // 있지만 초과분은 1건이라 프로토타입에서는 허용한다
-        if (attempt > MAX_ATTEMPTS_PER_ITEM) {
-            throw new ApiException(ErrorCode.RATE_RETAKE_EXCEEDED);
-        }
-        AnalysisJob job = new AnalysisJob("a_" + UUID.randomUUID(), session.id(), itemId, attempt,
-                key, AnalysisJobStatus.PROCESSING, Instant.now());
-        try {
-            repository.save(job);
-        } catch (DataIntegrityViolationException e) {
-            // 같은 키가 동시에 들어온 경합 - 먼저 저장된 쪽을 반환한다 (§5.2)
-            return repository.findBySessionIdAndItemIdAndIdempotencyKey(session.id(), itemId, key)
-                    .map(winner -> VoiceUploadResponse.from(winner, pollAfterMs))
-                    .orElseThrow(() -> e);
+        String newJobId = "a_" + UUID.randomUUID();
+        AnalysisJob job = Objects.requireNonNull(transactionTemplate.execute(tx -> {
+            // 잠금 재조회가 빈 것은 동시 삭제(만료 정리)를 뜻하므로 만료와 같게 응답한다
+            TestSession locked = sessionRepository.lockById(session.id())
+                    .orElseThrow(() -> new ApiException(ErrorCode.SESSION_EXPIRED));
+            // 만료도 잠금 아래에서 재확인한다 - 인증(스냅샷 검사)과 잠금 획득 사이에 TTL이
+            // 지나면 만료된 세션의 분석에 GPU가 소모된다. 완료 가드와 같은 이유의 재검사다
+            if (locked.isExpired(Instant.now())) {
+                throw new ApiException(ErrorCode.SESSION_EXPIRED);
+            }
+            // 완료 가드가 멱등 판별보다 먼저다 - 어휘 답안(§3.5)과 같은 규칙이라, 완료 뒤에는
+            // 같은 키의 재전송도 202가 아니라 409를 받는다
+            if (locked.isCompleted()) {
+                throw new ApiException(ErrorCode.SESSION_COMPLETED);
+            }
+            // 같은 키의 재전송은 저장된 작업을 그대로 반환한다 - 분석 중복 생성 없음 (§5.2)
+            var existing = repository.findBySessionIdAndItemIdAndIdempotencyKey(session.id(), itemId, key);
+            if (existing.isPresent()) {
+                return existing.get();
+            }
+            // AI에 도달하지 못한 전달 실패(ANALYSIS_UNAVAILABLE)만 예산에서 뺀다 - 서버 장애로
+            // 예산이 깎이면 5회 연속 장애 시 사용자 잘못 없이 문항이 영구 차단되기 때문이다.
+            // 반대로 AI가 분석까지 한 판정 실패(AUDIO_TOO_QUIET 등)는 GPU를 썼으므로 센다 (Codex sol 리뷰 P1)
+            int attempt = (int) repository.countAiConsumingAttempts(
+                    session.id(), itemId, ErrorCode.ANALYSIS_UNAVAILABLE.name()) + 1;
+            // 상한 검사는 멱등 재전송 판별 뒤다 - 같은 키의 재전송은 상한과 무관하게 저장된
+            // 작업을 돌려받는다 (§5.2)
+            if (attempt > MAX_ATTEMPTS_PER_ITEM) {
+                throw new ApiException(ErrorCode.RATE_RETAKE_EXCEEDED);
+            }
+            AnalysisJob created = new AnalysisJob(newJobId, session.id(), itemId, attempt,
+                    key, AnalysisJobStatus.PROCESSING, Instant.now());
+            repository.save(created);
+            return created;
+        }));
+        if (!job.id().equals(newJobId)) {
+            // 잠금 안에서 발견된 같은 키의 재전송 - 새 분석 없이 저장된 작업을 돌려준다
+            return VoiceUploadResponse.from(job, pollAfterMs);
         }
 
         try {
@@ -141,20 +163,8 @@ public class VoiceUploadService {
 
         // 오디오 바이트는 여기서 참조가 끝난다 - 로그 포함 어디에도 남기지 않는다 (§2.6)
         log.info("음성 업로드 접수 sessionId={} itemId={} attempt={} jobId={}",
-                session.id(), itemId, attempt, job.id());
+                session.id(), itemId, job.attempt(), job.id());
         return VoiceUploadResponse.from(job, pollAfterMs);
-    }
-
-    private static String requireIdempotencyKey(@Nullable String idempotencyKey) {
-        if (idempotencyKey == null || idempotencyKey.isBlank()) {
-            throw new ApiException(ErrorCode.VALIDATION_FAILED,
-                    "Idempotency-Key 헤더가 필요합니다.");
-        }
-        if (idempotencyKey.length() > MAX_IDEMPOTENCY_KEY_LENGTH) {
-            throw new ApiException(ErrorCode.VALIDATION_FAILED,
-                    "Idempotency-Key가 너무 깁니다. (최대 " + MAX_IDEMPOTENCY_KEY_LENGTH + "자)");
-        }
-        return idempotencyKey;
     }
 
     private static byte[] requireAudio(@Nullable MultipartFile audio) {

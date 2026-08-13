@@ -124,7 +124,8 @@ class SessionServiceTest extends IntegrationTest {
         // 엔티티에 컬럼을 추가하면 이 목록도 갱신해야 한다 - 개인 식별 정보가
         // 슬쩍 들어오는 것을 리뷰가 아니라 테스트가 막는다
         Set<String> allowed = Set.of("id", "tokenHash", "testVersion", "scoreVersion",
-                "platform", "appVersion", "campaignToken", "createdAt", "expiresAt");
+                "platform", "appVersion", "campaignToken", "createdAt", "expiresAt",
+                "completedAt");   // 완료 가드 (KAN-15·16) - 시각뿐, 식별 정보 아님
 
         Set<String> actual = Stream.of(TestSession.class.getDeclaredFields())
                 .map(Field::getName)

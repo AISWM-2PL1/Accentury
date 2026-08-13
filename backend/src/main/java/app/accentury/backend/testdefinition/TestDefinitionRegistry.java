@@ -51,6 +51,14 @@ public class TestDefinitionRegistry {
     /** 어휘 문항은 4지선다다 (SRS 확정, KAN-13) */
     static final int CHOICE_COUNT = 4;
 
+    /**
+     * 문항·선택지 식별자의 최대 길이 - 제출 저장 컬럼({@code analysis_job.item_id},
+     * {@code vocab_answer.item_id}·{@code choice_id}, 전부 varchar(40))과 같다.
+     * 발행 검증이 막지 않으면 정의 조회와 검증은 통과하고 제출 시점의 INSERT가
+     * 500으로 터진다 (Codex sol 리뷰 P2).
+     */
+    static final int MAX_ID_LENGTH = 40;
+
     private final Map<String, PublishedDefinition> published = new HashMap<>();
 
     /**
@@ -176,6 +184,8 @@ public class TestDefinitionRegistry {
         int vocabulary = 0;
         for (TestDefinition.Item item : items) {
             require(hasText(item.itemId()), "itemId가 비어 있다");
+            require(item.itemId().length() <= MAX_ID_LENGTH,
+                    "itemId가 " + MAX_ID_LENGTH + "자를 넘는다: " + item.itemId());
             require(itemIds.add(item.itemId()), "itemId 중복: " + item.itemId());
             require(seqs.add(item.seq()), "seq 중복: " + item.seq());
             require(hasText(item.prompt()), "prompt가 비어 있다: " + item.itemId());
@@ -226,6 +236,8 @@ public class TestDefinitionRegistry {
         Set<String> choiceIds = new HashSet<>();
         for (TestDefinition.Choice choice : choices) {
             require(hasText(choice.choiceId()), "choiceId가 비어 있다: " + item.itemId());
+            require(choice.choiceId().length() <= MAX_ID_LENGTH,
+                    "choiceId가 " + MAX_ID_LENGTH + "자를 넘는다: " + choice.choiceId());
             require(choiceIds.add(choice.choiceId()), "choiceId 중복: " + choice.choiceId());
             require(hasText(choice.text()), "선택지 문구가 비어 있다: " + choice.choiceId());
         }

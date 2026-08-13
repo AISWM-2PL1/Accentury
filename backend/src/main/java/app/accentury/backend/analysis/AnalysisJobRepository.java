@@ -29,6 +29,15 @@ public interface AnalysisJobRepository extends JpaRepository<AnalysisJob, String
     long countBySessionIdAndItemId(String sessionId, String itemId);
 
     /**
+     * 업로드가 1건이라도 있었던 음성 문항 수 - 답안 응답의 진행도(answeredCount) 입력이다
+     * (KAN-15, §3.5). §3.4 대표 상태의 "NOT_SUBMITTED 아님"과 같은 기준이라 시도의 성공
+     * 여부는 따지지 않는다 - 제출됨 표시가 목적이고 채점 대상 선정(§5.1)과는 무관하다
+     * (2026-08-11 확정).
+     */
+    @Query("select count(distinct j.itemId) from AnalysisJob j where j.sessionId = :sessionId")
+    long countDistinctSubmittedItems(@Param("sessionId") String sessionId);
+
+    /**
      * 시도 상한 판정용 (§2.5, §5.1) - AI 자원을 쓰지 않은 시도만 예산에서 뺀다.
      * 전달 실패(errorCode = ANALYSIS_UNAVAILABLE)는 AI에 도달하지 못한 것이라 제외하고,
      * AI가 실제로 분석한 뒤의 판정 실패(AUDIO_TOO_QUIET 등)는 GPU를 썼으므로 센다 -

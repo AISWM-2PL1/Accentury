@@ -109,6 +109,26 @@ class TestDefinitionRegistryTest {
         assertThrows(IllegalStateException.class, () -> TestDefinitionRegistry.validate(broken));
     }
 
+    @Test
+    void 식별자가_저장_컬럼_길이를_넘으면_발행_거부다() {
+        // 제출 저장 컬럼이 varchar(40)이다 - 발행 검증이 막지 않으면 정의 조회와 답안
+        // 검증은 통과하고 제출 시점의 INSERT가 500으로 터진다 (Codex sol 리뷰 P2)
+        TestDefinition longItemId = withItem(valid(), "w2",
+                item -> new TestDefinition.Item("w".repeat(41), item.seq(), item.type(), item.prompt(),
+                        null, item.choices(), item.correctChoiceId()));
+        assertThrows(IllegalStateException.class, () -> TestDefinitionRegistry.validate(longItemId));
+
+        TestDefinition longChoiceId = withItem(valid(), "w2",
+                item -> new TestDefinition.Item(item.itemId(), item.seq(), item.type(), item.prompt(),
+                        null, List.of(
+                                new TestDefinition.Choice("w2a", "부추"),
+                                new TestDefinition.Choice("w2b", "미나리"),
+                                new TestDefinition.Choice("w2c", "쑥갓"),
+                                new TestDefinition.Choice("c".repeat(41), "시금치")),
+                        "w2a"));
+        assertThrows(IllegalStateException.class, () -> TestDefinitionRegistry.validate(longChoiceId));
+    }
+
     // === §6 - 경북 정의는 MVP에서 활성화 불가 ===
 
     @Test

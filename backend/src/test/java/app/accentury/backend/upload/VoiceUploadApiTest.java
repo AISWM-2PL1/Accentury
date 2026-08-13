@@ -4,6 +4,8 @@ import app.accentury.backend.IntegrationTest;
 import app.accentury.backend.analysis.AnalysisJobRepository;
 import app.accentury.backend.analysis.AnalysisJobStatus;
 import app.accentury.backend.analysis.AnalysisJobTransitions;
+import app.accentury.backend.session.TestSession;
+import app.accentury.backend.session.TestSessionRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -17,6 +19,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 
 import static org.hamcrest.Matchers.startsWith;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -52,6 +55,9 @@ class VoiceUploadApiTest extends IntegrationTest {
 
     @Autowired
     private AnalysisJobTransitions analysisJobTransitions;
+
+    @Autowired
+    private TestSessionRepository sessionRepository;
 
     // === 정상 흐름 ===
 
@@ -131,6 +137,22 @@ class VoiceUploadApiTest extends IntegrationTest {
 
         assertEquals(firstJobId, jobId(replay));
         assertEquals(1, analysisJobRepository.countBySessionIdAndItemId(session.id(), "v3"));
+    }
+
+    // === 세션 상태 ===
+
+    @Test
+    void 완료된_세션에는_409_SESSION_COMPLETED다() throws Exception {
+        // 완료 상태는 KAN-15에서 도입 - 가드가 없으면 /complete 뒤의 업로드가 GPU를
+        // 소모하고 확정된 세션 상태를 흔든다 (Codex sol 리뷰 P2)
+        SessionHandle session = createSession();
+        TestSession stored = sessionRepository.findById(session.id()).orElseThrow();
+        stored.markCompleted(Instant.now());
+        sessionRepository.save(stored);
+
+        mockMvc.perform(upload(session, "v1", "after-complete"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("SESSION_COMPLETED"));
     }
 
     // === 인증 (§2.1) ===
