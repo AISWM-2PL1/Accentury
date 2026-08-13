@@ -7,7 +7,12 @@ import java.util.concurrent.atomic.AtomicReference
 
 class RecordingEngine(private val source: PcmSource = AudioRecorder()) {
 
-    data class Progress(val elapsedMs: Long, val rms: Double)
+    data class Progress(
+        val elapsedMs: Long,
+        val rms: Double,
+        /** 청크의 추정 F0(Hz). 무성음이면 null — 소비 측은 곡선을 끊거나 마지막 값을 유지한다. */
+        val pitchHz: Float?,
+    )
 
     sealed interface Outcome {
         data class Success(
@@ -41,6 +46,7 @@ class RecordingEngine(private val source: PcmSource = AudioRecorder()) {
                         Progress(
                             elapsedMs = minOf(totalSamples, MAX_SAMPLES) * 1000L / SAMPLE_RATE,
                             rms = calculateRms(chunk),
+                            pitchHz = YinPitchEstimator.estimate(chunk),
                         ),
                     )
                 }
