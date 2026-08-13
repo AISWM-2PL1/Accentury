@@ -59,7 +59,8 @@ public class VoiceUploadController {
      * ({@code VALIDATION_FAILED}) /
      * 401 토큰 누락이나 만료({@code SESSION_EXPIRED}) /
      * 403 다른 세션의 토큰({@code SESSION_FORBIDDEN}) /
-     * 409 음성 문항이 아님, 어휘 문항은 업로드 대상이 아니다({@code ITEM_WRONG_TYPE}) /
+     * 409 완료된 세션({@code SESSION_COMPLETED}) 또는 음성 문항이 아님, 어휘 문항은
+     * 업로드 대상이 아니다({@code ITEM_WRONG_TYPE}) /
      * 413 1MB 초과({@code AUDIO_TOO_LARGE}) /
      * 415 WAV 16kHz mono 16-bit가 아님({@code AUDIO_FORMAT_UNSUPPORTED}) /
      * 422 이 버전에 없는 문항({@code ITEM_NOT_IN_VERSION}) 또는 문항 상한을 넘는 길이({@code AUDIO_TOO_LONG}) /

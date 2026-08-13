@@ -22,6 +22,8 @@ public enum ErrorCode {
     // === ITEM_* : 문항 (KAN-10, 13, 15) ===
     ITEM_NOT_IN_VERSION(HttpStatus.UNPROCESSABLE_CONTENT, false, "이 테스트 버전에 없는 문항입니다."),
     ITEM_WRONG_TYPE(HttpStatus.CONFLICT, false, "문항 유형이 올바르지 않습니다."),
+    // 새 키의 재제출 거절 (KAN-15) - 확정 플로우(§5.7)에 답 변경이 없어 클라이언트 오류로 본다
+    ITEM_ALREADY_ANSWERED(HttpStatus.CONFLICT, false, "이미 답변한 문항입니다."),
 
     // === AUDIO_* : 음성 업로드 (KAN-23) ===
     AUDIO_FORMAT_UNSUPPORTED(HttpStatus.UNSUPPORTED_MEDIA_TYPE, false, "지원하지 않는 오디오 형식입니다. (WAV 16kHz mono)"),

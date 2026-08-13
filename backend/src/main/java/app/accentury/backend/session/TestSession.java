@@ -58,6 +58,13 @@ public class TestSession {
     @Column(name = "expires_at", nullable = false)
     private Instant expiresAt;
 
+    /**
+     * {@code /complete} 성공 시각 (KAN-16이 기록) - null이면 진행 중.
+     * 완료된 세션에 추가 답변을 막는 가드의 기준이다 (KAN-15 AC, §3.5 - 409 SESSION_COMPLETED).
+     */
+    @Column(name = "completed_at")
+    private @Nullable Instant completedAt;
+
     protected TestSession() {
         // JPA 전용
     }
@@ -78,6 +85,21 @@ public class TestSession {
 
     public boolean isExpired(Instant now) {
         return expiresAt.isBefore(now);
+    }
+
+    public boolean isCompleted() {
+        return completedAt != null;
+    }
+
+    /**
+     * 완료 처리 - 호출 지점은 {@code /complete}(KAN-16)다. KAN-15는 읽기(가드)만 한다.
+     * <p>
+     * 전이는 제출 경로와 같은 세션 행 잠금({@link TestSessionRepository#lockById}) 아래에서
+     * 해야 한다 - 아니면 제출 경로의 완료 검사와 저장 사이에 완료가 끼어들어 확정된
+     * 세션에 답안·분석 작업이 추가된다 (Codex sol 리뷰 P2).
+     */
+    public void markCompleted(Instant completedAt) {
+        this.completedAt = completedAt;
     }
 
     public String id() {
@@ -114,5 +136,9 @@ public class TestSession {
 
     public Instant expiresAt() {
         return expiresAt;
+    }
+
+    public @Nullable Instant completedAt() {
+        return completedAt;
     }
 }
