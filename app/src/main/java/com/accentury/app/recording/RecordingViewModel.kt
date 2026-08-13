@@ -34,7 +34,9 @@ class RecordingViewModel(
             val outcome = engine.record { progress ->
                 if (progress.rms > peakRms) peakRms = progress.rms
                 if (BuildConfig.DEBUG) {
-                    android.util.Log.d(TAG, "rec $attemptId elapsed=${progress.elapsedMs} rms=${progress.rms.toInt()}")
+                    // KAN-103 스파이크: 마이크 F0 확인용 로그. 무성음 프레임은 "-".
+                    val f0 = progress.pitchHz?.let { String.format("%.1f", it) } ?: "-"
+                    android.util.Log.d(TAG, "rec $attemptId elapsed=${progress.elapsedMs} rms=${progress.rms.toInt()} f0=$f0")
                 }
                 _uiState.value = RecordingUiState.Recording(progress.elapsedMs, progress.rms)
             }

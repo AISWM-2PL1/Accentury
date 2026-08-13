@@ -97,6 +97,22 @@ class RecordingEngineTest {
     }
 
     @Test
+    fun `진행 리포트에 청크의 F0 추정값이 실린다`() = runBlocking {
+        val sine220 = ShortArray(CHUNK_SIZE) {
+            (8000 * kotlin.math.sin(2 * Math.PI * 220.0 * it / SAMPLE_RATE)).toInt().toShort()
+        }
+        val engine = RecordingEngine(FakeSource(flow { repeat(3) { emit(sine220.copyOf()) } }))
+        val pitches = mutableListOf<Float?>()
+
+        engine.record { pitches += it.pitchHz }
+
+        assertEquals(3, pitches.size)
+        pitches.forEach { pitch ->
+            assertTrue(pitch != null && kotlin.math.abs(pitch - 220f) < 3f)
+        }
+    }
+
+    @Test
     fun `캡처 예외는 Failure로 변환된다`() = runBlocking {
         val failing = FakeSource(
             flow { throw AudioRecorder.CaptureException("녹음 중 권한 회수") },
