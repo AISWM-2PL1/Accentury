@@ -52,8 +52,8 @@ public class TestDefinitionRegistry {
     static final int CHOICE_COUNT = 4;
 
     /**
-     * 문항·선택지 식별자의 최대 길이 - 제출 저장 컬럼({@code analysis_job.item_id},
-     * {@code vocab_answer.item_id}·{@code choice_id}, 전부 varchar(40))과 같다.
+     * 문항/선택지 식별자의 최대 길이 - 제출 저장 컬럼({@code analysis_job.item_id},
+     * {@code vocab_answer.item_id}/{@code choice_id}, 전부 varchar(40))과 같다.
      * 발행 검증이 막지 않으면 정의 조회와 검증은 통과하고 제출 시점의 INSERT가
      * 500으로 터진다 (Codex sol 리뷰 P2).
      */

@@ -43,7 +43,8 @@ public class ScoreAggregator {
      * @param scoreVersion           세션이 생성 시점에 고정한 점수 버전 (§5.4)
      * @param definition             세션의 테스트 정의 - 문항 구성과 어휘 정답표의 출처
      * @param intonationScoreByItem  음성 itemId → AI 원점수 0~100. 채점 대상은 문항당 최신 성공
-     *                               시도 1건이다 ({@code AnalysisStatusService#scoringTargets}, §5.1)
+     *                               시도 1건이다 ({@code AnalysisStatusService#representativeByItem}의
+     *                               COMPLETED 대표, §5.1)
      * @param chosenChoiceIdByItem   어휘 itemId → 제출된 choiceId (KAN-15 답안 저장소)
      * @throws IllegalArgumentException 문항 누락과 초과, 범위 밖 점수, 정의에 없는 선택지 -
      *                                  전부 호출부 버그거나 데이터 오염이다

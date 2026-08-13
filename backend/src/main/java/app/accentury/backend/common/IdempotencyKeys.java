@@ -3,7 +3,7 @@ package app.accentury.backend.common;
 import org.jspecify.annotations.Nullable;
 
 /**
- * {@code Idempotency-Key} 헤더 규칙 (API 명세서 §2.2 - 비용 발생 POST 필수: 업로드·답안·완료).
+ * {@code Idempotency-Key} 헤더 규칙 (API 명세서 §2.2 - 비용 발생 POST 필수: 업로드/답안/완료).
  * <p>
  * 검증을 한 곳에 두어 API마다 규칙이 갈라지지 않게 한다 (KAN-23 업로드, KAN-15 답안).
  */

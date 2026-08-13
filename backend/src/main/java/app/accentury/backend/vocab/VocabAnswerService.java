@@ -21,7 +21,7 @@ import java.util.UUID;
 /**
  * 어휘 답안의 검증 파이프라인과 저장 (KAN-15, API 명세서 §3.5).
  * <p>
- * 검증 순서: 세션 인증 -> 멱등 키 -> 문항·선택지 -> (잠금) 완료 가드 -> 멱등 판별 -> 저장.
+ * 검증 순서: 세션 인증 -> 멱등 키 -> 문항/선택지 -> (잠금) 완료 가드 -> 멱등 판별 -> 저장.
  * AI를 거치지 않는다 - 정답표 대조는 저장 시점에 끝난다 (§4.3, §5.7).
  * <p>
  * 완료 검사부터 저장까지는 세션 행 잠금 아래 한 트랜잭션이다 (Codex sol 리뷰 P2) -
@@ -97,7 +97,7 @@ public class VocabAnswerService {
         }));
 
         if (savedNew) {
-            // 답안 내용(choiceId·정오)은 로그에 남기지 않는다 (§2.6의 취지 - 결과 유추 차단)
+            // 답안 내용(choiceId/정오)은 로그에 남기지 않는다 (§2.6의 취지 - 결과 유추 차단)
             log.info("어휘 답안 저장 sessionId={} itemId={}", session.id(), itemId);
         }
         return response(session);
