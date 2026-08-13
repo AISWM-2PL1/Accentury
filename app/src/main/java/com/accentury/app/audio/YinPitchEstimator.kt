@@ -66,7 +66,10 @@ object YinPitchEstimator {
         while (tau + 1 <= tauMax && cmndf[tau + 1] < cmndf[tau]) tau++
 
         // 4단계 — 포물선 보간: 정수 τ 이웃 3점으로 실수 주기를 근사해 양자화 오차를 줄인다.
-        return sampleRate / parabolicInterpolation(cmndf, tau)
+        //         대역 경계 τ에서 보간이 대역을 살짝 벗어날 수 있어(예: τ=40 → 400Hz 초과)
+        //         결과를 탐색 대역으로 clamp한다 (Codex 1R).
+        val f0 = sampleRate / parabolicInterpolation(cmndf, tau)
+        return f0.coerceIn(MIN_F0_HZ.toFloat(), MAX_F0_HZ.toFloat())
     }
 
     private fun parabolicInterpolation(cmndf: FloatArray, tau: Int): Float {

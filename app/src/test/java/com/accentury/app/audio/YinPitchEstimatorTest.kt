@@ -3,6 +3,7 @@ package com.accentury.app.audio
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.Random
 import kotlin.math.PI
@@ -45,6 +46,21 @@ class YinPitchEstimatorTest {
         val f0 = YinPitchEstimator.estimate(chunk)
         assertNotNull(f0)
         assertEquals(120f, f0!!, 3f)
+    }
+
+    @Test
+    fun `대역 상한 경계 396Hz도 400Hz를 넘기지 않는다`() {
+        val f0 = YinPitchEstimator.estimate(sine(396.0))
+        assertNotNull(f0)
+        assertEquals(396f, f0!!, 4f)
+        assertTrue(f0 <= 400f)
+    }
+
+    @Test
+    fun `대역 밖 410Hz는 400Hz 초과 값을 반환하지 않는다`() {
+        // τmin=40 경계에서 보간이 대역 밖으로 새는지 확인. null(무성음) 또는 clamp된 값만 허용.
+        val f0 = YinPitchEstimator.estimate(sine(410.0))
+        assertTrue(f0 == null || f0 <= 400f)
     }
 
     @Test
