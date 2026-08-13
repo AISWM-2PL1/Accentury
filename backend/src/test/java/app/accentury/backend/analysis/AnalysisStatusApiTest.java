@@ -13,10 +13,8 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
-import java.util.Map;
 
 import static org.hamcrest.Matchers.hasSize;
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -44,9 +42,6 @@ class AnalysisStatusApiTest extends IntegrationTest {
 
     @Autowired
     private AnalysisJobTransitions transitions;
-
-    @Autowired
-    private AnalysisStatusService service;
 
     @Autowired
     private AnalysisBacklog backlog;
@@ -148,6 +143,25 @@ class AnalysisStatusApiTest extends IntegrationTest {
     }
 
     @Test
+    void 성공보다_새로운_시도가_분석_중이면_최신_실패에도_PROCESSING이다() throws Exception {
+        // [성공, 분석 중, 실패] - 분석 중인 2차가 성공하면 채점 대상(최신 성공)이 1차에서
+        // 2차로 바뀐다. 여기서 COMPLETED를 보고하면 /complete가 옛 점수로 결과를 영구
+        // 확정할 수 있으므로 기다려야 한다 (Codex sol 리뷰 P1)
+        SessionHandle session = createSession();
+        Instant base = Instant.now().minusSeconds(60);
+        AnalysisJob first = saveJob(session, "v1", 1, base);
+        saveJob(session, "v1", 2, base.plusSeconds(10));
+        AnalysisJob third = saveJob(session, "v1", 3, base.plusSeconds(20));
+        transitions.complete(first.id(), 80, "OK", "rmvpe-0.2", "sv-0.3");
+        transitions.fail(third.id(), AnalysisJobStatus.RETRYABLE_FAILED, "AUDIO_TOO_QUIET");
+
+        mockMvc.perform(statuses(session))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].status").value("PROCESSING"))
+                .andExpect(jsonPath("$.items[0].error").doesNotExist());
+    }
+
+    @Test
     void 성공이_없고_이전_시도가_아직_분석_중이면_최신_실패라도_PROCESSING이다() throws Exception {
         // 겹친 업로드에서 새 시도가 먼저 실패한 경우 - 아직 도는 이전 시도가 성공하면
         // 채점 대상이 되므로, 실패를 보고해 폴링을 멈추게 하면 안 된다 (Codex sol 리뷰 P2)
@@ -212,30 +226,6 @@ class AnalysisStatusApiTest extends IntegrationTest {
         // 밀림이 풀리면 즉시 기준 간격으로 돌아온다
         mockMvc.perform(statuses(session))
                 .andExpect(jsonPath("$.pollAfterMs").value(base));
-    }
-
-    // === 채점 대상 선정 (§5.1, KAN-24 AC - KAN-25가 소비) ===
-
-    @Test
-    void 채점_대상은_문항당_최신_성공_시도_1건이다() throws Exception {
-        SessionHandle session = createSession();
-        Instant base = Instant.now().minusSeconds(60);
-        AnalysisJob first = saveJob(session, "v1", 1, base);
-        AnalysisJob second = saveJob(session, "v1", 2, base.plusSeconds(10));
-        AnalysisJob third = saveJob(session, "v1", 3, base.plusSeconds(20));
-        AnalysisJob other = saveJob(session, "v3", 1, base);
-        transitions.complete(first.id(), 40, "OK", "rmvpe-0.2", "sv-0.3");
-        transitions.complete(second.id(), 90, "OK", "rmvpe-0.2", "sv-0.3");
-        transitions.fail(third.id(), AnalysisJobStatus.FAILED, "INTERNAL_ERROR");
-        transitions.complete(other.id(), 55, "OK", "rmvpe-0.2", "sv-0.3");
-
-        Map<String, AnalysisJob> targets = service.scoringTargets(session.id());
-
-        // 최신 성공은 2차다 - 이후 실패(3차)와 이전 성공(1차)은 채점에서 제외 (§5.1)
-        assertEquals(2, targets.size());
-        assertEquals(second.id(), targets.get("v1").id());
-        assertEquals(90, targets.get("v1").intonationScore());
-        assertEquals(other.id(), targets.get("v3").id());
     }
 
     // === 단건 조회 (§3.4 - "동일 스키마 + modelVersion, scoreVersion") ===

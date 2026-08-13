@@ -46,5 +46,9 @@ accentury:
     dispatch-concurrency: 4          # 분석 전달 워커 수 - GPU 동시 슬롯을 넘지 않게 (명세서 §5.3)
   upload:
     rate-limit-per-minute: 30    # IP당 분당 업로드 상한 - 부하 테스트 후 확정 (명세서 §7, KAN-28)
+  completion:
+    rate-limit-per-minute: 120   # 세션당 분당 /complete 상한 (KAN-16 AC) - pollAfterMs 800ms를 그대로 따르는
+                                 # 합법 폴링(약 75회/분)이 60초 분석 대기 중에도 걸리지 않는 여유 배수.
+                                 # 임계치는 부하 테스트 후 확정 (명세서 §5.3, §7, KAN-28)
   cors:
     allowed-origins: []    # 스탠드얼론 웹 테스트(KAN-31) 오리진 - 웹 배포 시 지정 (명세서 §2.5)

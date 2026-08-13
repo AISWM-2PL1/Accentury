@@ -19,12 +19,13 @@ import java.util.List;
  * @param session      익명 세션 정책 (KAN-9)
  * @param analysis     분석 상태 폴링 정책 (KAN-23, KAN-24)
  * @param upload       음성 업로드 요청 제한 (KAN-23)
+ * @param completion   완료 API 요청 제한 (KAN-16)
  * @param cors         웹 테스트 CORS allowlist (KAN-23, KAN-31)
  */
 @ConfigurationProperties(prefix = "accentury")
 public record AccenturyProperties(String testVersion, String scoreVersion, Session session,
                                   @DefaultValue Analysis analysis, @DefaultValue Upload upload,
-                                  @DefaultValue Cors cors) {
+                                  @DefaultValue Completion completion, @DefaultValue Cors cors) {
 
     /**
      * @param ttl 세션 토큰 수명 - 테스트 소요 5분의 여유 배수인 30분 (§2.1, §7)
@@ -72,6 +73,18 @@ public record AccenturyProperties(String testVersion, String scoreVersion, Sessi
      *                           임계치는 부하 테스트 후 확정한다 (§7, KAN-28)
      */
     public record Upload(@DefaultValue("30") int rateLimitPerMinute) {
+    }
+
+    /**
+     * @param rateLimitPerMinute 세션당 분당 {@code /complete} 허용 횟수 (§2.5, KAN-16 AC).
+     *                           폴링 대상 엔드포인트라(§3.6) IP가 아니라 세션 단위다 - NAT 뒤의
+     *                           여러 정상 세션이 서로의 한도를 깎지 않는다. 서버가 내려주는
+     *                           {@code pollAfterMs} 기준값 800ms를 그대로 따르는 클라이언트가
+     *                           분당 약 75회이므로(§5.3 규칙 1 - 정상 트래픽), 60초 실행 잔류
+     *                           한도(§3.4)까지 이어지는 합법 폴링이 걸리지 않게 그 위로 잡는다
+     *                           (Codex sol 리뷰 P2). 임계치는 부하 테스트 후 확정한다 (§7, KAN-28)
+     */
+    public record Completion(@DefaultValue("120") int rateLimitPerMinute) {
     }
 
     /**

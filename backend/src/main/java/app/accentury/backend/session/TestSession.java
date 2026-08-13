@@ -96,7 +96,7 @@ public class TestSession {
      * <p>
      * 전이는 제출 경로와 같은 세션 행 잠금({@link TestSessionRepository#lockById}) 아래에서
      * 해야 한다 - 아니면 제출 경로의 완료 검사와 저장 사이에 완료가 끼어들어 확정된
-     * 세션에 답안·분석 작업이 추가된다 (Codex sol 리뷰 P2).
+     * 세션에 답안/분석 작업이 추가된다 (Codex sol 리뷰 P2).
      */
     public void markCompleted(Instant completedAt) {
         this.completedAt = completedAt;

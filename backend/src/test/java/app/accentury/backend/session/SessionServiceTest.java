@@ -125,7 +125,7 @@ class SessionServiceTest extends IntegrationTest {
         // 슬쩍 들어오는 것을 리뷰가 아니라 테스트가 막는다
         Set<String> allowed = Set.of("id", "tokenHash", "testVersion", "scoreVersion",
                 "platform", "appVersion", "campaignToken", "createdAt", "expiresAt",
-                "completedAt");   // 완료 가드 (KAN-15·16) - 시각뿐, 식별 정보 아님
+                "completedAt");   // 완료 가드 (KAN-15/16) - 시각뿐, 식별 정보 아님
 
         Set<String> actual = Stream.of(TestSession.class.getDeclaredFields())
                 .map(Field::getName)

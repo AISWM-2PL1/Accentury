@@ -203,7 +203,7 @@ class VocabAnswerApiTest extends IntegrationTest {
                 .andExpect(jsonPath("$.code").value("SESSION_FORBIDDEN"));
     }
 
-    // === 문항·선택지 검증 (AC - 다른 버전·다른 세션 제출 거절) ===
+    // === 문항/선택지 검증 (AC - 다른 버전/다른 세션 제출 거절) ===
 
     @Test
     void 버전에_없는_문항이면_422_ITEM_NOT_IN_VERSION이다() throws Exception {

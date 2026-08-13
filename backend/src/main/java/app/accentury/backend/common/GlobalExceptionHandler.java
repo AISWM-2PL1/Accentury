@@ -66,6 +66,21 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     }
 
     /**
+     * 문항 목록 확장 필드가 붙는 비즈니스 예외 (§2.3, §3.6) - {@link #handleApi}보다
+     * 구체 타입이라 이쪽이 잡는다. 이 확장이 붙는 코드(409, 422)는 요청 제한이 아니므로
+     * Retry-After 분기는 없다.
+     */
+    @ExceptionHandler(ItemsApiException.class)
+    public ResponseEntity<ItemsErrorResponse> handleApiWithItems(ItemsApiException e) {
+        String correlationId = CorrelationIdFilter.current();
+        // 문항 ID는 정의 공개 정보라 로그에 남겨도 결과를 유추할 수 없다 (§2.6과 무충돌)
+        log.warn("[{}] {} - {} {}", correlationId, e.code(), e.getMessage(), e.itemIds());
+        return ResponseEntity.status(e.code().status())
+                .cacheControl(NO_STORE)
+                .body(ItemsErrorResponse.of(e, correlationId));
+    }
+
+    /**
      * 경로와 쿼리 파라미터 타입 불일치 (예: 숫자 자리에 문자) → 400.
      * 부모도 상위 타입(TypeMismatchException)으로 잡아주지만,
      * 여기서 어떤 파라미터가 문제인지 담은 메시지로 바꾼다.

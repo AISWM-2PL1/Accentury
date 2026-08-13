@@ -46,6 +46,7 @@ class AnalysisDispatchConfigTest {
                         processingTimeout, Duration.ofMinutes(5), "http://ai.test",
                         Duration.ofSeconds(10), 2, 4),
                 new AccenturyProperties.Upload(30),
+                new AccenturyProperties.Completion(60),
                 new AccenturyProperties.Cors(List.of()));
     }
 }
