@@ -7,6 +7,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -47,6 +48,7 @@ class AnalysisDispatchConfigTest {
                         Duration.ofSeconds(10), 2, 4),
                 new AccenturyProperties.Upload(30),
                 new AccenturyProperties.Completion(60),
-                new AccenturyProperties.Cors(List.of()));
+                new AccenturyProperties.Cors(List.of()),
+                new AccenturyProperties.Result(null, Map.of()));
     }
 }

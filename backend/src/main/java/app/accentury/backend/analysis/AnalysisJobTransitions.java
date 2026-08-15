@@ -38,7 +38,7 @@ public class AnalysisJobTransitions {
     }
 
     /**
-     * 분석 성공 - COMPLETED로 전이하고 결과(점수, 품질, 모델·점수 버전)를 채운다.
+     * 분석 성공 - COMPLETED로 전이하고 결과(점수, 품질, 모델과 점수 버전)를 채운다.
      * 점수는 이 시점에 세션 저장소에 누적되고(§4.3), 합산은 /complete가 1회 한다 (KAN-25).
      */
     @Transactional

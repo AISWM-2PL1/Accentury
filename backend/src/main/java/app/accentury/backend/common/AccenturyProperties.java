@@ -6,6 +6,7 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 서비스 전역 설정 - 활성 테스트와 점수 버전, 세션 정책.
@@ -21,11 +22,13 @@ import java.util.List;
  * @param upload       음성 업로드 요청 제한 (KAN-23)
  * @param completion   완료 API 요청 제한 (KAN-16)
  * @param cors         웹 테스트 CORS allowlist (KAN-23, KAN-31)
+ * @param result       결과 응답의 등급별 자산과 공유 URL (KAN-25)
  */
 @ConfigurationProperties(prefix = "accentury")
 public record AccenturyProperties(String testVersion, String scoreVersion, Session session,
                                   @DefaultValue Analysis analysis, @DefaultValue Upload upload,
-                                  @DefaultValue Completion completion, @DefaultValue Cors cors) {
+                                  @DefaultValue Completion completion, @DefaultValue Cors cors,
+                                  @DefaultValue Result result) {
 
     /**
      * @param ttl 세션 토큰 수명 - 테스트 소요 5분의 여유 배수인 30분 (§2.1, §7)
@@ -92,5 +95,30 @@ public record AccenturyProperties(String testVersion, String scoreVersion, Sessi
      *                       비어 있으면 교차 출처 요청을 허용하지 않는다
      */
     public record Cors(@DefaultValue List<String> allowedOrigins) {
+    }
+
+    /**
+     * {@code /result} 응답의 등급별 자산 (§3.7, KAN-25) - 서버가 내려주므로 앱 배포 없이
+     * 설정 변경만으로 문구와 이미지를 교체할 수 있다 (KAN-29, 30 소비).
+     * 완결성(5개 등급 전부, 빈 값 없음)은 기동 시 {@code TierAssets}가 강제한다.
+     *
+     * @param webTestUrl 공유 카드가 여는 웹 테스트 URL - 공유 유입 계측용 캠페인 파라미터가
+     *                   붙은 완성 URL을 설정값 그대로 반환한다 (2026-08-14 확정 - 전 등급
+     *                   공통 고정값 하나, KAN-30). 개인 식별 요소를 넣지 않는다
+     * @param tiers      등급 code(소문자 키) → 자산. 키는 {@code ScorePolicyRegistry.TIER_CODES}와
+     *                   대소문자 무시 1:1이어야 한다
+     */
+    public record Result(@Nullable String webTestUrl, @DefaultValue Map<String, TierAsset> tiers) {
+    }
+
+    /**
+     * 등급 하나의 결과 화면과 공유 자산 (§3.7 - comment, share.imageUrl, share.text).
+     *
+     * @param comment   등급별 진단 코멘트 - 결과 화면에 그대로 표시된다 (KAN-29)
+     * @param imageUrl  등급별 정적 공유 이미지 - 사전 제작 자산, 개인 점수 미포함 (KAN-30)
+     * @param shareText 공유 카드 문구 - 이름 없는 1인칭 (KAN-30)
+     */
+    public record TierAsset(@Nullable String comment, @Nullable String imageUrl,
+                            @Nullable String shareText) {
     }
 }

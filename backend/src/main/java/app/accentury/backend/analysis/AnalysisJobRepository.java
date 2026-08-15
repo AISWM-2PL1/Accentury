@@ -23,7 +23,7 @@ public interface AnalysisJobRepository extends JpaRepository<AnalysisJob, String
             String sessionId, String itemId, String idempotencyKey);
 
     /**
-     * 세션·문항의 전체 시도 행 수 - 테스트 검증용. attempt 번호와 시도 상한 판정은
+     * 세션과 문항의 전체 시도 행 수 - 테스트 검증용. attempt 번호와 시도 상한 판정은
      * {@link #countAiConsumingAttempts}가 정본이다 (§5.1 - 전달 실패는 세지 않는다).
      */
     long countBySessionIdAndItemId(String sessionId, String itemId);

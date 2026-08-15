@@ -6,6 +6,7 @@ import app.accentury.backend.analysis.AnalysisJobRepository;
 import app.accentury.backend.analysis.AnalysisJobStatus;
 import app.accentury.backend.analysis.AnalysisJobTransitions;
 import app.accentury.backend.common.AccenturyProperties;
+import app.accentury.backend.session.TestSession;
 import app.accentury.backend.session.TestSessionRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -98,7 +99,11 @@ class CompleteApiTest extends IntegrationTest {
         assertEquals("sv-0.3", result.scoreVersion());
         // 결과 수명은 저장 시점에 확정된다 - /result 응답의 expiresAt이자 정리 기준 (§3.7, §5.5)
         assertEquals(result.createdAt().plus(properties.analysis().retention()), result.expiresAt());
-        assertNotNull(sessionRepository.findById(session.id()).orElseThrow().completedAt());
+        TestSession completed = sessionRepository.findById(session.id()).orElseThrow();
+        assertNotNull(completed.completedAt());
+        // 완료 시 토큰 수명이 결과 수명까지 연장된다 (2026-08-14 확정, KAN-25) - 30분 TTL
+        // 그대로면 결과 재조회(§5.5)와 만료 410 안내가 전부 401에 막힌다
+        assertEquals(result.expiresAt(), completed.expiresAt());
 
         // 재시도(다른 키여도)는 READY 재확인일 뿐 결과를 다시 만들지 않는다 (AC) -
         // 같은 행이 그대로 남아 있어야 한다 (세션당 유니크 제약은 마지막 안전망)

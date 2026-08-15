@@ -1,7 +1,5 @@
 package app.accentury.backend.result;
 
-import app.accentury.backend.analysis.AnalysisJob;
-import app.accentury.backend.analysis.AnalysisStatusService;
 import app.accentury.backend.analysis.PollIntervals;
 import app.accentury.backend.common.AccenturyProperties;
 import app.accentury.backend.common.ApiException;
@@ -15,8 +13,6 @@ import app.accentury.backend.session.TestSession;
 import app.accentury.backend.session.TestSessionRepository;
 import app.accentury.backend.testdefinition.TestDefinition;
 import app.accentury.backend.testdefinition.TestDefinitionRegistry;
-import app.accentury.backend.vocab.VocabAnswer;
-import app.accentury.backend.vocab.VocabAnswerRepository;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,14 +20,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
 /**
  * 완료 검증과 결과 확정 (KAN-16, API 명세서 §3.6).
@@ -52,8 +42,7 @@ public class CompletionService {
 
     private final SessionService sessionService;
     private final TestDefinitionRegistry registry;
-    private final AnalysisStatusService analysisStatusService;
-    private final VocabAnswerRepository vocabAnswerRepository;
+    private final CompletionJudge judge;
     private final TestResultRepository resultRepository;
     private final TestSessionRepository sessionRepository;
     private final ScoreAggregator aggregator;
@@ -63,8 +52,7 @@ public class CompletionService {
     private final TransactionTemplate transactionTemplate;
 
     public CompletionService(SessionService sessionService, TestDefinitionRegistry registry,
-                             AnalysisStatusService analysisStatusService,
-                             VocabAnswerRepository vocabAnswerRepository,
+                             CompletionJudge judge,
                              TestResultRepository resultRepository,
                              TestSessionRepository sessionRepository,
                              ScoreAggregator aggregator, CompleteRateLimiter rateLimiter,
@@ -72,8 +60,7 @@ public class CompletionService {
                              TransactionTemplate transactionTemplate) {
         this.sessionService = sessionService;
         this.registry = registry;
-        this.analysisStatusService = analysisStatusService;
-        this.vocabAnswerRepository = vocabAnswerRepository;
+        this.judge = judge;
         this.resultRepository = resultRepository;
         this.sessionRepository = sessionRepository;
         this.aggregator = aggregator;
@@ -122,82 +109,39 @@ public class CompletionService {
 
     /**
      * 완주 판정과 결과 확정 - 세션 행 잠금 아래에서만 호출된다.
-     * <p>
-     * 문항 순회는 정의의 seq 순서라 응답의 문항 목록도 항상 그 순서다. 음성 문항의
-     * 판정은 대표 상태({@link AnalysisStatusService#representativeByItem}) 그대로다 -
-     * 대기 화면(§3.4)과 완료 판정이 같은 문항을 다르게 말하지 않고, 대표가 COMPLETED인
-     * 작업이 곧 채점 대상(최신 성공 시도, §5.1)이라 별도 선정도 필요 없다.
+     * 판정 자체는 {@code /result}(KAN-25)와 공용이다 ({@link CompletionJudge}).
      */
     private CompleteResponse verifyAndFinalize(TestSession session, long pollAfterMs) {
         TestDefinition definition = registry.get(session.testVersion()).definition();
-        Map<String, AnalysisJob> representatives = analysisStatusService.representativeByItem(session.id());
-        Map<String, VocabAnswer> answers = vocabAnswerRepository.findBySessionId(session.id()).stream()
-                .collect(Collectors.toMap(VocabAnswer::itemId, Function.identity()));
-
-        List<String> missing = new ArrayList<>();
-        List<String> retake = new ArrayList<>();
-        List<String> pending = new ArrayList<>();
-        Map<String, Integer> intonationScoreByItem = new HashMap<>();
-        Map<String, String> chosenChoiceIdByItem = new HashMap<>();
-        for (TestDefinition.Item item : definition.items()) {
-            switch (item.type()) {
-                case VOICE -> {
-                    AnalysisJob representative = representatives.get(item.itemId());
-                    if (representative == null) {
-                        missing.add(item.itemId()); // 업로드된 시도가 없다 (§5.1 - 로컬 재녹음은 시도가 아니다)
-                    } else {
-                        switch (representative.status()) {
-                            case PROCESSING -> pending.add(item.itemId());
-                            // COMPLETED의 점수가 null이면 데이터 오염이다 - 집계가 크게 실패한다 (KAN-21)
-                            case COMPLETED -> intonationScoreByItem.put(item.itemId(),
-                                    representative.intonationScore());
-                            // FAILED(재녹음 무익)도 retake로 묶는다 (2026-08-13 확정, Codex sol 리뷰
-                            // P2 기각) - §3.7이 실패 종류를 구분하지 않고, 새 시도가 세션 내 유일한
-                            // 복구 경로다. 문항별 retryable의 정본은 §3.4 상태 조회이고, FAILED가
-                            // 반복되면 시도 상한(§2.5) → 429 → 재응시(§3.1)로 수렴한다
-                            case RETRYABLE_FAILED, FAILED -> retake.add(item.itemId());
-                            // 상태가 추가되면 조용한 문항 누락 대신 여기서 즉시 실패한다
-                            default -> throw new IllegalStateException(
-                                    "완주 판정 규칙이 없는 분석 상태다: " + representative.status());
-                        }
-                    }
-                }
-                case VOCABULARY -> {
-                    VocabAnswer answer = answers.get(item.itemId());
-                    if (answer == null) {
-                        missing.add(item.itemId());
-                    } else {
-                        chosenChoiceIdByItem.put(item.itemId(), answer.choiceId());
-                    }
-                }
-            }
-        }
+        CompletionJudge.Judgment judgment = judge.judge(session.id(), definition);
 
         // 우선순위: 미제출 > 실패 > 분석 중 (2026-08-13 확정) - 아래 주석은 각 갈래의 §3.6 계약
-        if (!missing.isEmpty()) {
+        if (!judgment.missingItems().isEmpty()) {
             // 422 - 제출부터 해야 한다. 건너뛰기가 없으므로(§5.6) 재시도해도 안 바뀐다 (retryable=false)
             throw new ItemsApiException(ErrorCode.RESULT_INCOMPLETE,
-                    ItemsApiException.ItemsField.MISSING_ITEMS, missing);
+                    ItemsApiException.ItemsField.MISSING_ITEMS, judgment.missingItems());
         }
-        if (!retake.isEmpty()) {
+        if (!judgment.retakeItems().isEmpty()) {
             // 409 - 성공도 진행 중도 없는 문항은 기다려도 안 바뀐다. 재녹음(새 시도)으로만 풀린다 (§3.7과 같은 코드)
             throw new ItemsApiException(ErrorCode.RESULT_RETAKE_REQUIRED,
-                    ItemsApiException.ItemsField.RETAKE_ITEMS, retake);
+                    ItemsApiException.ItemsField.RETAKE_ITEMS, judgment.retakeItems());
         }
-        if (!pending.isEmpty()) {
-            return CompleteResponse.processing(pending, pollAfterMs);
+        if (!judgment.pendingItems().isEmpty()) {
+            return CompleteResponse.processing(judgment.pendingItems(), pollAfterMs);
         }
 
-        AggregateScore score = aggregator.aggregate(
-                session.scoreVersion(), definition, intonationScoreByItem, chosenChoiceIdByItem);
+        AggregateScore score = aggregator.aggregate(session.scoreVersion(), definition,
+                judgment.intonationScoreByItem(), judgment.chosenChoiceIdByItem());
         Instant now = Instant.now();
+        Instant resultExpiresAt = now.plus(properties.analysis().retention());
         resultRepository.save(new TestResult("r_" + UUID.randomUUID(), session.id(),
                 session.testVersion(), score.scoreVersion(),
                 score.intonation(), score.vocabulary(), score.overall(),
                 score.tier().code(), score.tier().name(), score.tier().rank(), score.tierCount(),
-                now, now.plus(properties.analysis().retention())));
-        // 결과 저장과 같은 트랜잭션이다 - 완료 전이만 커밋되고 결과가 없는 상태는 존재하지 않는다
-        session.markCompleted(now);
+                now, resultExpiresAt));
+        // 결과 저장과 같은 트랜잭션이다 - 완료 전이만 커밋되고 결과가 없는 상태는 존재하지
+        // 않는다. 세션 수명은 결과 수명까지 늘어난다 - 재조회와 410 안내의 전제 (KAN-25)
+        session.markCompleted(now, resultExpiresAt);
         return CompleteResponse.ready();
     }
 }

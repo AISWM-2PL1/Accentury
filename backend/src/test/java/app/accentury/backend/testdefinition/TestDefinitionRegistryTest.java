@@ -10,6 +10,7 @@ import tools.jackson.databind.json.JsonMapper;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -204,7 +205,8 @@ class TestDefinitionRegistryTest {
                         Duration.ofSeconds(60), Duration.ofMinutes(5), null, Duration.ofSeconds(10), 2, 4),
                 new AccenturyProperties.Upload(30),
                 new AccenturyProperties.Completion(60),
-                new AccenturyProperties.Cors(List.of()));
+                new AccenturyProperties.Cors(List.of()),
+                new AccenturyProperties.Result(null, Map.of()));
     }
 
     /** 정본 구성과 같은 5+5와 seq 교차 정의. 각 테스트가 한 곳씩 망가뜨린다 */

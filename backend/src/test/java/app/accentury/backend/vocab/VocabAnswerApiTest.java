@@ -162,7 +162,7 @@ class VocabAnswerApiTest extends IntegrationTest {
     void 완료된_세션에는_409_SESSION_COMPLETED다() throws Exception {
         SessionHandle session = createSession();
         TestSession stored = sessionRepository.findById(session.id()).orElseThrow();
-        stored.markCompleted(Instant.now());
+        stored.markCompleted(Instant.now(), stored.expiresAt());
         sessionRepository.save(stored);
 
         mockMvc.perform(answer(session, "w1", "after-complete", body("w1a")))

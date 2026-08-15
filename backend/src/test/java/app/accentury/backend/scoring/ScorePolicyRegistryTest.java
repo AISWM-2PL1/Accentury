@@ -7,6 +7,7 @@ import tools.jackson.databind.json.JsonMapper;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -165,7 +166,8 @@ class ScorePolicyRegistryTest {
                         Duration.ofSeconds(60), Duration.ofMinutes(5), null, Duration.ofSeconds(10), 2, 4),
                 new AccenturyProperties.Upload(30),
                 new AccenturyProperties.Completion(60),
-                new AccenturyProperties.Cors(List.of()));
+                new AccenturyProperties.Cors(List.of()),
+                new AccenturyProperties.Result(null, Map.of()));
     }
 
     /** sv-0.3과 같은 5등급 정책. 각 테스트가 한 곳씩 망가뜨린다 */
