@@ -37,9 +37,10 @@ public class ScorePolicyRegistry {
      * 등급 code의 확정 목록 - rank 순서 그대로다 (2026-07-27 확정). code는 §3.7 tier.code
      * 클라이언트 계약이고 결과 화면과 공유 이미지(KAN-29, 30)가 code별 고정 자산을 가지므로,
      * 오타나 순서 바뀜은 발행 시점에 거부해야 한다 (Codex sol 리뷰 P2). 표시 이름과 경계는
-     * seed가 정본이지만 code 집합 변경은 클라이언트 배포가 함께 필요한 별개 결정이다
+     * seed가 정본이지만 code 집합 변경은 클라이언트 배포가 함께 필요한 별개 결정이다.
+     * 등급별 자산 설정 검증(TierAssets, KAN-25)도 이 목록이 기준이다
      */
-    static final List<String> TIER_CODES = List.of("OUTSIDER", "TRAVELER", "WANNABE", "HONORARY", "NATIVE");
+    public static final List<String> TIER_CODES = List.of("OUTSIDER", "TRAVELER", "WANNABE", "HONORARY", "NATIVE");
 
     /**
      * 가중치 상한 - 가중치는 비율값(sv-0.3: 2:1)이라 이 범위면 충분하다. 집계 산술은

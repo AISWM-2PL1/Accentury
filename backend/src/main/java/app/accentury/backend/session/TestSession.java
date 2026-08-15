@@ -97,9 +97,25 @@ public class TestSession {
      * 전이는 제출 경로와 같은 세션 행 잠금({@link TestSessionRepository#lockById}) 아래에서
      * 해야 한다 - 아니면 제출 경로의 완료 검사와 저장 사이에 완료가 끼어들어 확정된
      * 세션에 답안/분석 작업이 추가된다 (Codex sol 리뷰 P2).
+     * <p>
+     * 토큰 수명을 결과 수명(24시간, §5.5)까지 함께 연장한다 (2026-08-14 확정, KAN-25) -
+     * 30분 TTL 그대로면 결과 재조회(새로고침, 앱 복귀)와 만료 후 410 안내가 전부 401에
+     * 막힌다. 완료된 세션은 제출 가드(SESSION_COMPLETED)로 잠겨 있어 연장으로 열리는
+     * 쓰기 경로는 없고, 읽히는 것은 익명 결과뿐이다.
+     * <p>
+     * 결과 보존 수명을 토큰 수명과 분리(전용 컬럼/tombstone)하라는 지적(Codex sol
+     * 리뷰 P2)은 기각한다 (2026-08-14 확정 설계) - 완료 후 상태 조회(/analyses)가 24시간
+     * 열리지만 자기 세션의 익명 상태뿐이고, 만료 후 세션 행이 주기 삭제되면 410이 401로
+     * 바뀌는 것도 수용한 트레이드오프다(401 안내 문구 역시 재응시로 이끈다). 분리 모델의
+     * 값이 프로토타입 복잡도를 넘지 않는다.
+     *
+     * @param completedAt     완료 확정 시각
+     * @param resultExpiresAt 함께 저장되는 결과의 만료 시각 - 세션과 결과가 같은 순간
+     *                        만료돼 "세션과 결과는 24시간 후 파기 → 이후 조회 410"(§5.5)이 성립한다
      */
-    public void markCompleted(Instant completedAt) {
+    public void markCompleted(Instant completedAt, Instant resultExpiresAt) {
         this.completedAt = completedAt;
+        this.expiresAt = resultExpiresAt;
     }
 
     public String id() {

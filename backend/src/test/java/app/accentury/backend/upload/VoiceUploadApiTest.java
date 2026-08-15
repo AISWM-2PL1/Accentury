@@ -147,7 +147,7 @@ class VoiceUploadApiTest extends IntegrationTest {
         // 소모하고 확정된 세션 상태를 흔든다 (Codex sol 리뷰 P2)
         SessionHandle session = createSession();
         TestSession stored = sessionRepository.findById(session.id()).orElseThrow();
-        stored.markCompleted(Instant.now());
+        stored.markCompleted(Instant.now(), stored.expiresAt());
         sessionRepository.save(stored);
 
         mockMvc.perform(upload(session, "v1", "after-complete"))

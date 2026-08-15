@@ -40,8 +40,8 @@ accentury:
     processing-timeout: 60s          # 실행 잔류 한도 - 실행 시작 후 이 시간을 넘기면 RETRYABLE_FAILED(ANALYSIS_TIMEOUT) (KAN-24)
     queued-timeout: 5m               # 큐 유실 한도 - 실행을 시작 못 한 채 이 시간이 지나면 정리 (프로세스 사망 대비).
                                      # 정상 큐 소진(수 분)보다 길고, 세션 TTL(30분) 안에 복구가 보이도록 그보다 짧다
-    # ai-base-url: http://localhost:8000    # AI 서버(FastAPI, 명세서 §4.1) - 미설정이면 전달하지 않는 개발 모드 (KAN-22·36 배포 시 지정)
-    ai-timeout: 10s                  # AI 호출 연결·읽기 타임아웃 - 추론 P95 3초의 여유 배수
+    # ai-base-url: http://localhost:8000    # AI 서버(FastAPI, 명세서 §4.1) - 미설정이면 전달하지 않는 개발 모드 (KAN-22, 36 배포 시 지정)
+    ai-timeout: 10s                  # AI 호출 연결과 읽기 타임아웃 - 추론 P95 3초의 여유 배수
     ai-retries: 2                    # AI 일시 장애(연결 실패, 5xx) 재전송 횟수 - 전달 시점에만 가능 (FR-DP-01)
     dispatch-concurrency: 4          # 분석 전달 워커 수 - GPU 동시 슬롯을 넘지 않게 (명세서 §5.3)
   upload:
@@ -52,3 +52,30 @@ accentury:
                                  # 임계치는 부하 테스트 후 확정 (명세서 §5.3, §7, KAN-28)
   cors:
     allowed-origins: []    # 스탠드얼론 웹 테스트(KAN-31) 오리진 - 웹 배포 시 지정 (명세서 §2.5)
+  # /result 등급별 자산 (명세서 §3.7, KAN-25) - 서버가 내려주므로 앱 배포 없이 여기서 교체 (KAN-29/30)
+  # 기동 시 5개 등급 전부 존재해야 한다 (TierAssets 검증). 코멘트, 문구, 이미지는 더미다 -
+  # KAN-29/30 확정 자산이 나오면 교체한다. 키는 등급 code의 소문자다 (relaxed binding이
+  # 대문자 키를 보존하지 않으므로 소문자로 적고, 조회가 대소문자를 무시한다)
+  result:
+    web-test-url: https://accentury.app/t?c=kko_share    # 공유 유입 계측 캠페인 파라미터가 붙은 완성 URL (2026-08-14 확정 - 전 등급 공통 고정값, KAN-30)
+    tiers:
+      outsider:
+        comment: "억양도 단어도 아직 표준어에 가깝습니다. 경남 사투리 입문을 환영합니다."
+        image-url: https://static.accentury.app/tier/outsider.png
+        share-text: "나는 외지인! 너도 시도해볼래?"
+      traveler:
+        comment: "여행에서 주워들은 사투리가 조금 묻어 있습니다. 아직은 손님 티가 납니다."
+        image-url: https://static.accentury.app/tier/traveler.png
+        share-text: "나는 여행객! 너도 시도해볼래?"
+      wannabe:
+        comment: "사투리를 쓰고 싶은 마음은 가득한데 억양이 아직 따라오지 못했습니다."
+        image-url: https://static.accentury.app/tier/wannabe.png
+        share-text: "나는 사투리 호소인! 너도 시도해볼래?"
+      honorary:
+        comment: "억양은 거의 토박이인데 단어에서 들켰습니다."
+        image-url: https://static.accentury.app/tier/honorary.png
+        share-text: "나는 명예주민! 너도 시도해볼래?"
+      native:
+        comment: "억양도 단어도 완벽한 경남 토박이입니다. 더 배울 것이 없습니다."
+        image-url: https://static.accentury.app/tier/native.png
+        share-text: "나는 경남 토박이! 너도 시도해볼래?"

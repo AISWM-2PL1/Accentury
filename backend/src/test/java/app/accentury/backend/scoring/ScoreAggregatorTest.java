@@ -261,7 +261,8 @@ class ScoreAggregatorTest {
                         Duration.ofSeconds(60), Duration.ofMinutes(5), null, Duration.ofSeconds(10), 2, 4),
                 new AccenturyProperties.Upload(30),
                 new AccenturyProperties.Completion(60),
-                new AccenturyProperties.Cors(List.of()));
+                new AccenturyProperties.Cors(List.of()),
+                new AccenturyProperties.Result(null, Map.of()));
     }
 
     /** 정본 구성과 같은 음성 5 + 어휘 5. 어휘 정답은 항상 a 선택지다 */

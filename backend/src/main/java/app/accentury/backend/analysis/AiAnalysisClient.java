@@ -25,7 +25,7 @@ public interface AiAnalysisClient {
     /**
      * 분석 성공 (§4.1 200 OK).
      *
-     * @param intonationScore 0~100 원값 - 20점 만점 환산은 BE 집계(KAN-21·25)가 한다 (§4.3)
+     * @param intonationScore 0~100 원값 - 20점 만점 환산은 BE 집계(KAN-21, 25)가 한다 (§4.3)
      */
     record Completed(int intonationScore, String qualityCode,
                      String modelVersion, String scoreVersion) implements Outcome {

@@ -68,11 +68,47 @@ public class SessionService {
      */
     @Transactional(readOnly = true)
     public TestSession authenticateBearer(String sessionId, @Nullable String authorizationHeader) {
+        return authenticate(sessionId, bearerToken(authorizationHeader));
+    }
+
+    /**
+     * {@code /result} 전용 인증 (KAN-25, 2026-08-14 확정) - 완료된 세션은 만료됐어도
+     * 통과시켜 결과 만료 판정(410 RESULT_EXPIRED)이 세션 만료(401)보다 먼저 서게 한다.
+     * <p>
+     * 완료 시 세션 수명이 결과 수명과 같아지므로({@link TestSession#markCompleted}) 이
+     * 완화가 실제로 여는 구간은 만료 후 세션 행이 주기 삭제되기 전까지다 - 삭제된 뒤는
+     * 모르는 토큰과 같은 401이고, 그 안내 문구도 410처럼 재응시로 이끈다.
+     * <p>
+     * {@link #authenticate}의 보안 규칙은 유지한다: 만료 토큰과 모르는 토큰은 구분되면
+     * 안 되므로, 만료된 토큰을 다른 세션 경로에 대면 403이 아니라 401이다. 미완료
+     * 세션의 만료 검사도 그대로다 - 완화는 완료된 세션의 자기 결과 조회에만 적용된다.
+     * <p>
+     * 완화 자체가 구분 금지 규칙 위반이라는 지적(Codex sol 리뷰 P1)은 기각한다
+     * (2026-08-14 확정 설계) - 구분이 생기는 조합은 자기 sessionId + 자기 토큰뿐이라
+     * 제3자의 저장소 상태 탐지에 쓸 수 없고, 소유자에게 드러나는 정보도 "내 결과가
+     * 만료됐다"라는 제품 의도(§3.7의 410 안내) 그 자체다.
+     */
+    @Transactional(readOnly = true)
+    public TestSession authenticateBearerForResult(String sessionId, @Nullable String authorizationHeader) {
+        TestSession session = repository.findByTokenHash(SessionTokens.hash(bearerToken(authorizationHeader)))
+                .orElseThrow(() -> new ApiException(ErrorCode.SESSION_EXPIRED));
+        if (session.isExpired(Instant.now())
+                && !(session.isCompleted() && session.id().equals(sessionId))) {
+            throw new ApiException(ErrorCode.SESSION_EXPIRED);
+        }
+        if (!session.id().equals(sessionId)) {
+            throw new ApiException(ErrorCode.SESSION_FORBIDDEN);
+        }
+        return session;
+    }
+
+    /** 헤더에서 Bearer 토큰을 꺼낸다. 부재나 형식 오류는 401 - 미인증과 만료를 구분해주지 않는다 */
+    private static String bearerToken(@Nullable String authorizationHeader) {
         if (authorizationHeader == null
                 || !authorizationHeader.regionMatches(true, 0, "Bearer ", 0, 7)) {
             throw new ApiException(ErrorCode.SESSION_EXPIRED);
         }
-        return authenticate(sessionId, authorizationHeader.substring(7).strip());
+        return authorizationHeader.substring(7).strip();
     }
 
     /**

@@ -14,7 +14,7 @@ import java.net.http.HttpClient;
  * 분석 전달 경로의 조립 (KAN-24).
  * <p>
  * {@code accentury.analysis.ai-base-url}이 있으면 실제 AI 호출 디스패처를, 없으면
- * 아무것도 전달하지 않는 {@link NoopAnalysisDispatcher}를 쓴다 - AI 서버(KAN-22·36) 없이
+ * 아무것도 전달하지 않는 {@link NoopAnalysisDispatcher}를 쓴다 - AI 서버(KAN-22, 36) 없이
  * BE만 띄우는 개발 모드다. 조건부 애너테이션 대신 조립 지점의 분기 하나로 정한다.
  */
 @Configuration(proxyBeanMethods = false)

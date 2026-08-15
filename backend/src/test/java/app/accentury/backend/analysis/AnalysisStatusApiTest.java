@@ -201,7 +201,7 @@ class AnalysisStatusApiTest extends IntegrationTest {
         // 혼잡 시 폴링 증폭(§5.3 - 요청 20배)을 막을 수 없다.
         SessionHandle session = createSession();
         AnalysisJob job = saveJob(session, "v1", 1, Instant.now());
-        // 임계치·간격은 설정이 정본이다 - 값을 복사하면 설정 변경 시 엉뚱한 이유로 깨진다.
+        // 임계치와 간격은 설정이 정본이다 - 값을 복사하면 설정 변경 시 엉뚱한 이유로 깨진다.
         // 공유 빈을 직접 올리므로 이 테스트는 다른 테스트와 병렬 실행하면 안 된다 (finally 복원)
         int threshold = properties.analysis().congestionThreshold();
         int congested = (int) properties.analysis().congestedPollAfterMs();
