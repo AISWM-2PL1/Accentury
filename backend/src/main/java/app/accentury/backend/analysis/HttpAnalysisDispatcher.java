@@ -67,6 +67,8 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
             submitted = true;
         } finally {
             if (!submitted) {
+                // 워커가 뜨지 못했으니 버퍼를 지울 주체도 여기뿐이다 (KAN-27 소유권 계약)
+                request.wipeAudio();
                 backlog.finished();
             }
         }
@@ -96,6 +98,10 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
                         request.analysisJobId(), failure);
             }
         } finally {
+            // 종결 즉시 원본 음성을 지운다 (KAN-27) - 성공, 판정 실패, 예산 소진, 예외,
+            // 이미 종결된 작업이라 AI를 부르지 않은 경우까지 전부 이 finally를 지난다.
+            // 재전송은 analyzeWithRetry 안에서 이미 끝났으므로 여기서 지워도 늦지 않다
+            request.wipeAudio();
             MDC.remove(CorrelationIdFilter.MDC_KEY);
             backlog.finished();
         }

@@ -22,6 +22,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 
 import static org.hamcrest.Matchers.startsWith;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
@@ -335,6 +336,35 @@ class VoiceUploadApiTest extends IntegrationTest {
         mockMvc.perform(upload(createSession(), "v1", "too-long", WavFixtures.standardWav(11_000)))
                 .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.code").value("AUDIO_TOO_LONG"));
+    }
+
+    // === 수신 사본 파기 (KAN-27) ===
+
+    @Test
+    void 형식_거절로_끝나면_요청_사본을_지운다() throws Exception {
+        // 분석으로 넘어가지 못한 오디오도 파기 대상이다 (Codex sol 리뷰 P1) - 서비스가
+        // MultipartFile.getBytes()로 뜬 사본에는 컨테이너의 요청 종료 정리가 닿지 않는다.
+        // MockMultipartFile은 getBytes()에서 내부 배열을 그대로 주므로, 서비스가 지웠는지를
+        // 여기서 그대로 확인할 수 있다
+        byte[] audio = WavFixtures.wav(44_100, 1, 16, 1000);
+
+        mockMvc.perform(upload(createSession(), "v1", "wipe-format", audio))
+                .andExpect(status().isUnsupportedMediaType());
+
+        assertArrayEquals(new byte[audio.length], audio);
+    }
+
+    @Test
+    void 멱등_재전송이라_분석을_새로_걸지_않아도_요청_사본을_지운다() throws Exception {
+        SessionHandle session = createSession();
+        mockMvc.perform(upload(session, "v1", "wipe-replay")).andExpect(status().isAccepted());
+        byte[] replay = WavFixtures.standardWav(3000);
+
+        // 저장된 작업을 그대로 돌려주는 경로 - dispatch()가 없어 소유권이 넘어가지 않는다
+        mockMvc.perform(upload(session, "v1", "wipe-replay", replay))
+                .andExpect(status().isAccepted());
+
+        assertArrayEquals(new byte[replay.length], replay);
     }
 
     // === CORS (§2.5, KAN-31) ===
