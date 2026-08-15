@@ -19,6 +19,9 @@ spring:
 accentury:
   upload:
     rate-limit-per-minute: 10000    # 업로드 API 테스트가 걸리지 않게 넉넉히 - 제한 동작은 전용 테스트에서 검증
+    # 같은 머신에서 개발 서버가 함께 떠 있어도 서로의 임시 디렉터리를 보지 않게 분리한다 (KAN-27).
+    # 보존 기간(temp-retention)과 multipart 설정은 main 값을 그대로 검증한다
+    temp-dir: ${java.io.tmpdir}/accentury-voice-tmp-test
   completion:
     rate-limit-per-minute: 10000    # /complete 테스트가 걸리지 않게 넉넉히 - 제한 동작은 전용 테스트에서 검증
   cors:

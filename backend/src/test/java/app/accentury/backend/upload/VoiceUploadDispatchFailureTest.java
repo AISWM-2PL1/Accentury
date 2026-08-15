@@ -4,6 +4,7 @@ import app.accentury.backend.IntegrationTest;
 import app.accentury.backend.analysis.AnalysisDispatcher;
 import app.accentury.backend.analysis.AnalysisJobRepository;
 import app.accentury.backend.analysis.AnalysisJobStatus;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,6 +24,7 @@ import tools.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -47,7 +49,13 @@ class VoiceUploadDispatchFailureTest extends IntegrationTest {
         }
     }
 
-    /** 기본은 전달 실패. 시도 카운트 검증에서만 성공으로 전환한다 */
+    /**
+     * 기본은 전달 실패. 시도 카운트 검증에서만 성공으로 전환한다.
+     * <p>
+     * 일부러 버퍼를 지우지 않는다 - 소유권이 호출과 함께 넘어온다는 계약
+     * ({@link AnalysisDispatcher})을 지키는지 보려면, 서비스가 손대지 않았다는 것을
+     * 여기서 확인할 수 있어야 한다.
+     */
     static class ToggleableDispatcher implements AnalysisDispatcher {
 
         volatile boolean failing = true;
@@ -55,8 +63,12 @@ class VoiceUploadDispatchFailureTest extends IntegrationTest {
         /** 전달에 성공한 마지막 요청 - 분석으로 실제로 넘어간 값을 확인한다 */
         volatile AnalysisRequest lastDispatched;
 
+        /** 마지막으로 넘어온 오디오 버퍼 - 지우지 않고 그대로 들고 있는다 */
+        volatile byte @Nullable [] lastAudio;
+
         @Override
         public void dispatch(AnalysisRequest request) {
+            lastAudio = request.audio();
             if (failing) {
                 throw new IllegalStateException("AI 연결 실패 시뮬레이션");
             }
@@ -100,6 +112,23 @@ class VoiceUploadDispatchFailureTest extends IntegrationTest {
                 .findBySessionIdAndItemIdAndIdempotencyKey(session.id(), "v1", "dispatch-fail")
                 .orElseThrow();
         assertEquals(AnalysisJobStatus.RETRYABLE_FAILED, job.status());
+    }
+
+    @Test
+    void 전달이_예외로_끝나도_서비스는_버퍼를_건드리지_않는다() throws Exception {
+        // 소유권은 반환이 아니라 dispatch() 호출과 함께 넘어간다 (AnalysisDispatcher 계약).
+        // 반환 뒤에 넘긴다고 보면, 제출에는 성공하고 그 뒤에 던지는 구현(계측 데코레이터,
+        // 향후 AOP)에서 살아 있는 워커의 버퍼를 서비스가 0으로 덮어쓴다 (Codex 리뷰)
+        SessionHandle session = createSession();
+
+        mockMvc.perform(upload(session, "ownership-on-call"))
+                .andExpect(status().isServiceUnavailable());
+
+        byte[] audio = dispatcher.lastAudio;
+        assertNotNull(audio, "디스패처까지 버퍼가 넘어왔어야 한다");
+        // 이 디스패처는 일부러 지우지 않는다 - WAV 헤더가 0으로 덮였다면 서비스가 손댄 것이다
+        assertEquals("RIFF", new String(audio, 0, 4, StandardCharsets.US_ASCII),
+                "전달 이후의 파기는 구현의 몫이다");
     }
 
     @Test

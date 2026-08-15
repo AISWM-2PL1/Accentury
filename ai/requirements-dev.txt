@@ -1,0 +1,6 @@
+-r requirements.txt
+pytest>=8
+# TestClient의 HTTP 클라이언트. starlette 1.6+는 httpx2를, 그 이전 버전은 httpx를
+# 임포트한다 - 의존성이 어느 쪽으로 풀려도 CI가 뜨도록 둘 다 둔다 (Codex sol 리뷰 P1)
+httpx>=0.27
+httpx2>=2.10

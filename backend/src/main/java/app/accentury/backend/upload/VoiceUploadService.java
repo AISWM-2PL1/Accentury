@@ -31,9 +31,11 @@ import java.util.UUID;
  * <p>
  * 검증 순서: 세션 인증 -> 멱등 키 -> 문항 -> meta -> 오디오 -> (잠금) 완료 가드 ->
  * 멱등 판별 -> 시도 상한. 전부 통과해야 작업이 만들어지고,
- * 오디오는 {@link AnalysisDispatcher}로 넘어간 뒤 이 요청 스코프와 함께 소멸한다 -
- * 어디에도 저장하지 않는다 (FR-DP-01). IP 요청 제한은 본문이 파싱되기 전에
- * {@link UploadRateLimitFilter}가 먼저 끊는다.
+ * 오디오는 {@link AnalysisDispatcher}로 넘어간 뒤 어디에도 저장되지 않는다 (FR-DP-01).
+ * 파기는 두 갈래다 (KAN-27): 요청이 들고 온 수신 버퍼와 임시파일은 컨테이너가 요청 종료
+ * 시점에 지우고({@link VoiceTempDirectory}), 분석으로 넘어간 사본은 디스패처가 종결 시점에
+ * 0으로 덮어쓴다 - {@code dispatch()} 이후 이 서비스는 오디오를 다시 만지지 않는다.
+ * IP 요청 제한은 본문이 파싱되기 전에 {@link UploadRateLimitFilter}가 먼저 끊는다.
  */
 @Service
 public class VoiceUploadService {
@@ -87,84 +89,104 @@ public class VoiceUploadService {
         VoiceUploadMeta meta = VoiceUploadMeta.parse(objectMapper, metaJson);
         byte[] audioBytes = requireAudio(audio);
 
-        WavAudio wav = WavAudio.parse(audioBytes);
-        if (wav.sampleRate() != SAMPLE_RATE || wav.channels() != CHANNELS
-                || wav.bitsPerSample() != BITS_PER_SAMPLE) {
-            throw new ApiException(ErrorCode.AUDIO_FORMAT_UNSUPPORTED);
-        }
-        // 길이의 정본은 클라이언트 신고값이 아니라 서버가 WAV에서 계산한 값이다.
-        // 상한은 전 문항 공통 상수다 - 앱의 자동 종료와 같은 값이어야 하므로 문항별로 두지 않는다
-        if (wav.durationMs() > TestDefinition.VOICE_MAX_DURATION_MS) {
-            throw new ApiException(ErrorCode.AUDIO_TOO_LONG);
-        }
-
-        // 완료 가드부터 작업 저장까지 세션 행 잠금 아래 한 트랜잭션이다 (KAN-15에서 완료
-        // 상태 도입, Codex sol 리뷰 P2) - 잠금이 없으면 /complete(KAN-16)가 검사와 저장
-        // 사이에 끼어들어 확정된 세션이 GPU를 소모한다. 동시 업로드도 이 잠금으로
-        // 직렬화되므로 (session_id, item_id, idempotency_key) 유니크 제약은 마지막
-        // 안전망이고, attempt 번호와 시도 상한 판정도 경합 없이 정확하다
-        long pollAfterMs = pollIntervals.pollAfterMs();
-        String newJobId = "a_" + UUID.randomUUID();
-        AnalysisJob job = Objects.requireNonNull(transactionTemplate.execute(tx -> {
-            // 잠금 재조회가 빈 것은 동시 삭제(만료 정리)를 뜻하므로 만료와 같게 응답한다
-            TestSession locked = sessionRepository.lockById(session.id())
-                    .orElseThrow(() -> new ApiException(ErrorCode.SESSION_EXPIRED));
-            // 만료도 잠금 아래에서 재확인한다 - 인증(스냅샷 검사)과 잠금 획득 사이에 TTL이
-            // 지나면 만료된 세션의 분석에 GPU가 소모된다. 완료 가드와 같은 이유의 재검사다
-            if (locked.isExpired(Instant.now())) {
-                throw new ApiException(ErrorCode.SESSION_EXPIRED);
-            }
-            // 완료 가드가 멱등 판별보다 먼저다 - 어휘 답안(§3.5)과 같은 규칙이라, 완료 뒤에는
-            // 같은 키의 재전송도 202가 아니라 409를 받는다
-            if (locked.isCompleted()) {
-                throw new ApiException(ErrorCode.SESSION_COMPLETED);
-            }
-            // 같은 키의 재전송은 저장된 작업을 그대로 반환한다 - 분석 중복 생성 없음 (§5.2)
-            var existing = repository.findBySessionIdAndItemIdAndIdempotencyKey(session.id(), itemId, key);
-            if (existing.isPresent()) {
-                return existing.get();
-            }
-            // AI에 도달하지 못한 전달 실패(ANALYSIS_UNAVAILABLE)만 예산에서 뺀다 - 서버 장애로
-            // 예산이 깎이면 5회 연속 장애 시 사용자 잘못 없이 문항이 영구 차단되기 때문이다.
-            // 반대로 AI가 분석까지 한 판정 실패(AUDIO_TOO_QUIET 등)는 GPU를 썼으므로 센다 (Codex sol 리뷰 P1)
-            int attempt = (int) repository.countAiConsumingAttempts(
-                    session.id(), itemId, ErrorCode.ANALYSIS_UNAVAILABLE.name()) + 1;
-            // 상한 검사는 멱등 재전송 판별 뒤다 - 같은 키의 재전송은 상한과 무관하게 저장된
-            // 작업을 돌려받는다 (§5.2)
-            if (attempt > MAX_ATTEMPTS_PER_ITEM) {
-                throw new ApiException(ErrorCode.RATE_RETAKE_EXCEEDED);
-            }
-            AnalysisJob created = new AnalysisJob(newJobId, session.id(), itemId, attempt,
-                    key, AnalysisJobStatus.PROCESSING, Instant.now());
-            repository.save(created);
-            return created;
-        }));
-        if (!job.id().equals(newJobId)) {
-            // 잠금 안에서 발견된 같은 키의 재전송 - 새 분석 없이 저장된 작업을 돌려준다
-            return VoiceUploadResponse.from(job, pollAfterMs);
-        }
-
+        // 이 사본은 컨테이너의 수신 버퍼와 별개다 - 요청 종료 정리가 닿지 않으므로 파기도
+        // 우리 몫이다 (KAN-27, Codex sol 리뷰 P1). 소유권은 dispatch() 호출과 함께 넘어가고,
+        // 그 전에 끊기는 모든 경로(형식 거절, 만료와 완료 세션, 멱등 재전송, 시도 상한)에서는
+        // 여기서 지운다. 호출 이후는 전달이 성공했든 예외로 끝났든 구현의 몫이다
+        boolean transferred = false;
         try {
+            WavAudio wav = WavAudio.parse(audioBytes);
+            if (wav.sampleRate() != SAMPLE_RATE || wav.channels() != CHANNELS
+                    || wav.bitsPerSample() != BITS_PER_SAMPLE) {
+                throw new ApiException(ErrorCode.AUDIO_FORMAT_UNSUPPORTED);
+            }
+            // 길이의 정본은 클라이언트 신고값이 아니라 서버가 WAV에서 계산한 값이다.
+            // 상한은 전 문항 공통 상수다 - 앱의 자동 종료와 같은 값이어야 하므로 문항별로 두지 않는다
+            if (wav.durationMs() > TestDefinition.VOICE_MAX_DURATION_MS) {
+                throw new ApiException(ErrorCode.AUDIO_TOO_LONG);
+            }
+
+            // 완료 가드부터 작업 저장까지 세션 행 잠금 아래 한 트랜잭션이다 (KAN-15에서 완료
+            // 상태 도입, Codex sol 리뷰 P2) - 잠금이 없으면 /complete(KAN-16)가 검사와 저장
+            // 사이에 끼어들어 확정된 세션이 GPU를 소모한다. 동시 업로드도 이 잠금으로
+            // 직렬화되므로 (session_id, item_id, idempotency_key) 유니크 제약은 마지막
+            // 안전망이고, attempt 번호와 시도 상한 판정도 경합 없이 정확하다
+            long pollAfterMs = pollIntervals.pollAfterMs();
+            String newJobId = "a_" + UUID.randomUUID();
+            AnalysisJob job = Objects.requireNonNull(transactionTemplate.execute(tx -> {
+                // 잠금 재조회가 빈 것은 동시 삭제(만료 정리)를 뜻하므로 만료와 같게 응답한다
+                TestSession locked = sessionRepository.lockById(session.id())
+                        .orElseThrow(() -> new ApiException(ErrorCode.SESSION_EXPIRED));
+                // 만료도 잠금 아래에서 재확인한다 - 인증(스냅샷 검사)과 잠금 획득 사이에 TTL이
+                // 지나면 만료된 세션의 분석에 GPU가 소모된다. 완료 가드와 같은 이유의 재검사다
+                if (locked.isExpired(Instant.now())) {
+                    throw new ApiException(ErrorCode.SESSION_EXPIRED);
+                }
+                // 완료 가드가 멱등 판별보다 먼저다 - 어휘 답안(§3.5)과 같은 규칙이라, 완료 뒤에는
+                // 같은 키의 재전송도 202가 아니라 409를 받는다
+                if (locked.isCompleted()) {
+                    throw new ApiException(ErrorCode.SESSION_COMPLETED);
+                }
+                // 같은 키의 재전송은 저장된 작업을 그대로 반환한다 - 분석 중복 생성 없음 (§5.2)
+                var existing = repository.findBySessionIdAndItemIdAndIdempotencyKey(session.id(), itemId, key);
+                if (existing.isPresent()) {
+                    return existing.get();
+                }
+                // AI에 도달하지 못한 전달 실패(ANALYSIS_UNAVAILABLE)만 예산에서 뺀다 - 서버 장애로
+                // 예산이 깎이면 5회 연속 장애 시 사용자 잘못 없이 문항이 영구 차단되기 때문이다.
+                // 반대로 AI가 분석까지 한 판정 실패(AUDIO_TOO_QUIET 등)는 GPU를 썼으므로 센다 (Codex sol 리뷰 P1)
+                int attempt = (int) repository.countAiConsumingAttempts(
+                        session.id(), itemId, ErrorCode.ANALYSIS_UNAVAILABLE.name()) + 1;
+                // 상한 검사는 멱등 재전송 판별 뒤다 - 같은 키의 재전송은 상한과 무관하게 저장된
+                // 작업을 돌려받는다 (§5.2)
+                if (attempt > MAX_ATTEMPTS_PER_ITEM) {
+                    throw new ApiException(ErrorCode.RATE_RETAKE_EXCEEDED);
+                }
+                AnalysisJob created = new AnalysisJob(newJobId, session.id(), itemId, attempt,
+                        key, AnalysisJobStatus.PROCESSING, Instant.now());
+                repository.save(created);
+                return created;
+            }));
+            if (!job.id().equals(newJobId)) {
+                // 잠금 안에서 발견된 같은 키의 재전송 - 새 분석 없이 저장된 작업을 돌려준다
+                return VoiceUploadResponse.from(job, pollAfterMs);
+            }
+
             // durationMs는 클라이언트 신고값(meta)이 아니라 서버가 WAV에서 계산한 값을
             // 전달한다 - 신고값이 실제와 다르면 분석이 엉뚱한 메타를 받는다 (Codex sol 리뷰 P2)
-            dispatcher.dispatch(new AnalysisDispatcher.AnalysisRequest(
+            AnalysisDispatcher.AnalysisRequest analysisRequest = new AnalysisDispatcher.AnalysisRequest(
                     job.id(), session.id(), itemId, session.testVersion(), session.scoreVersion(),
-                    wav.durationMs(), audioBytes));
-        } catch (RuntimeException e) {
-            // 전달 실패를 PROCESSING으로 두면 오디오가 없어 영영 끝나지 않는다 (FR-DP-01) -
-            // 재녹음(새 키)을 유도하는 RETRYABLE_FAILED로 전이하고 503을 준다 (Codex sol 리뷰 P1).
-            // 같은 키의 재전송은 이 상태를 그대로 돌려받아 새 시도로 넘어갈 수 있다.
-            // 저장과 전달 사이에 프로세스가 죽어 PROCESSING으로 남는 경우는 AnalysisJobTimeout이 정리한다
-            job.markRetryableFailed(ErrorCode.ANALYSIS_UNAVAILABLE.name());
-            repository.save(job);
-            log.warn("분석 전달 실패 jobId={} itemId={}", job.id(), itemId, e);
-            throw new ApiException(ErrorCode.ANALYSIS_UNAVAILABLE);
-        }
+                    wav.durationMs(), audioBytes);
+            // 소유권은 반환이 아니라 호출과 함께 넘어간다 - 계약(AnalysisDispatcher)이 그렇게
+            // 정의되어 있고, 예외로 끝난 경우의 파기도 구현의 몫이다. 반환 뒤에 세우면
+            // "제출에는 성공하고 그 뒤에 던지는" 구현(계측 데코레이터, 향후 AOP)에서 살아
+            // 있는 워커의 버퍼를 아래 finally가 0으로 덮어쓴다 (Codex 리뷰)
+            transferred = true;
+            try {
+                dispatcher.dispatch(analysisRequest);
+            } catch (RuntimeException e) {
+                // 전달 실패를 PROCESSING으로 두면 오디오가 없어 영영 끝나지 않는다 (FR-DP-01) -
+                // 재녹음(새 키)을 유도하는 RETRYABLE_FAILED로 전이하고 503을 준다 (Codex sol 리뷰 P1).
+                // 같은 키의 재전송은 이 상태를 그대로 돌려받아 새 시도로 넘어갈 수 있다.
+                // 저장과 전달 사이에 프로세스가 죽어 PROCESSING으로 남는 경우는 AnalysisJobTimeout이 정리한다.
+                // 버퍼는 여기서 손대지 않는다 - 소유권이 이미 넘어갔고, 파기는 계약상 구현의 몫이다
+                job.markRetryableFailed(ErrorCode.ANALYSIS_UNAVAILABLE.name());
+                repository.save(job);
+                log.warn("분석 전달 실패 jobId={} itemId={}", job.id(), itemId, e);
+                throw new ApiException(ErrorCode.ANALYSIS_UNAVAILABLE);
+            }
 
-        // 오디오 바이트는 여기서 참조가 끝난다 - 로그 포함 어디에도 남기지 않는다 (§2.6)
-        log.info("음성 업로드 접수 sessionId={} itemId={} attempt={} jobId={}",
-                session.id(), itemId, job.attempt(), job.id());
-        return VoiceUploadResponse.from(job, pollAfterMs);
+            // 오디오 바이트의 소유권은 디스패처로 넘어갔다 (KAN-27) - 여기서 다시 읽지 않고,
+            // 로그 포함 어디에도 남기지 않는다 (§2.6)
+            log.info("음성 업로드 접수 sessionId={} itemId={} attempt={} jobId={}",
+                    session.id(), itemId, job.attempt(), job.id());
+            return VoiceUploadResponse.from(job, pollAfterMs);
+        } finally {
+            if (!transferred) {
+                // 디스패처가 쓰는 것과 같은 파기다 - 한쪽만 바뀌지 않게 공용 메서드를 쓴다
+                AnalysisDispatcher.AnalysisRequest.wipe(audioBytes);
+            }
+        }
     }
 
     private static byte[] requireAudio(@Nullable MultipartFile audio) {

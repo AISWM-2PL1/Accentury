@@ -1,11 +1,14 @@
 spring:
   # 업로드 오디오가 디스크에 닿지 않게 한다 (FR-DP-01, Codex sol 리뷰 P1)
-  # file-size-threshold >= max-request-size라 모든 파트가 메모리에서 처리되고 임시파일이 생기지 않는다
+  # file-size-threshold >= max-request-size라 모든 파트가 메모리에서 처리되고 임시파일이 생기지 않는다.
+  # 이 불변식은 기동 시 VoiceTempDirectory가 강제한다 - 어긋나면 컨텍스트가 뜨지 않는다 (KAN-27)
   servlet:
     multipart:
       max-file-size: 1MB        # §3.3 오디오 상한과 일치 - 초과는 413 AUDIO_TOO_LARGE로 매핑된다
       max-request-size: 2MB     # audio + meta + multipart 오버헤드
       file-size-threshold: 2MB
+      # 불변식이 깨졌을 때 임시파일이 공용 임시 디렉터리로 흩어지지 않게 전용 위치로 고정한다 (KAN-27)
+      location: ${accentury.upload.temp-dir}
   datasource:
     url: jdbc:postgresql://localhost:5432/accentury
     username: postgres
@@ -19,6 +22,10 @@ spring:
       mode: force    # analysisExecutor(4워커 AI 전달 풀) 정의가 applicationTaskExecutor 자동
                      # 구성을 밀어내지 않게 강제한다 - 밀리면 MVC 비동기가 무제한 스레드로
                      # 떨어지고, 미래의 @Async가 AI 전달 풀에 얹힌다 (Codex 리뷰)
+    scheduling:
+      pool-size: 4   # @Scheduled 잡이 8개인데 기본값은 1스레드다 (Codex 리뷰) - 파일시스템을
+                     # 훑는 VoiceTempSweeper가 느린 볼륨에서 막히면 그 한 스레드를 붙잡아
+                     # AnalysisJobTimeout(30초 주기)이 멎고, 사용자가 대기 화면에 갇힌다
 
 # 모든 로그 줄에 correlation ID 포함 - 요청 단위 추적 (KAN-38, Codex 리뷰 P2)
 logging:
@@ -46,6 +53,10 @@ accentury:
     dispatch-concurrency: 4          # 분석 전달 워커 수 - GPU 동시 슬롯을 넘지 않게 (명세서 §5.3)
   upload:
     rate-limit-per-minute: 30    # IP당 분당 업로드 상한 - 부하 테스트 후 확정 (명세서 §7, KAN-28)
+    # 업로드 임시파일 전용 디렉터리 (KAN-27) - 기동 시 소유자 전용(700) 권한으로 만든다.
+    # 메모리 전용 불변식이 지켜지는 한 비어 있고, 프로세스가 kill된 뒤의 잔여물만 여기 남는다
+    temp-dir: ${java.io.tmpdir}/accentury-voice-tmp
+    temp-retention: 30m          # 잔존 임시파일 삭제 기준 (KAN-27 AC) - 이보다 오래된 파일만 청소 잡이 지운다
   completion:
     rate-limit-per-minute: 120   # 세션당 분당 /complete 상한 (KAN-16 AC) - pollAfterMs 800ms를 그대로 따르는
                                  # 합법 폴링(약 75회/분)이 60초 분석 대기 중에도 걸리지 않는 여유 배수.

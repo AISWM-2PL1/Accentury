@@ -19,7 +19,7 @@ import java.util.Map;
  * @param scoreVersion 활성 점수 버전 - 집계식과 등급 경계의 기준 (sv-0.3, KAN-21)
  * @param session      익명 세션 정책 (KAN-9)
  * @param analysis     분석 상태 폴링 정책 (KAN-23, KAN-24)
- * @param upload       음성 업로드 요청 제한 (KAN-23)
+ * @param upload       음성 업로드 요청 제한 (KAN-23)과 임시파일 정책 (KAN-27)
  * @param completion   완료 API 요청 제한 (KAN-16)
  * @param cors         웹 테스트 CORS allowlist (KAN-23, KAN-31)
  * @param result       결과 응답의 등급별 자산과 공유 URL (KAN-25)
@@ -74,8 +74,18 @@ public record AccenturyProperties(String testVersion, String scoreVersion, Sessi
     /**
      * @param rateLimitPerMinute IP당 분당 업로드 허용 횟수 (§2.5, NFR-SC-04).
      *                           임계치는 부하 테스트 후 확정한다 (§7, KAN-28)
+     * @param tempDir            업로드 임시파일 전용 디렉터리 (KAN-27). 정상 경로에서는 파일이
+     *                           생기지 않지만(메모리 전용 불변식), 생긴다면 반드시 이 한 곳에
+     *                           모여야 청소 잡과 권한 제한이 닿는다.
+     *                           {@code spring.servlet.multipart.location}과 같은 값이어야 하고,
+     *                           기동 시 {@code VoiceTempDirectory}가 둘의 일치를 강제한다
+     * @param tempRetention      잔존 임시파일 삭제 기준 - 수정 시각이 이보다 오래된 파일만
+     *                           지운다 (KAN-27 - 30분). 업로드 1건은 초 단위로 끝나므로 살아
+     *                           있는 요청의 파일을 앞질러 지우지 않는 여유 배수다
      */
-    public record Upload(@DefaultValue("30") int rateLimitPerMinute) {
+    public record Upload(@DefaultValue("30") int rateLimitPerMinute,
+                         @Nullable String tempDir,
+                         @DefaultValue("30m") Duration tempRetention) {
     }
 
     /**

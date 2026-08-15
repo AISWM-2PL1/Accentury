@@ -12,6 +12,7 @@ import java.util.UUID;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -224,6 +225,67 @@ class HttpAnalysisDispatcherTest extends IntegrationTest {
 
         assertEquals(1, atRejection.get());
         assertEquals(0, backlog.inFlight());
+    }
+
+    // === 오디오 버퍼 파기 (KAN-27) ===
+
+    @Test
+    void 종결되면_오디오_버퍼를_0으로_지운다() {
+        // "분석 응답 수신 즉시 삭제"(KAN-27)의 메모리 쪽 - 참조만 끊고 GC를 기다리면
+        // 원본 음성이 힙 덤프와 스왑에 실린다
+        AnalysisJob job = saveProcessingJob();
+        AnalysisDispatcher.AnalysisRequest request = request(job);
+        ScriptedClient client = new ScriptedClient()
+                .then(new AiAnalysisClient.Completed(78, "OK", "rmvpe-0.2", "sv-0.3"));
+
+        dispatcher(client, 0).dispatch(request);
+
+        assertArrayEquals(new byte[] {0, 0, 0}, request.audio());
+    }
+
+    @Test
+    void 재전송_예산을_다_쓴_뒤에도_버퍼를_지운다() {
+        // 재전송 중에는 같은 배열을 다시 보내야 하므로, 파기는 마지막 시도까지 끝난 뒤다 -
+        // 여기서 이르게 지우면 재전송이 무음을 분석하게 된다 (그래서 성공 케이스와 따로 본다)
+        AnalysisJob job = saveProcessingJob();
+        AnalysisDispatcher.AnalysisRequest request = request(job);
+        ScriptedClient client = new ScriptedClient()
+                .then(new AiAnalysisClient.AiUnavailableException("연결 실패",
+                        AiAnalysisClient.AiUnavailableException.Kind.UNREACHED, null))
+                .then(new AiAnalysisClient.Completed(78, "OK", "rmvpe-0.2", "sv-0.3"));
+
+        dispatcher(client, 1).dispatch(request);
+
+        // 재전송이 실제로 일어났고(2회 호출), 그 뒤에 지워졌다
+        assertEquals(2, client.calls);
+        assertArrayEquals(new byte[] {0, 0, 0}, request.audio());
+    }
+
+    @Test
+    void 이미_종결된_작업이라_AI를_부르지_않아도_버퍼를_지운다() {
+        AnalysisJob job = saveProcessingJob();
+        transitions.fail(job.id(), AnalysisJobStatus.RETRYABLE_FAILED, "ANALYSIS_TIMEOUT");
+        AnalysisDispatcher.AnalysisRequest request = request(job);
+
+        dispatcher(new ScriptedClient(), 0).dispatch(request);
+
+        assertArrayEquals(new byte[] {0, 0, 0}, request.audio());
+    }
+
+    @Test
+    void 제출이_거절되면_요청_스레드가_버퍼를_지운다() {
+        // 워커가 뜨지 못한 경로 - 지울 주체가 dispatch() 자신뿐이다
+        AnalysisJob job = saveProcessingJob();
+        AnalysisDispatcher.AnalysisRequest request = request(job);
+        HttpAnalysisDispatcher dispatcher = new HttpAnalysisDispatcher(new ScriptedClient(),
+                task -> {
+                    throw new RejectedExecutionException("큐 포화 시뮬레이션");
+                },
+                transitions, new AnalysisBacklog(), 0, 0);
+
+        assertThrows(RejectedExecutionException.class, () -> dispatcher.dispatch(request));
+
+        assertArrayEquals(new byte[] {0, 0, 0}, request.audio());
     }
 
     private HttpAnalysisDispatcher dispatcher(AiAnalysisClient client, int retries) {

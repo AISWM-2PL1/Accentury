@@ -1,0 +1,5 @@
+# 런타임 의존성 (KAN-27 스켈레톤).
+# 모델 추론 의존성(librosa, torch 등)은 KAN-22에서 더한다.
+fastapi>=0.115
+python-multipart>=0.0.9
+uvicorn>=0.30

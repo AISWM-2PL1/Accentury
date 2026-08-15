@@ -13,6 +13,7 @@ jobs:
       app: ${{ steps.filter.outputs.app }}
       backend: ${{ steps.filter.outputs.backend }}
       web: ${{ steps.filter.outputs.web }}
+      ai: ${{ steps.filter.outputs.ai }}
     steps:
       # pull_request 이벤트에서는 checkout 없이 GitHub API로 변경 파일을 조회한다
       - uses: dorny/paths-filter@v3
@@ -31,6 +32,9 @@ jobs:
               - '.github/workflows/test.yml'
             web:
               - 'web/**'
+              - '.github/workflows/test.yml'
+            ai:
+              - 'ai/**'
               - '.github/workflows/test.yml'
 
   app-test:
@@ -79,3 +83,20 @@ jobs:
       - run: npm test
       # tsc --noEmit + vite build — 타입 오류와 번들 실패를 PR에서 잡는다
       - run: npm run build
+
+  ai-test:
+    needs: changes
+    if: needs.changes.outputs.ai == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ai
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: ai/requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - run: pytest
