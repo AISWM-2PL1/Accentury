@@ -1,4 +1,4 @@
-package app.accentury.backend.result;
+package app.accentury.backend.vocab;
 
 import app.accentury.backend.IntegrationTest;
 import org.junit.jupiter.api.Test;
@@ -9,6 +9,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.RequestBuilder;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -18,14 +19,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * {@code /complete}의 세션 단위 요청 제한 (KAN-16 AC - 비용 보호, API 명세서 §2.5).
+ * 어휘 답안의 세션 단위 요청 제한 (KAN-28, API 명세서 §2.5).
  * <p>
- * 한도를 2로 줄여 검증한다 - 고정 윈도우 판정과 범위별 한도 배분 자체의 명세는
- * {@code app.accentury.backend.common.RateLimitsTest}가 맡는다.
+ * 인증 뒤에만 닿는 경로라 IP가 아니라 세션이 키다 - NAT 뒤의 정상 응시자들이 서로의
+ * 한도를 깎으면 안 된다. 정상 응시는 어휘 5문항 x 1회이므로 그 이상은 재전송이거나 남용이다.
  */
 @AutoConfigureMockMvc
-@TestPropertySource(properties = "accentury.completion.rate-limit-per-minute=2")
-class CompleteRateLimitApiTest extends IntegrationTest {
+@TestPropertySource(properties = "accentury.vocab.rate-limit-per-minute=2")
+class VocabAnswerRateLimitApiTest extends IntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
@@ -36,11 +37,11 @@ class CompleteRateLimitApiTest extends IntegrationTest {
     @Test
     void 세션당_한도를_넘으면_429와_Retry_After다() throws Exception {
         SessionHandle session = createSession();
-        // 미제출 세션이라 제한 전까지는 422다 - 제한은 완주 판정보다 먼저 걸린다
-        mockMvc.perform(complete(session, "c-1")).andExpect(status().isUnprocessableContent());
-        mockMvc.perform(complete(session, "c-2")).andExpect(status().isUnprocessableContent());
+        mockMvc.perform(answer(session, "w1", "w1a", "v-1")).andExpect(status().isOk());
+        // 같은 키의 재전송도 요청 한 번이다 - 제한은 멱등 판별보다 앞이다
+        mockMvc.perform(answer(session, "w1", "w1a", "v-1")).andExpect(status().isOk());
 
-        mockMvc.perform(complete(session, "c-3"))
+        mockMvc.perform(answer(session, "w2", "w2b", "v-2"))
                 .andExpect(status().isTooManyRequests())
                 .andExpect(jsonPath("$.code").value("RATE_LIMITED"))
                 .andExpect(jsonPath("$.retryable").value(true))
@@ -49,14 +50,12 @@ class CompleteRateLimitApiTest extends IntegrationTest {
 
     @Test
     void 다른_세션은_영향을_받지_않는다() throws Exception {
-        // 세션 단위인 이유 - NAT 뒤의 여러 정상 응시자가 서로의 한도를 깎으면 안 된다
         SessionHandle exhausted = createSession();
-        mockMvc.perform(complete(exhausted, "e-1")).andExpect(status().isUnprocessableContent());
-        mockMvc.perform(complete(exhausted, "e-2")).andExpect(status().isUnprocessableContent());
-        mockMvc.perform(complete(exhausted, "e-3")).andExpect(status().isTooManyRequests());
+        mockMvc.perform(answer(exhausted, "w1", "w1a", "e-1")).andExpect(status().isOk());
+        mockMvc.perform(answer(exhausted, "w2", "w2b", "e-2")).andExpect(status().isOk());
+        mockMvc.perform(answer(exhausted, "w3", "w3a", "e-3")).andExpect(status().isTooManyRequests());
 
-        mockMvc.perform(complete(createSession(), "other-1"))
-                .andExpect(status().isUnprocessableContent());
+        mockMvc.perform(answer(createSession(), "w1", "w1a", "o-1")).andExpect(status().isOk());
     }
 
     // === 헬퍼 ===
@@ -73,10 +72,12 @@ class CompleteRateLimitApiTest extends IntegrationTest {
         return new SessionHandle(json.get("sessionId").asString(), json.get("sessionToken").asString());
     }
 
-    private org.springframework.test.web.servlet.RequestBuilder complete(
-            SessionHandle session, String idempotencyKey) {
-        return post("/v0/sessions/" + session.id() + "/complete")
+    private RequestBuilder answer(SessionHandle session, String itemId, String choiceId,
+                                  String idempotencyKey) {
+        return post("/v0/sessions/" + session.id() + "/vocab-items/" + itemId + "/answer")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + session.token())
-                .header("Idempotency-Key", idempotencyKey);
+                .header("Idempotency-Key", idempotencyKey)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"choiceId\":\"" + choiceId + "\"}");
     }
 }

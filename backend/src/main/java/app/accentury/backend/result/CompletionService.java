@@ -6,6 +6,7 @@ import app.accentury.backend.common.ApiException;
 import app.accentury.backend.common.ErrorCode;
 import app.accentury.backend.common.IdempotencyKeys;
 import app.accentury.backend.common.ItemsApiException;
+import app.accentury.backend.common.RateLimits;
 import app.accentury.backend.scoring.AggregateScore;
 import app.accentury.backend.scoring.ScoreAggregator;
 import app.accentury.backend.session.SessionService;
@@ -46,7 +47,7 @@ public class CompletionService {
     private final TestResultRepository resultRepository;
     private final TestSessionRepository sessionRepository;
     private final ScoreAggregator aggregator;
-    private final CompleteRateLimiter rateLimiter;
+    private final RateLimits rateLimits;
     private final PollIntervals pollIntervals;
     private final AccenturyProperties properties;
     private final TransactionTemplate transactionTemplate;
@@ -55,7 +56,7 @@ public class CompletionService {
                              CompletionJudge judge,
                              TestResultRepository resultRepository,
                              TestSessionRepository sessionRepository,
-                             ScoreAggregator aggregator, CompleteRateLimiter rateLimiter,
+                             ScoreAggregator aggregator, RateLimits rateLimits,
                              PollIntervals pollIntervals, AccenturyProperties properties,
                              TransactionTemplate transactionTemplate) {
         this.sessionService = sessionService;
@@ -64,7 +65,7 @@ public class CompletionService {
         this.resultRepository = resultRepository;
         this.sessionRepository = sessionRepository;
         this.aggregator = aggregator;
-        this.rateLimiter = rateLimiter;
+        this.rateLimits = rateLimits;
         this.pollIntervals = pollIntervals;
         this.properties = properties;
         this.transactionTemplate = transactionTemplate;
@@ -81,7 +82,7 @@ public class CompletionService {
         // 비용 발생 POST의 계약(§2.2 - 업로드/답안/완료)이므로 존재는 강제한다
         IdempotencyKeys.require(idempotencyKey);
         // 인증 뒤, 잠금 전 - 폭주 폴링이 세션 행 잠금까지 도달하지 못하게 끊는다 (KAN-16 AC)
-        rateLimiter.check(session.id());
+        rateLimits.check(RateLimits.Scope.COMPLETE, session.id());
 
         long pollAfterMs = pollIntervals.pollAfterMs();
         Outcome outcome = Objects.requireNonNull(transactionTemplate.execute(tx -> {

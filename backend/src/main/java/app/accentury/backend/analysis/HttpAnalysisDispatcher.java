@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.core.task.TaskExecutor;
 
+import java.util.OptionalLong;
 import java.util.UUID;
 
 /**
@@ -22,6 +23,11 @@ import java.util.UUID;
  * RETRYABLE_FAILED로 종결해 재녹음(새 시도)을 유도한다. 분석 판정 실패
  * ({@link AiAnalysisClient.Rejected})는 같은 오디오에 같은 답이 올 것이므로 재전송하지 않는다 -
  * "재시도 가능한 실패만 다시 큐잉한다"(KAN-24 AC)의 구현이 이 구분이다.
+ * <p>
+ * 장애가 길어지면 재전송도 손해다 - 연속 실패가 임계치에 닿으면 {@link AiCircuitBreaker}가
+ * 회로를 열어 이 경로를 통째로 끊는다 (KAN-28). 열린 동안 업로드는 작업조차 만들지 않고
+ * 503으로 돌아가고({@link #accepts(String)}), 큐에 이미 들어와 있던 작업은 AI를 부르지 않고
+ * RETRYABLE_FAILED로 종결한다.
  */
 class HttpAnalysisDispatcher implements AnalysisDispatcher {
 
@@ -34,23 +40,62 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
     private final TaskExecutor executor;
     private final AnalysisJobTransitions transitions;
     private final AnalysisBacklog backlog;
+    private final AiCircuitBreaker circuitBreaker;
     private final int retries;
     private final long retryBackoffMs;
 
     HttpAnalysisDispatcher(AiAnalysisClient client, TaskExecutor executor,
-                           AnalysisJobTransitions transitions, AnalysisBacklog backlog, int retries) {
-        this(client, executor, transitions, backlog, retries, RETRY_BACKOFF_MS);
+                           AnalysisJobTransitions transitions, AnalysisBacklog backlog,
+                           AiCircuitBreaker circuitBreaker, int retries) {
+        this(client, executor, transitions, backlog, circuitBreaker, retries, RETRY_BACKOFF_MS);
     }
 
     HttpAnalysisDispatcher(AiAnalysisClient client, TaskExecutor executor,
                            AnalysisJobTransitions transitions, AnalysisBacklog backlog,
-                           int retries, long retryBackoffMs) {
+                           AiCircuitBreaker circuitBreaker, int retries, long retryBackoffMs) {
         this.client = client;
         this.executor = executor;
         this.transitions = transitions;
         this.backlog = backlog;
+        this.circuitBreaker = circuitBreaker;
         this.retries = retries;
         this.retryBackoffMs = retryBackoffMs;
+    }
+
+    /**
+     * 회로가 열려 있으면 새 업로드를 받지 않는다 (KAN-28). 반열림에서는 복구를 판정할
+     * 시험 1건만 통과한다 - 판정 규칙은 {@link AiCircuitBreaker}에 있다.
+     */
+    @Override
+    public boolean accepts(String analysisJobId) {
+        return circuitBreaker.admitsUpload(analysisJobId);
+    }
+
+    /**
+     * 업로드가 잡아 둔 복구 시험 자리를 놓아준다 (KAN-28) - 작업 저장이 롤백되거나 큐
+     * 제출이 거절돼 이 작업이 AI에 닿지 못할 때 호출부가 부른다.
+     */
+    @Override
+    public void abandon(String analysisJobId) {
+        circuitBreaker.releaseTrial(analysisJobId);
+    }
+
+    /**
+     * 열린 회로의 복구 프로브 (KAN-28, §4.2) - 차례일 때만 health를 던진다.
+     * 프로브 결과는 그 프로브가 나간 회로 세대에만 적용된다.
+     */
+    @Override
+    public void probeAvailability() {
+        OptionalLong claimed = circuitBreaker.claimProbe();
+        if (claimed.isEmpty()) {
+            return;
+        }
+        long probeGeneration = claimed.getAsLong();
+        if (client.healthy()) {
+            circuitBreaker.probeSucceeded(probeGeneration);
+        } else {
+            circuitBreaker.probeFailed(probeGeneration);
+        }
     }
 
     @Override
@@ -98,6 +143,11 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
                         request.analysisJobId(), failure);
             }
         } finally {
+            // 이 작업이 복구 시험 자리를 물고 있었다면 놓아준다 (KAN-28). 성공이나 실패로
+            // 판정이 난 경우엔 회로가 이미 자리를 비웠으므로 아무 일도 일어나지 않고, AI에
+            // 닿지도 못한 경우(이미 종결된 작업, 워커에서 터진 예상 밖 예외)에만 실제로
+            // 풀린다 - 그대로 두면 trialTimeout(60초) 동안 다른 업로드가 전부 503이다
+            circuitBreaker.releaseTrial(request.analysisJobId());
             // 종결 즉시 원본 음성을 지운다 (KAN-27) - 성공, 판정 실패, 예산 소진, 예외,
             // 이미 종결된 작업이라 AI를 부르지 않은 경우까지 전부 이 finally를 지난다.
             // 재전송은 analyzeWithRetry 안에서 이미 끝났으므로 여기서 지워도 늦지 않다
@@ -111,9 +161,33 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
     private AiAnalysisClient.@Nullable Outcome analyzeWithRetry(
             AnalysisRequest request, String correlationId) {
         for (int attempt = 0; ; attempt++) {
+            if (!circuitBreaker.admitsDispatch(request.analysisJobId())) {
+                // 회로가 열려 있거나, 반열림에서 다른 작업이 이미 시험 중이다 - 접수와 실행
+                // 사이에, 또는 재전송 대기 중에 상태가 바뀐 경우다.
+                // 이 시도는 AI에 닿지 않았으므로 시도 예산에서 빠지는 ANALYSIS_UNAVAILABLE로
+                // 종결한다 (§2.5 - 서버 사정으로 사용자의 문항별 상한이 깎이면 안 된다).
+                // 재전송 중에 열렸다면 앞선 시도는 GPU를 썼을 수 있지만, 작업 하나에 사유는
+                // 하나이고 장애 구간에서는 사용자에게 유리한 쪽으로 접는다
+                log.info("AI 회로가 전달을 허용하지 않아 건너뛴다 jobId={}", request.analysisJobId());
+                transitions.fail(request.analysisJobId(), AnalysisJobStatus.RETRYABLE_FAILED,
+                        ErrorCode.ANALYSIS_UNAVAILABLE.name());
+                return null;
+            }
             try {
-                return client.analyze(request, correlationId);
+                AiAnalysisClient.Outcome outcome = client.analyze(request, correlationId);
+                if (contractViolation(outcome)) {
+                    // 응답은 왔지만 계약(§4.1)과 다르다 - 같은 오디오에 같은 답이 올 것이므로
+                    // 재전송하지는 않되, 회로에는 실패로 센다 (KAN-28). 성공으로 세면 응답만
+                    // 하고 고장 난 AI 앞에서 회로가 영영 닫혀 있어 업로드마다 GPU 슬롯을
+                    // 태우고, 섞여 오는 진짜 5xx의 연속 카운터까지 매번 0으로 되돌린다
+                    circuitBreaker.recordFailure(request.analysisJobId());
+                } else {
+                    // 판정 실패(§4.1 422)도 AI가 살아서 답한 것이다 - 가용성 실패가 아니다
+                    circuitBreaker.recordSuccess(request.analysisJobId());
+                }
+                return outcome;
             } catch (AiAnalysisClient.AiUnavailableException e) {
+                circuitBreaker.recordFailure(request.analysisJobId());
                 if (attempt >= retries) {
                     log.warn("AI 일시 장애로 재전송 예산 소진 jobId={} 시도={} kind={}",
                             request.analysisJobId(), attempt + 1, e.kind(), e);
@@ -129,6 +203,12 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
                 }
             }
         }
+    }
+
+    /** AI가 답은 했지만 계약(§4.1)을 어겼는가 - 재전송 대상은 아니지만 가용성 실패다 (KAN-28) */
+    private static boolean contractViolation(AiAnalysisClient.Outcome outcome) {
+        return outcome instanceof AiAnalysisClient.Rejected rejected
+                && rejected.cause() == AiAnalysisClient.Rejected.Cause.CONTRACT_VIOLATION;
     }
 
     /**

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  로그 마스킹 변환어 등록 (API 명세서 §2.6, NFR-SC-07, KAN-28 AC).
+
+  이 파일이 있는 이유는 변환어 등록이 XML로만 가능하기 때문이다 - 레벨과 포맷은 여전히
+  Boot 기본값과 application.yml(logging.pattern.console)이 정본이다.
+
+  콘솔 어펜더 하나만 둔다. 프로토타입 배포는 컨테이너 표준 출력을 수집하므로 파일
+  어펜더가 필요 없고, 여기 없는 어펜더를 나중에 추가할 때는 반드시 패턴에 %mask와
+  %maskEx를 넣어야 한다 - 마스킹은 어펜더별 패턴에 걸리는 것이라, 빠뜨린 어펜더 하나가
+  토큰과 오디오를 그대로 흘린다. 같은 이유로 구조화 로깅(logging.structured.format)도
+  도입하려면 마스킹 경로를 먼저 만들어야 한다.
+-->
+<configuration>
+    <conversionRule conversionWord="mask"
+                    class="app.accentury.backend.common.MaskingMessageConverter"/>
+    <conversionRule conversionWord="maskEx"
+                    class="app.accentury.backend.common.MaskingThrowableConverter"/>
+
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+    <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>

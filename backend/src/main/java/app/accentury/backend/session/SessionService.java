@@ -3,6 +3,7 @@ package app.accentury.backend.session;
 import app.accentury.backend.common.AccenturyProperties;
 import app.accentury.backend.common.ApiException;
 import app.accentury.backend.common.ErrorCode;
+import app.accentury.backend.common.RateLimits;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,16 +28,28 @@ public class SessionService {
 
     private final TestSessionRepository repository;
     private final AccenturyProperties properties;
+    private final RateLimits rateLimits;
 
-    public SessionService(TestSessionRepository repository, AccenturyProperties properties) {
+    public SessionService(TestSessionRepository repository, AccenturyProperties properties,
+                          RateLimits rateLimits) {
         this.repository = repository;
         this.properties = properties;
+        this.rateLimits = rateLimits;
     }
 
     /**
      * 새 익명 세션을 만든다. 재응시도 이 호출이며, 이전 세션과 어떤 이력도 연결하지 않는다 (KAN-9 AC).
+     * <p>
+     * 인증이 없는 유일한 쓰기 경로라(§2.1) IP 단위 요청 제한을 건다 (§2.5, KAN-28) -
+     * 호출 한 번마다 세션 행과 토큰이 생기므로, 막지 않으면 반복 호출만으로 저장소를
+     * 채울 수 있다. 검사는 저장보다 먼저다.
+     *
+     * @param clientIp 요청 제한의 기준 IP - {@link app.accentury.backend.common.ClientIps}가
+     *                 신뢰 프록시 규칙으로 정한 값
      */
-    public SessionResponse create(@Nullable CreateSessionRequest request) {
+    public SessionResponse create(@Nullable CreateSessionRequest request, String clientIp) {
+        rateLimits.check(RateLimits.Scope.SESSION_CREATE, clientIp);
+
         Instant now = Instant.now();
         Instant expiresAt = now.plus(properties.session().ttl());
         String sessionId = SessionTokens.newSessionId();

@@ -1,13 +1,12 @@
 package app.accentury.backend.scoring;
 
+import app.accentury.backend.PropertiesFixture;
 import app.accentury.backend.common.AccenturyProperties;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.json.JsonMapper;
 
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -160,14 +159,7 @@ class ScorePolicyRegistryTest {
 
     /** 레지스트리 기동 검사용 설정. 점수 버전 외 항목은 기본값과 같게 둔다 */
     private static AccenturyProperties props(String scoreVersion) {
-        return new AccenturyProperties("gn-2026.08.1", scoreVersion,
-                new AccenturyProperties.Session(Duration.ofMinutes(30)),
-                new AccenturyProperties.Analysis(800, 3000, 30, Duration.ofHours(24),
-                        Duration.ofSeconds(60), Duration.ofMinutes(5), null, Duration.ofSeconds(10), 2, 4),
-                new AccenturyProperties.Upload(30, null, Duration.ofMinutes(30)),
-                new AccenturyProperties.Completion(60),
-                new AccenturyProperties.Cors(List.of()),
-                new AccenturyProperties.Result(null, Map.of()));
+        return PropertiesFixture.versions("gn-2026.08.1", scoreVersion);
     }
 
     /** sv-0.3과 같은 5등급 정책. 각 테스트가 한 곳씩 망가뜨린다 */

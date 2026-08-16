@@ -1,8 +1,10 @@
 package app.accentury.backend.upload;
 
 import app.accentury.backend.common.ApiException;
+import app.accentury.backend.common.ClientIps;
 import app.accentury.backend.common.CorrelationIdFilter;
 import app.accentury.backend.common.ErrorResponse;
+import app.accentury.backend.common.RateLimits;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -19,11 +21,14 @@ import tools.jackson.databind.ObjectMapper;
 import java.io.IOException;
 
 /**
- * 업로드 요청 제한을 multipart 해석 <b>전에</b> 집행하는 필터 (Codex sol 리뷰 P2).
+ * 업로드의 <b>IP 단위</b> 요청 제한을 multipart 해석 <b>전에</b> 집행하는 필터 (Codex sol 리뷰 P2).
  * <p>
  * 컨트롤러({@code @RequestPart}) 도달 시점에는 본문 전체가 이미 읽혀 버퍼링된 뒤라,
  * 서비스에서 검사하면 한도 초과 IP가 429를 받으면서도 요청마다 파싱과 메모리 할당을
  * 강제할 수 있다 - DispatcherServlet 앞에서 끊는다.
+ * <p>
+ * 세션 단위 제한은 여기서 할 수 없다 - 인증이 아직 안 끝나 세션을 모른다.
+ * 그쪽은 인증 직후 {@link VoiceUploadService}가 건다 (§2.5 이중 제한, KAN-28).
  * <p>
  * MVC 바깥이라 {@code GlobalExceptionHandler}를 타지 않으므로 오류 봉투(§2.3)를
  * 직접 쓴다. correlation ID는 {@code HIGHEST_PRECEDENCE}인
@@ -38,11 +43,13 @@ class UploadRateLimitFilter extends OncePerRequestFilter {
     private static final PathPattern RECORDING_PATH =
             PathPatternParser.defaultInstance.parse("/v0/sessions/*/voice-items/*/recording");
 
-    private final UploadRateLimiter rateLimiter;
+    private final RateLimits rateLimits;
+    private final ClientIps clientIps;
     private final ObjectMapper objectMapper;
 
-    UploadRateLimitFilter(UploadRateLimiter rateLimiter, ObjectMapper objectMapper) {
-        this.rateLimiter = rateLimiter;
+    UploadRateLimitFilter(RateLimits rateLimits, ClientIps clientIps, ObjectMapper objectMapper) {
+        this.rateLimits = rateLimits;
+        this.clientIps = clientIps;
         this.objectMapper = objectMapper;
     }
 
@@ -51,7 +58,7 @@ class UploadRateLimitFilter extends OncePerRequestFilter {
                                     FilterChain filterChain) throws ServletException, IOException {
         if ("POST".equals(request.getMethod()) && matchesRecordingPath(request)) {
             try {
-                rateLimiter.check(ClientIps.from(request));
+                rateLimits.check(RateLimits.Scope.VOICE_UPLOAD_IP, clientIps.resolve(request));
             } catch (ApiException e) {
                 writeRateLimited(response, e);
                 return;

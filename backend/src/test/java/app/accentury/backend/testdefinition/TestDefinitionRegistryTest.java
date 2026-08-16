@@ -1,5 +1,6 @@
 package app.accentury.backend.testdefinition;
 
+import app.accentury.backend.PropertiesFixture;
 import app.accentury.backend.common.AccenturyProperties;
 import app.accentury.backend.common.ApiException;
 import app.accentury.backend.common.ErrorCode;
@@ -7,10 +8,8 @@ import app.accentury.backend.scoring.ScorePolicyRegistry;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.json.JsonMapper;
 
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -199,14 +198,7 @@ class TestDefinitionRegistryTest {
 
     /** 레지스트리 기동 검사용 설정. 업로드, CORS 등 무관한 항목은 기본값과 같게 둔다 */
     private static AccenturyProperties props(String testVersion, String scoreVersion) {
-        return new AccenturyProperties(testVersion, scoreVersion,
-                new AccenturyProperties.Session(Duration.ofMinutes(30)),
-                new AccenturyProperties.Analysis(800, 3000, 30, Duration.ofHours(24),
-                        Duration.ofSeconds(60), Duration.ofMinutes(5), null, Duration.ofSeconds(10), 2, 4),
-                new AccenturyProperties.Upload(30, null, Duration.ofMinutes(30)),
-                new AccenturyProperties.Completion(60),
-                new AccenturyProperties.Cors(List.of()),
-                new AccenturyProperties.Result(null, Map.of()));
+        return PropertiesFixture.versions(testVersion, scoreVersion);
     }
 
     /** 정본 구성과 같은 5+5와 seq 교차 정의. 각 테스트가 한 곳씩 망가뜨린다 */

@@ -21,6 +21,7 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
+import static org.springframework.http.HttpMethod.GET;
 import static org.springframework.http.HttpMethod.POST;
 
 /**
@@ -38,7 +39,9 @@ class RestAiAnalysisClientTest {
     void setUp() {
         RestClient.Builder builder = RestClient.builder().baseUrl("http://ai.test");
         server = MockRestServiceServer.bindTo(builder).build();
-        client = new RestAiAnalysisClient(builder.build(), new ObjectMapper());
+        // 분석과 health가 같은 서버를 보게 한다 - 타임아웃만 다른 두 클라이언트다
+        RestClient restClient = builder.build();
+        client = new RestAiAnalysisClient(restClient, restClient, new ObjectMapper());
     }
 
     @Test
@@ -74,6 +77,26 @@ class RestAiAnalysisClientTest {
                 assertInstanceOf(AiAnalysisClient.Rejected.class, client.analyze(request(), "c_test"));
         assertEquals("AUDIO_TOO_QUIET", rejected.errorCode());
         assertTrue(rejected.retryable());
+        // 계약대로 온 판정이다 - AI는 살아 있으므로 회로에 실패로 세면 안 된다 (KAN-28)
+        assertEquals(AiAnalysisClient.Rejected.Cause.JUDGED, rejected.cause());
+    }
+
+    @Test
+    void 계약_위반_응답은_판정과_다른_사유로_구분된다() {
+        // 둘 다 재전송하지 않는 Rejected지만 "AI가 정상인가"가 다르다 - 이 구분이 없으면
+        // 응답만 하고 고장 난 AI 앞에서 회로가 영영 닫혀 있는다 (KAN-28)
+        server.expect(requestTo("http://ai.test/internal/v0/analyze"))
+                .andRespond(withStatus(HttpStatus.OK).body("""
+                        { "status": "OK", "intonationScore": 999, "modelVersion": "rmvpe-0.2",
+                          "scoreVersion": "sv-0.3" }
+                        """).contentType(MediaType.APPLICATION_JSON));
+
+        AiAnalysisClient.Rejected rejected =
+                assertInstanceOf(AiAnalysisClient.Rejected.class, client.analyze(request(), "c_test"));
+
+        assertEquals("INTERNAL_ERROR", rejected.errorCode());
+        assertFalse(rejected.retryable(), "같은 오디오에 같은 답이 온다");
+        assertEquals(AiAnalysisClient.Rejected.Cause.CONTRACT_VIOLATION, rejected.cause());
     }
 
     @Test
@@ -193,6 +216,50 @@ class RestAiAnalysisClientTest {
                 assertInstanceOf(AiAnalysisClient.Rejected.class, client.analyze(request(), "c_test"));
         assertEquals("INTERNAL_ERROR", rejected.errorCode());
         assertEquals(false, rejected.retryable());
+    }
+
+    // === 회로 복구 프로브 (KAN-28, §4.2) ===
+
+    @Test
+    void health가_UP이면_살아_있는_것으로_본다() {
+        server.expect(requestTo("http://ai.test/internal/v0/health"))
+                .andExpect(method(GET))
+                .andRespond(withSuccess("{ \"status\": \"UP\" }", MediaType.APPLICATION_JSON));
+
+        assertTrue(client.healthy());
+    }
+
+    @Test
+    void health가_UP이_아니면_아직_복구가_아니다() {
+        // 프로세스는 떴지만 모델이 아직 안 올라온 상태(KAN-22가 채운다)를 UP으로 읽으면,
+        // 회로를 열어 준 직후 사용자 요청이 다시 실패한다
+        server.expect(requestTo("http://ai.test/internal/v0/health"))
+                .andRespond(withSuccess("{ \"status\": \"WARMING_UP\" }", MediaType.APPLICATION_JSON));
+
+        assertFalse(client.healthy());
+    }
+
+    @Test
+    void health가_5xx거나_본문이_계약과_다르면_실패로_본다() {
+        server.expect(requestTo("http://ai.test/internal/v0/health"))
+                .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
+        assertFalse(client.healthy());
+
+        server.reset();
+        server.expect(requestTo("http://ai.test/internal/v0/health"))
+                .andRespond(withSuccess("not json", MediaType.APPLICATION_JSON));
+        assertFalse(client.healthy());
+    }
+
+    @Test
+    void health는_연결_실패에도_예외를_던지지_않는다() {
+        // 프로브 실패는 "아직 아니다"가 전부다 - 스케줄 잡으로 예외가 새면 다음 주기가 멎는다
+        server.expect(requestTo("http://ai.test/internal/v0/health"))
+                .andRespond(request -> {
+                    throw new java.net.SocketTimeoutException("연결 지연 시뮬레이션");
+                });
+
+        assertFalse(client.healthy());
     }
 
     private static AnalysisDispatcher.AnalysisRequest request() {
