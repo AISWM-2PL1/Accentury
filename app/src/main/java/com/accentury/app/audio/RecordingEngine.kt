@@ -10,7 +10,7 @@ class RecordingEngine(private val source: PcmSource = AudioRecorder()) {
     data class Progress(
         val elapsedMs: Long,
         val rms: Double,
-        /** 청크의 추정 F0(Hz). 무성음이면 null — 소비 측은 곡선을 끊거나 마지막 값을 유지한다. */
+        /** 청크의 추정 F0(Hz). 무성음이면 null - 소비 측은 곡선을 끊거나 마지막 값을 유지한다. */
         val pitchHz: Float?,
     )
 
@@ -53,7 +53,7 @@ class RecordingEngine(private val source: PcmSource = AudioRecorder()) {
         } catch (e: AudioRecorder.CaptureException) {
             return Outcome.Failure(e.message ?: "capture error")
         } catch (e: SecurityException) {
-            return Outcome.Failure("녹음 권한 없음 — ${e.message}")
+            return Outcome.Failure("녹음 권한 없음 - ${e.message}")
         } finally {
             activeSession.compareAndSet(stopRequested, null)
         }

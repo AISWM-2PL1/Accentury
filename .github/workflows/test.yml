@@ -81,7 +81,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
       - run: npm test
-      # tsc --noEmit + vite build — 타입 오류와 번들 실패를 PR에서 잡는다
+      # tsc --noEmit + vite build - 타입 오류와 번들 실패를 PR에서 잡는다
       - run: npm run build
 
   ai-test:

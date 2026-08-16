@@ -37,7 +37,7 @@ class YinPitchEstimatorTest {
 
     @Test
     fun `배음이 섞여도 기본 주파수를 잡는다 - 옥타브 오류 없음`() {
-        // 실제 목소리처럼 2·3배음 포함. 단순 autocorrelation이 배음(240Hz)으로 튀던 케이스.
+        // 실제 목소리처럼 2, 3배음 포함. 단순 autocorrelation이 배음(240Hz)으로 튀던 케이스.
         val f0Hz = 120.0
         val chunk = ShortArray(CHUNK_SIZE) {
             val t = 2 * PI * f0Hz * it / SAMPLE_RATE
