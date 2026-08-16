@@ -1,5 +1,7 @@
 package app.accentury.backend.session;
 
+import app.accentury.backend.common.ClientIps;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.jspecify.annotations.Nullable;
 import org.springframework.http.HttpStatus;
@@ -19,9 +21,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class SessionController {
 
     private final SessionService sessionService;
+    private final ClientIps clientIps;
 
-    public SessionController(SessionService sessionService) {
+    public SessionController(SessionService sessionService, ClientIps clientIps) {
         this.sessionService = sessionService;
+        this.clientIps = clientIps;
     }
 
     /**
@@ -34,11 +38,13 @@ public class SessionController {
      * 응답의 {@code testVersion}과 {@code scoreVersion}은 이 세션에 고정된다.
      * 테스트 도중 서버에 새 버전이 올라가도 이 세션은 시작할 때의 문항과 점수 기준을 그대로 쓴다.
      * <p>
-     * 201 세션 생성됨 / 400 {@code campaignToken} 형식 위반 등 입력 검증 실패({@code VALIDATION_FAILED}).
+     * 201 세션 생성됨 / 400 {@code campaignToken} 형식 위반 등 입력 검증 실패({@code VALIDATION_FAILED}) /
+     * 429 IP 분당 세션 생성 제한 초과({@code RATE_LIMITED} + {@code Retry-After}, §2.5).
      */
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public SessionResponse create(@Valid @RequestBody(required = false) @Nullable CreateSessionRequest request) {
-        return sessionService.create(request);
+    public SessionResponse create(@Valid @RequestBody(required = false) @Nullable CreateSessionRequest request,
+                                  HttpServletRequest httpRequest) {
+        return sessionService.create(request, clientIps.resolve(httpRequest));
     }
 }

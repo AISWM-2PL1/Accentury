@@ -9,6 +9,8 @@ import org.springframework.web.client.RestClient;
 import tools.jackson.databind.ObjectMapper;
 
 import java.net.http.HttpClient;
+import java.time.Clock;
+import java.time.Duration;
 
 /**
  * 분석 전달 경로의 조립 (KAN-24).
@@ -58,15 +60,26 @@ class AnalysisDispatchConfig {
                     + properties.analysis().processingTimeout() + ")이 AI 재전송 최악 소요("
                     + worstCaseMs + "ms)보다 짧다 - ai-timeout, ai-retries와 함께 조정해야 한다");
         }
-        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(
-                HttpClient.newBuilder().connectTimeout(properties.analysis().aiTimeout()).build());
-        requestFactory.setReadTimeout(properties.analysis().aiTimeout());
         // Boot의 RestClient.Builder 자동 구성은 webmvc 스타터에 없다 - 내부 호출 하나라 정적 빌더로 충분하다
-        RestClient restClient = RestClient.builder()
-                .baseUrl(aiBaseUrl)
-                .requestFactory(requestFactory)
-                .build();
-        return new HttpAnalysisDispatcher(new RestAiAnalysisClient(restClient, objectMapper),
-                analysisExecutor, transitions, backlog, properties.analysis().aiRetries());
+        RestClient restClient = restClient(aiBaseUrl, properties.analysis().aiTimeout());
+        // 회로 복구 프로브는 추론을 태우지 않으므로 훨씬 짧게 기다린다 (KAN-28) -
+        // 스케줄러 스레드를 오래 붙들면 같은 풀의 다른 잡이 밀린다
+        RestClient healthRestClient = restClient(aiBaseUrl, properties.analysis().aiHealthTimeout());
+        AiCircuitBreaker circuitBreaker = new AiCircuitBreaker(
+                properties.analysis().circuitFailureThreshold(),
+                properties.analysis().circuitProbeInterval(),
+                // 반열림 시험의 슬롯 해제 한도 - 분석 1건의 실행 잔류 한도와 같은 값이다
+                properties.analysis().processingTimeout(), Clock.systemUTC());
+        return new HttpAnalysisDispatcher(
+                new RestAiAnalysisClient(restClient, healthRestClient, objectMapper),
+                analysisExecutor, transitions, backlog, circuitBreaker,
+                properties.analysis().aiRetries());
+    }
+
+    private static RestClient restClient(String baseUrl, Duration timeout) {
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(
+                HttpClient.newBuilder().connectTimeout(timeout).build());
+        requestFactory.setReadTimeout(timeout);
+        return RestClient.builder().baseUrl(baseUrl).requestFactory(requestFactory).build();
     }
 }

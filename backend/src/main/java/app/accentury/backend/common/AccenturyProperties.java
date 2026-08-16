@@ -15,25 +15,39 @@ import java.util.Map;
  * 프로토타입에서는 활성 버전을 이 설정 파일로 관리하고,
  * 버전 발행과 활성 전환(KAN-26)이 들어오면 DB 관리로 옮긴다.
  *
- * @param testVersion  활성 테스트 정의 버전 (예: gn-2026.08.1)
- * @param scoreVersion 활성 점수 버전 - 집계식과 등급 경계의 기준 (sv-0.3, KAN-21)
- * @param session      익명 세션 정책 (KAN-9)
- * @param analysis     분석 상태 폴링 정책 (KAN-23, KAN-24)
- * @param upload       음성 업로드 요청 제한 (KAN-23)과 임시파일 정책 (KAN-27)
- * @param completion   완료 API 요청 제한 (KAN-16)
- * @param cors         웹 테스트 CORS allowlist (KAN-23, KAN-31)
- * @param result       결과 응답의 등급별 자산과 공유 URL (KAN-25)
+ * @param testVersion    활성 테스트 정의 버전 (예: gn-2026.08.1)
+ * @param scoreVersion   활성 점수 버전 - 집계식과 등급 경계의 기준 (sv-0.3, KAN-21)
+ * @param session        익명 세션 정책 (KAN-9)과 세션 생성 요청 제한 (KAN-28)
+ * @param analysis       분석 상태 폴링 정책 (KAN-23, KAN-24)과 AI 회로 차단 정책 (KAN-28)
+ * @param upload         음성 업로드 요청 제한 (KAN-23, KAN-28)과 임시파일 정책 (KAN-27)
+ * @param vocab          어휘 답안 요청 제한 (KAN-28)
+ * @param completion     완료 API 요청 제한 (KAN-16)
+ * @param cors           웹 테스트 CORS allowlist (KAN-23, KAN-31)
+ * @param result         결과 응답의 등급별 자산과 공유 URL (KAN-25)
+ * @param trustedProxies 요청 제한의 기준 IP를 정할 때 신뢰하는 프록시 대역 (KAN-28, §2.5).
+ *                       CIDR 또는 단일 IP 목록이고, 직접 접속한 상대가 이 목록에 들어야만
+ *                       {@code X-Forwarded-For}를 읽는다. 비어 있으면 헤더를 무시하고 접속 IP만
+ *                       쓴다 - 프록시 없는 배포에서 헤더 위조로 제한을 우회하지 못하게 하는
+ *                       안전한 기본값이다. <b>ALB 뒤에 배포할 때는 반드시 지정해야 한다</b> -
+ *                       지정하지 않으면 모든 사용자가 ALB IP 하나를 공유해 서로의 한도를 깎는다
  */
 @ConfigurationProperties(prefix = "accentury")
 public record AccenturyProperties(String testVersion, String scoreVersion, Session session,
                                   @DefaultValue Analysis analysis, @DefaultValue Upload upload,
+                                  @DefaultValue Vocab vocab,
                                   @DefaultValue Completion completion, @DefaultValue Cors cors,
-                                  @DefaultValue Result result) {
+                                  @DefaultValue Result result,
+                                  @DefaultValue List<String> trustedProxies) {
 
     /**
-     * @param ttl 세션 토큰 수명 - 테스트 소요 5분의 여유 배수인 30분 (§2.1, §7)
+     * @param ttl                세션 토큰 수명 - 테스트 소요 5분의 여유 배수인 30분 (§2.1, §7)
+     * @param rateLimitPerMinute IP당 분당 세션 생성 허용 횟수 (§2.5, KAN-28). 인증이 없는
+     *                           엔드포인트라(§2.1) IP가 유일한 키다. 정상 응시자는 응시 1회당
+     *                           1건이고 재응시해도 분당 1~2건이므로, 공유 IP(학교, 카페 NAT) 뒤의
+     *                           동시 시작을 덮는 여유 배수로 잡는다. 임계치는 부하 테스트 후
+     *                           확정한다 (§7, KAN-40)
      */
-    public record Session(Duration ttl) {
+    public record Session(Duration ttl, @DefaultValue("30") int rateLimitPerMinute) {
     }
 
     /**
@@ -58,6 +72,20 @@ public record AccenturyProperties(String testVersion, String scoreVersion, Sessi
      * @param aiRetries            AI 일시 장애(연결 실패, 5xx)의 재전송 횟수 - 오디오가 메모리에
      *                             살아 있는 전달 시점에만 가능하다 (FR-DP-01, KAN-24 재큐잉)
      * @param dispatchConcurrency  분석 전달 워커 수 - GPU 동시 슬롯(§5.3)을 넘지 않게 잡는다
+     * @param aiHealthTimeout      회로 복구 프로브({@code GET /internal/v0/health}, §4.2)의 연결과
+     *                             읽기 타임아웃 (KAN-28). 추론 없이 즉답하는 엔드포인트라 분석
+     *                             호출보다 짧게 잡는다 - 프로브가 스케줄러 스레드를 오래 붙들면
+     *                             같은 풀의 다른 잡(타임아웃 정리, 임시파일 청소)이 밀린다
+     * @param circuitFailureThreshold AI 장애가 이만큼 연속되면 회로를 연다 (KAN-28, §4.2).
+     *                             회로가 열린 동안 업로드는 GPU를 소모하지 않는 503
+     *                             {@code ANALYSIS_UNAVAILABLE}로 즉시 끊기고, 큐에 남아 있던
+     *                             작업도 AI를 부르지 않고 종결한다. 1건짜리 순간 장애로 열리지
+     *                             않을 만큼 크고, 장애가 지속될 때 워커가 타임아웃을 반복하며
+     *                             묶이지 않을 만큼 작아야 한다
+     * @param circuitProbeInterval 회로가 열린 뒤 health 프로브를 다시 던지는 간격 (KAN-28).
+     *                             첫 프로브까지의 대기(쿨다운)도 같은 값이다. 사용자 요청을
+     *                             프로브로 쓰지 않는다 - 오디오는 재전송할 수 없어(FR-DP-01)
+     *                             프로브로 뽑힌 사용자만 실패를 떠안기 때문이다
      */
     public record Analysis(@DefaultValue("800") long pollAfterMs,
                            @DefaultValue("3000") long congestedPollAfterMs,
@@ -68,24 +96,43 @@ public record AccenturyProperties(String testVersion, String scoreVersion, Sessi
                            @Nullable String aiBaseUrl,
                            @DefaultValue("10s") Duration aiTimeout,
                            @DefaultValue("2") int aiRetries,
-                           @DefaultValue("4") int dispatchConcurrency) {
+                           @DefaultValue("4") int dispatchConcurrency,
+                           @DefaultValue("2s") Duration aiHealthTimeout,
+                           @DefaultValue("5") int circuitFailureThreshold,
+                           @DefaultValue("5s") Duration circuitProbeInterval) {
     }
 
     /**
-     * @param rateLimitPerMinute IP당 분당 업로드 허용 횟수 (§2.5, NFR-SC-04).
-     *                           임계치는 부하 테스트 후 확정한다 (§7, KAN-28)
-     * @param tempDir            업로드 임시파일 전용 디렉터리 (KAN-27). 정상 경로에서는 파일이
-     *                           생기지 않지만(메모리 전용 불변식), 생긴다면 반드시 이 한 곳에
-     *                           모여야 청소 잡과 권한 제한이 닿는다.
-     *                           {@code spring.servlet.multipart.location}과 같은 값이어야 하고,
-     *                           기동 시 {@code VoiceTempDirectory}가 둘의 일치를 강제한다
-     * @param tempRetention      잔존 임시파일 삭제 기준 - 수정 시각이 이보다 오래된 파일만
-     *                           지운다 (KAN-27 - 30분). 업로드 1건은 초 단위로 끝나므로 살아
-     *                           있는 요청의 파일을 앞질러 지우지 않는 여유 배수다
+     * @param rateLimitPerMinute        IP당 분당 업로드 허용 횟수 (§2.5, NFR-SC-04).
+     *                                  임계치는 부하 테스트 후 확정한다 (§7, KAN-40)
+     * @param sessionRateLimitPerMinute 세션당 분당 업로드 허용 횟수 (§2.5 - IP와 세션 이중 제한,
+     *                                  KAN-28). IP 제한은 NAT 뒤 다수 사용자를 고려해 느슨하므로,
+     *                                  세션 하나가 그 여유를 혼자 쓰지 못하게 막는 두 번째 축이다.
+     *                                  정상 응시는 음성 5문항 x 1회 = 5건이고 최악이 문항당 시도
+     *                                  상한 5회 x 5문항 = 25건이라(§5.1), 멱등 재전송까지 덮는
+     *                                  여유 배수로 잡는다
+     * @param tempDir                   업로드 임시파일 전용 디렉터리 (KAN-27). 정상 경로에서는 파일이
+     *                                  생기지 않지만(메모리 전용 불변식), 생긴다면 반드시 이 한 곳에
+     *                                  모여야 청소 잡과 권한 제한이 닿는다.
+     *                                  {@code spring.servlet.multipart.location}과 같은 값이어야 하고,
+     *                                  기동 시 {@code VoiceTempDirectory}가 둘의 일치를 강제한다
+     * @param tempRetention             잔존 임시파일 삭제 기준 - 수정 시각이 이보다 오래된 파일만
+     *                                  지운다 (KAN-27 - 30분). 업로드 1건은 초 단위로 끝나므로 살아
+     *                                  있는 요청의 파일을 앞질러 지우지 않는 여유 배수다
      */
     public record Upload(@DefaultValue("30") int rateLimitPerMinute,
+                         @DefaultValue("60") int sessionRateLimitPerMinute,
                          @Nullable String tempDir,
                          @DefaultValue("30m") Duration tempRetention) {
+    }
+
+    /**
+     * @param rateLimitPerMinute 세션당 분당 어휘 답안 제출 허용 횟수 (§2.5, KAN-28).
+     *                           인증 뒤에만 닿는 경로라 세션이 키다. 정상 응시는 어휘 5문항
+     *                           x 1회 = 5건이고 문항당 답안은 하나뿐이라(§3.5 - 새 키 재제출은
+     *                           409) 그 이상은 재전송이거나 남용이다
+     */
+    public record Vocab(@DefaultValue("60") int rateLimitPerMinute) {
     }
 
     /**
@@ -95,7 +142,7 @@ public record AccenturyProperties(String testVersion, String scoreVersion, Sessi
      *                           {@code pollAfterMs} 기준값 800ms를 그대로 따르는 클라이언트가
      *                           분당 약 75회이므로(§5.3 규칙 1 - 정상 트래픽), 60초 실행 잔류
      *                           한도(§3.4)까지 이어지는 합법 폴링이 걸리지 않게 그 위로 잡는다
-     *                           (Codex sol 리뷰 P2). 임계치는 부하 테스트 후 확정한다 (§7, KAN-28)
+     *                           (Codex sol 리뷰 P2). 임계치는 부하 테스트 후 확정한다 (§7, KAN-40)
      */
     public record Completion(@DefaultValue("120") int rateLimitPerMinute) {
     }

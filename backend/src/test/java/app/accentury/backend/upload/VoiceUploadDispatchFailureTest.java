@@ -25,6 +25,7 @@ import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -66,6 +67,9 @@ class VoiceUploadDispatchFailureTest extends IntegrationTest {
         /** 마지막으로 넘어온 오디오 버퍼 - 지우지 않고 그대로 들고 있는다 */
         volatile byte @Nullable [] lastAudio;
 
+        /** 복구 시험 자리를 놓아준 작업 - 회로 판정 자체는 AiCircuitBreakerTest가 본다 (KAN-28) */
+        volatile @Nullable String abandoned;
+
         @Override
         public void dispatch(AnalysisRequest request) {
             lastAudio = request.audio();
@@ -73,6 +77,11 @@ class VoiceUploadDispatchFailureTest extends IntegrationTest {
                 throw new IllegalStateException("AI 연결 실패 시뮬레이션");
             }
             lastDispatched = request;
+        }
+
+        @Override
+        public void abandon(String analysisJobId) {
+            abandoned = analysisJobId;
         }
     }
 
@@ -97,6 +106,36 @@ class VoiceUploadDispatchFailureTest extends IntegrationTest {
     @BeforeEach
     void 기본은_전달_실패() {
         dispatcher.failing = true;
+        dispatcher.abandoned = null;
+    }
+
+    @Test
+    void 전달에_실패하면_복구_시험_자리를_놓아준다() throws Exception {
+        // accepts()가 반열림 시험 자리를 이 작업 앞으로 잡아 둘 수 있다 (KAN-28) - 전달이
+        // 실패하면 이 작업은 AI에 닿지 못하는데, 놓아주지 않으면 시험 한도(60초) 동안
+        // 나머지 업로드가 전부 503이다. 그동안 AI는 이미 살아 있을 수 있다
+        SessionHandle session = createSession();
+
+        mockMvc.perform(upload(session, "release-trial"))
+                .andExpect(status().isServiceUnavailable());
+
+        var job = analysisJobRepository
+                .findBySessionIdAndItemIdAndIdempotencyKey(session.id(), "v1", "release-trial")
+                .orElseThrow();
+        assertEquals(job.id(), dispatcher.abandoned,
+                "전달에 실패한 그 작업의 자리를 놓아줘야 한다");
+    }
+
+    @Test
+    void 전달에_성공하면_시험_자리를_놓아주지_않는다() throws Exception {
+        // 자리는 판정(성공/실패)이 날 때까지 그 작업의 것이다 - 여기서 놓아주면 큐에 남은
+        // 다른 작업이 자리를 채가고, 202를 받은 업로드가 분석도 못 해 보고 실패한다
+        SessionHandle session = createSession();
+        dispatcher.failing = false;
+
+        mockMvc.perform(upload(session, "keep-trial")).andExpect(status().isAccepted());
+
+        assertNull(dispatcher.abandoned);
     }
 
     @Test

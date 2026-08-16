@@ -1,5 +1,7 @@
 package app.accentury.backend.upload;
 
+import app.accentury.backend.common.ClientIps;
+import app.accentury.backend.common.RateLimits;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -16,9 +18,9 @@ class UploadRateLimitFilterConfig {
 
     @Bean
     FilterRegistrationBean<UploadRateLimitFilter> uploadRateLimitFilter(
-            UploadRateLimiter rateLimiter, ObjectMapper objectMapper) {
+            RateLimits rateLimits, ClientIps clientIps, ObjectMapper objectMapper) {
         FilterRegistrationBean<UploadRateLimitFilter> registration =
-                new FilterRegistrationBean<>(new UploadRateLimitFilter(rateLimiter, objectMapper));
+                new FilterRegistrationBean<>(new UploadRateLimitFilter(rateLimits, clientIps, objectMapper));
         registration.addUrlPatterns("/v0/sessions/*");
         return registration;
     }

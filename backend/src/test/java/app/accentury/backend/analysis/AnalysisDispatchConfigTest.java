@@ -1,13 +1,12 @@
 package app.accentury.backend.analysis;
 
+import app.accentury.backend.PropertiesFixture;
 import app.accentury.backend.common.AccenturyProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
-import java.util.List;
-import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -41,14 +40,7 @@ class AnalysisDispatchConfigTest {
 
     /** 기본값 조합에 ai-base-url만 지정한 설정 - processing-timeout만 시나리오별로 바꾼다 */
     private static AccenturyProperties props(Duration processingTimeout) {
-        return new AccenturyProperties("gn-2026.08.1", "sv-0.3",
-                new AccenturyProperties.Session(Duration.ofMinutes(30)),
-                new AccenturyProperties.Analysis(800, 3000, 30, Duration.ofHours(24),
-                        processingTimeout, Duration.ofMinutes(5), "http://ai.test",
-                        Duration.ofSeconds(10), 2, 4),
-                new AccenturyProperties.Upload(30, null, Duration.ofMinutes(30)),
-                new AccenturyProperties.Completion(60),
-                new AccenturyProperties.Cors(List.of()),
-                new AccenturyProperties.Result(null, Map.of()));
+        return PropertiesFixture.withAnalysis(
+                PropertiesFixture.analysis(30, "http://ai.test", processingTimeout));
     }
 }

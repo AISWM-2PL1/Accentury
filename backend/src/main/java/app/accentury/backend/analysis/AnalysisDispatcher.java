@@ -18,6 +18,40 @@ public interface AnalysisDispatcher {
     void dispatch(AnalysisRequest request);
 
     /**
+     * 이 작업으로 분석을 받을 수 있는가 (KAN-28) - 업로드는 false면 작업을 만들지 않고
+     * 503 {@code ANALYSIS_UNAVAILABLE}로 끊는다. 오디오를 저장하지 않아(FR-DP-01) 나중에
+     * 다시 보낼 수 없으므로, 받아 두고 실패시키는 것보다 받지 않는 쪽이 정직하다.
+     * <p>
+     * 작업 ID를 받는 이유는 복구 시험 자리를 그 작업에 묶기 위해서다 - 자리를 잡은
+     * 업로드와 실제로 전달되는 작업이 같아야 한다 ({@code AiCircuitBreaker}).
+     * <p>
+     * 기본은 true다 - 판정 수단이 없는 구현(개발 모드)까지 막지 않는다.
+     */
+    default boolean accepts(String analysisJobId) {
+        return true;
+    }
+
+    /**
+     * {@link #accepts(String)}로 자리를 받은 작업이 결국 전달되지 못했다 (KAN-28).
+     * <p>
+     * 반열림에서 {@code accepts()}는 복구 시험 자리를 그 작업 앞으로 잡아 둔다. 작업 저장이
+     * 롤백되거나 큐 제출이 거절되면 그 작업은 AI에 닿지 못하는데, 자리는 잡힌 채로 남아
+     * 나머지 업로드가 시험 한도만큼 막힌다. 자리를 잡았던 호출부가 그 사실을 알려주는 자리다.
+     * <p>
+     * {@code accepts()}가 true를 준 뒤 전달에 실패한 모든 경로에서 부르면 된다 - 이미
+     * 판정이 났거나 자리를 잡지 않은 작업이면 아무 일도 일어나지 않는다.
+     */
+    default void abandon(String analysisJobId) {
+    }
+
+    /**
+     * 막혔던 경로가 살아났는지 확인한다 (KAN-28) - {@link AnalysisAvailabilityProbe}가
+     * 주기적으로 부른다. 확인할 것이 없는 구현에는 아무 일도 일어나지 않는다.
+     */
+    default void probeAvailability() {
+    }
+
+    /**
      * AI 분석 1건에 필요한 전부 (§4.1 meta 파트와 대응).
      *
      * @param audio WAV 원본 - 클라이언트 업로드를 그대로 패스스루한다 (§4.1).

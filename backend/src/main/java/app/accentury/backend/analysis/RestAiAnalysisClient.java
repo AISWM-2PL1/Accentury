@@ -26,8 +26,10 @@ import java.net.http.HttpTimeoutException;
  * <p>
  * 클라이언트 업로드 WAV를 그대로 multipart로 패스스루한다. 이 호출이 오디오 바이트의
  * 마지막 사용처다 - 반환과 함께 참조가 끝나 수거된다 (FR-DP-01). AI의 계약 위반
- * (형식이 다른 본문, 범위 밖 점수)은 장애가 아니라 비재시도 {@link AiAnalysisClient.Rejected}로
- * 종결한다 - 같은 요청을 다시 보내도 같은 응답이 올 것이기 때문이다.
+ * (형식이 다른 본문, 범위 밖 점수)은 재전송하지 않는 {@link AiAnalysisClient.Rejected}로
+ * 종결한다 - 같은 요청을 다시 보내도 같은 응답이 올 것이기 때문이다. 다만 그 거절에는
+ * {@code CONTRACT_VIOLATION} 사유를 달아 회로 차단기가 <b>실패로</b> 세게 한다 (KAN-28) -
+ * 응답은 하면서 계약을 어기는 AI는 정상이 아니고, 성공으로 세면 회로가 영영 닫혀 있는다.
  */
 class RestAiAnalysisClient implements AiAnalysisClient {
 
@@ -35,11 +37,22 @@ class RestAiAnalysisClient implements AiAnalysisClient {
 
     static final String ANALYZE_PATH = "/internal/v0/analyze";
 
+    static final String HEALTH_PATH = "/internal/v0/health";
+
     private final RestClient restClient;
+
+    /**
+     * health 프로브 전용 클라이언트 - 분석보다 짧은 타임아웃({@code ai-health-timeout})으로
+     * 조립된다 (KAN-28). 추론 없이 즉답하는 엔드포인트인데 분석과 같은 10초를 기다리면,
+     * 프로브를 도는 스케줄러 스레드가 그만큼 묶여 같은 풀의 다른 잡이 밀린다.
+     */
+    private final RestClient healthRestClient;
+
     private final ObjectMapper objectMapper;
 
-    RestAiAnalysisClient(RestClient restClient, ObjectMapper objectMapper) {
+    RestAiAnalysisClient(RestClient restClient, RestClient healthRestClient, ObjectMapper objectMapper) {
         this.restClient = restClient;
+        this.healthRestClient = healthRestClient;
         this.objectMapper = objectMapper;
     }
 
@@ -69,6 +82,34 @@ class RestAiAnalysisClient implements AiAnalysisClient {
         }
     }
 
+    /**
+     * 워밍업 상태 조회 (§4.2) - 회로 복구 판정에만 쓴다 (KAN-28).
+     * <p>
+     * 200 + {@code status: "UP"}만 살아 있는 것으로 본다. 프로세스는 떠 있지만 모델이
+     * 아직 안 올라온 상태(KAN-22가 채울 워밍업)를 UP으로 읽으면, 회로를 닫자마자
+     * 사용자 요청이 다시 실패한다.
+     */
+    @Override
+    public boolean healthy() {
+        try {
+            return Boolean.TRUE.equals(healthRestClient.get()
+                    .uri(HEALTH_PATH)
+                    .exchange((httpRequest, httpResponse) -> {
+                        if (!httpResponse.getStatusCode().is2xxSuccessful()) {
+                            return false;
+                        }
+                        HealthResponse parsed =
+                                objectMapper.readValue(httpResponse.getBody(), HealthResponse.class);
+                        return parsed != null && "UP".equals(parsed.status());
+                    }));
+        } catch (RuntimeException e) {
+            // 연결 실패, 타임아웃, 계약과 다른 본문 - 전부 "아직 아니다"로 접는다.
+            // 프로브는 실패해도 회로를 열린 채로 두는 것이 전부라 던질 이유가 없다
+            log.debug("AI health 프로브 실패: {}", e.toString());
+            return false;
+        }
+    }
+
     private static HttpEntity<Object> part(Object content, MediaType contentType) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(contentType);
@@ -94,7 +135,7 @@ class RestAiAnalysisClient implements AiAnalysisClient {
             parsed = objectMapper.readValue(responseBody, AnalyzeResponse.class);
         } catch (JacksonException e) {
             log.error("AI 응답 본문을 해석할 수 없다 status={}", statusCode, e);
-            return new Rejected(ErrorCode.INTERNAL_ERROR.name(), false);
+            return Rejected.contractViolation();
         }
 
         if (statusCode == HttpStatus.OK.value() && parsed != null && "OK".equals(parsed.status())) {
@@ -109,18 +150,18 @@ class RestAiAnalysisClient implements AiAnalysisClient {
                 // 없어 비재시도이고, 미검증 문자열을 DB 컬럼(40자)과 클라이언트로 흘리지
                 // 않는다 (Codex 리뷰 - "OK"나 모르는 코드가 error.code로 나가면 안 된다)
                 log.error("AI 판정 코드가 계약에 없다 code={}", rawCode);
-                return new Rejected(ErrorCode.INTERNAL_ERROR.name(), false);
+                return Rejected.contractViolation();
             }
             // AI가 retryable을 생략하면 코드 정의(§2.4)의 기본값을 따른다 - 생략을 false로
             // 읽으면 AUDIO_TOO_QUIET가 재녹음 불가로 굳어 문항이 막힌다 (Codex 리뷰)
             boolean retryable = parsed.retryable() != null ? parsed.retryable()
                     : code.retryable();
-            return new Rejected(code.name(), retryable && code != ErrorCode.INTERNAL_ERROR);
+            return Rejected.judged(code.name(), retryable && code != ErrorCode.INTERNAL_ERROR);
         }
 
         log.error("AI 응답이 계약(§4.1)과 다르다 status={} body.status={}",
                 statusCode, parsed != null ? parsed.status() : null);
-        return new Rejected(ErrorCode.INTERNAL_ERROR.name(), false);
+        return Rejected.contractViolation();
     }
 
     private Outcome completed(AnalysisDispatcher.AnalysisRequest request, AnalyzeResponse parsed) {
@@ -131,14 +172,14 @@ class RestAiAnalysisClient implements AiAnalysisClient {
             // 점수 원값은 로그에도 남기지 않는다 - 점수 공개는 /result 한 곳이다 (Codex sol 리뷰 P2)
             log.error("AI 성공 응답에 필수 필드가 없거나 점수가 0~100 밖이다 scoreMissing={} modelVersion={}",
                     parsed.intonationScore() == null, parsed.modelVersion());
-            return new Rejected(ErrorCode.INTERNAL_ERROR.name(), false);
+            return Rejected.contractViolation();
         }
         // 세션은 생성 시점 점수 버전에 고정된다 (§5.4) - 구버전 AI가 다른 버전으로 채점한
         // 점수를 받으면 한 세션에 두 채점 버전이 섞인다. 계약 위반으로 끊는다 (Codex sol 리뷰 P1)
         if (!request.scoreVersion().equals(parsed.scoreVersion())) {
             log.error("AI가 다른 점수 버전으로 응답했다 expected={} actual={}",
                     request.scoreVersion(), parsed.scoreVersion());
-            return new Rejected(ErrorCode.INTERNAL_ERROR.name(), false);
+            return Rejected.contractViolation();
         }
         String qualityCode = parsed.quality() != null && parsed.quality().code() != null
                 ? parsed.quality().code() : "OK";
@@ -180,6 +221,10 @@ class RestAiAnalysisClient implements AiAnalysisClient {
 
         record Quality(@Nullable String code) {
         }
+    }
+
+    /** §4.2 health 응답 - 회로 복구 판정에 쓰는 필드만 읽는다 (모델 버전은 KAN-22) */
+    record HealthResponse(@Nullable String status) {
     }
 
     /** multipart 파트에 파일명을 주기 위한 래퍼 - 없으면 일부 서버 프레임워크가 파일 파트로 안 받는다 */

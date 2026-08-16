@@ -1,11 +1,10 @@
 package app.accentury.backend.result;
 
+import app.accentury.backend.PropertiesFixture;
 import app.accentury.backend.common.AccenturyProperties;
 import org.junit.jupiter.api.Test;
 
-import java.time.Duration;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -85,14 +84,6 @@ class TierAssetsTest {
 
     /** 기본값 조합에 result만 갈아끼운 설정 - 검증 대상은 result뿐이다 */
     private static AccenturyProperties props(AccenturyProperties.Result result) {
-        return new AccenturyProperties("gn-2026.08.1", "sv-0.3",
-                new AccenturyProperties.Session(Duration.ofMinutes(30)),
-                new AccenturyProperties.Analysis(800, 3000, 30, Duration.ofHours(24),
-                        Duration.ofSeconds(60), Duration.ofMinutes(5), null,
-                        Duration.ofSeconds(10), 2, 4),
-                new AccenturyProperties.Upload(30, null, Duration.ofMinutes(30)),
-                new AccenturyProperties.Completion(120),
-                new AccenturyProperties.Cors(List.of()),
-                result);
+        return PropertiesFixture.withResult(result);
     }
 }

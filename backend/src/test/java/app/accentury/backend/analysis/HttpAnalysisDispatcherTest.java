@@ -1,10 +1,13 @@
 package app.accentury.backend.analysis;
 
 import app.accentury.backend.IntegrationTest;
+import app.accentury.backend.SteppingClock;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.task.SyncTaskExecutor;
 
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -14,8 +17,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * AI 전달 워커의 종결 규칙 (KAN-24).
@@ -37,6 +42,16 @@ class HttpAnalysisDispatcherTest extends IntegrationTest {
 
         final Deque<Object> script = new ArrayDeque<>();
         int calls;
+
+        /** health 프로브 응답 - 회로 복구(KAN-28) 검증에서만 바꾼다 */
+        volatile boolean healthy = true;
+        int healthCalls;
+
+        @Override
+        public boolean healthy() {
+            healthCalls++;
+            return healthy;
+        }
 
         ScriptedClient then(Object outcomeOrException) {
             script.add(outcomeOrException);
@@ -136,7 +151,7 @@ class HttpAnalysisDispatcherTest extends IntegrationTest {
     void 판정_실패는_재전송_없이_한_번으로_끝난다() {
         AnalysisJob job = saveProcessingJob();
         ScriptedClient client = new ScriptedClient()
-                .then(new AiAnalysisClient.Rejected("AUDIO_TOO_QUIET", true));
+                .then(AiAnalysisClient.Rejected.judged("AUDIO_TOO_QUIET", true));
 
         dispatcher(client, 2).dispatch(request(job));
 
@@ -150,7 +165,7 @@ class HttpAnalysisDispatcherTest extends IntegrationTest {
     void 비재시도_판정_실패는_FAILED다() {
         AnalysisJob job = saveProcessingJob();
         ScriptedClient client = new ScriptedClient()
-                .then(new AiAnalysisClient.Rejected("INTERNAL_ERROR", false));
+                .then(AiAnalysisClient.Rejected.judged("INTERNAL_ERROR", false));
 
         dispatcher(client, 2).dispatch(request(job));
 
@@ -171,6 +186,242 @@ class HttpAnalysisDispatcherTest extends IntegrationTest {
         // 큐에서 기다리다 타임아웃 종결된 작업이 뒤늦게 GPU를 쓰면 안 된다 (Codex sol 리뷰 P1)
         assertEquals(0, client.calls);
         assertEquals(AnalysisJobStatus.RETRYABLE_FAILED, repository.findById(job.id()).orElseThrow().status());
+    }
+
+    // === 회로 차단 (KAN-28) ===
+
+    @Test
+    void 연속_실패가_임계치에_닿으면_회로가_열려_새_업로드를_막는다() {
+        // 회로가 열리면 업로드는 작업을 만들지 않고 503으로 끊긴다 (VoiceUploadService)
+        AiCircuitBreaker breaker = new AiCircuitBreaker(2, Duration.ofSeconds(5),
+                Duration.ofSeconds(60), Clock.systemUTC());
+        HttpAnalysisDispatcher dispatcher = dispatcher(unavailableClient(), 1, breaker);
+        assertTrue(dispatcher.accepts("a_probe"));
+
+        // 최초 1회 + 재전송 1회 = 실패 2회로 임계치에 닿는다
+        dispatcher.dispatch(request(saveProcessingJob()));
+
+        assertFalse(dispatcher.accepts("a_probe"));
+    }
+
+    @Test
+    void 회로가_열려_있으면_AI를_부르지_않고_ANALYSIS_UNAVAILABLE로_종결한다() {
+        // 큐에 이미 들어와 있던 작업들이다 - 여기서 AI를 부르면 장애가 끝날 때까지
+        // 워커가 타임아웃마다 묶인다. 미도달이므로 시도 예산(§2.5)에서 빠지는 코드로 종결한다
+        SteppingClock clock = new SteppingClock();
+        AiCircuitBreaker breaker = new AiCircuitBreaker(1, Duration.ofSeconds(5),
+                Duration.ofSeconds(60), clock);
+        breaker.recordFailure("a_setup");
+        AnalysisJob job = saveProcessingJob();
+        ScriptedClient client = new ScriptedClient()
+                .then(new AiAnalysisClient.Completed(95, "OK", "rmvpe-0.2", "sv-0.3"));
+
+        dispatcher(client, 2, breaker).dispatch(request(job));
+
+        assertEquals(0, client.calls);
+        AnalysisJob saved = repository.findById(job.id()).orElseThrow();
+        assertEquals(AnalysisJobStatus.RETRYABLE_FAILED, saved.status());
+        assertEquals("ANALYSIS_UNAVAILABLE", saved.errorCode());
+    }
+
+    @Test
+    void 반열림의_시험이_실패하면_뒤따르는_작업은_AI를_보지_못한다() {
+        // health가 UP이어도 추론이 죽어 있으면 시험 1건만 태우고 곧바로 다시 닫는다 -
+        // 큐에 남아 있던 작업까지 통과하면 사용자 여럿의 시도가 함께 탄다 (Codex sol 리뷰 P1)
+        SteppingClock clock = new SteppingClock();
+        AiCircuitBreaker breaker = new AiCircuitBreaker(1, Duration.ofSeconds(5),
+                Duration.ofSeconds(60), clock);
+        breaker.recordFailure("a_setup");
+        clock.advance(Duration.ofSeconds(5));
+        breaker.probeSucceeded(breaker.claimProbe().orElseThrow());
+        AnalysisJob trial = saveProcessingJob();
+        AnalysisJob queued = saveProcessingJob();
+        ScriptedClient client = unavailableClient();
+        HttpAnalysisDispatcher dispatcher = dispatcher(client, 0, breaker);
+
+        dispatcher.dispatch(request(trial));
+        dispatcher.dispatch(request(queued));
+
+        assertEquals(1, client.calls, "시험 1건만 AI로 나가야 한다");
+        for (AnalysisJob job : new AnalysisJob[] {trial, queued}) {
+            AnalysisJob saved = repository.findById(job.id()).orElseThrow();
+            assertEquals(AnalysisJobStatus.RETRYABLE_FAILED, saved.status());
+            // 둘 다 GPU 미소모로 종결해 시도 예산(§2.5)을 지킨다
+            assertEquals("ANALYSIS_UNAVAILABLE", saved.errorCode());
+        }
+    }
+
+    @Test
+    void 회로가_열려_전달을_건너뛰어도_오디오_버퍼는_지운다() {
+        // 종결 경로가 하나 늘었다 - 여기가 새면 원본 음성이 힙에 남는다 (KAN-27 소유권 계약)
+        SteppingClock clock = new SteppingClock();
+        AiCircuitBreaker breaker = new AiCircuitBreaker(1, Duration.ofSeconds(5),
+                Duration.ofSeconds(60), clock);
+        breaker.recordFailure("a_setup");
+        AnalysisDispatcher.AnalysisRequest request = request(saveProcessingJob());
+
+        dispatcher(new ScriptedClient(), 0, breaker).dispatch(request);
+
+        assertArrayEquals(new byte[] {0, 0, 0}, request.audio());
+    }
+
+    @Test
+    void health_프로브가_성공하면_시험_요청_1건을_통과시킨다() {
+        // health(§4.2)는 프로세스 생존만 알린다 - 그것만으로 회로를 닫지 않고 시험
+        // 1건까지만 허용한다 (Codex sol 리뷰 P1). health가 응답하지 않는 동안에는
+        // 사용자 요청을 한 건도 쓰지 않는다
+        SteppingClock clock = new SteppingClock();
+        AiCircuitBreaker breaker = new AiCircuitBreaker(1, Duration.ofSeconds(5),
+                Duration.ofSeconds(60), clock);
+        breaker.recordFailure("a_setup");
+        ScriptedClient client = new ScriptedClient();
+        client.healthy = false;
+        HttpAnalysisDispatcher dispatcher = dispatcher(client, 0, breaker);
+
+        clock.advance(Duration.ofSeconds(5));
+        dispatcher.probeAvailability();
+        assertFalse(dispatcher.accepts("a_probe"), "health가 UP이 아니면 계속 열려 있다");
+
+        client.healthy = true;
+        clock.advance(Duration.ofSeconds(5));
+        dispatcher.probeAvailability();
+
+        assertTrue(dispatcher.accepts("a_trial"), "시험 1건은 통과한다");
+        assertFalse(dispatcher.accepts("a_other"), "그 결론 전까지 두 번째는 없다");
+        assertEquals(0, client.calls, "복구 프로브에 분석 호출을 쓰지 않는다");
+    }
+
+    @Test
+    void 계약_위반_응답은_회로에_실패로_센다() {
+        // 응답은 하면서 계약(§4.1)을 어기는 AI는 정상이 아니다 - 성공으로 세면 회로가 영영
+        // 닫혀 있어 업로드마다 GPU 슬롯을 태우고 INTERNAL_ERROR만 돌려준다 (KAN-28)
+        AiCircuitBreaker breaker = new AiCircuitBreaker(2, Duration.ofSeconds(5),
+                Duration.ofSeconds(60), Clock.systemUTC());
+        ScriptedClient client = new ScriptedClient()
+                .then(AiAnalysisClient.Rejected.contractViolation())
+                .then(AiAnalysisClient.Rejected.contractViolation());
+        HttpAnalysisDispatcher dispatcher = dispatcher(client, 0, breaker);
+
+        dispatcher.dispatch(request(saveProcessingJob()));
+        assertTrue(dispatcher.accepts("a_probe"), "1회로는 임계치에 닿지 않는다");
+        dispatcher.dispatch(request(saveProcessingJob()));
+
+        assertFalse(dispatcher.accepts("a_probe"), "연속 2회로 회로가 열려야 한다");
+    }
+
+    @Test
+    void 계약_위반_응답은_재전송하지_않는다() {
+        // 회로에는 실패지만 같은 오디오에 같은 답이 온다 - 재전송은 GPU 낭비다
+        AnalysisJob job = saveProcessingJob();
+        ScriptedClient client = new ScriptedClient()
+                .then(AiAnalysisClient.Rejected.contractViolation());
+
+        dispatcher(client, 2).dispatch(request(job));
+
+        assertEquals(1, client.calls);
+        AnalysisJob saved = repository.findById(job.id()).orElseThrow();
+        assertEquals(AnalysisJobStatus.FAILED, saved.status());
+        assertEquals("INTERNAL_ERROR", saved.errorCode());
+    }
+
+    @Test
+    void 계약대로_온_판정_실패는_회로를_열지_않는다() {
+        // 422 판정(AUDIO_TOO_QUIET 등)은 AI가 살아서 답한 것이다 - 조용한 녹음이 이어졌다고
+        // 회로가 열리면 멀쩡한 AI를 두고 업로드가 503으로 끊긴다
+        AiCircuitBreaker breaker = new AiCircuitBreaker(2, Duration.ofSeconds(5),
+                Duration.ofSeconds(60), Clock.systemUTC());
+        ScriptedClient client = new ScriptedClient()
+                .then(AiAnalysisClient.Rejected.judged("AUDIO_TOO_QUIET", true))
+                .then(AiAnalysisClient.Rejected.judged("AUDIO_TOO_QUIET", true))
+                .then(AiAnalysisClient.Rejected.judged("AUDIO_TOO_QUIET", true));
+        HttpAnalysisDispatcher dispatcher = dispatcher(client, 0, breaker);
+
+        for (int i = 0; i < 3; i++) {
+            dispatcher.dispatch(request(saveProcessingJob()));
+        }
+
+        assertTrue(dispatcher.accepts("a_probe"));
+    }
+
+    @Test
+    void 시험이_성공하면_회로가_닫히고_정상_트래픽이_재개된다() {
+        // 복구의 끝까지 한 번에 본다 - 장애로 열리고, health가 UP이 되고, 시험 1건이
+        // 성공해 닫히고, 그 뒤 업로드가 다시 통과한다 (KAN-28 §4.2)
+        SteppingClock clock = new SteppingClock();
+        AiCircuitBreaker breaker = new AiCircuitBreaker(1, Duration.ofSeconds(5),
+                Duration.ofSeconds(60), clock);
+        ScriptedClient client = new ScriptedClient();
+        client.healthy = false;
+        HttpAnalysisDispatcher dispatcher = dispatcher(client, 0, breaker);
+        breaker.recordFailure("a_setup");
+        assertFalse(dispatcher.accepts("a_blocked"), "장애로 열려 있다");
+
+        client.healthy = true;
+        clock.advance(Duration.ofSeconds(5));
+        dispatcher.probeAvailability();
+
+        AnalysisJob trial = saveProcessingJob();
+        assertTrue(dispatcher.accepts(trial.id()), "health가 UP이면 시험 1건은 통과한다");
+        client.then(new AiAnalysisClient.Completed(78, "OK", "rmvpe-0.2", "sv-0.3"));
+        dispatcher.dispatch(request(trial));
+
+        assertEquals(AnalysisJobStatus.COMPLETED,
+                repository.findById(trial.id()).orElseThrow().status());
+        assertTrue(dispatcher.accepts("a_after-1"), "닫힌 뒤에는 시험 자리 제한이 없다");
+        assertTrue(dispatcher.accepts("a_after-2"), "정상 트래픽이 재개된다");
+        assertEquals(1, client.healthCalls, "복구에 쓴 health는 한 번뿐이다");
+    }
+
+    @Test
+    void 이미_종결된_시험_작업은_자리를_놓아준다() {
+        // 스위퍼가 먼저 종결한 작업이 시험 자리를 물고 있으면, AI가 살아 있어도 나머지
+        // 업로드가 한도(60초)만큼 503이다 - 한도 만료는 안전장치이지 정상 경로가 아니다
+        SteppingClock clock = new SteppingClock();
+        AiCircuitBreaker breaker = halfOpen(clock);
+        AnalysisJob trial = saveProcessingJob();
+        transitions.fail(trial.id(), AnalysisJobStatus.RETRYABLE_FAILED, "ANALYSIS_TIMEOUT");
+        ScriptedClient client = new ScriptedClient();
+        HttpAnalysisDispatcher dispatcher = dispatcher(client, 0, breaker);
+        assertTrue(dispatcher.accepts(trial.id()));
+
+        dispatcher.dispatch(request(trial));
+
+        assertEquals(0, client.calls, "종결된 작업에 GPU를 쓰지 않는다");
+        assertTrue(dispatcher.accepts("a_next"), "시험 자리가 다음 업로드에게 넘어가야 한다");
+    }
+
+    @Test
+    void 워커에서_예상_못_한_예외가_나도_시험_자리를_놓아준다() {
+        // AiUnavailableException이 아닌 예외는 회로에 아무것도 기록하지 않는다 -
+        // 놓아주는 코드가 없으면 자리가 한도까지 잠긴다
+        SteppingClock clock = new SteppingClock();
+        AiCircuitBreaker breaker = halfOpen(clock);
+        AnalysisJob trial = saveProcessingJob();
+        AiAnalysisClient exploding = new ScriptedClient() {
+            @Override
+            public Outcome analyze(AnalysisDispatcher.AnalysisRequest request, String correlationId) {
+                throw new IllegalStateException("워커에서 터진 예상 밖 예외");
+            }
+        };
+        HttpAnalysisDispatcher dispatcher = dispatcher(exploding, 0, breaker);
+        assertTrue(dispatcher.accepts(trial.id()));
+
+        dispatcher.dispatch(request(trial));
+
+        assertEquals(AnalysisJobStatus.RETRYABLE_FAILED,
+                repository.findById(trial.id()).orElseThrow().status());
+        assertTrue(dispatcher.accepts("a_next"), "시험 자리가 풀려 있어야 한다");
+    }
+
+    @Test
+    void 회로가_닫혀_있으면_프로브를_던지지_않는다() {
+        // 정상 운영 중에 매 틱 health를 두드리면 의미 없는 트래픽만 늘어난다
+        ScriptedClient client = new ScriptedClient();
+        HttpAnalysisDispatcher dispatcher = dispatcher(client, 0);
+
+        dispatcher.probeAvailability();
+
+        assertEquals(0, client.healthCalls);
     }
 
     @Test
@@ -200,7 +451,7 @@ class HttpAnalysisDispatcherTest extends IntegrationTest {
         new HttpAnalysisDispatcher(client, task -> {
             duringRun.set(backlog.inFlight());
             task.run();
-        }, transitions, backlog, 0, 0).dispatch(request(job));
+        }, transitions, backlog, openCircuitNever(), 0, 0).dispatch(request(job));
 
         assertEquals(1, duringRun.get());
         assertEquals(0, backlog.inFlight());
@@ -218,7 +469,7 @@ class HttpAnalysisDispatcherTest extends IntegrationTest {
                     atRejection.set(backlog.inFlight());
                     throw new RejectedExecutionException("큐 포화 시뮬레이션");
                 },
-                transitions, backlog, 0, 0);
+                transitions, backlog, openCircuitNever(), 0, 0);
 
         // 예외는 업로드 요청 스레드로 그대로 올라가야 업로드가 503으로 종결할 수 있다 (§3.3)
         assertThrows(RejectedExecutionException.class, () -> dispatcher.dispatch(request(job)));
@@ -281,7 +532,7 @@ class HttpAnalysisDispatcherTest extends IntegrationTest {
                 task -> {
                     throw new RejectedExecutionException("큐 포화 시뮬레이션");
                 },
-                transitions, new AnalysisBacklog(), 0, 0);
+                transitions, new AnalysisBacklog(), openCircuitNever(), 0, 0);
 
         assertThrows(RejectedExecutionException.class, () -> dispatcher.dispatch(request));
 
@@ -289,9 +540,42 @@ class HttpAnalysisDispatcherTest extends IntegrationTest {
     }
 
     private HttpAnalysisDispatcher dispatcher(AiAnalysisClient client, int retries) {
+        return dispatcher(client, retries, openCircuitNever());
+    }
+
+    private HttpAnalysisDispatcher dispatcher(AiAnalysisClient client, int retries,
+                                              AiCircuitBreaker circuitBreaker) {
         // 백오프 0ms - 테스트가 재전송 대기에 시간을 쓰지 않게 한다
         return new HttpAnalysisDispatcher(client, new SyncTaskExecutor(), transitions,
-                new AnalysisBacklog(), retries, 0);
+                new AnalysisBacklog(), circuitBreaker, retries, 0);
+    }
+
+    /** health까지 통과해 시험 1건을 기다리는 회로 */
+    private static AiCircuitBreaker halfOpen(SteppingClock clock) {
+        AiCircuitBreaker breaker = new AiCircuitBreaker(1, Duration.ofSeconds(5),
+                Duration.ofSeconds(60), clock);
+        breaker.recordFailure("a_setup");
+        clock.advance(Duration.ofSeconds(5));
+        breaker.probeSucceeded(breaker.claimProbe().orElseThrow());
+        return breaker;
+    }
+
+    /** 이 테스트의 관심사가 아닌 회로 - 한 번에 열리지 않을 만큼 임계치를 크게 둔다 */
+    private static AiCircuitBreaker openCircuitNever() {
+        return new AiCircuitBreaker(Integer.MAX_VALUE, Duration.ofSeconds(5),
+                Duration.ofSeconds(60), Clock.systemUTC());
+    }
+
+    /** 부를 때마다 일시 장애를 내는 클라이언트 - 회로가 열리는 조건을 만든다 */
+    private static ScriptedClient unavailableClient() {
+        return new ScriptedClient() {
+            @Override
+            public Outcome analyze(AnalysisDispatcher.AnalysisRequest request, String correlationId) {
+                calls++;
+                throw new AiUnavailableException("연결 실패",
+                        AiUnavailableException.Kind.UNREACHED, null);
+            }
+        };
     }
 
     private AnalysisJob saveProcessingJob() {

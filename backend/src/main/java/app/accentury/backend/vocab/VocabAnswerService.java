@@ -4,6 +4,7 @@ import app.accentury.backend.analysis.AnalysisJobRepository;
 import app.accentury.backend.common.ApiException;
 import app.accentury.backend.common.ErrorCode;
 import app.accentury.backend.common.IdempotencyKeys;
+import app.accentury.backend.common.RateLimits;
 import app.accentury.backend.session.SessionService;
 import app.accentury.backend.session.TestSession;
 import app.accentury.backend.session.TestSessionRepository;
@@ -21,8 +22,8 @@ import java.util.UUID;
 /**
  * 어휘 답안의 검증 파이프라인과 저장 (KAN-15, API 명세서 §3.5).
  * <p>
- * 검증 순서: 세션 인증 -> 멱등 키 -> 문항/선택지 -> (잠금) 완료 가드 -> 멱등 판별 -> 저장.
- * AI를 거치지 않는다 - 정답표 대조는 저장 시점에 끝난다 (§4.3, §5.7).
+ * 검증 순서: 세션 인증 -> 세션 요청 제한 -> 멱등 키 -> 문항/선택지 -> (잠금) 완료 가드 ->
+ * 멱등 판별 -> 저장. AI를 거치지 않는다 - 정답표 대조는 저장 시점에 끝난다 (§4.3, §5.7).
  * <p>
  * 완료 검사부터 저장까지는 세션 행 잠금 아래 한 트랜잭션이다 (Codex sol 리뷰 P2) -
  * 잠금이 없으면 검사와 저장 사이에 완료 전이({@code /complete}, KAN-16)가 끼어들어
@@ -40,22 +41,28 @@ public class VocabAnswerService {
     private final AnalysisJobRepository analysisJobRepository;
     private final TestSessionRepository sessionRepository;
     private final TransactionTemplate transactionTemplate;
+    private final RateLimits rateLimits;
 
     public VocabAnswerService(SessionService sessionService, TestDefinitionRegistry registry,
                               VocabAnswerRepository repository, AnalysisJobRepository analysisJobRepository,
-                              TestSessionRepository sessionRepository, TransactionTemplate transactionTemplate) {
+                              TestSessionRepository sessionRepository, TransactionTemplate transactionTemplate,
+                              RateLimits rateLimits) {
         this.sessionService = sessionService;
         this.registry = registry;
         this.repository = repository;
         this.analysisJobRepository = analysisJobRepository;
         this.sessionRepository = sessionRepository;
         this.transactionTemplate = transactionTemplate;
+        this.rateLimits = rateLimits;
     }
 
     VocabAnswerResponse submit(String sessionId, String itemId,
                                @Nullable String authorization, @Nullable String idempotencyKey,
                                @Nullable VocabAnswerRequest request) {
         TestSession session = sessionService.authenticateBearer(sessionId, authorization);
+        // 인증 뒤에만 닿는 경로라 세션이 키다 (§2.5, KAN-28) - 어휘 5문항이 정상 상한이므로
+        // 그 이상은 재전송이거나 남용이다
+        rateLimits.check(RateLimits.Scope.VOCAB_ANSWER, session.id());
         String key = IdempotencyKeys.require(idempotencyKey);
         // 없는 문항(422)과 음성 문항(409)을 여기서 끊는다 (§3.5, KAN-23과 공용 규칙)
         TestDefinition.Item item = registry.requireItem(
