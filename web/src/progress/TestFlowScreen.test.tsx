@@ -230,6 +230,8 @@ describe('VOICE 문항 — 네이티브 녹음 화면 전환 (KAN-100)', () => {
       itemNumber: 1,
       totalItems: 10,
       maxDurationMs: 10_000,
+      // 가이드 곡선은 정의가 든 그대로 실려 간다 (KAN-102) — 가공되면 이 대조가 깨진다
+      guideF0: { unit: 'semitone', frameIntervalMs: 10, values: [0, 1] },
     })
   })
 

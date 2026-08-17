@@ -21,8 +21,11 @@ export interface GuideF0 {
   unit: string
   /** 시간축 샘플링 간격 (ms) */
   frameIntervalMs: number
-  /** 정규화된 semitone 배열 */
-  values: number[]
+  /**
+   * 정규화된 semitone 배열. 무성 구간은 null이다 — 단위가 정규화 semitone이라
+   * 0은 평균 음높이라는 유효한 값이고, 무성 표현은 null만 가능하다 (2026-08-17 결정).
+   */
+  values: (number | null)[]
   /**
    * 허용 밴드 하한. 발행 검증이 required로 강제하지만(2026-08-09 확정, §6),
    * 응답은 null 필드를 빼고 직렬화하므로 그 이전에 발행된 정의에서는 없을 수 있다.

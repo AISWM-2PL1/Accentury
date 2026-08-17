@@ -42,6 +42,8 @@ export function VoiceItemScreen({ item, itemNumber, totalItems, onDevSubmitted }
       itemNumber,
       totalItems,
       maxDurationMs: item.maxDurationMs,
+      // 네이티브 녹음 화면의 가이드 레인이 그릴 정적 곡선 (KAN-102). 정의 그대로 전달한다.
+      guideF0: item.guideF0,
     })
 
   useEffect(() => {
