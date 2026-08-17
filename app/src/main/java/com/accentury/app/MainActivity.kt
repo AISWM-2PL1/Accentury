@@ -257,6 +257,7 @@ private fun RecordingOverlay(
             totalQuestions = start.totalItems,
             onNext = onSubmit,
             onExit = onExit,
+            guideF0 = start.guideF0,
             viewModel = viewModel,
         )
     }
