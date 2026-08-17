@@ -1,6 +1,7 @@
 package app.accentury.backend.result;
 
 import app.accentury.backend.analysis.PollIntervals;
+import app.accentury.backend.analytics.AnalyticsCounters;
 import app.accentury.backend.common.AccenturyProperties;
 import app.accentury.backend.common.ApiException;
 import app.accentury.backend.common.ErrorCode;
@@ -35,6 +36,10 @@ import java.util.UUID;
  * 완료 전이(집계, 결과 저장, {@code completed_at})는 제출 경로(KAN-15/23)와 같은
  * 세션 행 잠금({@link TestSessionRepository#lockById}) 아래 한 트랜잭션이다 - 잠금이
  * 없으면 완주 판정과 확정 사이에 답안/업로드가 끼어들어 결과에 안 담긴 제출이 생긴다.
+ * <p>
+ * 익명 집계의 완주 카운터(KAN-106)는 <b>그 트랜잭션이 커밋된 뒤</b>에 올린다 - 롤백된
+ * 완료를 세지 않고, 잠금을 쥔 채 커넥션을 하나 더 잡지도 않는다. 증가 실패는 카운터
+ * 쪽에서 삼키므로 결과 반환을 막지 않는다 (티켓 제약).
  */
 @Service
 public class CompletionService {
@@ -51,6 +56,7 @@ public class CompletionService {
     private final PollIntervals pollIntervals;
     private final AccenturyProperties properties;
     private final TransactionTemplate transactionTemplate;
+    private final AnalyticsCounters counters;
 
     public CompletionService(SessionService sessionService, TestDefinitionRegistry registry,
                              CompletionJudge judge,
@@ -58,7 +64,8 @@ public class CompletionService {
                              TestSessionRepository sessionRepository,
                              ScoreAggregator aggregator, RateLimits rateLimits,
                              PollIntervals pollIntervals, AccenturyProperties properties,
-                             TransactionTemplate transactionTemplate) {
+                             TransactionTemplate transactionTemplate,
+                             AnalyticsCounters counters) {
         this.sessionService = sessionService;
         this.registry = registry;
         this.judge = judge;
@@ -69,10 +76,27 @@ public class CompletionService {
         this.pollIntervals = pollIntervals;
         this.properties = properties;
         this.transactionTemplate = transactionTemplate;
+        this.counters = counters;
     }
 
-    /** 트랜잭션의 반환값 - 로그는 커밋이 확정된 뒤에만 남기려고 확정 여부를 함께 나른다 */
-    private record Outcome(CompleteResponse response, boolean completedNow) {
+    /**
+     * 트랜잭션의 반환값.
+     * <p>
+     * 로그와 집계 카운터(KAN-106)는 커밋이 확정된 뒤에만 움직여야 하므로, 트랜잭션 안에서
+     * 하지 않고 확정 사실을 여기 실어 밖으로 내보낸다.
+     *
+     * @param confirmedScore 이 호출이 결과를 새로 확정했을 때의 집계 결과. 그 외(이미 완료된
+     *                       세션의 재시도, 아직 분석 중)는 null이다 - 완주는 세션당 1회만 센다
+     * @param confirmedAt    결과 행의 {@code createdAt}과 같은 시각 - 집계 일자가 결과 행과
+     *                       어긋나지 않게 트랜잭션 안에서 정한 값을 그대로 쓴다
+     */
+    private record Outcome(CompleteResponse response,
+                           @Nullable AggregateScore confirmedScore,
+                           @Nullable Instant confirmedAt) {
+
+        static Outcome pending(CompleteResponse response) {
+            return new Outcome(response, null, null);
+        }
     }
 
     CompleteResponse complete(String sessionId, @Nullable String authorization,
@@ -95,15 +119,20 @@ public class CompletionService {
             }
             // 완료 재시도는 READY를 다시 준다 - 결과를 중복 생성하지 않는다 (AC, §3.6)
             if (locked.isCompleted()) {
-                return new Outcome(CompleteResponse.ready(), false);
+                return Outcome.pending(CompleteResponse.ready());
             }
-            return new Outcome(verifyAndFinalize(locked, pollAfterMs), true);
+            return verifyAndFinalize(locked, pollAfterMs);
         }));
 
-        if (outcome.completedNow() && outcome.response().status() == CompleteResponse.Status.READY) {
+        AggregateScore confirmed = outcome.confirmedScore();
+        if (confirmed != null) {
             // 점수와 등급은 로그에 남기지 않는다 - 결과 공개는 /result 한 곳이다 (§2.6의 취지)
             log.info("테스트 완료 sessionId={} testVersion={} scoreVersion={}",
                     session.id(), session.testVersion(), session.scoreVersion());
+            // 완주 1건과 등급, 점수 (KAN-106) - 트랜잭션이 커밋된 이 자리여야 한다.
+            // 안에서 부르면 세션 행 잠금을 쥔 채 커넥션을 더 잡고, 롤백된 완료까지 세게 된다
+            counters.recordSessionCompleted(
+                    Objects.requireNonNull(outcome.confirmedAt()), session.testVersion(), confirmed);
         }
         return outcome.response();
     }
@@ -112,7 +141,7 @@ public class CompletionService {
      * 완주 판정과 결과 확정 - 세션 행 잠금 아래에서만 호출된다.
      * 판정 자체는 {@code /result}(KAN-25)와 공용이다 ({@link CompletionJudge}).
      */
-    private CompleteResponse verifyAndFinalize(TestSession session, long pollAfterMs) {
+    private Outcome verifyAndFinalize(TestSession session, long pollAfterMs) {
         TestDefinition definition = registry.get(session.testVersion()).definition();
         CompletionJudge.Judgment judgment = judge.judge(session.id(), definition);
 
@@ -128,7 +157,7 @@ public class CompletionService {
                     ItemsApiException.ItemsField.RETAKE_ITEMS, judgment.retakeItems());
         }
         if (!judgment.pendingItems().isEmpty()) {
-            return CompleteResponse.processing(judgment.pendingItems(), pollAfterMs);
+            return Outcome.pending(CompleteResponse.processing(judgment.pendingItems(), pollAfterMs));
         }
 
         AggregateScore score = aggregator.aggregate(session.scoreVersion(), definition,
@@ -143,6 +172,6 @@ public class CompletionService {
         // 결과 저장과 같은 트랜잭션이다 - 완료 전이만 커밋되고 결과가 없는 상태는 존재하지
         // 않는다. 세션 수명은 결과 수명까지 늘어난다 - 재조회와 410 안내의 전제 (KAN-25)
         session.markCompleted(now, resultExpiresAt);
-        return CompleteResponse.ready();
+        return new Outcome(CompleteResponse.ready(), score, now);
     }
 }

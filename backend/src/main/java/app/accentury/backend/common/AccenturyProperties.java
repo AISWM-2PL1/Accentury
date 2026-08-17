@@ -5,6 +5,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
 import java.time.Duration;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 
@@ -24,6 +25,7 @@ import java.util.Map;
  * @param completion     완료 API 요청 제한 (KAN-16)
  * @param cors           웹 테스트 CORS allowlist (KAN-23, KAN-31)
  * @param result         결과 응답의 등급별 자산과 공유 URL (KAN-25)
+ * @param analytics      익명 집계 카운터의 일자 경계와 운영자 조회 토큰 (KAN-106)
  * @param trustedProxies 요청 제한의 기준 IP를 정할 때 신뢰하는 프록시 대역 (KAN-28, §2.5).
  *                       CIDR 또는 단일 IP 목록이고, 직접 접속한 상대가 이 목록에 들어야만
  *                       {@code X-Forwarded-For}를 읽는다. 비어 있으면 헤더를 무시하고 접속 IP만
@@ -36,7 +38,7 @@ public record AccenturyProperties(String testVersion, String scoreVersion, Sessi
                                   @DefaultValue Analysis analysis, @DefaultValue Upload upload,
                                   @DefaultValue Vocab vocab,
                                   @DefaultValue Completion completion, @DefaultValue Cors cors,
-                                  @DefaultValue Result result,
+                                  @DefaultValue Result result, @DefaultValue Analytics analytics,
                                   @DefaultValue List<String> trustedProxies) {
 
     /**
@@ -166,6 +168,27 @@ public record AccenturyProperties(String testVersion, String scoreVersion, Sessi
      *                   대소문자 무시 1:1이어야 한다
      */
     public record Result(@Nullable String webTestUrl, @DefaultValue Map<String, TierAsset> tiers) {
+    }
+
+    /**
+     * 익명 집계 카운터 (KAN-106, SRS FR-AN-10) - 영속 데이터로 허용된 유일한 것이다 (NFR-PR-03).
+     *
+     * @param zone          집계 행의 일자 경계를 정하는 타임존 (2026-08-17 확정 - Asia/Seoul).
+     *                      리포트를 읽는 사람의 하루(KAN-20 등급 분포)와 행의 하루가 같아야
+     *                      한다 - UTC로 자르면 KST 09:00에 날짜가 바뀌어 "8월 17일 응시 수"가
+     *                      한국의 8월 17일과 어긋난다. 저장 시각 체계(Instant)와는 별개다
+     * @param adminToken    운영자 조회 엔드포인트({@code GET /admin/v0/analytics}, §6)의 공유
+     *                      시크릿 - 세션 토큰이 아니라 §6이 규정한 별도 관리자 인증이다.
+     *                      <b>미설정이 기본값이고, 그러면 엔드포인트 자체가 등록되지 않는다</b>
+     *                      (404) - 설정을 빼먹어도 열려 있는 경로가 생기지 않게 하는 안전한
+     *                      기본값이다 (trustedProxies와 같은 계열). 조회 API와 대시보드는
+     *                      티켓 범위 밖이라 이 최소 경로만 둔다
+     * @param maxQueryDays  조회 한 번의 최대 기간(일). 실수로 전 기간을 훑는 질의가 운영 DB를
+     *                      붙잡지 않게 막는 상한이다 - 넘으면 400이다
+     */
+    public record Analytics(@DefaultValue("Asia/Seoul") ZoneId zone,
+                            @Nullable String adminToken,
+                            @DefaultValue("366") int maxQueryDays) {
     }
 
     /**

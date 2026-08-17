@@ -62,6 +62,24 @@ class LogMaskingTest extends IntegrationTest {
     }
 
     @Test
+    void 관리자_토큰도_이름_세_형태_모두에서_지운다() {
+        // 관리자 토큰(KAN-106)은 Authorization과 같은 등급의 자격증명인데 헤더 이름이 달라
+        // AUTHORIZATION 규칙에 안 걸린다. 프레임워크가 예외 메시지에 헤더를 싣거나
+        // 설정이 덤프되면 운영 시크릿이 평문으로 남는 자리다
+        assertEquals("X-Admin-Token: ***",
+                LogMasking.mask("X-Admin-Token: s3cr3t-admin-value"),
+                "요청 헤더로 찍힌 경우");
+        assertEquals("accentury.analytics.admin-token=***",
+                LogMasking.mask("accentury.analytics.admin-token=s3cr3t-admin-value"),
+                "설정 키로 찍힌 경우");
+        assertEquals("""
+                {"adminToken": "***"}""",
+                LogMasking.mask("""
+                        {"adminToken": "s3cr3t-admin-value"}"""),
+                "바인딩된 필드로 찍힌 경우");
+    }
+
+    @Test
     void 값에_공백이_있어도_따옴표_끝까지_지운다() {
         // 공백에서 끊으면 뒷부분이 로그에 그대로 남고, 열린 따옴표만 닫혀 JSON 한 줄이
         // 깨진다 - 마스킹이 유출과 로그 수집 실패를 동시에 만드는 자리다
