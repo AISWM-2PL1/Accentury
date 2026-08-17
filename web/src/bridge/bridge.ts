@@ -7,7 +7,6 @@
  */
 
 import { parseItemResult, type ItemResult } from './itemResult'
-import type { GuideF0 } from '../progress/testDefinition'
 
 export interface AccenturyBridge {
   /** [시작하기] → 네이티브 마이크 권한 게이트 호출 */
@@ -35,6 +34,27 @@ export interface VoiceItemStart {
   totalItems: number
   maxDurationMs: number
   guideF0: GuideF0
+}
+
+/**
+ * 브리지를 건너는 가이드 곡선 — 네이티브 `GuideF0`(VoiceItemStart.kt)와 맞춘 계약이다.
+ *
+ * `testDefinition.ts`의 GuideF0와 구조가 겹치지만 일부러 import하지 않는다. 저쪽의 정본은
+ * 백엔드 응답이고 이쪽의 정본은 브리지 계약이라, 사본(정의 미러)을 여기 끌어오면 백엔드
+ * 스키마 변경이 컴파일 에러 없이 payload 형태를 바꿔 §5 버전 게이트를 우회한다. 독립
+ * 선언이면 정의 → payload 대입 지점(VoiceItemScreen)이 구조 검사가 되어, 두 계약이
+ * 어긋나는 순간 그 자리에서 컴파일이 깨진다.
+ *
+ * 허용 밴드(bandLow/bandHigh)는 계약에 없다 — 채점 층위 데이터라 네이티브가 읽지 않고,
+ * 정의 객체를 그대로 넘기면 실제 JSON에 실려 가더라도 네이티브가 모르는 필드로 무시한다.
+ */
+export interface GuideF0 {
+  /** semitone — 화자 음역 정규화 단위. 네이티브는 semitone이 아니면 그리지 않는다 */
+  unit: string
+  /** 시간축 샘플링 간격 (ms) */
+  frameIntervalMs: number
+  /** 정규화된 semitone 배열. 무성 구간은 null (0은 유효한 값, 2026-08-17 결정) */
+  values: (number | null)[]
 }
 
 /** 네이티브 → 웹 수신 지점. 네이티브가 evaluateJavascript로 직접 부른다 */

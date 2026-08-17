@@ -74,6 +74,14 @@ class GuideCurveTest {
     }
 
     @Test
+    fun `거의 평평한 곡선의 미세 잡음은 레인 전체로 증폭되지 않는다`() {
+        // 부동소수 잡음 수준(1e-9 semitone)의 등락. 자기 스케일만 있으면 이게 전폭으로 튄다 —
+        // 표시 범위 바닥값(0.5 semitone)이 잡음을 중앙 부근에 눌러 둔다.
+        val points = guideCurveDisplayPoints(listOf(1.0, 1.0 + 1e-9, 1.0))
+        points.forEach { assertEquals(0.5f, it.y, 1e-3f) }
+    }
+
+    @Test
     fun `유성 프레임이 하나뿐이면 그 시각에 점 하나다`() {
         val points = guideCurveDisplayPoints(listOf(null, 2.0, null))
         assertEquals(1, points.size)

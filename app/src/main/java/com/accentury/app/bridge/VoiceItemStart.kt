@@ -2,6 +2,8 @@ package com.accentury.app.bridge
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 
 /**
  * 웹이 모르는 필드를 붙여 보내도 파싱이 깨지지 않게 한다 — 필드 추가는 하위호환이라
@@ -33,27 +35,25 @@ data class VoiceItemStart(
 )
 
 /**
- * 정의의 `guideF0`를 그대로 실어 온 것 (KAN-10 §3.2 미러, 산출: KAN-17).
+ * 정의의 `guideF0`에서 녹음 화면이 읽는 부분집합 (KAN-10 §3.2, 산출: KAN-17).
  *
- * 웹이 가공하지 않고 정의째로 건네는 이유: 곡선을 어떻게 그릴지는 전부 네이티브 사정이라,
- * 중간에서 요약하면 렌더링 규칙이 바뀔 때마다 브리지 계약도 같이 흔들린다. 정의 그대로면
- * 시드(목 픽스처)를 실데이터로 갈아끼워도 이 계약과 렌더링 코드는 손대지 않는다.
+ * 웹은 정의의 guideF0를 가공 없이 통째로 실어 보내고, 네이티브는 그중 아는 필드만 읽는다
+ * ([VoiceItemStart]와 같은 부분집합 원칙). 허용 밴드(bandLow/bandHigh)는 일부러 안 받는다 —
+ * 채점 층위(서버) 데이터라 렌더링이 읽을 일이 없는데 타입만 갖고 있으면, 그 필드의 형태
+ * 변화(예: 무성 프레임 null)가 읽지도 않는 값 때문에 payload 전체를 거부하게 만든다.
  *
- * @property unit semitone — 화자 음역 정규화 단위
+ * @property unit semitone — 화자 음역 정규화 단위. semitone이 아니면 그리지 않는다
+ *   (무성=null 규칙이 이 단위에서만 참이므로, `RecordingScreen`의 가드)
  * @property frameIntervalMs 시간축 샘플링 간격. 아직 렌더링에 안 쓰지만(가이드는 레인
  *   전체 폭에 맞춰 그린다) 사용자 곡선과의 시간축 대응(후속 티켓)이 쓸 값이라 함께 받는다
  * @property values 정규화된 semitone 배열. 무성 구간은 null이다 — 0은 평균 음높이라는
  *   유효한 값이라 무성 표현이 될 수 없다 (2026-08-17 결정, `GuideCurve.kt`)
- * @property bandLow 허용 밴드 하한. 렌더링 범위 밖(채점 층위)이지만 정의 그대로 받는다
- * @property bandHigh 허용 밴드 상한. 유무 규칙은 bandLow와 같다
  */
 @Serializable
 data class GuideF0(
     val unit: String,
     val frameIntervalMs: Int,
     val values: List<Double?>,
-    val bandLow: List<Double>? = null,
-    val bandHigh: List<Double>? = null,
 )
 
 /**
@@ -64,17 +64,14 @@ data class GuideF0(
  * 빈 itemId는 결과를 어느 문항에 붙일지 알 수 없게 만들고, 0 이하의 순번·문항 수·녹음 길이는
  * 녹음 화면이 그릴 수 없는 상태다. 어느 쪽이든 화면을 띄우기 전에 끊는 편이 안전하다.
  *
- * guideF0는 따로 값 검증을 두지 않는다 — 그릴 수 없는 배열(빈 배열·전부 무성)은 렌더링 쪽
- * (`GuideCurve`)이 빈 곡선으로 소화하고, 곡선은 없어도 녹음은 성립하기 때문이다. 다만 타입이
- * 어긋난 guideF0(예: values에 문자열)는 다른 필드처럼 payload 전체를 무시하게 된다 — 같은
- * 빌드의 웹만 이 필드를 보내므로, 부분 복구보다 "불량 payload는 통째로 무시" 원칙의 일관성을 택했다.
+ * guideF0는 다른 필드보다 관대하게 다룬다 — 값 검증도 없고(그릴 수 없는 배열은 렌더링 쪽
+ * `GuideCurve`가 빈 곡선으로 소화한다), 타입이 어긋나 파싱이 안 되면 곡선만 버리고 나머지를
+ * 다시 파싱한다. 곡선은 없어도 녹음은 성립하는데, guideF0의 내용은 웹 빌드가 아니라 서버가
+ * 발행한 정의(KAN-17 산출물)에서 오므로, 여기서 payload째 거부하면 정의 데이터 한 줄이
+ * 문항 진행 전체를 막게 되기 때문이다.
  */
 fun parseVoiceItemStart(payloadJson: String): VoiceItemStart? {
-    val start = try {
-        json.decodeFromString(VoiceItemStart.serializer(), payloadJson)
-    } catch (_: Exception) {
-        return null
-    }
+    val start = decodeStart(payloadJson) ?: return null
 
     if (start.itemId.isBlank()) return null
     if (start.itemNumber < 1 || start.totalItems < 1) return null
@@ -82,4 +79,19 @@ fun parseVoiceItemStart(payloadJson: String): VoiceItemStart? {
     if (start.maxDurationMs <= 0) return null
 
     return start
+}
+
+/** 전체 파싱을 먼저 시도하고, 실패하면 guideF0만 떼어낸 뒤 한 번 더 시도한다. */
+private fun decodeStart(payloadJson: String): VoiceItemStart? {
+    try {
+        return json.decodeFromString(VoiceItemStart.serializer(), payloadJson)
+    } catch (_: Exception) {
+        // guideF0만 불량일 수 있다 — 아래에서 곡선을 버리고 구제를 시도한다.
+    }
+    return try {
+        val stripped = JsonObject(json.parseToJsonElement(payloadJson).jsonObject.filterKeys { it != "guideF0" })
+        json.decodeFromJsonElement(VoiceItemStart.serializer(), stripped)
+    } catch (_: Exception) {
+        null
+    }
 }
