@@ -166,6 +166,37 @@ class AccenturyBridgeTest {
     }
 
     @Test
+    fun `guideF0 속의 모르는 필드(허용 밴드)는 무성 null이 섞여 있어도 무시하고 받는다`() {
+        // 밴드는 채점 층위라 네이티브 계약에 없다. 타입으로 들고 있으면 읽지도 않는 필드의
+        // 형태(무성 프레임 null)가 payload 전체를 거부하게 만든다 — 그 회귀를 여기서 막는다.
+        val start = startVoiceItem(
+            payload(
+                extra = ""","guideF0":{"unit":"semitone","frameIntervalMs":10,""" +
+                    """"values":[0.5],"bandLow":[null],"bandHigh":[1.0]}""",
+            ),
+        )
+
+        assertEquals(GuideF0(unit = "semitone", frameIntervalMs = 10, values = listOf(0.5)), start?.guideF0)
+    }
+
+    @Test
+    fun `guideF0 형태가 불량이면 곡선만 버리고 녹음 컨텍스트는 받는다`() {
+        // guideF0 내용은 웹 빌드가 아니라 서버가 발행한 정의에서 온다 - 정의 데이터 한 줄이
+        // 문항 진행 전체를 막으면 안 되므로, 다른 필드와 달리 payload째 거부하지 않는다.
+        val badShapes = listOf(
+            ""","guideF0":{"unit":"semitone","frameIntervalMs":10,"values":["x"]}""", // 값 타입 불일치
+            ""","guideF0":{"frameIntervalMs":10,"values":[0.5]}""", // unit 누락
+            ""","guideF0":{"unit":"semitone","frameIntervalMs":10.5,"values":[0.5]}""", // 정수 자리에 실수
+            ""","guideF0":42""", // 객체가 아님
+        )
+        badShapes.forEach { extra ->
+            val start = startVoiceItem(payload(extra = extra))
+            assertEquals("불량 guideF0에도 문항은 받아야 한다: $extra", "item_1", start?.itemId)
+            assertNull("불량 guideF0는 버려져야 한다: $extra", start?.guideF0)
+        }
+    }
+
+    @Test
     fun `모르는 필드가 붙어 있어도 받는다 (필드 추가는 하위호환)`() {
         // 신버전 웹 + 구버전 앱 조합. 버전을 올리지 않는 변경이라 실제로 존재하는 조합이다.
         val start = startVoiceItem(payload(extra = ",\"futureField\":\"whatever\""))

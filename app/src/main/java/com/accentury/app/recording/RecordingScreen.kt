@@ -52,7 +52,11 @@ fun RecordingScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     // 문항이 사는 동안 곡선 데이터는 정적이다 - 좌표 계산은 마운트당 한 번이면 된다.
-    val guidePoints = remember(guideF0) { guideCurveDisplayPoints(guideF0?.values ?: emptyList()) }
+    // unit 가드: "0은 무성이 아니다" 규칙(GuideCurve)은 semitone에서만 참이다. 모르는 단위는
+    // 자기 스케일 덕에 그럴듯하게 그려지면서 무성 판정만 조용히 틀리므로, 안 그리는 쪽을 택한다.
+    val guidePoints = remember(guideF0) {
+        if (guideF0?.unit == "semitone") guideCurveDisplayPoints(guideF0.values) else emptyList()
+    }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -144,14 +148,22 @@ private val GuideCurveColor = Color(0xFFB0C4DE)
  */
 @Composable
 private fun CurveLane(label: String, points: List<CurvePoint> = emptyList(), lineColor: Color = Color.Gray) {
-    Box(
-        // 240dp 자리표시자에서 축소 - 레인 둘에 대사·버튼까지 한 화면에 서야 한다 (ux-ui.md §D)
+    // 240dp 자리표시자에서 축소 - 레인 둘에 대사·버튼까지 한 화면에 서야 한다 (ux-ui.md §D)
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .height(120.dp)
             .border(1.dp, Color.Gray),
     ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
+        // 라벨을 캔버스와 겹치지 않는 자기 행에 둔다 - 곡선 최고점은 캔버스 상단 근처까지
+        // 올라오므로(여백 10%), 같은 영역에 겹쳐 그리면 좌상단에서 서로 가린다.
+        Text(
+            label,
+            fontSize = 12.sp,
+            color = Color.Gray,
+            modifier = Modifier.padding(start = 8.dp, top = 4.dp),
+        )
+        Canvas(modifier = Modifier.fillMaxWidth().weight(1f)) {
             val stroke = 2.dp.toPx()
             if (points.size >= 2) {
                 val path = Path()
@@ -167,12 +179,6 @@ private fun CurveLane(label: String, points: List<CurvePoint> = emptyList(), lin
                 drawCircle(lineColor, radius = stroke, center = Offset(p.x * size.width, p.y * size.height))
             }
         }
-        Text(
-            label,
-            fontSize = 12.sp,
-            color = Color.Gray,
-            modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
-        )
     }
 }
 

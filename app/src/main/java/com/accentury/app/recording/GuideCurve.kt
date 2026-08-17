@@ -20,7 +20,9 @@ package com.accentury.app.recording
  *   두되, x 위치는 원래 시각을 유지한다(시간축은 배열 전체 길이 기준).
  * - **표시 스케일은 곡선 자신의 min/max다** (ux-ui.md "레인별 자기 스케일"). 티켓의 "표시
  *   범위 100~250Hz로 좁게"는 Hz 스키마 시절 문구고, 의도(움직임이 커 보이게)는 자기 스케일이
- *   그대로 담당한다. 여백 [SCALE_PADDING]은 최고·최저점이 레인 가장자리에 붙지 않게 한다.
+ *   그대로 담당한다. 여백 [SCALE_PADDING]은 최고·최저점이 레인 가장자리에 붙지 않게 하고,
+ *   바닥값 [MIN_DISPLAY_RANGE_SEMITONE]은 거의 평평한 곡선의 부동소수 잡음이 레인 전체
+ *   높이로 증폭돼 억양 변화처럼 보이는 것을 막는다.
  * - **y는 뒤집는다** (`1 - 정규화값`). Canvas는 아래로 갈수록 y가 커지므로 뒤집지 않으면
  *   높은 음이 아래로 그려진다.
  */
@@ -32,11 +34,22 @@ data class CurvePoint(val x: Float, val y: Float)
 private const val SCALE_PADDING = 0.1
 
 /**
+ * 표시 범위의 바닥값 (semitone). 실제 range가 이보다 좁으면 이 값을 스케일로 쓴다 —
+ * 0.5 semitone 미만의 등락은 억양이라기보다 측정 잡음이라, 크게 그리면 오히려 거짓말이 된다.
+ * 정확히 0(평평)만 특별 취급하면 range가 1e-15인 곡선이 전폭으로 튀는 불연속이 생기므로
+ * 바닥값 방식으로 연속이 되게 한다. 평평한 곡선은 이 식에서 자연히 레인 중앙(0.5)에 놓인다.
+ */
+private const val MIN_DISPLAY_RANGE_SEMITONE = 0.5
+
+/**
  * guideF0 `values`를 표시 좌표 목록으로 바꾼다. 그릴 수 있는 유성 프레임이 하나도 없으면
  * 빈 목록이다 — 이때 어떻게 보일지(빈 레인)는 그리는 쪽이 정한다.
  */
 fun guideCurveDisplayPoints(values: List<Double?>): List<CurvePoint> {
-    val voiced = values.withIndex().filter { (_, v) -> v != null && v.isFinite() }
+    // mapNotNull로 무성을 걸러 원소 타입에서 null을 없앤다 — 아래 계산에 !!가 낄 자리를 안 남긴다.
+    val voiced = values.withIndex().mapNotNull { (i, v) ->
+        if (v != null && v.isFinite()) IndexedValue(i, v) else null
+    }
     if (voiced.isEmpty()) return emptyList()
 
     val first = voiced.first().index
@@ -45,27 +58,33 @@ fun guideCurveDisplayPoints(values: List<Double?>): List<CurvePoint> {
     // 첫~끝 유성 프레임 사이를 촘촘한 값 배열로 만든다. 유성 프레임은 제 값 그대로,
     // 사이에 낀 무성 프레임은 양옆 유성 값의 선형 보간이다.
     val filled = DoubleArray(last - first + 1)
-    filled[0] = voiced.first().value!!
-    for (k in 0 until voiced.size - 1) {
-        val (i0, v0) = voiced[k]
-        val (i1, v1) = voiced[k + 1]
-        for (i in i0..i1) {
-            val t = if (i1 == i0) 0.0 else (i - i0).toDouble() / (i1 - i0)
-            filled[i - first] = v0!! + (v1!! - v0) * t
+    if (voiced.size == 1) {
+        filled[0] = voiced.single().value
+    } else {
+        for (k in 0 until voiced.size - 1) {
+            val (i0, v0) = voiced[k]
+            val (i1, v1) = voiced[k + 1]
+            for (i in i0..i1) {
+                // i1 > i0이 항상 성립한다 — voiced의 index는 강한 단조 증가라 0 나눗셈이 없다.
+                val t = (i - i0).toDouble() / (i1 - i0)
+                filled[i - first] = v0 + (v1 - v0) * t
+            }
         }
     }
 
     // 보간값은 항상 양옆 유성 값 사이에 있으므로, filled의 min/max는 곧 유성 값의 min/max다.
     val min = filled.min()
-    val range = filled.max() - min
+    val max = filled.max()
+    // 데이터 중앙을 기준으로 range(바닥값 이상)를 펼친다. range >= 바닥값이면 기존 자기
+    // 스케일과 같은 식이고, 그보다 좁으면 바닥값 스케일 안에서 중앙 근처에 놓인다.
+    val center = (min + max) / 2
+    val displaySpan = maxOf(max - min, MIN_DISPLAY_RANGE_SEMITONE) * (1 + 2 * SCALE_PADDING)
 
     val lastIndex = values.size - 1
     return filled.mapIndexed { k, v ->
         val i = first + k
         val x = if (lastIndex == 0) 0.5f else i.toFloat() / lastIndex
-        // 평평한 곡선(range 0)은 나눗셈이 안 되고, 어디 그리든 정보가 없으니 레인 중앙에 둔다.
-        val y = if (range == 0.0) 0.5f
-        else (1.0 - (v - min + range * SCALE_PADDING) / (range * (1 + 2 * SCALE_PADDING))).toFloat()
+        val y = (1.0 - ((v - center) / displaySpan + 0.5)).toFloat()
         CurvePoint(x, y)
     }
 }
