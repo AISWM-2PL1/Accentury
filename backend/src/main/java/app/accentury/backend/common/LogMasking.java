@@ -50,13 +50,20 @@ public final class LogMasking {
      * {@code sessionToken=...} / {@code "sessionToken": "..."} 처럼 이름이 붙어 나오는 값.
      * 토큰 형식이 바뀌어도(발급 규칙 변경) 이름 쪽에서 한 번 더 걸린다.
      * <p>
+     * 관리자 토큰(KAN-106)은 세 가지 이름으로 새어 나올 수 있어 전부 넣는다 - HTTP 헤더
+     * {@code X-Admin-Token}(프레임워크가 예외 메시지에 헤더를 실을 때), 설정 키
+     * {@code admin-token}(설정 덤프), 바인딩된 필드 {@code adminToken}(객체 toString).
+     * {@code Authorization}과 같은 등급의 자격증명인데 {@link #AUTHORIZATION}은 이름으로
+     * 잡으므로 걸리지 않는다 - 새 시크릿 헤더를 늘리면 여기도 같이 늘려야 한다.
+     * <p>
      * 따옴표로 열린 값은 <b>닫는 따옴표까지</b> 통째로 받는다 - 공백을 만나면 멈추게 두면
      * {@code "opaque value"} 같은 값의 뒷부분이 로그에 그대로 남고, 열린 따옴표만 닫혀
      * JSON 한 줄이 깨진다. 따옴표가 없으면 예전처럼 공백에서 끊는다 -
      * {@code sessionToken=abc itemId=v1}에서 뒤 필드까지 먹으면 안 된다.
      */
     private static final Pattern NAMED_SECRET = Pattern.compile(
-            "(?i)\\b(sessionToken)\\b(\"?\\s*[=:]\\s*)(?:\"([^\"\\r\\n]*)\"|([^\\s\",;}]+))");
+            "(?i)\\b(sessionToken|X-Admin-Token|adminToken|admin-token)\\b"
+                    + "(\"?\\s*[=:]\\s*)(?:\"([^\"\\r\\n]*)\"|([^\\s\",;}]+))");
 
     /**
      * 오디오처럼 긴 이진 덩어리 - base64나 hex로 찍힌 200자 이상의 연속 블록.

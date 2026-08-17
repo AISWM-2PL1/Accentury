@@ -4,6 +4,7 @@ import app.accentury.backend.common.AccenturyProperties;
 import org.jspecify.annotations.Nullable;
 
 import java.time.Duration;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 
@@ -63,10 +64,28 @@ public final class PropertiesFixture {
         return new AccenturyProperties.Result(null, Map.of());
     }
 
+    /** 집계 정책만 바꾼 설정 - 일자 경계와 조회 상한(KAN-106) 검증이 쓴다 */
+    public static AccenturyProperties withAnalytics(AccenturyProperties.Analytics analytics) {
+        return properties("gn-2026.08.1", "sv-0.3", analysis(), result(), List.of(), analytics);
+    }
+
+    /** application.yml 기본값 그대로의 집계 정책 (KAN-106) - 내부 조회 토큰은 미설정이 기본이다 */
+    public static AccenturyProperties.Analytics analytics() {
+        return new AccenturyProperties.Analytics(ZoneId.of("Asia/Seoul"), null, 366);
+    }
+
     private static AccenturyProperties properties(String testVersion, String scoreVersion,
                                                   AccenturyProperties.Analysis analysis,
                                                   AccenturyProperties.Result result,
                                                   List<String> trustedProxies) {
+        return properties(testVersion, scoreVersion, analysis, result, trustedProxies, analytics());
+    }
+
+    private static AccenturyProperties properties(String testVersion, String scoreVersion,
+                                                  AccenturyProperties.Analysis analysis,
+                                                  AccenturyProperties.Result result,
+                                                  List<String> trustedProxies,
+                                                  AccenturyProperties.Analytics analytics) {
         return new AccenturyProperties(testVersion, scoreVersion,
                 new AccenturyProperties.Session(Duration.ofMinutes(30), 30),
                 analysis,
@@ -75,6 +94,7 @@ public final class PropertiesFixture {
                 new AccenturyProperties.Completion(120),
                 new AccenturyProperties.Cors(List.of()),
                 result,
+                analytics,
                 trustedProxies);
     }
 }

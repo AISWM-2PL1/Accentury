@@ -7,6 +7,7 @@ import org.springframework.http.HttpStatus;
  * <p>
  * App-Backend API 명세서 §2.4 - 도메인별 네임스페이스로 나뉜다:
  * SESSION_* / ITEM_* / AUDIO_* / ANALYSIS_* / RESULT_* / RATE_* + 공통.
+ * 클라이언트가 닿지 않는 운영자 전용 API(§6)의 ADMIN_*(KAN-106)는 §2.4 밖의 별도 묶음이다.
  * <p>
  * 각 코드는 자기의 HTTP 상태와 재시도 가능 여부, 기본 메시지를 스스로 알고 있어서,
  * 던지는 쪽은 {@code throw new ApiException(ErrorCode.SESSION_EXPIRED)} 한 줄이면 된다.
@@ -46,6 +47,11 @@ public enum ErrorCode {
     RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, true, "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요."),
     // 시간이 지나도 풀리지 않는 상한이므로 retryable=false - RATE_LIMITED와 다르다
     RATE_RETAKE_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, false, "이 문항의 업로드 횟수 상한을 넘었습니다. (최대 5회)"),
+
+    // === ADMIN_* : 운영자 전용 API (§6, KAN-106) ===
+    // 클라이언트가 닿지 않는 경로라 §2.4의 클라이언트 네임스페이스와 섞지 않는다.
+    // 토큰 누락과 불일치를 구분하지 않는다 - 세션 토큰(SESSION_EXPIRED)과 같은 이유다
+    ADMIN_UNAUTHORIZED(HttpStatus.UNAUTHORIZED, false, "관리자 API 인증에 실패했습니다."),
 
     // === 공통 ===
     VALIDATION_FAILED(HttpStatus.BAD_REQUEST, false, "요청 값이 올바르지 않습니다."),

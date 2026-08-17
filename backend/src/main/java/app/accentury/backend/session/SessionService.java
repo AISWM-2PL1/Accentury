@@ -1,5 +1,6 @@
 package app.accentury.backend.session;
 
+import app.accentury.backend.analytics.AnalyticsCounters;
 import app.accentury.backend.common.AccenturyProperties;
 import app.accentury.backend.common.ApiException;
 import app.accentury.backend.common.ErrorCode;
@@ -29,12 +30,14 @@ public class SessionService {
     private final TestSessionRepository repository;
     private final AccenturyProperties properties;
     private final RateLimits rateLimits;
+    private final AnalyticsCounters counters;
 
     public SessionService(TestSessionRepository repository, AccenturyProperties properties,
-                          RateLimits rateLimits) {
+                          RateLimits rateLimits, AnalyticsCounters counters) {
         this.repository = repository;
         this.properties = properties;
         this.rateLimits = rateLimits;
+        this.counters = counters;
     }
 
     /**
@@ -43,6 +46,9 @@ public class SessionService {
      * 인증이 없는 유일한 쓰기 경로라(§2.1) IP 단위 요청 제한을 건다 (§2.5, KAN-28) -
      * 호출 한 번마다 세션 행과 토큰이 생기므로, 막지 않으면 반복 호출만으로 저장소를
      * 채울 수 있다. 검사는 저장보다 먼저다.
+     * <p>
+     * 성공한 호출은 익명 집계의 응시 시도 1건이 된다 (KAN-106, FR-AN-10) - 세션과 무관한
+     * 숫자만 늘어나고, 그 증가가 실패해도 세션 생성은 성공한다.
      *
      * @param clientIp 요청 제한의 기준 IP - {@link app.accentury.backend.common.ClientIps}가
      *                 신뢰 프록시 규칙으로 정한 값
@@ -70,6 +76,10 @@ public class SessionService {
         // 토큰은 로그에 남기지 않는다 (§2.6, NFR-SC-07)
         log.info("세션 생성 sessionId={} platform={} testVersion={}",
                 sessionId, client != null ? client.platform() : null, properties.testVersion());
+
+        // 응시 시도 1건 (KAN-106) - save()가 자기 트랜잭션으로 이미 커밋된 뒤다.
+        // 실패는 카운터 쪽에서 삼킨다 - 통계가 세션 생성을 막으면 안 된다 (FR-AN-10)
+        counters.recordSessionStarted(now, properties.testVersion(), properties.scoreVersion());
 
         return new SessionResponse(sessionId, token, properties.testVersion(), properties.scoreVersion(), expiresAt);
     }
