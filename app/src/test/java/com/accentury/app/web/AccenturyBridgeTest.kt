@@ -1,5 +1,6 @@
 package com.accentury.app.web
 
+import com.accentury.app.bridge.GuideF0
 import com.accentury.app.bridge.VoiceItemStart
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -142,6 +143,26 @@ class AccenturyBridgeTest {
         assertNull(startVoiceItem(payload(maxDurationMs = -1L)))
         // 진행 표기가 "11/10"이 되는 조합. 정의를 읽는 쪽의 계산 착오이므로 화면을 띄우지 않는다.
         assertNull(startVoiceItem(payload(itemNumber = 11, totalItems = 10)))
+    }
+
+    @Test
+    fun `guideF0가 실려 있으면 무성 null까지 값 그대로 파싱된다`() {
+        val start = startVoiceItem(
+            payload(extra = ""","guideF0":{"unit":"semitone","frameIntervalMs":10,"values":[0.5,null,-1.2]}"""),
+        )
+
+        assertEquals(
+            GuideF0(unit = "semitone", frameIntervalMs = 10, values = listOf(0.5, null, -1.2)),
+            start?.guideF0,
+        )
+    }
+
+    @Test
+    fun `guideF0가 없는 구버전 웹 payload도 받는다 (가이드 레인만 비운다)`() {
+        val start = startVoiceItem(payload())
+
+        assertEquals("item_1", start?.itemId)
+        assertNull(start?.guideF0)
     }
 
     @Test

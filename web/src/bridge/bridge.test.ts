@@ -32,6 +32,8 @@ const voiceStart: VoiceItemStart = {
   itemNumber: 1,
   totalItems: 10,
   maxDurationMs: 15_000,
+  // 무성 구간 null 포함 — JSON.stringify가 null을 그대로 실어 보내는지도 이 픽스처가 덮는다 (KAN-102)
+  guideF0: { unit: 'semitone', frameIntervalMs: 10, values: [0.5, null, -1.2] },
 }
 
 const itemResult: ItemResult = {

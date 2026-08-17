@@ -7,6 +7,7 @@
  */
 
 import { parseItemResult, type ItemResult } from './itemResult'
+import type { GuideF0 } from '../progress/testDefinition'
 
 export interface AccenturyBridge {
   /** [시작하기] → 네이티브 마이크 권한 게이트 호출 */
@@ -23,6 +24,9 @@ export interface AccenturyBridge {
  *
  * @property itemNumber 진행 표기용 순번. 1부터 시작한다 (정의의 `seq`가 아니라 사람이 읽는 번호다)
  * @property maxDurationMs 최대 녹음 길이. VOICE 문항 정의가 들고 있는 값 그대로다
+ * @property guideF0 상단 레인에 그릴 정적 가이드 곡선 (KAN-102). 정의가 든 그대로 가공 없이
+ *   건넨다 — 곡선을 어떻게 그릴지는 전부 네이티브 사정이라, 여기서 요약하면 렌더링 규칙이
+ *   바뀔 때마다 계약도 같이 흔들린다. 필드 추가는 하위호환이라 계약 버전 1을 유지한다 (§5)
  */
 export interface VoiceItemStart {
   itemId: string
@@ -30,6 +34,7 @@ export interface VoiceItemStart {
   itemNumber: number
   totalItems: number
   maxDurationMs: number
+  guideF0: GuideF0
 }
 
 /** 네이티브 → 웹 수신 지점. 네이티브가 evaluateJavascript로 직접 부른다 */
