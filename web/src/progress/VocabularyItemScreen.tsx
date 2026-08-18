@@ -21,7 +21,7 @@
 
 import { useRef, useState } from 'react'
 import type { VocabularyItem } from './testDefinition'
-import type { VocabSubmitResult } from './submitVocabAnswer'
+import { newIdempotencyKey, type VocabSubmitResult } from './submitVocabAnswer'
 
 export interface VocabularyItemScreenProps {
   item: VocabularyItem
@@ -46,14 +46,15 @@ export function VocabularyItemScreen({ item, submitAnswer, onSubmitted }: Vocabu
     // disabled 가드와 겹치지만 남겨 둔다 — 비동기 제출 도중 들어오는 호출은 disabled로 못 막는다
     if (selected === null || submitting) return
 
-    // 같은 답의 재시도면 키 재사용, 답이 바뀌었으면 새 키 (헤더 주석의 수명 규칙)
-    if (keyForChoice.current?.choiceId !== selected) {
-      keyForChoice.current = { choiceId: selected, key: crypto.randomUUID() }
-    }
-
     setSubmitting(true)
     setErrorMessage(null)
+    // 키 생성까지 try 안이다 — 여기서 동기로 터지면 rejection이 아무 데도 안 잡혀 버튼이
+    // "눌러도 아무 일 없는" 상태가 된다 (crypto.randomUUID 부재로 실제 발생했던 증상)
     try {
+      // 같은 답의 재시도면 키 재사용, 답이 바뀌었으면 새 키 (헤더 주석의 수명 규칙)
+      if (keyForChoice.current?.choiceId !== selected) {
+        keyForChoice.current = { choiceId: selected, key: newIdempotencyKey() }
+      }
       await submitAnswer(selected, keyForChoice.current.key)
       onSubmitted()
     } catch (error: unknown) {

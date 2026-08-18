@@ -115,3 +115,30 @@ describe('결과 해석', () => {
     })
   })
 })
+
+describe('newIdempotencyKey', () => {
+  const V4_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+
+  it('UUID v4 형태의 서로 다른 키를 만든다', async () => {
+    const { newIdempotencyKey } = await import('./submitVocabAnswer')
+    const first = newIdempotencyKey()
+
+    expect(first).toMatch(V4_SHAPE)
+    expect(newIdempotencyKey()).not.toBe(first)
+  })
+
+  it('randomUUID가 없는 비보안 컨텍스트(개발 WebView의 http://10.0.2.2)에서도 같은 형태를 만든다', async () => {
+    const { newIdempotencyKey } = await import('./submitVocabAnswer')
+    const real = globalThis.crypto
+    // randomUUID만 없는 crypto — 보안 컨텍스트 밖의 실제 모습이다 (getRandomValues는 항상 있다)
+    vi.stubGlobal('crypto', { getRandomValues: real.getRandomValues.bind(real) })
+    try {
+      const first = newIdempotencyKey()
+
+      expect(first).toMatch(V4_SHAPE)
+      expect(newIdempotencyKey()).not.toBe(first)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})
