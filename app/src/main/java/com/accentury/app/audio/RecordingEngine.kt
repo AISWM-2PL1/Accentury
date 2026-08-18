@@ -7,11 +7,17 @@ import java.util.concurrent.atomic.AtomicReference
 
 class RecordingEngine(private val source: PcmSource = AudioRecorder()) {
 
+    /** 분석 창 1개의 F0. timestampMs는 창 시작 샘플의 시각이고, 무성음이면 pitchHz가 null이다. */
+    data class PitchFrame(
+        val timestampMs: Long,
+        val pitchHz: Float?,
+    )
+
     data class Progress(
         val elapsedMs: Long,
         val rms: Double,
-        /** 청크의 추정 F0(Hz). 무성음이면 null - 소비 측은 곡선을 끊거나 마지막 값을 유지한다. */
-        val pitchHz: Float?,
+        /** 이번 청크가 완성시킨 분석 창들의 F0. 청크 길이에 따라 0개 이상이고 32ms 간격이다. */
+        val pitchFrames: List<PitchFrame>,
     )
 
     sealed interface Outcome {
@@ -36,17 +42,25 @@ class RecordingEngine(private val source: PcmSource = AudioRecorder()) {
         activeSession.set(stopRequested)
         val chunks = ArrayList<ShortArray>()
         var totalSamples = 0
+        // 프레이머는 녹음 1회분 상태다. 이전 녹음의 잔여 샘플이 섞이지 않도록 여기서 새로 만든다.
+        val framer = OverlappedFramer()
         try {
             source.recordingFlow()
                 .takeWhile { !stopRequested.get() && totalSamples < MAX_SAMPLES }
                 .collect { chunk ->
                     chunks += chunk
                     totalSamples += chunk.size
+                    val pitchFrames = framer.push(chunk).map { frame ->
+                        PitchFrame(
+                            timestampMs = frame.startSampleIndex * 1000L / SAMPLE_RATE,
+                            pitchHz = YinPitchEstimator.estimate(frame.samples),
+                        )
+                    }
                     onProgress(
                         Progress(
                             elapsedMs = minOf(totalSamples, MAX_SAMPLES) * 1000L / SAMPLE_RATE,
                             rms = calculateRms(chunk),
-                            pitchHz = YinPitchEstimator.estimate(chunk),
+                            pitchFrames = pitchFrames,
                         ),
                     )
                 }
