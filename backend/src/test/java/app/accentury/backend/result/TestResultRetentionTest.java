@@ -1,6 +1,8 @@
 package app.accentury.backend.result;
 
 import app.accentury.backend.IntegrationTest;
+import app.accentury.backend.TestSessions;
+import app.accentury.backend.session.TestSessionRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
@@ -23,9 +25,14 @@ class TestResultRetentionTest extends IntegrationTest {
     @Autowired
     private TestResultRepository repository;
 
+    @Autowired
+    private TestSessionRepository sessionRepository;
+
     @Test
     void 만료된_결과만_지운다() {
         Instant now = Instant.now();
+        TestSessions.ensure(sessionRepository, "s_retention-expired");
+        TestSessions.ensure(sessionRepository, "s_retention-active");
         repository.save(result("r_retention-expired", "s_retention-expired",
                 now.minusSeconds(90_000), now.minusSeconds(3_600)));
         repository.save(result("r_retention-active", "s_retention-active",

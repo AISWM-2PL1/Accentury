@@ -15,8 +15,8 @@ import java.util.concurrent.TimeUnit;
  * <p>
  * 분석 작업과 같은 보존 설정({@code accentury.analysis.retention})을 쓴다 - 답안과
  * 억양 점수는 결과 조합(KAN-16/25)의 두 입력이라 수명이 갈라지면 한쪽만 사라진 채
- * 집계될 수 있다. 세션 삭제(30분 TTL)와 연동하지 않는 이유도 분석 작업과 같다 -
- * 답안은 세션 만료 후에도 결과 보존 기간 동안 남아야 한다.
+ * 집계될 수 있다. baseline(KAN-123)의 ON DELETE CASCADE 이후에는 세션 주기 삭제가
+ * 답안도 함께 지우므로, 이 잡은 그와 별개로 도는 상한선이자 안전망이다.
  */
 @Component
 public class VocabAnswerRetention {

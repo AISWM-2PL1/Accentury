@@ -1,13 +1,13 @@
 spring:
   # 업로드 오디오가 디스크에 닿지 않게 한다 (FR-DP-01, Codex sol 리뷰 P1)
   # file-size-threshold >= max-request-size라 모든 파트가 메모리에서 처리되고 임시파일이 생기지 않는다.
-  # 이 불변식은 기동 시 VoiceTempDirectory가 강제한다 - 어긋나면 컨텍스트가 뜨지 않는다 (KAN-27)
+  # 이 불변식은 기동 시 VoiceTempDirectory가 강제한다 - 어긋나면 컨텍스트가 뜨지 않는다 (KAN-27).
   servlet:
     multipart:
-      max-file-size: 1MB        # §3.3 오디오 상한과 일치 - 초과는 413 AUDIO_TOO_LARGE로 매핑된다
+      max-file-size: 1MB        # §3.3 오디오 상한과 일치 - 초과는 413 AUDIO_TOO_LARGE로 매핑된다.
       max-request-size: 2MB     # audio + meta + multipart 오버헤드
       file-size-threshold: 2MB
-      # 불변식이 깨졌을 때 임시파일이 공용 임시 디렉터리로 흩어지지 않게 전용 위치로 고정한다 (KAN-27)
+      # 불변식이 깨졌을 때 임시파일이 공용 임시 디렉터리로 흩어지지 않게 전용 위치로 고정한다 (KAN-27).
       location: ${accentury.upload.temp-dir}
   datasource:
     url: jdbc:postgresql://localhost:5432/accentury
@@ -15,25 +15,29 @@ spring:
     password: local
   jpa:
     hibernate:
-      ddl-auto: update    # 개발 단계 한정 - 운영 전에 마이그레이션 도구로 교체
+      # 스키마는 Flyway 마이그레이션(db/migration)만 만든다 (KAN-123) - update는 운영 DB를
+      # 조용히 변형하고 롤백이 안 된다. validate는 엔티티와 스키마가 어긋나면 기동을 막는다.
+      # 기존 로컬 DB(ddl-auto가 만든 스키마)는 Flyway 이력이 없어 기동이 막히므로 리셋한다:
+      # docker compose down -v && docker compose up -d (2026-08-18 확정 - 개발 데이터는 버려도 된다).
+      ddl-auto: validate
     open-in-view: false
   task:
     execution:
       mode: force    # analysisExecutor(4워커 AI 전달 풀) 정의가 applicationTaskExecutor 자동
                      # 구성을 밀어내지 않게 강제한다 - 밀리면 MVC 비동기가 무제한 스레드로
-                     # 떨어지고, 미래의 @Async가 AI 전달 풀에 얹힌다 (Codex 리뷰)
+                     # 떨어지고, 미래의 @Async가 AI 전달 풀에 얹힌다 (Codex 리뷰).
     scheduling:
       pool-size: 4   # @Scheduled 잡이 여덟인데 기본값은 1스레드다 (Codex 리뷰) - 파일시스템을
                      # 훑는 VoiceTempSweeper가 느린 볼륨에서 막히면 그 한 스레드를 붙잡아
                      # AnalysisJobTimeout(30초 주기)이 멎고, 사용자가 대기 화면에 갇힌다.
                      # AI 회로 복구 프로브(KAN-28)도 이 풀을 쓴다 - 짧은 타임아웃
-                     # (ai-health-timeout)으로 잡아 다른 잡을 밀어내지 않게 한다
+                     # (ai-health-timeout)으로 잡아 다른 잡을 밀어내지 않게 한다.
 
 # 모든 로그 줄에 correlation ID 포함 - 요청 단위 추적 (KAN-38, Codex 리뷰 P2)
 # %mask와 %maskEx는 토큰과 오디오를 출력 직전에 지우는 변환어다 (명세서 §2.6, NFR-SC-07, KAN-28) -
 # 메시지와 예외 스택트레이스 양쪽에 걸어야 새지 않는다. 등록은 logback-spring.xml이 한다.
 # %mask(%m) 뒤의 빈 옵션 {}은 오타가 아니다 - 복합 변환어의 닫는 괄호 바로 뒤에 오는 변환어를
-# logback이 해석하지 못해(%n이 그대로 찍힌다) 옵션 블록으로 끊어 준다 (LogMaskingTest가 검증)
+# logback이 해석하지 못해(%n이 그대로 찍힌다) 옵션 블록으로 끊어 준다 (LogMaskingTest가 검증).
 logging:
   pattern:
     console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSS} %5p [%X{correlationId:-}] --- [%15.15t] %-40.40logger{39} : %mask(%m){}%n%maskEx"
@@ -50,31 +54,31 @@ accentury:
                                 # 뒤의 동시 시작을 덮는 값. 부하 테스트 후 확정 (§7, KAN-40)
   analysis:
     poll-after-ms: 800               # 상태 폴링 간격 - 서버가 통제, 부하 상승 시 상향 (명세서 §5.3)
-    congested-poll-after-ms: 3000    # 혼잡 시 폴링 간격 - 분석이 밀릴 때 폴링 증폭을 막는다 (명세서 §5.3, KAN-24)
+    congested-poll-after-ms: 3000    # 혼잡 시 폴링 간격 - 분석이 밀릴 때 폴링 증폭을 막는다 (명세서 §5.3, KAN-24).
     congestion-threshold: 30         # 혼잡 판정 - 진행 중 분석 전달이 이 건수 이상이면 간격 상향
     retention: 24h                   # 분석 작업 보존 기간 - 세션, 결과와 동일 (명세서 §5.5)
     processing-timeout: 60s          # 실행 잔류 한도 - 실행 시작 후 이 시간을 넘기면 RETRYABLE_FAILED(ANALYSIS_TIMEOUT) (KAN-24)
     queued-timeout: 5m               # 큐 유실 한도 - 실행을 시작 못 한 채 이 시간이 지나면 정리 (프로세스 사망 대비).
-                                     # 정상 큐 소진(수 분)보다 길고, 세션 TTL(30분) 안에 복구가 보이도록 그보다 짧다
+                                     # 정상 큐 소진(수 분)보다 길고, 세션 TTL(30분) 안에 복구가 보이도록 그보다 짧다.
     # ai-base-url: http://localhost:8000    # AI 서버(FastAPI, 명세서 §4.1) - 미설정이면 전달하지 않는 개발 모드 (KAN-22, 36 배포 시 지정)
     ai-timeout: 10s                  # AI 호출 연결과 읽기 타임아웃 - 추론 P95 3초의 여유 배수
     ai-retries: 2                    # AI 일시 장애(연결 실패, 5xx) 재전송 횟수 - 전달 시점에만 가능 (FR-DP-01)
     dispatch-concurrency: 4          # 분석 전달 워커 수 - GPU 동시 슬롯을 넘지 않게 (명세서 §5.3)
     ai-health-timeout: 2s            # 회로 복구 프로브(GET /internal/v0/health, 명세서 §4.2)의 타임아웃 (KAN-28) -
-                                     # 추론 없이 즉답하는 엔드포인트라 분석 호출(10초)보다 짧게 잡는다
+                                     # 추론 없이 즉답하는 엔드포인트라 분석 호출(10초)보다 짧게 잡는다.
     circuit-failure-threshold: 5     # AI 연속 실패 이 횟수에서 회로를 연다 (KAN-28) - 열린 동안 업로드는
-                                     # GPU 미소모 503으로 즉시 끊기고 시도 예산(명세서 §2.5)도 깎이지 않는다
+                                     # GPU 미소모 503으로 즉시 끊기고 시도 예산(명세서 §2.5)도 깎이지 않는다.
     circuit-probe-interval: 5s       # 회로가 열린 뒤 health 프로브 간격 - 첫 프로브까지의 쿨다운도 같은 값 (KAN-28)
   upload:
     rate-limit-per-minute: 30            # IP당 분당 업로드 상한 - 부하 테스트 후 확정 (명세서 §7, KAN-40)
     session-rate-limit-per-minute: 60    # 세션당 분당 업로드 상한 (명세서 §2.5 이중 제한, KAN-28) - 정상 5건,
                                          # 문항당 시도 상한까지 다 써도 25건이라 그 위의 여유 배수
     # 업로드 임시파일 전용 디렉터리 (KAN-27) - 기동 시 소유자 전용(700) 권한으로 만든다.
-    # 메모리 전용 불변식이 지켜지는 한 비어 있고, 프로세스가 kill된 뒤의 잔여물만 여기 남는다
+    # 메모리 전용 불변식이 지켜지는 한 비어 있고, 프로세스가 kill된 뒤의 잔여물만 여기 남는다.
     temp-dir: ${java.io.tmpdir}/accentury-voice-tmp
-    temp-retention: 30m          # 잔존 임시파일 삭제 기준 (KAN-27 AC) - 이보다 오래된 파일만 청소 잡이 지운다
+    temp-retention: 30m          # 잔존 임시파일 삭제 기준 (KAN-27 AC) - 이보다 오래된 파일만 청소 잡이 지운다.
   vocab:
-    rate-limit-per-minute: 60    # 세션당 분당 어휘 답안 상한 (명세서 §2.5, KAN-28) - 정상은 5문항 x 1회다
+    rate-limit-per-minute: 60    # 세션당 분당 어휘 답안 상한 (명세서 §2.5, KAN-28) - 정상은 5문항 x 1회다.
   completion:
     rate-limit-per-minute: 120   # 세션당 분당 /complete 상한 (KAN-16 AC) - pollAfterMs 800ms를 그대로 따르는
                                  # 합법 폴링(약 75회/분)이 60초 분석 대기 중에도 걸리지 않는 여유 배수.
@@ -82,7 +86,7 @@ accentury:
   # 요청 제한의 기준 IP를 정할 때 신뢰할 프록시 대역 (명세서 §2.5, KAN-28).
   # 비어 있으면 X-Forwarded-For를 아예 읽지 않는다 - 프록시 없이 뜬 서버에서 헤더 위조로
   # IP 제한을 우회하지 못하게 하는 기본값이다. ALB 뒤에 배포하면 반드시 그 서브넷을 넣어야
-  # 한다 (안 넣으면 전원이 ALB IP 하나를 공유해 서로의 한도를 깎는다, KAN-35/36)
+  # 한다 (안 넣으면 전원이 ALB IP 하나를 공유해 서로의 한도를 깎는다, KAN-35/36).
   trusted-proxies: []    # 예: ["10.0.0.0/16"]
   cors:
     allowed-origins: []    # 스탠드얼론 웹 테스트(KAN-31) 오리진 - 웹 배포 시 지정 (명세서 §2.5)
@@ -100,7 +104,7 @@ accentury:
   # /result 등급별 자산 (명세서 §3.7, KAN-25) - 서버가 내려주므로 앱 배포 없이 여기서 교체 (KAN-29/30)
   # 기동 시 5개 등급 전부 존재해야 한다 (TierAssets 검증). 코멘트, 문구, 이미지는 더미다 -
   # KAN-29/30 확정 자산이 나오면 교체한다. 키는 등급 code의 소문자다 (relaxed binding이
-  # 대문자 키를 보존하지 않으므로 소문자로 적고, 조회가 대소문자를 무시한다)
+  # 대문자 키를 보존하지 않으므로 소문자로 적고, 조회가 대소문자를 무시한다).
   result:
     web-test-url: https://accentury.app/t?c=kko_share    # 공유 유입 계측 캠페인 파라미터가 붙은 완성 URL (2026-08-14 확정 - 전 등급 공통 고정값, KAN-30)
     tiers:

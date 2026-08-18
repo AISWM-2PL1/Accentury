@@ -61,7 +61,9 @@ jobs:
           distribution: temurin
           java-version: '25'
       - uses: gradle/actions/setup-gradle@v4
-      # 백엔드 테스트는 H2 인메모리로 실행 - Docker DB 불필요
+      # 백엔드 테스트는 Testcontainers PostgreSQL로 실행 (KAN-123) - ubuntu-latest 러너의
+      # 기본 Docker를 그대로 쓴다. 스키마는 Flyway V1이 만들고 Hibernate validate가
+      # 대조하므로, 이 job 통과가 곧 "마이그레이션이 실제 PostgreSQL에 적용된다"의 검증이다 (티켓 AC).
       - run: ./gradlew test
         working-directory: backend
 

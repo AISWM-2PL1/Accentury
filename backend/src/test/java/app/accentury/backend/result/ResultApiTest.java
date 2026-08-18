@@ -45,7 +45,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 class ResultApiTest extends IntegrationTest {
 
-    /** seed 정본의 어휘 정답표 - 전부 이대로 제출하면 단어 점수 100이다 */
+    /** seed 정본의 어휘 정답표 - 전부 이대로 제출하면 단어 점수 100이다. */
     private static final Map<String, String> CORRECT_CHOICES =
             Map.of("w1", "w1a", "w2", "w2b", "w3", "w3a", "w4", "w4b", "w5", "w5a");
 
@@ -85,7 +85,7 @@ class ResultApiTest extends IntegrationTest {
 
         MvcResult ready = mockMvc.perform(result(session))
                 .andExpect(status().isOk())
-                // 점수가 실리는 개인 결과라 캐시 금지다 - 만료(410) 전환이 가려져도 안 된다
+                // 점수가 실리는 개인 결과라 캐시 금지다 - 만료(410) 전환이 가려져도 안 된다.
                 .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"))
                 .andExpect(jsonPath("$.status").value("READY"))
                 .andExpect(jsonPath("$.scores.intonation").value(75))
@@ -100,19 +100,19 @@ class ResultApiTest extends IntegrationTest {
                 .andExpect(jsonPath("$.share.imageUrl").value("https://static.accentury.app/tier/honorary.png"))
                 .andExpect(jsonPath("$.share.text").value("나는 명예주민! 너도 시도해볼래?"))
                 .andExpect(jsonPath("$.share.webTestUrl").value("https://accentury.app/t?c=kko_share"))
-                // AC - 결과에 test version과 score version이 포함된다
+                // AC - 결과에 test version과 score version이 포함된다.
                 .andExpect(jsonPath("$.testVersion").value("gn-2026.08.1"))
                 .andExpect(jsonPath("$.scoreVersion").value("sv-0.3"))
                 .andReturn();
 
-        // §3.7 스키마 그대로다 - 발음, 리듬, 백분위 같은 범위 밖 필드가 새면 여기서 잡힌다
+        // §3.7 스키마 그대로다 - 발음, 리듬, 백분위 같은 범위 밖 필드가 새면 여기서 잡힌다.
         assertEquals(Set.of("status", "scores", "tier", "comment", "share",
                 "testVersion", "scoreVersion", "expiresAt"), fieldNames(ready));
         JsonNode json = objectMapper.readTree(ready.getResponse().getContentAsString());
         TestResult stored = resultRepository.findBySessionId(session.id()).orElseThrow();
         assertEquals(stored.expiresAt(), Instant.parse(json.get("expiresAt").asString()));
 
-        // AC - 동일 세션 반복 조회는 같은 결과다 (확정 행이 불변이라 본문이 그대로다)
+        // AC - 동일 세션 반복 조회는 같은 결과다 (확정 행이 불변이라 본문이 그대로다).
         MvcResult again = mockMvc.perform(result(session)).andExpect(status().isOk()).andReturn();
         assertEquals(ready.getResponse().getContentAsString(), again.getResponse().getContentAsString());
     }
@@ -120,20 +120,20 @@ class ResultApiTest extends IntegrationTest {
     @Test
     void 재녹음한_문항은_최신_성공_시도_1건으로만_집계된_결과가_나온다() throws Exception {
         // AC - 재녹음 세션도 문항 수 5로 집계된다 (중복 시도 미반영). 정상 흐름은 attempt 1이라
-        // 분석 실패 후 재녹음(예외 경로)으로 시나리오를 잡는다 (KAN-25 코멘트 2026-08-09)
+        // 분석 실패 후 재녹음(예외 경로)으로 시나리오를 잡는다 (KAN-25 코멘트 2026-08-09).
         SessionHandle session = createSession();
         answerVocab(session, CORRECT_CHOICES);
         Instant base = Instant.now();
-        // v1: 실패 후 재녹음 성공 - 채점 대상은 성공한 2차다
+        // v1: 실패 후 재녹음 성공 - 채점 대상은 성공한 2차다.
         failJob(saveJob(session, "v1", 1, base), "AUDIO_TOO_QUIET");
         completeJob(saveJob(session, "v1", 2, base.plusMillis(10)), 100);
-        // v2: 성공이 둘 - 옛 성공(0)이 아니라 최신 성공(100)이다
+        // v2: 성공이 둘 - 옛 성공(0)이 아니라 최신 성공(100)이다.
         completeJob(saveJob(session, "v2", 1, base), 0);
         completeJob(saveJob(session, "v2", 2, base.plusMillis(10)), 100);
         completeVoice(session, Map.of("v3", 100, "v4", 100, "v5", 100));
         complete(session);
 
-        // 이전 시도가 끼면 100이 나올 수 없다 - 5문항 합산에 최신 성공만 들어갔다는 증거다
+        // 이전 시도가 끼면 100이 나올 수 없다 - 5문항 합산에 최신 성공만 들어갔다는 증거다.
         mockMvc.perform(result(session))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.scores.intonation").value(100))
@@ -146,7 +146,7 @@ class ResultApiTest extends IntegrationTest {
 
     @Test
     void 미제출_문항이_있으면_422_RESULT_INCOMPLETE다() throws Exception {
-        // AC - 모든 필수 문항(음성 5 + 어휘 5) 완료 전에는 최종 결과를 만들지 않는다
+        // AC - 모든 필수 문항(음성 5 + 어휘 5) 완료 전에는 최종 결과를 만들지 않는다.
         SessionHandle session = createSession();
         answerVocab(session, Map.of("w1", "w1a", "w2", "w2b", "w3", "w3a", "w4", "w4b")); // w5 미제출
         completeVoice(session, Map.of("v1", 75, "v2", 75, "v3", 75, "v4", 75)); // v5 미제출
@@ -166,7 +166,7 @@ class ResultApiTest extends IntegrationTest {
 
     @Test
     void 전부_실패한_문항이_있으면_409_RESULT_RETAKE_REQUIRED다() throws Exception {
-        // 존재하지 않는 점수로 임시 결과를 만들지 않는다 - 복구 정보(재수행 itemId)만 준다 (§3.7)
+        // 존재하지 않는 점수로 임시 결과를 만들지 않는다 - 복구 정보(재수행 itemId)만 준다 (§3.7).
         SessionHandle session = createSession();
         answerVocab(session, CORRECT_CHOICES);
         completeVoice(session, Map.of("v1", 75, "v3", 75, "v4", 75, "v5", 75));
@@ -200,7 +200,7 @@ class ResultApiTest extends IntegrationTest {
     @Test
     void 전_문항이_갖춰져도_complete_전에는_409_RESULT_NOT_READY다() throws Exception {
         // 결과 생성은 /complete만 한다 (2026-08-13 확정 - KAN-25는 조회만). 조회가 만들어주면
-        // 완료 전이(세션 잠금, completed_at)를 우회한 결과가 생긴다
+        // 완료 전이(세션 잠금, completed_at)를 우회한 결과가 생긴다.
         SessionHandle session = createSession();
         answerVocab(session, CORRECT_CHOICES);
         completeVoice(session, Map.of("v1", 75, "v2", 75, "v3", 75, "v4", 75, "v5", 75));
@@ -208,7 +208,7 @@ class ResultApiTest extends IntegrationTest {
         mockMvc.perform(result(session))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("RESULT_NOT_READY"))
-                // 기다릴 문항이 없다는 뜻 그대로 빈 목록이다 - 확정은 /complete 호출이 맡는다 (§5.7)
+                // 기다릴 문항이 없다는 뜻 그대로 빈 목록이다 - 확정은 /complete 호출이 맡는다 (§5.7).
                 .andExpect(jsonPath("$.pendingItems", hasSize(0)));
 
         assertTrue(resultRepository.findBySessionId(session.id()).isEmpty());
@@ -225,20 +225,20 @@ class ResultApiTest extends IntegrationTest {
         expireResultAndSession(session);
 
         // 정리 잡이 돌기 전 - 행은 남아 있지만 만료 시각이 지났으므로 같은 410이다.
-        // 세션 토큰도 함께 만료됐지만 완료 세션은 결과 만료 판정이 먼저다 (2026-08-14 확정)
+        // 세션 토큰도 함께 만료됐지만 완료 세션은 결과 만료 판정이 먼저다 (2026-08-14 확정).
         mockMvc.perform(result(session))
                 .andExpect(status().isGone())
                 .andExpect(jsonPath("$.code").value("RESULT_EXPIRED"))
                 .andExpect(jsonPath("$.retryable").value(false));
 
-        // AC - 24시간 경과 후 결과가 삭제되고 410과 다시 테스트 안내가 반환된다
+        // AC - 24시간 경과 후 결과가 삭제되고 410과 다시 테스트 안내가 반환된다.
         resultRetention.purgeExpired();
         assertTrue(resultRepository.findBySessionId(session.id()).isEmpty());
         mockMvc.perform(result(session))
                 .andExpect(status().isGone())
                 .andExpect(jsonPath("$.code").value("RESULT_EXPIRED"));
 
-        // 세션 행까지 정리되면 모르는 토큰과 같은 401이다 - 저장소 상태를 흘리지 않는다
+        // 세션 행까지 정리되면 모르는 토큰과 같은 401이다 - 저장소 상태를 흘리지 않는다.
         sessionService.purgeExpired();
         mockMvc.perform(result(session))
                 .andExpect(status().isUnauthorized())
@@ -262,7 +262,7 @@ class ResultApiTest extends IntegrationTest {
 
     @Test
     void 다른_세션의_토큰이면_403이고_만료된_타인_토큰이면_401이다() throws Exception {
-        // AC - 다른 세션 토큰으로 결과를 조회할 수 없다
+        // AC - 다른 세션 토큰으로 결과를 조회할 수 없다.
         SessionHandle mine = createSession();
         answerVocab(mine, CORRECT_CHOICES);
         completeVoice(mine, Map.of("v1", 75, "v2", 75, "v3", 75, "v4", 75, "v5", 75));
@@ -274,7 +274,7 @@ class ResultApiTest extends IntegrationTest {
                 .andExpect(jsonPath("$.code").value("SESSION_FORBIDDEN"));
 
         // 만료된 완료 세션의 통과(410 판정용)는 자기 결과 경로에서만이다 - 만료 토큰을
-        // 다른 세션 경로에 대면 모르는 토큰과 같은 401이다 (만료/미지 구분 금지 규칙 유지)
+        // 다른 세션 경로에 대면 모르는 토큰과 같은 401이다 (만료/미지 구분 금지 규칙 유지).
         expireResultAndSession(mine);
         mockMvc.perform(get(url(other)).header(HttpHeaders.AUTHORIZATION, "Bearer " + mine.token()))
                 .andExpect(status().isUnauthorized())
@@ -283,7 +283,7 @@ class ResultApiTest extends IntegrationTest {
 
     @Test
     void 만료된_미완료_세션은_401이다() throws Exception {
-        // 완료 세션의 만료 통과가 진행 중 세션까지 열리면 안 된다 - 30분 TTL은 그대로다 (§2.1)
+        // 완료 세션의 만료 통과가 진행 중 세션까지 열리면 안 된다 - 30분 TTL은 그대로다 (§2.1).
         SessionHandle session = createSession();
         answerVocab(session, CORRECT_CHOICES);
         expireSession(session);
@@ -315,7 +315,7 @@ class ResultApiTest extends IntegrationTest {
         return get(url(session)).header(HttpHeaders.AUTHORIZATION, "Bearer " + session.token());
     }
 
-    /** 실제 /complete(KAN-16)로 결과를 확정한다 */
+    /** 실제 /complete(KAN-16)로 결과를 확정한다. */
     private void complete(SessionHandle session) throws Exception {
         mockMvc.perform(post("/v0/sessions/" + session.id() + "/complete")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + session.token())
@@ -324,7 +324,7 @@ class ResultApiTest extends IntegrationTest {
                 .andExpect(jsonPath("$.status").value("READY"));
     }
 
-    /** 어휘 답안을 실제 제출 API(KAN-15)로 넣는다 */
+    /** 어휘 답안을 실제 제출 API(KAN-15)로 넣는다. */
     private void answerVocab(SessionHandle session, Map<String, String> choiceByItem) throws Exception {
         for (Map.Entry<String, String> entry : choiceByItem.entrySet()) {
             mockMvc.perform(post("/v0/sessions/" + session.id() + "/vocab-items/"
@@ -337,7 +337,7 @@ class ResultApiTest extends IntegrationTest {
         }
     }
 
-    /** 문항마다 시도 1건을 심고 주어진 원점수로 성공 종결한다 */
+    /** 문항마다 시도 1건을 심고 주어진 원점수로 성공 종결한다. */
     private void completeVoice(SessionHandle session, Map<String, Integer> scoreByItem) {
         Instant base = Instant.now();
         for (Map.Entry<String, Integer> entry : scoreByItem.entrySet()) {
@@ -363,6 +363,10 @@ class ResultApiTest extends IntegrationTest {
      * 세션의 expires_at을 과거로 되돌린다 - 미완료 세션의 30분 TTL 경과를 흉내낸다.
      * 지우고 다시 만드는 것은 TestSession이 Persistable이라 기존 id의 새 인스턴스를
      * save()하면 merge가 아니라 persist로 가서 중복 키로 터지기 때문이다.
+     * <p>
+     * 주의 - 세션 FK가 ON DELETE CASCADE라(KAN-123) 이 삭제가 그 세션의 답안, 시도,
+     * 결과를 함께 지운다. 하위 행이 남아 있어야 하는 검증에는 쓸 수 없다 - 그런 경우는
+     * {@link #expireResultAndSession}처럼 UPDATE 경로로 만료를 흉내내야 한다.
      */
     private void expireSession(SessionHandle session) {
         TestSession stored = sessionRepository.findById(session.id()).orElseThrow();
@@ -373,7 +377,7 @@ class ResultApiTest extends IntegrationTest {
                 stored.campaignToken(), stored.createdAt(), Instant.now().minusSeconds(1)));
     }
 
-    /** 완료된 세션과 결과의 expires_at을 과거로 되돌린다 - 24시간 경과를 흉내낸다 (§5.5) */
+    /** 완료된 세션과 결과의 expires_at을 과거로 되돌린다 - 24시간 경과를 흉내낸다 (§5.5). */
     private void expireResultAndSession(SessionHandle session) {
         Instant past = Instant.now().minusSeconds(1);
         TestResult stored = resultRepository.findBySessionId(session.id()).orElseThrow();

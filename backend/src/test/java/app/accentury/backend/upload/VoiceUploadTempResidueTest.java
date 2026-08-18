@@ -1,13 +1,17 @@
 package app.accentury.backend.upload;
 
+import app.accentury.backend.DatabaseWipeExtension;
+import app.accentury.backend.PostgresTestcontainer;
 import app.accentury.backend.analysis.AnalysisDispatcher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.ActiveProfiles;
 import tools.jackson.databind.JsonNode;
@@ -48,6 +52,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = "accentury.upload.temp-dir=${java.io.tmpdir}/accentury-voice-tmp-residue-test")
 @ActiveProfiles("test")
+// IntegrationTest를 상속하지 못하므로 (웹 환경 직접 지정) 테스트 DB 컨테이너와 클래스 단위
+// 격리를 직접 결선한다 (KAN-123 - IntegrationTest javadoc의 안내와 같은 두 개 한 벌).
+@Import(PostgresTestcontainer.class)
+@ExtendWith(DatabaseWipeExtension.class)
 class VoiceUploadTempResidueTest {
 
     @TestConfiguration
@@ -60,7 +68,7 @@ class VoiceUploadTempResidueTest {
         }
     }
 
-    /** 전달 실패 종료 경로를 만들기 위한 스위치 - 기본은 성공이다 */
+    /** 전달 실패 종료 경로를 만들기 위한 스위치 - 기본은 성공이다. */
     static class ToggleableDispatcher implements AnalysisDispatcher {
 
         volatile boolean failing;
@@ -124,7 +132,7 @@ class VoiceUploadTempResidueTest {
     @Test
     void 크기_초과로_파싱이_끊겨도_임시파일이_남지_않는다() throws Exception {
         // 컨테이너가 본문을 읽다가 상한에서 끊는 경로 - 애플리케이션 코드가 아예 실행되지
-        // 않으므로, 여기서 남는다면 정리가 컨테이너 밖 어딘가에 의존하고 있다는 뜻이다
+        // 않으므로, 여기서 남는다면 정리가 컨테이너 밖 어딘가에 의존하고 있다는 뜻이다.
         SessionHandle session = createSession();
 
         HttpResponse<String> response = upload(session, "residue-too-large",
@@ -176,7 +184,7 @@ class VoiceUploadTempResidueTest {
         try (Stream<Path> entries = Files.list(tempDirectory.directory())) {
             List<Path> residue = entries.toList();
             // 파일명은 로그에 남기지 않는 값이지만, 실패 메시지는 개발자만 보는 로컬 산출물이라
-            // 개수만으로는 원인을 못 좁힌다 - 이름을 붙여 어떤 파트가 남았는지 알 수 있게 한다
+            // 개수만으로는 원인을 못 좁힌다 - 이름을 붙여 어떤 파트가 남았는지 알 수 있게 한다.
             assertTrue(residue.isEmpty(), "임시파일 잔존: " + residue);
         }
     }
@@ -212,7 +220,7 @@ class VoiceUploadTempResidueTest {
         return "http://localhost:" + port;
     }
 
-    /** 실제 multipart 본문 - MockMvc가 건너뛰는 컨테이너 파싱을 그대로 태우기 위한 것이다 */
+    /** 실제 multipart 본문 - MockMvc가 건너뛰는 컨테이너 파싱을 그대로 태우기 위한 것이다. */
     private static byte[] multipartBody(byte[] audio, String meta) throws IOException {
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         body.write(ascii("--" + BOUNDARY + "\r\n"

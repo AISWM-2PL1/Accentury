@@ -13,9 +13,11 @@ import java.util.concurrent.TimeUnit;
 /**
  * 분석 작업 보존 기간 정리 (API 명세서 §5.5 - 세션과 결과는 24시간 후 파기, Codex sol 리뷰 P2).
  * <p>
- * 세션 삭제(30분 TTL)와 연동하지 않고 createdAt 기준 자체 수명을 갖는다 - 작업 상태는
- * 세션 만료 후에도 결과 보존 기간(24시간, KAN-25) 동안 남아 있어야 한다.
- * 업로드마다 행이 쌓이므로 이 잡이 없으면 테이블이 무한히 자란다.
+ * createdAt 기준 자체 수명을 갖는다 - 완주 세션은 만료가 결과 만료(24시간, KAN-25)로
+ * 연장되어({@code TestSession.markCompleted}) 그동안 작업 상태가 세션과 함께 남는다.
+ * baseline(KAN-123)의 ON DELETE CASCADE 이후에는 세션 주기 삭제가 하위 행을 함께
+ * 지우므로, 이 잡은 그와 별개로 도는 상한선이자 안전망이다. 업로드마다 행이 쌓이므로
+ * 이 잡이 없으면 테이블이 무한히 자란다.
  */
 @Component
 public class AnalysisJobRetention {
