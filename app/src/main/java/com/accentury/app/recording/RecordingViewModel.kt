@@ -64,6 +64,7 @@ class RecordingViewModel(
                         durationMs = outcome.durationMs,
                         quality = quality,
                         autoStopped = outcome.autoStopped,
+                        pitchFrames = pitchFrames.toList(),
                     )
                 }
                 is RecordingEngine.Outcome.Failure -> {

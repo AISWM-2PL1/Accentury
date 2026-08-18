@@ -23,11 +23,16 @@ sealed interface RecordingUiState {
         }
     }
 
+    /**
+     * @property pitchFrames 방금 끝난 녹음의 F0 프레임 전체. 재녹음과 다음을 고르는 화면이
+     *   자기 억양을 가이드와 비교할 순간이라, 곡선을 지우지 않고 남겨 둔다.
+     */
     data class Review(
         val attemptId: String,
         val durationMs: Long,
         val quality: QualityStatus,
         val autoStopped: Boolean,
+        val pitchFrames: List<RecordingEngine.PitchFrame> = emptyList(),
     ) : RecordingUiState {
         val canProceed: Boolean get() = quality == QualityStatus.NORMAL
     }
