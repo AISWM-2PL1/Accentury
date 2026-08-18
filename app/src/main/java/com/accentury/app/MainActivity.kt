@@ -162,6 +162,9 @@ private fun TestFlow(modifier: Modifier = Modifier) {
                     testEntry = if (testEntered) TestEntry(DEV_TEST_VERSION, DEV_SESSION_ID) else null,
                 ),
                 allowedOrigins = setOfNotNull(webOrigin(BuildConfig.WEB_URL)),
+                // 웹의 어휘 답안 제출(KAN-13)이 쓸 토큰. 업로드와 같은 상수를 쓰는 건 의도다 —
+                // KAN-9 결선 시 세 자리(업로드·웹 진입 URL·여기)가 같은 세션 값으로 함께 바뀐다.
+                sessionToken = { DEV_SESSION_TOKEN },
                 onRequestMicPermission = { startRequested = true },
                 onStartVoiceItem = { start ->
                     // 브리지 콜백은 postToMain을 타고 오므로 여기는 메인 스레드다.
