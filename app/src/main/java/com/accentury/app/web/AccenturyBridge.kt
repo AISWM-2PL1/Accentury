@@ -7,8 +7,8 @@ import com.accentury.app.bridge.parseVoiceItemStart
 /**
  * 웹 → 네이티브 브리지 (webview-layer.md §8). `window.AccenturyBridge`로 주입된다.
  *
- * 최소 표면 원칙 — 화면 전환(KAN-100)까지 필요한 세 메서드만 둔다. 늘리기 전에
- * 웹에서 해결 가능한지 먼저 볼 것.
+ * 최소 표면 원칙 — 화면 전환(KAN-100)과 답안 제출 인증(KAN-13)까지 필요한 네 메서드만 둔다.
+ * 늘리기 전에 웹에서 해결 가능한지 먼저 볼 것.
  *
  * 메서드 추가는 하위호환이라 [BRIDGE_CONTRACT_VERSION]을 올리지 않는다 (§5).
  *
@@ -18,16 +18,35 @@ import com.accentury.app.bridge.parseVoiceItemStart
  *
  * @param postToMain 메인 스레드 실행기 (프로덕션에선 View.post, 테스트에선 인라인 실행)
  * @param isCurrentUrlAllowed 메인 스레드에서 현재 로드된 URL의 allowlist 여부를 답한다
+ * @param isOriginAllowedNow 임의 스레드에서 안전하게 읽는 origin 허용 여부 — 값을 **돌려주는**
+ *   메서드는 postToMain으로 미룰 수 없어서(동기 반환), 메인 스레드가 페이지 전환마다 갱신해 둔
+ *   플래그를 여기로 받는다 (WebViewHost의 AtomicBoolean)
+ * @param sessionToken 세션 토큰 공급자 (KAN-13). KAN-9 네이티브 결선 전까지는 dev 상수가 온다
  */
 class AccenturyBridge(
     private val postToMain: (() -> Unit) -> Unit,
     private val isCurrentUrlAllowed: () -> Boolean,
+    private val isOriginAllowedNow: () -> Boolean,
+    private val sessionToken: () -> String,
     private val onRequestMicPermission: () -> Unit,
     private val onStartVoiceItem: (VoiceItemStart) -> Unit,
 ) {
     /** §5 스큐 협상 — 웹이 앱의 계약 버전을 런타임에 재확인할 때 쓴다. 상태 변경이 없어 스레드 무관. */
     @JavascriptInterface
     fun getContractVersion(): Int = BRIDGE_CONTRACT_VERSION
+
+    /**
+     * 세션 토큰 — 웹의 어휘 답안 제출(KAN-13)이 Authorization 헤더에 싣는다.
+     *
+     * 토큰을 URL 쿼리로 실어 보내지 않는 이유가 이 메서드의 존재 이유다: 쿼리는 히스토리·로그에
+     * 남는다. 메서드 추가는 하위호환이라 계약 버전 1을 유지한다 (§5).
+     *
+     * 비밀값을 돌려주므로 origin 검증이 필수인데, 반환이 동기라 postToMain 패턴을 못 쓴다 —
+     * 대신 메인 스레드가 유지하는 [isOriginAllowedNow] 플래그를 본다. 허용이 아니면 빈 문자열이다
+     * (웹 래퍼가 빈 값을 null로 정규화한다).
+     */
+    @JavascriptInterface
+    fun getSessionToken(): String = if (isOriginAllowedNow()) sessionToken() else ""
 
     /** [시작하기] → 네이티브 마이크 권한 게이트 호출. 권한 로직 자체는 KAN-98 범위다. */
     @JavascriptInterface

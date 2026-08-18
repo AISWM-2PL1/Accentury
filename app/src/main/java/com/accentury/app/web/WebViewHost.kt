@@ -1,6 +1,7 @@
 package com.accentury.app.web
 
 import android.annotation.SuppressLint
+import android.graphics.Bitmap
 import android.view.ViewGroup
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -29,6 +30,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.accentury.app.BuildConfig
 import com.accentury.app.bridge.VoiceItemStart
 import kotlinx.coroutines.delay
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** 원격 웹 로드의 세 상태. Failed로 가는 길은 명시 오류 콜백과 자체 타임아웃 두 갈래다. */
 sealed interface WebLoadState {
@@ -46,6 +48,7 @@ sealed interface WebLoadState {
  *
  * [url]이 바뀌면 같은 WebView에서 이어 로드한다 (인트로 → 테스트 진입, KAN-100).
  *
+ * @param sessionToken 브리지 getSessionToken이 웹에 건넬 세션 토큰 공급자 (KAN-13)
  * @param onWebViewCreated 결과를 웹으로 주입하려면(evaluateJavascript) 상위가 인스턴스를 알아야 한다
  * @param onWebViewReleased 해제된 인스턴스. 상위가 들고 있는 참조를 놓을 자리다
  */
@@ -54,6 +57,7 @@ sealed interface WebLoadState {
 fun WebViewHost(
     url: String,
     allowedOrigins: Set<String>,
+    sessionToken: () -> String,
     onRequestMicPermission: () -> Unit,
     onStartVoiceItem: (VoiceItemStart) -> Unit,
     modifier: Modifier = Modifier,
@@ -76,6 +80,16 @@ fun WebViewHost(
         // 끝나지 않으므로, 값이 달라졌을 때만 다시 건다. 컴포지션에서 읽지 않아 이 쓰기가
         // 리컴포지션을 부르지도 않는다. attempt가 바뀌면 함께 초기화돼 새 WebView가 다시 로드한다.
         val loadedUrl = remember { mutableStateOf<String?>(null) }
+
+        /*
+         * 동기 반환 브리지(getSessionToken, KAN-13)용 origin 허용 플래그.
+         *
+         * 값을 돌려주는 메서드는 postToMain 검증을 못 쓴다(반환이 동기) — 대신 메인 스레드가
+         * 메인 프레임 전환(onPageStarted)마다 이 플래그를 갱신해 두고, JS 스레드는 읽기만 한다.
+         * 시작값 false: 첫 페이지가 뜨기 전(about:blank 포함)에는 아무에게도 토큰을 주지 않는다.
+         * attempt가 바뀌면 remember째 초기화돼 새 WebView도 false에서 시작한다.
+         */
+        val originAllowed = remember { AtomicBoolean(false) }
 
         Box(modifier = modifier.fillMaxSize()) {
             AndroidView(
@@ -102,6 +116,12 @@ fun WebViewHost(
                                 // allowlist 밖 URL은 로드 차단 (§7). 외부 링크가 생기면
                                 // 여기서 Custom Tabs로 여는 처리를 더한다 — 인트로엔 아직 없다.
                                 return !isAllowedWebUrl(request.url.toString(), allowedOrigins)
+                            }
+
+                            override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
+                                // 메인 프레임 전환마다 동기 브리지용 origin 플래그 갱신 (메인 스레드).
+                                // 리다이렉트도 각 전환이 onPageStarted를 타므로 여기 한 곳이면 된다.
+                                originAllowed.set(isAllowedWebUrl(url, allowedOrigins))
                             }
 
                             override fun onPageFinished(view: WebView, url: String?) {
@@ -132,6 +152,9 @@ fun WebViewHost(
                                 postToMain = { block -> post(block) },
                                 // 실행 시점의 현재 URL로 재검증 — 로드 중 리다이렉트돼 있어도 안전하다.
                                 isCurrentUrlAllowed = { isAllowedWebUrl(this.url, allowedOrigins) },
+                                // 동기 반환 메서드용 — 메인 스레드가 갱신해 둔 플래그를 읽기만 한다.
+                                isOriginAllowedNow = { originAllowed.get() },
+                                sessionToken = sessionToken,
                                 onRequestMicPermission = onRequestMicPermission,
                                 onStartVoiceItem = onStartVoiceItem,
                             ),

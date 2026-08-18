@@ -38,6 +38,8 @@ class AccenturyBridgeTest {
         val bridge = AccenturyBridge(
             postToMain = queue::post,
             isCurrentUrlAllowed = { allowed },
+            isOriginAllowedNow = { false },
+            sessionToken = { "" },
             onRequestMicPermission = {},
             onStartVoiceItem = { received = it },
         )
@@ -53,6 +55,8 @@ class AccenturyBridgeTest {
         val bridge = AccenturyBridge(
             postToMain = queue::post,
             isCurrentUrlAllowed = { true },
+            isOriginAllowedNow = { false },
+            sessionToken = { "" },
             onRequestMicPermission = { fired++ },
             onStartVoiceItem = {},
         )
@@ -68,6 +72,8 @@ class AccenturyBridgeTest {
         val bridge = AccenturyBridge(
             postToMain = queue::post,
             isCurrentUrlAllowed = { false },
+            isOriginAllowedNow = { false },
+            sessionToken = { "" },
             onRequestMicPermission = { fired++ },
             onStartVoiceItem = {},
         )
@@ -86,6 +92,8 @@ class AccenturyBridgeTest {
         val bridge = AccenturyBridge(
             postToMain = queue::post,
             isCurrentUrlAllowed = { allowedNow },
+            isOriginAllowedNow = { false },
+            sessionToken = { "" },
             onRequestMicPermission = { fired++ },
             onStartVoiceItem = {},
         )
@@ -100,10 +108,33 @@ class AccenturyBridgeTest {
         val bridge = AccenturyBridge(
             postToMain = { it() },
             isCurrentUrlAllowed = { true },
+            isOriginAllowedNow = { false },
+            sessionToken = { "" },
             onRequestMicPermission = {},
             onStartVoiceItem = {},
         )
         assertEquals(BRIDGE_CONTRACT_VERSION, bridge.getContractVersion())
+    }
+
+    /** getSessionToken은 동기 반환이라 postToMain을 타지 않는다 — 플래그 검증만 본다. */
+    private fun bridgeForToken(originAllowedNow: Boolean, token: String) = AccenturyBridge(
+        postToMain = { it() },
+        isCurrentUrlAllowed = { true },
+        isOriginAllowedNow = { originAllowedNow },
+        sessionToken = { token },
+        onRequestMicPermission = {},
+        onStartVoiceItem = {},
+    )
+
+    @Test
+    fun `허용된 origin이면 세션 토큰을 돌려준다`() {
+        assertEquals("token-1", bridgeForToken(originAllowedNow = true, token = "token-1").getSessionToken())
+    }
+
+    @Test
+    fun `allowlist 밖 origin에서는 토큰 대신 빈 문자열이다`() {
+        // 비밀값이므로 거부 신호도 조용해야 한다 — 예외를 던지면 웹 콘솔에 흔적이 남는다.
+        assertEquals("", bridgeForToken(originAllowedNow = false, token = "token-1").getSessionToken())
     }
 
     @Test
@@ -213,6 +244,8 @@ class AccenturyBridgeTest {
         val bridge = AccenturyBridge(
             postToMain = queue::post,
             isCurrentUrlAllowed = { allowedNow },
+            isOriginAllowedNow = { false },
+            sessionToken = { "" },
             onRequestMicPermission = {},
             onStartVoiceItem = { received = it },
         )
