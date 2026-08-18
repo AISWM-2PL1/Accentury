@@ -84,6 +84,7 @@ function stubBridge() {
     requestMicPermission: vi.fn(),
     startVoiceItem,
     getContractVersion: () => 1,
+    getSessionToken: () => 'stub-token',
   }
   return startVoiceItem
 }
@@ -203,7 +204,12 @@ describe('문항 진행', () => {
     renderScreen(okFetch())
     await findDevSubmit()
 
-    for (let i = 0; i < 10; i += 1) advance()
+    for (let i = 0; i < 10; i += 1) {
+      advance()
+      // 어휘 제출은 비동기다(개발용 통로도 Promise) — 다음 문항이 뜨기 전에 다음 advance가
+      // 돌지 않도록 microtask를 비운다
+      await act(async () => {})
+    }
 
     expect(screen.getByText('분석 대기 화면 (KAN-14 예정)')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '제출 (개발용)' })).not.toBeInTheDocument()
@@ -216,6 +222,8 @@ describe('문항 진행', () => {
     await findDevSubmit()
     advance()
     advance()
+    // 어휘 제출(두 번째 advance)이 비동기라, 진행 통지가 스냅샷에 닿기 전에 내리면 안 된다
+    await act(async () => {})
     unmount()
 
     expect(JSON.parse(storage.getItem(snapshotKey())!).submittedItemIds).toEqual(['item-1', 'item-2'])
@@ -258,7 +266,8 @@ describe('VOICE 문항 — 네이티브 녹음 화면 전환 (KAN-100)', () => {
 
   it('다음 음성 문항에서는 그 문항의 순번으로 다시 호출한다', async () => {
     const startVoiceItem = stubBridge()
-    renderScreen(okFetch())
+    // 브리지가 있으면 어휘 답안이 실제로 제출된다 — 세션 없이는 가드가 막으므로 실어 준다
+    renderScreen(okFetch(), { sessionId: 'sess-1' })
     await findRecordingWait()
 
     deliverResult('item-1')
@@ -329,7 +338,8 @@ describe('VOICE 문항 — 네이티브 녹음 화면 전환 (KAN-100)', () => {
 describe('VOCABULARY 문항 — 보기 선택 (KAN-13)', () => {
   it('보기를 고르고 [다음]을 누르면 다음 문항으로 넘어간다', async () => {
     stubBridge()
-    renderScreen(okFetch())
+    // 브리지가 있으면 어휘 답안이 실제로 제출된다 — 세션 없이는 가드가 막으므로 실어 준다
+    renderScreen(okFetch(), { sessionId: 'sess-1' })
     await findRecordingWait()
     deliverResult('item-1')
 
@@ -348,6 +358,40 @@ describe('VOCABULARY 문항 — 보기 선택 (KAN-13)', () => {
 
     expect(screen.getByText('어휘 문항 2')).toBeInTheDocument()
     expect(startVoiceItem).toHaveBeenCalledTimes(1) // 문항 1의 호출 그대로
+  })
+
+  it('앱(브리지 존재)에서는 답안이 브리지 토큰을 싣고 서버로 제출된다 (KAN-13)', async () => {
+    stubBridge()
+    const fetchImpl = okFetch()
+    renderScreen(fetchImpl, { sessionId: 'sess-1' })
+    await findRecordingWait()
+    deliverResult('item-1')
+
+    expect(screen.getByText('어휘 문항 2')).toBeInTheDocument()
+    answerVocabulary()
+
+    // 정의 조회(1) + 답안 제출(2). 제출 성공 후에만 다음 문항으로 넘어간다 (AC 2항)
+    expect(await screen.findByText('음성 문항 3')).toBeInTheDocument()
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    const [url, init] = fetchImpl.mock.calls[1]
+    expect(url).toBe(`${API_BASE}/v0/sessions/sess-1/vocab-items/item-2/answer`)
+    expect(init?.method).toBe('POST')
+    expect(init?.headers).toMatchObject({ Authorization: 'Bearer stub-token' })
+    expect((init?.headers as Record<string, string>)['Idempotency-Key']).toBeTruthy()
+    expect(JSON.parse(init?.body as string)).toEqual({ choiceId: 'c1' })
+  })
+
+  it('브리지가 없으면(브라우저 단독) 서버 제출 없이 진행만 민다 — 음성의 개발용 통로와 같다', async () => {
+    const fetchImpl = okFetch()
+    renderScreen(fetchImpl)
+    await findDevSubmit()
+    advance() // 음성 문항 1 (개발용 제출)
+
+    expect(screen.getByText('어휘 문항 2')).toBeInTheDocument()
+    answerVocabulary()
+
+    expect(await screen.findByText('음성 문항 3')).toBeInTheDocument()
+    expect(fetchImpl).toHaveBeenCalledTimes(1) // 정의 조회뿐 — 답안 POST가 없다
   })
 })
 
@@ -389,7 +433,10 @@ describe('폴링 부재 — 문항 진행 중에는 요청이 없다 (KAN-14 규
       renderScreen(fetchImpl)
       await findDevSubmit()
 
-      for (let i = 0; i < 10; i += 1) advance()
+      for (let i = 0; i < 10; i += 1) {
+        advance()
+        await act(async () => {}) // 어휘 제출(개발용 통로 포함)은 비동기 — microtask를 비운다
+      }
 
       expect(fetchImpl).toHaveBeenCalledTimes(1)
       expect(globalFetch).not.toHaveBeenCalled()

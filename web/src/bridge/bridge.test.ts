@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   appBridgeVersion,
+  getSessionToken,
   installItemResultReceiver,
   isBridgeCompatible,
   REQUIRED_BRIDGE_VERSION,
@@ -154,5 +155,29 @@ describe('installItemResultReceiver — 네이티브 → 웹 수신 지점', () 
     disposeSecond()
     window.AccenturyWeb?.onItemResult(JSON.stringify(itemResult))
     expect(first).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('getSessionToken — 토큰 읽기 (KAN-13)', () => {
+  it('브리지가 토큰을 주면 그대로 돌려준다', () => {
+    window.AccenturyBridge = fakeBridge({ getSessionToken: () => 'token-1' })
+
+    expect(getSessionToken()).toBe('token-1')
+  })
+
+  it('브리지가 없으면(브라우저 단독) null이다', () => {
+    expect(getSessionToken()).toBeNull()
+  })
+
+  it('메서드가 없는 구버전 앱(계약 버전 1의 다른 조각)에서도 null이다', () => {
+    window.AccenturyBridge = fakeBridge() // getSessionToken 없음
+
+    expect(getSessionToken()).toBeNull()
+  })
+
+  it('네이티브의 origin 거부 신호(빈 문자열)는 null로 정규화한다', () => {
+    window.AccenturyBridge = fakeBridge({ getSessionToken: () => '' })
+
+    expect(getSessionToken()).toBeNull()
   })
 })
