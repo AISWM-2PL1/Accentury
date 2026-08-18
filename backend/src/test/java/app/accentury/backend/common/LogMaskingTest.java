@@ -62,7 +62,7 @@ class LogMaskingTest extends IntegrationTest {
     }
 
     @Test
-    void 관리자_토큰도_이름_세_형태_모두에서_지운다() {
+    void 관리자_토큰도_이름_네_형태_모두에서_지운다() {
         // 관리자 토큰(KAN-106)은 Authorization과 같은 등급의 자격증명인데 헤더 이름이 달라
         // AUTHORIZATION 규칙에 안 걸린다. 프레임워크가 예외 메시지에 헤더를 싣거나
         // 설정이 덤프되면 운영 시크릿이 평문으로 남는 자리다
@@ -77,6 +77,15 @@ class LogMaskingTest extends IntegrationTest {
                 LogMasking.mask("""
                         {"adminToken": "s3cr3t-admin-value"}"""),
                 "바인딩된 필드로 찍힌 경우");
+        // 환경 변수 철자는 밑줄이 단어 문자라 \b가 이름 중간에서 성립하지 않는다 -
+        // 전체 철자를 패턴에 넣지 않으면 위 세 이름 어느 것에도 걸리지 않는 자리다
+        // (2026-08-17 리뷰). application.yml이 권하는 주입 경로가 정확히 이 철자다.
+        assertEquals("ACCENTURY_ANALYTICS_ADMINTOKEN=***",
+                LogMasking.mask("ACCENTURY_ANALYTICS_ADMINTOKEN=s3cr3t-admin-value"),
+                "환경 변수(대시 제거형)로 찍힌 경우");
+        assertEquals("ACCENTURY_ANALYTICS_ADMIN_TOKEN=***",
+                LogMasking.mask("ACCENTURY_ANALYTICS_ADMIN_TOKEN=s3cr3t-admin-value"),
+                "환경 변수(밑줄 분리형)로 찍힌 경우");
     }
 
     @Test

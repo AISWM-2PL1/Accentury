@@ -50,7 +50,7 @@ public enum ErrorCode {
 
     // === ADMIN_* : 운영자 전용 API (§6, KAN-106) ===
     // 클라이언트가 닿지 않는 경로라 §2.4의 클라이언트 네임스페이스와 섞지 않는다.
-    // 토큰 누락과 불일치를 구분하지 않는다 - 세션 토큰(SESSION_EXPIRED)과 같은 이유다
+    // 토큰 누락과 불일치를 구분하지 않는다 - 세션 토큰(SESSION_EXPIRED)과 같은 이유다.
     ADMIN_UNAUTHORIZED(HttpStatus.UNAUTHORIZED, false, "관리자 API 인증에 실패했습니다."),
 
     // === 공통 ===

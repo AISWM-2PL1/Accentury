@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -75,7 +76,7 @@ public class VocabAnswerService {
             throw new ApiException(ErrorCode.ITEM_NOT_IN_VERSION, "이 문항의 선택지가 아닙니다.");
         }
 
-        boolean savedNew = Boolean.TRUE.equals(transactionTemplate.execute(tx -> {
+        SubmitResult result = Objects.requireNonNull(transactionTemplate.execute(tx -> {
             // 완료 가드와 저장을 세션 행 잠금으로 묶는다 - 인증 시점의 스냅샷으로 검사하면
             // 그 사이 커밋된 /complete를 놓친다. 잠금 재조회가 빈 것은 동시 삭제(만료
             // 정리)를 뜻하므로 만료와 같게 응답한다
@@ -94,21 +95,26 @@ public class VocabAnswerService {
             var existing = repository.findBySessionIdAndItemId(session.id(), itemId);
             if (existing.isPresent()) {
                 requireSameReplay(existing.get(), key, choiceId);
-                return false;
+                return new SubmitResult(false, response(session));
             }
             // 정오는 저장 시점에 확정한다 - 정의가 불변이라(§5.4) 나중에 대조해도 같지만,
             // /complete(KAN-16)가 정답표를 다시 뒤지지 않고 이 행만 세면 되게 한다 (§4.3)
             repository.save(new VocabAnswer("va_" + UUID.randomUUID(), session.id(), itemId,
                     choiceId, choiceId.equals(item.correctChoiceId()), key, Instant.now()));
-            return true;
+            // 진행도도 잠금 아래에서 읽는다 - 커밋 뒤에 읽으면 그 사이 재응시 폐기(KAN-107)가
+            // 자식 행을 지워, 방금 수락한 답안의 응답이 진행도 0으로 나갈 수 있다 (2026-08-17 리뷰).
+            return new SubmitResult(true, response(session));
         }));
 
-        if (savedNew) {
+        if (result.savedNew()) {
             // 답안 내용(choiceId/정오)은 로그에 남기지 않는다 (§2.6의 취지 - 결과 유추 차단)
             log.info("어휘 답안 저장 sessionId={} itemId={}", session.id(), itemId);
         }
-        return response(session);
+        return result.response();
     }
+
+    /** 잠금 트랜잭션의 산출물 - 저장 여부(로그용)와 잠금 아래에서 확정한 진행도 응답. */
+    private record SubmitResult(boolean savedNew, VocabAnswerResponse response) {}
 
     /**
      * 이미 답안이 있는 문항의 처리 - 같은 키의 동일 요청만 재전송으로 인정한다 (§5.2).
@@ -133,6 +139,8 @@ public class VocabAnswerService {
      * 진행도 응답 (§3.5) - 어휘는 답안 저장, 음성은 업로드 시도 1건 이상을 제출로 센다
      * (2026-08-11 확정). 재전송 응답의 진행도는 저장 시점이 아니라 현재 값이다 -
      * "같은 결과"(AC)는 답안 수락에 대한 계약이고 진행도는 정보성 필드다.
+     * 세션 행 잠금 아래에서만 호출된다 - 잠금 밖에서는 재응시 폐기와 경합해 방금 저장한
+     * 답안이 빠진 진행도를 읽을 수 있다.
      */
     private VocabAnswerResponse response(TestSession session) {
         long answered = repository.countBySessionId(session.id())

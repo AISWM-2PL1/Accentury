@@ -1,11 +1,12 @@
 package app.accentury.backend.analytics;
 
 import app.accentury.backend.IntegrationTest;
-import app.accentury.backend.analysis.AnalysisJob;
+import app.accentury.backend.SessionTestFlow;
+import app.accentury.backend.SessionTestFlow.SessionHandle;
 import app.accentury.backend.analysis.AnalysisJobRepository;
-import app.accentury.backend.analysis.AnalysisJobStatus;
 import app.accentury.backend.analysis.AnalysisJobTransitions;
 import app.accentury.backend.result.TestResultRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -15,14 +16,9 @@ import org.springframework.context.annotation.Primary;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.MvcResult;
-import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
-import java.time.Instant;
 import java.time.LocalDate;
-import java.util.Map;
-import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -40,10 +36,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 @AutoConfigureMockMvc
 class CounterFailureIsolationApiTest extends IntegrationTest {
-
-    /** seed 정본의 어휘 정답표 */
-    private static final Map<String, String> CORRECT_CHOICES =
-            Map.of("w1", "w1a", "w2", "w2b", "w3", "w3a", "w4", "w4b", "w5", "w5a");
 
     @TestConfiguration
     static class FailingStoreConfig {
@@ -90,6 +82,13 @@ class CounterFailureIsolationApiTest extends IntegrationTest {
     @Autowired
     private TestResultRepository resultRepository;
 
+    private SessionTestFlow flow;
+
+    @BeforeEach
+    void setUpFlow() {
+        flow = new SessionTestFlow(mockMvc, objectMapper, analysisJobRepository, transitions);
+    }
+
     @Test
     void 끼운_저장소가_정말_실패한다() {
         // 이 확인이 없으면 아래 두 테스트가 "실패해도 괜찮다"가 아니라
@@ -109,9 +108,9 @@ class CounterFailureIsolationApiTest extends IntegrationTest {
     @Test
     void 집계_저장소가_죽어도_결과는_확정되고_반환된다() throws Exception {
         long rowsBefore = countersRepository.count();
-        SessionHandle session = createSession();
-        answerVocab(session);
-        completeVoice(session);
+        SessionHandle session = flow.createSession();
+        flow.answerVocab(session);
+        flow.completeVoice(session);
 
         mockMvc.perform(post("/v0/sessions/" + session.id() + "/complete")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + session.token())
@@ -124,39 +123,4 @@ class CounterFailureIsolationApiTest extends IntegrationTest {
         assertEquals(rowsBefore, countersRepository.count(), "실패한 증가가 행을 남기지 않는다");
     }
 
-    // === 조립 ===
-
-    private record SessionHandle(String id, String token) {
-    }
-
-    private SessionHandle createSession() throws Exception {
-        MvcResult result = mockMvc.perform(post("/v0/sessions")
-                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
-                .andExpect(status().isCreated())
-                .andReturn();
-        JsonNode json = objectMapper.readTree(result.getResponse().getContentAsString());
-        return new SessionHandle(json.get("sessionId").asString(), json.get("sessionToken").asString());
-    }
-
-    private void answerVocab(SessionHandle session) throws Exception {
-        for (Map.Entry<String, String> entry : CORRECT_CHOICES.entrySet()) {
-            mockMvc.perform(post("/v0/sessions/" + session.id() + "/vocab-items/"
-                            + entry.getKey() + "/answer")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content("{\"choiceId\": \"" + entry.getValue() + "\"}")
-                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + session.token())
-                            .header("Idempotency-Key", "vocab-" + entry.getKey()))
-                    .andExpect(status().isOk());
-        }
-    }
-
-    private void completeVoice(SessionHandle session) {
-        Instant base = Instant.now();
-        for (String itemId : new String[]{"v1", "v2", "v3", "v4", "v5"}) {
-            AnalysisJob job = analysisJobRepository.save(new AnalysisJob(
-                    "a_" + UUID.randomUUID(), session.id(), itemId,
-                    1, "k-" + UUID.randomUUID(), AnalysisJobStatus.PROCESSING, base));
-            transitions.complete(job.id(), 75, "OK", "stub-0.1", "sv-0.3");
-        }
-    }
 }

@@ -74,7 +74,7 @@ public class AnalyticsCounters {
     private void record(Instant at, String testVersion, String scoreVersion,
                         Supplier<CounterDelta> deltaSupplier) {
         // 커밋 후 호출 계약(클래스 javadoc)이 지켜지는지 값싸게 감시한다. 깨지면 REQUIRES_NEW가
-        // 두 번째 커넥션을 잡아 풀 고갈로 가고, 롤백될 요청까지 세게 된다 (Fable 리뷰 P3)
+        // 두 번째 커넥션을 잡아 풀 고갈로 가고, 롤백될 요청까지 세게 된다 (Fable 리뷰 P3).
         if (TransactionSynchronizationManager.isActualTransactionActive()) {
             log.warn("집계 카운터가 열린 트랜잭션 안에서 호출됐다 - 호출부를 커밋 뒤로 옮겨야 한다");
         }
@@ -98,7 +98,7 @@ public class AnalyticsCounters {
             }
         } catch (RuntimeException e) {
             // 사용자 요청은 이미 성공했다 (티켓 제약) - 여기서 끝내고 통계 1건만 버린다.
-            // 식별자 유도 자체가 실패했을 수 있으므로 키 조각을 그대로 남긴다
+            // 식별자 유도 자체가 실패했을 수 있으므로 키 조각을 그대로 남긴다.
             log.warn("익명 집계 카운터 증가 실패 - 이 1건은 통계에 빠진다 at={} testVersion={} scoreVersion={}",
                     at, testVersion, scoreVersion, e);
         }

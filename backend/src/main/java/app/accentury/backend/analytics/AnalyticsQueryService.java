@@ -11,7 +11,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -72,7 +71,7 @@ public class AnalyticsQueryService {
         List<AnalyticsResponse.Row> rows = found.stream()
                 .map(c -> new AnalyticsResponse.Row(c.statDate(), c.testVersion(), c.scoreVersion(), counts(c)))
                 .toList();
-        return new AnalyticsResponse(start, end, zone.getId(), rows, total(found));
+        return new AnalyticsResponse(start, end, zone.getId(), rows, total(rows));
     }
 
     /**
@@ -90,24 +89,28 @@ public class AnalyticsQueryService {
         if (!List.copyOf(tiers.keySet()).equals(ScorePolicyRegistry.TIER_CODES)) {
             // 등급이 늘거나 이름이 바뀌거나 rank 순서가 달라지면 여기도 같이 고쳐야 한다 -
             // 조용히 한 등급이 빠지거나 순서가 뒤집힌 분포를 내보내는 대신 즉시 깨뜨린다.
-            // 집합이 아니라 목록 비교인 것은 위 javadoc의 rank 오름차순 약속까지 지키기 위해서다
+            // 집합이 아니라 목록 비교인 것은 위 javadoc의 rank 오름차순 약속까지 지키기 위해서다.
             throw new IllegalStateException("등급 목록이 " + ScorePolicyRegistry.TIER_CODES + "와 어긋난다");
         }
         return tiers;
     }
 
     private static AnalyticsResponse.Counts counts(DailyCounter c) {
-        return build(c.sessionsStarted(), c.sessionsCompleted(), tiers(c), c.scoredCount(),
-                c.intonationSum(), c.vocabularySum(), c.overallSum());
+        return AnalyticsResponse.Counts.of(c.sessionsStarted(), c.sessionsCompleted(), tiers(c),
+                c.scoredCount(),
+                new AnalyticsResponse.Sums(c.intonationSum(), c.vocabularySum(), c.overallSum()));
     }
 
     /**
-     * 기간 전체 합산. 버전이 섞일 수 있으므로 참고값이다 - 버전별 비교는 {@code rows}로 한다.
+     * 기간 전체 합산 - 엔티티가 아니라 <b>이미 조립된 행</b>에서 더한다 (2026-08-17 리뷰).
+     * 엔티티를 다시 순회하면 {@link DailyCounter} 필드 목록이 이 클래스에 두 번 복제되어,
+     * 새 지표를 {@link #counts}에만 추가하면 합계가 그 지표를 조용히 누락한다.
+     * 버전이 섞일 수 있으므로 참고값이다 - 버전별 비교는 {@code rows}로 한다.
      */
-    private static AnalyticsResponse.Counts total(List<DailyCounter> found) {
-        Map<String, Long> totals = new LinkedHashMap<>();
+    private static AnalyticsResponse.Counts total(List<AnalyticsResponse.Row> rows) {
+        Map<String, Long> tiers = new LinkedHashMap<>();
         for (String code : ScorePolicyRegistry.TIER_CODES) {
-            totals.put(code, 0L);
+            tiers.put(code, 0L);
         }
         long started = 0;
         long completed = 0;
@@ -115,33 +118,17 @@ public class AnalyticsQueryService {
         long intonation = 0;
         long vocabulary = 0;
         long overall = 0;
-        for (DailyCounter c : found) {
+        for (AnalyticsResponse.Row row : rows) {
+            AnalyticsResponse.Counts c = row.counts();
             started += c.sessionsStarted();
             completed += c.sessionsCompleted();
             scored += c.scoredCount();
-            intonation += c.intonationSum();
-            vocabulary += c.vocabularySum();
-            overall += c.overallSum();
-            tiers(c).forEach((code, count) -> totals.merge(code, count, Long::sum));
+            intonation += c.sums().intonation();
+            vocabulary += c.sums().vocabulary();
+            overall += c.sums().overall();
+            c.tiers().forEach((code, count) -> tiers.merge(code, count, Long::sum));
         }
-        return build(started, completed, totals, scored, intonation, vocabulary, overall);
-    }
-
-    private static AnalyticsResponse.Counts build(long started, long completed, Map<String, Long> tiers,
-                                                  long scored, long intonation, long vocabulary, long overall) {
-        return new AnalyticsResponse.Counts(started, completed,
-                started == 0 ? null : round((double) completed / started, 10_000),
-                // Map.copyOf가 아니다 - 그쪽은 순회 순서를 보장하지 않아 등급이 rank 순서를 잃는다
-                Collections.unmodifiableMap(tiers),
-                scored,
-                new AnalyticsResponse.Sums(intonation, vocabulary, overall),
-                scored == 0 ? null : new AnalyticsResponse.Averages(
-                        round((double) intonation / scored, 100),
-                        round((double) vocabulary / scored, 100),
-                        round((double) overall / scored, 100)));
-    }
-
-    private static double round(double value, int scale) {
-        return Math.round(value * scale) / (double) scale;
+        return AnalyticsResponse.Counts.of(started, completed, tiers, scored,
+                new AnalyticsResponse.Sums(intonation, vocabulary, overall));
     }
 }

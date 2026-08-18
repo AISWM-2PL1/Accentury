@@ -359,9 +359,15 @@ class ResultApiTest extends IntegrationTest {
         transitions.fail(job.id(), AnalysisJobStatus.RETRYABLE_FAILED, errorCode);
     }
 
-    /** 세션의 expires_at을 과거로 되돌린다 - 미완료 세션의 30분 TTL 경과를 흉내낸다 */
+    /**
+     * 세션의 expires_at을 과거로 되돌린다 - 미완료 세션의 30분 TTL 경과를 흉내낸다.
+     * 지우고 다시 만드는 것은 TestSession이 Persistable이라 기존 id의 새 인스턴스를
+     * save()하면 merge가 아니라 persist로 가서 중복 키로 터지기 때문이다.
+     */
     private void expireSession(SessionHandle session) {
         TestSession stored = sessionRepository.findById(session.id()).orElseThrow();
+        sessionRepository.delete(stored);
+        sessionRepository.flush();
         sessionRepository.save(new TestSession(stored.id(), stored.tokenHash(),
                 stored.testVersion(), stored.scoreVersion(), stored.platform(), stored.appVersion(),
                 stored.campaignToken(), stored.createdAt(), Instant.now().minusSeconds(1)));

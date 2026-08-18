@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import org.jspecify.annotations.Nullable;
 
 import java.time.LocalDate;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -48,6 +49,29 @@ public record AnalyticsResponse(LocalDate from, LocalDate to, String zone,
                          @Nullable Double completionRate,
                          Map<String, Long> tiers, long scoredCount,
                          Sums sums, @Nullable Averages averages) {
+
+        /**
+         * 원자료(시도, 완주, 등급 분포, 분모, 합)에서 파생 필드(완주율, 평균)를 계산해
+         * 조립한다 - 반올림 자리와 null 규칙이 위 필드 주석과 한 파일에서 움직이게
+         * 파생 계산을 정의 옆에 둔다 (2026-08-17 리뷰).
+         */
+        public static Counts of(long sessionsStarted, long sessionsCompleted,
+                                Map<String, Long> tiers, long scoredCount, Sums sums) {
+            return new Counts(sessionsStarted, sessionsCompleted,
+                    sessionsStarted == 0 ? null
+                            : round((double) sessionsCompleted / sessionsStarted, 10_000),
+                    // Map.copyOf가 아니다 - 그쪽은 순회 순서를 보장하지 않아 등급이 rank 순서를 잃는다.
+                    Collections.unmodifiableMap(tiers),
+                    scoredCount, sums,
+                    scoredCount == 0 ? null : new Averages(
+                            round((double) sums.intonation() / scoredCount, 100),
+                            round((double) sums.vocabulary() / scoredCount, 100),
+                            round((double) sums.overall() / scoredCount, 100)));
+        }
+    }
+
+    private static double round(double value, int scale) {
+        return Math.round(value * scale) / (double) scale;
     }
 
     /** 점수 합 (0~100의 누적) */

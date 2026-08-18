@@ -105,20 +105,6 @@ public class AnalysisJob {
         this.createdAt = createdAt;
     }
 
-    /**
-     * 전달 실패 시 재녹음(새 시도)을 유도하는 상태로 전이한다 (§3.4).
-     * 오디오를 저장하지 않으므로(FR-DP-01) 서버가 같은 시도를 재시도할 수 없다.
-     * <p>
-     * 업로드 요청 스레드가 저장 직후의 자기 작업에만 쓴다 - 경합이 없어 엔티티 변경으로
-     * 충분하다. 비동기 전달 이후의 종결(타임아웃 스위퍼와 경합 가능)은 조건부 UPDATE인
-     * {@link AnalysisJobTransitions}를 거쳐야 한다.
-     */
-    public void markRetryableFailed(String errorCode) {
-        this.status = AnalysisJobStatus.RETRYABLE_FAILED;
-        this.errorCode = errorCode;
-        this.finishedAt = Instant.now();
-    }
-
     public String id() {
         return id;
     }

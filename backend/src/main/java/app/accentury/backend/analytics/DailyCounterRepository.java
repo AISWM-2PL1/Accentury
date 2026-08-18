@@ -35,37 +35,30 @@ public interface DailyCounterRepository extends Repository<DailyCounter, String>
      * <p>
      * 값이 아니라 증가분을 더하는 형태라 어느 순서로 도착해도 결과가 같다. 등급 다섯 축은
      * {@link CounterDelta}가 0/1로 펼쳐서 넘기므로 여기에는 조건 분기가 없다.
+     * <p>
+     * 증가분은 {@link CounterDelta}를 SpEL로 직접 바인딩한다 (2026-08-17 리뷰) - 같은 타입
+     * long 12개를 위치 인자로 나르면 자리바꿈이 컴파일을 통과해 카운터가 조용히 오염되고,
+     * 컬럼 목록이 레코드, 이 쿼리, 전달 계층 세 곳에 복제된다. 지금은 이 쿼리 한 곳이다.
      *
      * @return 1이면 증가 완료, 0이면 그 키의 행이 아직 없다 (첫 증가라 INSERT가 필요하다)
      */
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             update DailyCounter c
-               set c.sessionsStarted = c.sessionsStarted + :sessionsStarted,
-                   c.sessionsCompleted = c.sessionsCompleted + :sessionsCompleted,
-                   c.tierOutsider = c.tierOutsider + :tierOutsider,
-                   c.tierTraveler = c.tierTraveler + :tierTraveler,
-                   c.tierWannabe = c.tierWannabe + :tierWannabe,
-                   c.tierHonorary = c.tierHonorary + :tierHonorary,
-                   c.tierNative = c.tierNative + :tierNative,
-                   c.intonationSum = c.intonationSum + :intonationSum,
-                   c.vocabularySum = c.vocabularySum + :vocabularySum,
-                   c.overallSum = c.overallSum + :overallSum,
-                   c.scoredCount = c.scoredCount + :scoredCount
+               set c.sessionsStarted = c.sessionsStarted + :#{#delta.sessionsStarted()},
+                   c.sessionsCompleted = c.sessionsCompleted + :#{#delta.sessionsCompleted()},
+                   c.tierOutsider = c.tierOutsider + :#{#delta.tierOutsider()},
+                   c.tierTraveler = c.tierTraveler + :#{#delta.tierTraveler()},
+                   c.tierWannabe = c.tierWannabe + :#{#delta.tierWannabe()},
+                   c.tierHonorary = c.tierHonorary + :#{#delta.tierHonorary()},
+                   c.tierNative = c.tierNative + :#{#delta.tierNative()},
+                   c.intonationSum = c.intonationSum + :#{#delta.intonationSum()},
+                   c.vocabularySum = c.vocabularySum + :#{#delta.vocabularySum()},
+                   c.overallSum = c.overallSum + :#{#delta.overallSum()},
+                   c.scoredCount = c.scoredCount + :#{#delta.scoredCount()}
              where c.id = :id
             """)
-    int increment(@Param("id") String id,
-                  @Param("sessionsStarted") long sessionsStarted,
-                  @Param("sessionsCompleted") long sessionsCompleted,
-                  @Param("tierOutsider") long tierOutsider,
-                  @Param("tierTraveler") long tierTraveler,
-                  @Param("tierWannabe") long tierWannabe,
-                  @Param("tierHonorary") long tierHonorary,
-                  @Param("tierNative") long tierNative,
-                  @Param("intonationSum") long intonationSum,
-                  @Param("vocabularySum") long vocabularySum,
-                  @Param("overallSum") long overallSum,
-                  @Param("scoredCount") long scoredCount);
+    int increment(@Param("id") String id, @Param("delta") CounterDelta delta);
 
     /**
      * 기간 조회 (내부 전용, KAN-106 AC - 등급 누적 수와 점수 평균 확인).

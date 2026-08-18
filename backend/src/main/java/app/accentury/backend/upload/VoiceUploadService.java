@@ -4,6 +4,7 @@ import app.accentury.backend.analysis.AnalysisDispatcher;
 import app.accentury.backend.analysis.AnalysisJob;
 import app.accentury.backend.analysis.AnalysisJobRepository;
 import app.accentury.backend.analysis.AnalysisJobStatus;
+import app.accentury.backend.analysis.AnalysisJobTransitions;
 import app.accentury.backend.analysis.PollIntervals;
 import app.accentury.backend.common.ApiException;
 import app.accentury.backend.common.ErrorCode;
@@ -63,6 +64,7 @@ public class VoiceUploadService {
     private final TestDefinitionRegistry registry;
     private final AnalysisJobRepository repository;
     private final TestSessionRepository sessionRepository;
+    private final AnalysisJobTransitions transitions;
     private final AnalysisDispatcher dispatcher;
     private final ObjectMapper objectMapper;
     private final PollIntervals pollIntervals;
@@ -71,6 +73,7 @@ public class VoiceUploadService {
 
     public VoiceUploadService(SessionService sessionService, TestDefinitionRegistry registry,
                               AnalysisJobRepository repository, TestSessionRepository sessionRepository,
+                              AnalysisJobTransitions transitions,
                               AnalysisDispatcher dispatcher, ObjectMapper objectMapper,
                               PollIntervals pollIntervals, TransactionTemplate transactionTemplate,
                               RateLimits rateLimits) {
@@ -78,6 +81,7 @@ public class VoiceUploadService {
         this.registry = registry;
         this.repository = repository;
         this.sessionRepository = sessionRepository;
+        this.transitions = transitions;
         this.dispatcher = dispatcher;
         this.objectMapper = objectMapper;
         this.pollIntervals = pollIntervals;
@@ -204,9 +208,12 @@ public class VoiceUploadService {
                 // 재녹음(새 키)을 유도하는 RETRYABLE_FAILED로 전이하고 503을 준다 (Codex sol 리뷰 P1).
                 // 같은 키의 재전송은 이 상태를 그대로 돌려받아 새 시도로 넘어갈 수 있다.
                 // 저장과 전달 사이에 프로세스가 죽어 PROCESSING으로 남는 경우는 AnalysisJobTimeout이 정리한다.
-                // 버퍼는 여기서 손대지 않는다 - 소유권이 이미 넘어갔고, 파기는 계약상 구현의 몫이다
-                job.markRetryableFailed(ErrorCode.ANALYSIS_UNAVAILABLE.name());
-                repository.save(job);
+                // 버퍼는 여기서 손대지 않는다 - 소유권이 이미 넘어갔고, 파기는 계약상 구현의 몫이다.
+                // 전이는 반드시 조건부 UPDATE다 (KAN-107 리뷰 P1) - 세션 잠금이 풀린 뒤라 재응시
+                // 폐기가 이 행을 이미 지웠을 수 있고, 그때 지워진 엔티티의 save()는 merge라
+                // 폐기된 세션의 고아 행을 다시 INSERT한다. 0행이면 조용히 버리는 것이 맞다.
+                transitions.fail(job.id(), AnalysisJobStatus.RETRYABLE_FAILED,
+                        ErrorCode.ANALYSIS_UNAVAILABLE.name());
                 // 워커가 뜨지 못했으니 복구 시험 자리를 놓아줄 주체도 여기뿐이다 (KAN-28) -
                 // 큐가 가득 차 제출이 거절된 경우가 대표적이고, 그대로 두면 시험 한도(60초)
                 // 동안 나머지 업로드가 전부 503이 된다

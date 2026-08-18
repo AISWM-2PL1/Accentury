@@ -28,6 +28,17 @@ public interface TestSessionRepository extends JpaRepository<TestSession, String
     Optional<TestSession> lockById(@Param("id") String id);
 
     /**
+     * 재응시 폐기의 진입점 (KAN-107) - 이전 토큰의 세션 행을 잠그고 가져온다.
+     * <p>
+     * 제출 쓰기(KAN-15/23)와 완료 전이(KAN-16)가 잡는 {@link #lockById}와 같은 행 잠금이라
+     * 진행 중인 제출 트랜잭션과 폐기가 직렬화된다 - 잠금 없이 지우면 제출 경로가 완료 검사를
+     * 통과한 뒤와 삭제 사이에 자식 행을 끼워 넣어 고아가 남는다. 호출부에 트랜잭션 필요.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from TestSession s where s.tokenHash = :tokenHash")
+    Optional<TestSession> lockByTokenHash(@Param("tokenHash") String tokenHash);
+
+    /**
      * 만료 세션 주기 삭제 (§2.1). 호출부에 트랜잭션 필요.
      * <p>
      * 파생 delete는 엔티티를 전부 로드해 건별 삭제하므로 벌크 쿼리로 선언한다 -

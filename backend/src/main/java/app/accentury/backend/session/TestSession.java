@@ -4,8 +4,11 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
+import jakarta.persistence.PostPersist;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 import org.jspecify.annotations.Nullable;
+import org.springframework.data.domain.Persistable;
 
 import java.time.Instant;
 
@@ -17,11 +20,18 @@ import java.time.Instant;
  * <p>
  * 사용자 계정과 광고 식별자 등 개인 식별 정보 컬럼은 두지 않는다 (KAN-9 AC).
  * {@code campaignToken}은 공유 유입 계측용 코드로 개인 식별이 불가능하다 (§3.1).
+ * <p>
+ * {@link Persistable}인 이유: 식별자를 직접 정하는 엔티티라 {@code save()}가 merge(조회
+ * 후 저장)로 가면 생성마다 반드시 빗나가는 SELECT 한 번을 낸다 - 가장 뜨거운 쓰기
+ * 경로(세션 생성)의 낭비이고, 재응시 경로에서는 이전 세션의 행 잠금을 쥔 채 실행된다
+ * (2026-08-17 리뷰, {@code DailyCounterStore}가 persist를 쓰는 것과 같은 이유).
+ * 신규 판정은 생성자 기준이다 - JPA가 조회로 만든 인스턴스(protected 생성자)는 신규가
+ * 아니고, 코드가 만든 인스턴스는 첫 INSERT까지만 신규다 ({@link PostPersist}).
  */
 @Entity
 @Table(name = "test_session",
         indexes = @Index(name = "ux_test_session_token_hash", columnList = "token_hash", unique = true))
-public class TestSession {
+public class TestSession implements Persistable<String> {
 
     /** 형식: {@code s_} + UUID. 클라이언트 경로 파라미터로 쓰인다 */
     @Id
@@ -65,6 +75,10 @@ public class TestSession {
     @Column(name = "completed_at")
     private @Nullable Instant completedAt;
 
+    /** 코드 생성 인스턴스만 신규다 - JPA의 protected 생성자 경로는 false로 남는다. */
+    @Transient
+    private boolean isNew = false;
+
     protected TestSession() {
         // JPA 전용
     }
@@ -72,6 +86,7 @@ public class TestSession {
     public TestSession(String id, String tokenHash, String testVersion, String scoreVersion,
                        @Nullable String platform, @Nullable String appVersion, @Nullable String campaignToken,
                        Instant createdAt, Instant expiresAt) {
+        this.isNew = true;
         this.id = id;
         this.tokenHash = tokenHash;
         this.testVersion = testVersion;
@@ -116,6 +131,21 @@ public class TestSession {
     public void markCompleted(Instant completedAt, Instant resultExpiresAt) {
         this.completedAt = completedAt;
         this.expiresAt = resultExpiresAt;
+    }
+
+    @Override
+    public String getId() {
+        return id;
+    }
+
+    @Override
+    public boolean isNew() {
+        return isNew;
+    }
+
+    @PostPersist
+    void markPersisted() {
+        this.isNew = false;
     }
 
     public String id() {

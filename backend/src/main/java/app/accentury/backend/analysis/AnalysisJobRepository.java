@@ -79,6 +79,15 @@ public interface AnalysisJobRepository extends JpaRepository<AnalysisJob, String
     @Query("delete from AnalysisJob j where j.createdAt < :cutoff")
     long deleteByCreatedAtBefore(@Param("cutoff") Instant cutoff);
 
+    /**
+     * 재응시 시 이전 세션의 시도와 점수 누적분 즉시 폐기 (KAN-107). 호출부에 트랜잭션 필요.
+     * 잠금 규칙과 안전 논증(PROCESSING 행 삭제 포함)은
+     * {@link app.accentury.backend.session.SessionService}의 purgeForRetake javadoc이 정본이다.
+     */
+    @Modifying
+    @Query("delete from AnalysisJob j where j.sessionId = :sessionId")
+    long deleteBySessionId(@Param("sessionId") String sessionId);
+
     // === KAN-24 상태 전이 - 전부 "PROCESSING일 때만"의 조건부 UPDATE다 ===
     // AI 응답 워커와 타임아웃 스위퍼가 같은 작업을 두고 경합할 수 있어, 조회 후 저장이
     // 아니라 DB 한 문장으로 원자적으로 전이한다. 반환값 0 = 이미 종결된 작업(늦은 결과).
@@ -116,8 +125,12 @@ public interface AnalysisJobRepository extends JpaRepository<AnalysisJob, String
      * 실행 잔류 일괄 정리 (KAN-24 타임아웃) - 실행을 시작하고도 종결을 못 남긴 작업
      * (실행 중 프로세스 사망 등)을 재녹음 유도 상태로 넘긴다. 큐에서 기다리는 중인
      * 작업(startedAt null)은 정상이므로 건드리지 않는다 (Codex sol 리뷰 P1).
-     * 호출부에 트랜잭션 필요.
+     * 문장 하나가 <b>반드시</b> 자체 트랜잭션을 연다 (REQUIRES_NEW) - 외부 트랜잭션에
+     * 합류하면 두 벌크 문장이 잠금을 겹쳐 쥐어 재응시 폐기와의 데드락 창이 되살아난다.
+     * 이유는 {@link AnalysisJobTimeout#failStuckJobs} 참고 (2026-08-17 리뷰).
      */
+    @org.springframework.transaction.annotation.Transactional(
+            propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             update AnalysisJob j
@@ -134,8 +147,12 @@ public interface AnalysisJobRepository extends JpaRepository<AnalysisJob, String
      * 실행을 영영 시작하지 못한 작업의 정리 - 접수와 실행 사이에 프로세스가 죽어 큐가
      * 유실된 경우다. 정상 큐 대기와 구분할 수 없으므로 한도는 최악의 큐 소진 시간보다
      * 훨씬 길게 잡는다. AI에 도달하지 않았으므로 시도 예산에서 빠지는
-     * ANALYSIS_UNAVAILABLE로 종결해야 한다. 호출부에 트랜잭션 필요.
+     * ANALYSIS_UNAVAILABLE로 종결해야 한다. 문장 하나가 <b>반드시</b> 자체 트랜잭션을
+     * 연다 (REQUIRES_NEW) - 이유는 {@link #failStartedBefore}와
+     * {@link AnalysisJobTimeout#failStuckJobs} 참고 (2026-08-17 리뷰).
      */
+    @org.springframework.transaction.annotation.Transactional(
+            propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             update AnalysisJob j

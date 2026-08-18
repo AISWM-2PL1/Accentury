@@ -130,7 +130,7 @@ public class CompletionService {
             log.info("테스트 완료 sessionId={} testVersion={} scoreVersion={}",
                     session.id(), session.testVersion(), session.scoreVersion());
             // 완주 1건과 등급, 점수 (KAN-106) - 트랜잭션이 커밋된 이 자리여야 한다.
-            // 안에서 부르면 세션 행 잠금을 쥔 채 커넥션을 더 잡고, 롤백된 완료까지 세게 된다
+            // 안에서 부르면 세션 행 잠금을 쥔 채 커넥션을 더 잡고, 롤백된 완료까지 세게 된다.
             counters.recordSessionCompleted(
                     Objects.requireNonNull(outcome.confirmedAt()), session.testVersion(), confirmed);
         }

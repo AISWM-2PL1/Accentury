@@ -47,7 +47,9 @@ public class AnalysisJobTransitions {
         int updated = repository.completeIfProcessing(
                 jobId, intonationScore, qualityCode, modelVersion, scoreVersion, Instant.now());
         if (updated == 0) {
-            log.warn("이미 종결된 작업의 늦은 분석 결과를 버린다 jobId={}", jobId);
+            // 0행은 두 경우다 - 이미 종결된 작업이거나, 재응시 폐기(KAN-107)로 행 자체가
+            // 지워진 작업이다. 여기서는 구분할 수 없으므로 로그가 두 경우를 모두 말해야 한다.
+            log.warn("늦은 분석 결과를 버린다 - 이미 종결됐거나 재응시 폐기로 삭제된 작업이다 jobId={}", jobId);
         } else {
             // 점수는 로그에 남기지 않는다 - 결과 공개는 /result 한 곳이다 (§3.4, KAN-12)
             log.info("분석 완료 jobId={} modelVersion={}", jobId, modelVersion);
@@ -65,7 +67,9 @@ public class AnalysisJobTransitions {
         }
         int updated = repository.failIfProcessing(jobId, failedStatus, errorCode, Instant.now());
         if (updated == 0) {
-            log.warn("이미 종결된 작업의 늦은 실패 통지를 버린다 jobId={} errorCode={}", jobId, errorCode);
+            // complete()의 0행 경우와 같다 - 종결과 폐기 삭제를 구분할 수 없다.
+            log.warn("늦은 실패 통지를 버린다 - 이미 종결됐거나 재응시 폐기로 삭제된 작업이다 jobId={} errorCode={}",
+                    jobId, errorCode);
         } else {
             log.info("분석 실패 jobId={} status={} errorCode={}", jobId, failedStatus, errorCode);
         }
