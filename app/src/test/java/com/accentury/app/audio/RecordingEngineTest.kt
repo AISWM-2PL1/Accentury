@@ -96,19 +96,58 @@ class RecordingEngineTest {
         assertEquals(RecordingEngine.MAX_DURATION_MS, maxElapsed)
     }
 
-    @Test
-    fun `진행 리포트에 청크의 F0 추정값이 실린다`() = runBlocking {
-        val sine220 = ShortArray(CHUNK_SIZE) {
-            (8000 * kotlin.math.sin(2 * Math.PI * 220.0 * it / SAMPLE_RATE)).toInt().toShort()
+    /** 청크 경계에서도 위상이 이어지는 220Hz 사인. 창이 경계를 걸쳐도 파형이 온전하다. */
+    private fun sine220Source(chunkSize: Int, chunkCount: Int): FakeSource {
+        val sample = { i: Int ->
+            (8000 * kotlin.math.sin(2 * Math.PI * 220.0 * i / SAMPLE_RATE)).toInt().toShort()
         }
-        val engine = RecordingEngine(FakeSource(flow { repeat(3) { emit(sine220.copyOf()) } }))
-        val pitches = mutableListOf<Float?>()
+        return FakeSource(
+            flow {
+                repeat(chunkCount) { c ->
+                    emit(ShortArray(chunkSize) { sample(c * chunkSize + it) })
+                }
+            },
+        )
+    }
 
-        engine.record { pitches += it.pitchHz }
+    @Test
+    fun `진행 리포트에 겹침 프레임별 F0 추정값이 실린다`() = runBlocking {
+        val engine = RecordingEngine(sine220Source(chunkSize = CHUNK_SIZE, chunkCount = 3))
+        val reports = mutableListOf<List<RecordingEngine.PitchFrame>>()
 
-        assertEquals(3, pitches.size)
-        pitches.forEach { pitch ->
-            assertTrue(pitch != null && kotlin.math.abs(pitch - 220f) < 3f)
+        engine.record { reports += it.pitchFrames }
+
+        assertEquals(3, reports.size)
+        // 첫 청크는 창을 막 채워 1개, 이후에는 hop(512) 기준으로 청크당 4개가 나온다.
+        assertEquals(1, reports[0].size)
+        assertEquals(4, reports[1].size)
+        reports.flatten().forEach { frame ->
+            assertTrue(frame.pitchHz != null && kotlin.math.abs(frame.pitchHz!! - 220f) < 3f)
+        }
+    }
+
+    @Test
+    fun `연속 프레임 간격이 32ms로 유지된다 - NFR-PF-02`() = runBlocking {
+        val engine = RecordingEngine(sine220Source(chunkSize = CHUNK_SIZE, chunkCount = 3))
+        val timestamps = mutableListOf<Long>()
+
+        engine.record { progress -> progress.pitchFrames.forEach { timestamps += it.timestampMs } }
+
+        assertTrue(timestamps.size >= 5)
+        timestamps.zipWithNext().forEach { (prev, next) -> assertEquals(32L, next - prev) }
+    }
+
+    @Test
+    fun `hop보다 짧은 청크가 이어져도 F0 프레임이 나온다`() = runBlocking {
+        // AudioRecord.read()가 짧게 돌려주면 청크 단위 추정은 전부 null이 되던 케이스.
+        val engine = RecordingEngine(sine220Source(chunkSize = 300, chunkCount = 20))
+        val frames = mutableListOf<RecordingEngine.PitchFrame>()
+
+        engine.record { frames += it.pitchFrames }
+
+        assertTrue(frames.isNotEmpty())
+        frames.forEach { frame ->
+            assertTrue(frame.pitchHz != null && kotlin.math.abs(frame.pitchHz!! - 220f) < 3f)
         }
     }
 
