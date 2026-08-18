@@ -1,6 +1,7 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { VocabularyItemScreen } from './VocabularyItemScreen'
+import { VocabSubmitError, type VocabSubmitResult } from './submitVocabAnswer'
 import type { VocabularyItem } from './testDefinition'
 
 /** 더미 확정본(KAN-13 댓글, 2026-08-05)의 1번 문항 모양 그대로 */
@@ -19,10 +20,21 @@ function vocabularyItem(): VocabularyItem {
   }
 }
 
-function renderScreen() {
-  const onSubmit = vi.fn<(choiceId: string) => void>()
-  render(<VocabularyItemScreen item={vocabularyItem()} onSubmit={onSubmit} />)
-  return onSubmit
+type SubmitFn = (choiceId: string, idempotencyKey: string) => Promise<VocabSubmitResult>
+
+function renderScreen(submitAnswer: SubmitFn = async () => ({ status: 'SAVED' })) {
+  const submitSpy = vi.fn<SubmitFn>(submitAnswer)
+  const onSubmitted = vi.fn<() => void>()
+  render(<VocabularyItemScreen item={vocabularyItem()} submitAnswer={submitSpy} onSubmitted={onSubmitted} />)
+  return { submitSpy, onSubmitted }
+}
+
+function choose(text: string) {
+  fireEvent.click(screen.getByRole('radio', { name: text }))
+}
+
+function pressNext(name = '다음') {
+  fireEvent.click(screen.getByRole('button', { name }))
 }
 
 describe('표시', () => {
@@ -39,7 +51,7 @@ describe('표시', () => {
 
   it('정오를 유추할 만한 표시가 없다 — 선택지 문구 외 텍스트는 문제와 [다음]뿐이다', () => {
     renderScreen()
-    fireEvent.click(screen.getByRole('radio', { name: '부추' }))
+    choose('부추')
 
     // 정답 표시·해설·점수 등 어떤 추가 문구도 나타나면 안 된다 (KAN-13 정오 미노출)
     expect(document.body.textContent).toBe("'정구지'는 표준어로?부추미나리쑥갓시금치다음")
@@ -47,43 +59,118 @@ describe('표시', () => {
 })
 
 describe('선택과 [다음]', () => {
-  it('선택 전에는 [다음]이 비활성이고 아무 통지도 나가지 않는다', () => {
-    const onSubmit = renderScreen()
+  it('선택 전에는 [다음]이 비활성이고 아무 제출도 나가지 않는다', () => {
+    const { submitSpy } = renderScreen()
 
     const next = screen.getByRole('button', { name: '다음' })
     expect(next).toBeDisabled()
 
     fireEvent.click(next)
-    expect(onSubmit).not.toHaveBeenCalled()
-  })
-
-  it('하나를 고르면 [다음]이 활성화된다', () => {
-    renderScreen()
-
-    fireEvent.click(screen.getByRole('radio', { name: '미나리' }))
-
-    expect(screen.getByRole('button', { name: '다음' })).toBeEnabled()
+    expect(submitSpy).not.toHaveBeenCalled()
   })
 
   it('한 개만 선택된다 — 다른 것을 고르면 이전 선택이 풀린다', () => {
     renderScreen()
 
-    fireEvent.click(screen.getByRole('radio', { name: '부추' }))
-    fireEvent.click(screen.getByRole('radio', { name: '시금치' }))
+    choose('부추')
+    choose('시금치')
 
     expect(screen.getByRole('radio', { name: '시금치' })).toBeChecked()
     expect(screen.getByRole('radio', { name: '부추' })).not.toBeChecked()
     expect(screen.getAllByRole('radio').filter((radio) => (radio as HTMLInputElement).checked)).toHaveLength(1)
   })
 
-  it('[다음]은 바꾼 뒤의 최종 선택을 통지한다 (제출 전 변경 허용)', () => {
-    const onSubmit = renderScreen()
+  it('[다음]은 바꾼 뒤의 최종 선택을 제출한다 (제출 전 변경 허용)', async () => {
+    const { submitSpy } = renderScreen()
 
-    fireEvent.click(screen.getByRole('radio', { name: '부추' }))
-    fireEvent.click(screen.getByRole('radio', { name: '미나리' }))
-    fireEvent.click(screen.getByRole('button', { name: '다음' }))
+    choose('부추')
+    choose('미나리')
+    pressNext()
 
-    expect(onSubmit).toHaveBeenCalledTimes(1)
-    expect(onSubmit).toHaveBeenCalledWith('w1b')
+    await waitFor(() => expect(submitSpy).toHaveBeenCalledTimes(1))
+    expect(submitSpy.mock.calls[0][0]).toBe('w1b')
+  })
+})
+
+describe('제출 수명주기', () => {
+  it('제출 성공 후에만 진행 통지가 나간다 (AC 2항)', async () => {
+    const { onSubmitted } = renderScreen()
+
+    choose('부추')
+    expect(onSubmitted).not.toHaveBeenCalled()
+    pressNext()
+
+    await waitFor(() => expect(onSubmitted).toHaveBeenCalledTimes(1))
+  })
+
+  it('ALREADY_ANSWERED도 진행한다 — 답은 이미 서버에 있다', async () => {
+    const { onSubmitted } = renderScreen(async () => ({ status: 'ALREADY_ANSWERED' }))
+
+    choose('부추')
+    pressNext()
+
+    await waitFor(() => expect(onSubmitted).toHaveBeenCalledTimes(1))
+  })
+
+  it('제출 중에는 보기와 버튼이 잠기고 "제출 중…"이 보인다', async () => {
+    // 풀리지 않는 제출 — 진행 중 상태를 고정해 놓고 화면을 검사한다
+    renderScreen(() => new Promise<VocabSubmitResult>(() => {}))
+
+    choose('부추')
+    pressNext()
+
+    expect(await screen.findByRole('button', { name: '제출 중…' })).toBeDisabled()
+    screen.getAllByRole('radio').forEach((radio) => expect(radio).toBeDisabled())
+  })
+
+  it('실패하면 서버 문구와 [다시 시도]가 보이고 진행하지 않는다', async () => {
+    const { onSubmitted } = renderScreen(async () => {
+      throw new VocabSubmitError('네트워크 오류로 답안을 제출하지 못했습니다', null, true)
+    })
+
+    choose('부추')
+    pressNext()
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('네트워크 오류로 답안을 제출하지 못했습니다')
+    expect(screen.getByRole('button', { name: '다시 시도' })).toBeEnabled()
+    expect(onSubmitted).not.toHaveBeenCalled()
+    // 실패 뒤에는 답을 바꿀 수 있어야 한다 — 보기 잠금이 풀린다
+    screen.getAllByRole('radio').forEach((radio) => expect(radio).toBeEnabled())
+  })
+
+  it('같은 답의 재시도는 같은 멱등 키로 나간다 (AC 3항 — 중복 생성 없는 재시도)', async () => {
+    const { submitSpy } = renderScreen(vi.fn<SubmitFn>()
+      .mockRejectedValueOnce(new VocabSubmitError('일시적인 오류가 발생했습니다', null, true))
+      .mockResolvedValue({ status: 'SAVED' }))
+
+    choose('부추')
+    pressNext()
+    await screen.findByRole('button', { name: '다시 시도' })
+    pressNext('다시 시도')
+
+    await waitFor(() => expect(submitSpy).toHaveBeenCalledTimes(2))
+    const [firstChoice, firstKey] = submitSpy.mock.calls[0]
+    const [secondChoice, secondKey] = submitSpy.mock.calls[1]
+    expect(firstChoice).toBe('w1a')
+    expect(secondChoice).toBe('w1a')
+    expect(secondKey).toBe(firstKey)
+  })
+
+  it('실패 후 답을 바꾸면 새 멱등 키다 — 같은 키로 다른 답을 보내면 서버가 거절한다', async () => {
+    const { submitSpy } = renderScreen(vi.fn<SubmitFn>()
+      .mockRejectedValueOnce(new VocabSubmitError('일시적인 오류가 발생했습니다', null, true))
+      .mockResolvedValue({ status: 'SAVED' }))
+
+    choose('부추')
+    pressNext()
+    await screen.findByRole('button', { name: '다시 시도' })
+    choose('미나리')
+    pressNext('다시 시도')
+
+    await waitFor(() => expect(submitSpy).toHaveBeenCalledTimes(2))
+    const [, firstKey] = submitSpy.mock.calls[0]
+    const [secondChoice, secondKey] = submitSpy.mock.calls[1]
+    expect(secondChoice).toBe('w1b')
+    expect(secondKey).not.toBe(firstKey)
   })
 })

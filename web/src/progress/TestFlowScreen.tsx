@@ -11,9 +11,10 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
-import { installItemResultReceiver } from '../bridge/bridge'
+import { getSessionToken, installItemResultReceiver } from '../bridge/bridge'
 import { fetchTestDefinition, type FetchLike } from './fetchTestDefinition'
 import type { SnapshotStorage } from './progressSnapshot'
+import { submitVocabAnswer } from './submitVocabAnswer'
 import type { TestDefinition, TestItem } from './testDefinition'
 import { useTestProgress } from './useTestProgress'
 import { VocabularyItemScreen } from './VocabularyItemScreen'
@@ -114,20 +115,26 @@ export function TestFlowScreen({
     <TestRunner
       key={`${sessionId}:${load.definition.testVersion}`}
       definition={load.definition}
+      apiBase={apiBase}
       sessionId={sessionId}
       storage={storage}
+      fetchImpl={fetchImpl}
     />
   )
 }
 
 function TestRunner({
   definition,
+  apiBase,
   sessionId,
   storage,
+  fetchImpl,
 }: {
   definition: TestDefinition
+  apiBase: string
   sessionId: string
   storage?: SnapshotStorage
+  fetchImpl?: FetchLike
 }) {
   const { state, current, progress, submit } = useTestProgress(definition, storage, sessionId)
 
@@ -191,9 +198,32 @@ function TestRunner({
         <VocabularyItemScreen
           key={current.itemId}
           item={current}
-          // 고른 choiceId는 아직 버린다 — 서버 제출(POST .../answer) 결선이 Stage 3에서
-          // 이 자리에 끼면, 제출 성공 후에만 submit(진행 전진)이 불리게 바뀐다.
-          onSubmit={() => submit(current.itemId)}
+          /*
+           * 브리지가 없는 = 브라우저 단독 실행. 음성 문항의 [제출 (개발용)]과 같은 개발용 통로로,
+           * 서버 제출 없이 저장된 셈 치고 진행만 민다. 앱에서는 이 분기에 오지 않는다 —
+           * 브리지는 있는데 getSessionToken이 없는 앱(구버전)은 빈 토큰으로 제출이 실패해
+           * 오류가 보인다. 조용히 건너뛰어 채점에서 빠지는 것보다 실패가 보이는 편이 낫다.
+           *
+           * 토큰은 제출 시점마다 읽는다 — 미리 읽어 두면 페이지 전환으로 origin 허용이
+           * 바뀐 뒤에도 낡은 판정을 쓰게 된다.
+           */
+          submitAnswer={
+            window.AccenturyBridge === undefined
+              ? async () => ({ status: 'SAVED' })
+              : (choiceId, idempotencyKey) =>
+                  submitVocabAnswer(
+                    {
+                      apiBase,
+                      sessionId,
+                      itemId: current.itemId,
+                      choiceId,
+                      sessionToken: getSessionToken() ?? '',
+                      idempotencyKey,
+                    },
+                    fetchImpl,
+                  )
+          }
+          onSubmitted={() => submit(current.itemId)}
         />
       )}
     </main>

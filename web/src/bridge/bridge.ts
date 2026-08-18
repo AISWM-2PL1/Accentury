@@ -15,6 +15,12 @@ export interface AccenturyBridge {
   startVoiceItem(payloadJson: string): void
   /** 앱이 보유한 브리지 계약 버전 */
   getContractVersion(): number
+  /**
+   * 세션 토큰 — 어휘 답안 제출(KAN-13)의 Authorization 헤더에 쓴다. 네이티브는 origin이
+   * 허용이 아니면 빈 문자열을 준다. optional인 이유: 메서드 추가는 버전을 올리지 않으므로(§5)
+   * 이 메서드가 없는 계약 버전 1 앱이 실재할 수 있다
+   */
+  getSessionToken?(): string
 }
 
 /**
@@ -119,6 +125,19 @@ export function startVoiceItem(start: VoiceItemStart): boolean {
   if (typeof bridge?.startVoiceItem !== 'function') return false
   bridge.startVoiceItem(JSON.stringify(start))
   return true
+}
+
+/**
+ * 세션 토큰을 브리지에서 읽는다 (KAN-13). 쓸 수 있는 토큰이 없으면 null —
+ * 브리지 자체가 없는 브라우저 단독 실행, 메서드가 없는 구버전 앱, 네이티브가 origin 거부로
+ * 빈 문자열을 준 경우가 전부 여기에 포함된다. 셋의 구분은 호출자 관심사가 아니다:
+ * 어느 쪽이든 "인증 헤더에 실을 값이 없다"는 같은 사실이고, 대응(제출 불가)도 같다.
+ */
+export function getSessionToken(): string | null {
+  const bridge = window.AccenturyBridge
+  if (typeof bridge?.getSessionToken !== 'function') return null
+  const token = bridge.getSessionToken()
+  return typeof token === 'string' && token.trim() !== '' ? token : null
 }
 
 /**
