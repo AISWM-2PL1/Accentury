@@ -5,7 +5,6 @@ import app.accentury.backend.common.ApiException;
 import app.accentury.backend.common.ErrorCode;
 import org.jspecify.annotations.Nullable;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -17,6 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 
 /**
  * {@code GET /admin/v0/analytics} - 익명 집계 조회 (KAN-106 AC, API 명세서 §6).
@@ -78,7 +78,7 @@ class AnalyticsController {
             throw new IllegalStateException("accentury.analytics.admin-token이 비어 있다");
         }
         if (token.length() < MIN_TOKEN_LENGTH) {
-            // 길이만 알리고 값은 알리지 않는다 - 기동 로그도 로그다
+            // 길이만 알리고 값은 알리지 않는다 - 기동 로그도 로그다.
             throw new IllegalStateException("accentury.analytics.admin-token이 너무 짧다: "
                     + token.length() + "자 (최소 " + MIN_TOKEN_LENGTH + "자, 무작위 발급 권장)");
         }
@@ -88,8 +88,12 @@ class AnalyticsController {
     /**
      * 일자와 버전별 카운터, 그리고 기간 합산을 반환한다.
      * <p>
-     * 200 조회 성공 / 400 역전되거나 너무 긴 기간({@code VALIDATION_FAILED}) /
+     * 200 조회 성공 / 400 형식 오류나 역전되거나 너무 긴 기간({@code VALIDATION_FAILED}) /
      * 401 토큰 누락이나 불일치({@code ADMIN_UNAUTHORIZED}).
+     * <p>
+     * 일자를 {@code String}으로 받는 것은 인증이 첫 관문이어야 해서다 (2026-08-17 리뷰) -
+     * {@code LocalDate}로 받으면 바인딩이 {@link #authorize}보다 먼저 실행되어, 토큰 없는
+     * 요청이 날짜 형식 오류에 401 대신 400을 받아 미인증 호출자에게 입력 검증 피드백이 샌다.
      *
      * @param from  시작 일자 (포함, {@code yyyy-MM-dd}). 생략하면 {@code to}와 같은 날
      * @param to    종료 일자 (포함). 생략하면 오늘
@@ -97,18 +101,27 @@ class AnalyticsController {
      */
     @GetMapping
     ResponseEntity<AnalyticsResponse> query(
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
-            @Nullable LocalDate from,
-
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
-            @Nullable LocalDate to,
-
+            @RequestParam(required = false) @Nullable String from,
+            @RequestParam(required = false) @Nullable String to,
             @RequestHeader(value = TOKEN_HEADER, required = false) @Nullable String token) {
         authorize(token);
         return ResponseEntity.ok()
                 // 내부 지표라도 중간 캐시에 남기지 않는다. - 오류 응답과 같은 방침 (§2.3)
                 .cacheControl(CacheControl.noStore())
-                .body(service.query(from, to));
+                .body(service.query(parseDate("from", from), parseDate("to", to)));
+    }
+
+    /** {@code yyyy-MM-dd} 파싱 - 빈 값은 생략과 같고, 형식 오류는 파라미터 이름을 담아 400이다. */
+    private static @Nullable LocalDate parseDate(String name, @Nullable String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return LocalDate.parse(value);
+        } catch (DateTimeParseException e) {
+            throw new ApiException(ErrorCode.VALIDATION_FAILED,
+                    name + " 일자 형식이 올바르지 않습니다 (yyyy-MM-dd).");
+        }
     }
 
     /**

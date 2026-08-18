@@ -23,4 +23,13 @@ public interface TestResultRepository extends JpaRepository<TestResult, String> 
     @Modifying
     @Query("delete from TestResult r where r.expiresAt < :cutoff")
     long deleteByExpiresAtBefore(@Param("cutoff") Instant cutoff);
+
+    /**
+     * 재응시 시 이전 세션의 결과 즉시 폐기 (KAN-107) - 24시간 만료를 기다리지 않는 유일한
+     * 결과 삭제 경로다. 호출부에 트랜잭션 필요. 잠금 규칙과 안전 논증은
+     * {@link app.accentury.backend.session.SessionService}의 purgeForRetake javadoc이 정본이다.
+     */
+    @Modifying
+    @Query("delete from TestResult r where r.sessionId = :sessionId")
+    long deleteBySessionId(@Param("sessionId") String sessionId);
 }

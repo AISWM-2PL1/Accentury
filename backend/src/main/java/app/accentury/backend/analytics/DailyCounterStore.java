@@ -39,12 +39,7 @@ class DailyCounterStore implements CounterStore {
     @Override
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean increment(String id, CounterDelta delta) {
-        return repository.increment(id,
-                delta.sessionsStarted(), delta.sessionsCompleted(),
-                delta.tierOutsider(), delta.tierTraveler(), delta.tierWannabe(),
-                delta.tierHonorary(), delta.tierNative(),
-                delta.intonationSum(), delta.vocabularySum(), delta.overallSum(),
-                delta.scoredCount()) > 0;
+        return repository.increment(id, delta) > 0;
     }
 
     /**

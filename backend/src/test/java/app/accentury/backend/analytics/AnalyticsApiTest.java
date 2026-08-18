@@ -10,6 +10,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDate;
@@ -162,9 +163,17 @@ class AnalyticsApiTest extends IntegrationTest {
 
     @Test
     void 기간을_생략하면_오늘_하루다() throws Exception {
-        String today = LocalDate.now(properties.analytics().zone()).toString();
-        mockMvc.perform(get(URL).header(AnalyticsController.TOKEN_HEADER, TOKEN))
-                .andExpect(status().isOk())
+        // 고정 시계가 없어 서버는 요청 시각의 KST 오늘을 쓴다 - 자정을 사이에 두면 여기서
+        // 잡은 오늘과 어긋나 헛되이 실패하므로, 하루가 바뀌지 않은 실행만 유효로 치고
+        // 그때만 다시 부른다 (2026-08-17 리뷰).
+        String today;
+        ResultActions call;
+        do {
+            today = LocalDate.now(properties.analytics().zone()).toString();
+            call = mockMvc.perform(get(URL).header(AnalyticsController.TOKEN_HEADER, TOKEN));
+        } while (!today.equals(LocalDate.now(properties.analytics().zone()).toString()));
+
+        call.andExpect(status().isOk())
                 .andExpect(jsonPath("$.from").value(today))
                 .andExpect(jsonPath("$.to").value(today));
     }
@@ -185,11 +194,17 @@ class AnalyticsApiTest extends IntegrationTest {
     void from만_지정하면_오늘까지다() throws Exception {
         // "이 날부터"라는 자연스러운 질의다 - 하루로 좁히면 쓸모가 준다.
         // 시작일을 오늘 기준으로 잡는 것은 고정 과거 일자를 쓰면 언젠가 조회 기간
-        // 상한(366일)을 넘어 이 테스트가 400으로 깨지기 때문이다
-        LocalDate today = LocalDate.now(properties.analytics().zone());
-        mockMvc.perform(get(URL).header(AnalyticsController.TOKEN_HEADER, TOKEN)
-                        .param("from", today.minusDays(3).toString()))
-                .andExpect(status().isOk())
+        // 상한(366일)을 넘어 이 테스트가 400으로 깨지기 때문이다.
+        // do-while은 KST 자정 가드다 - 기간을_생략하면_오늘_하루다와 같은 이유.
+        LocalDate today;
+        ResultActions call;
+        do {
+            today = LocalDate.now(properties.analytics().zone());
+            call = mockMvc.perform(get(URL).header(AnalyticsController.TOKEN_HEADER, TOKEN)
+                    .param("from", today.minusDays(3).toString()));
+        } while (!today.equals(LocalDate.now(properties.analytics().zone())));
+
+        call.andExpect(status().isOk())
                 .andExpect(jsonPath("$.from").value(today.minusDays(3).toString()))
                 .andExpect(jsonPath("$.to").value(today.toString()));
     }
@@ -197,12 +212,19 @@ class AnalyticsApiTest extends IntegrationTest {
     @Test
     void 실제_응시가_조회에_그대로_나타난다() throws Exception {
         // 증가 경로와 조회 경로를 한 번에 잇는다 - 둘을 따로만 검증하면 키가 어긋나도
-        // 양쪽 테스트가 모두 통과한다 (Fable 리뷰 P3). seed는 과거 일자라 오늘 행은 비어 있다
-        mockMvc.perform(post("/v0/sessions").contentType(MediaType.APPLICATION_JSON).content("{}"))
-                .andExpect(status().isCreated());
+        // 양쪽 테스트가 모두 통과한다 (Fable 리뷰 P3). seed는 과거 일자라 오늘 행은 비어 있다.
+        // do-while은 KST 자정 가드다 - 증가와 조회 사이에 하루가 바뀌면 서로 다른 날짜
+        // 행을 보게 되므로, 하루가 바뀌지 않은 실행만 유효로 친다 (2026-08-17 리뷰).
+        LocalDate day;
+        ResultActions call;
+        do {
+            day = LocalDate.now(properties.analytics().zone());
+            mockMvc.perform(post("/v0/sessions").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                    .andExpect(status().isCreated());
+            call = mockMvc.perform(get(URL).header(AnalyticsController.TOKEN_HEADER, TOKEN));
+        } while (!day.equals(LocalDate.now(properties.analytics().zone())));
 
-        mockMvc.perform(get(URL).header(AnalyticsController.TOKEN_HEADER, TOKEN))
-                .andExpect(status().isOk())
+        call.andExpect(status().isOk())
                 .andExpect(jsonPath("$.rows.length()").value(1))
                 .andExpect(jsonPath("$.rows[0].testVersion").value(properties.testVersion()))
                 .andExpect(jsonPath("$.rows[0].scoreVersion").value(properties.scoreVersion()))
@@ -231,6 +253,16 @@ class AnalyticsApiTest extends IntegrationTest {
         mockMvc.perform(get(URL).header(AnalyticsController.TOKEN_HEADER, TOKEN).param("from", "어제"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
+    @Test
+    void 토큰이_없으면_날짜_형식_오류보다_인증이_먼저다() throws Exception {
+        // 인증이 첫 관문이다 (2026-08-17 리뷰) - LocalDate 파라미터로 받으면 바인딩이
+        // authorize()보다 먼저 돌아 미인증 호출자가 입력 검증 피드백(400)을 받는다.
+        // 컨트롤러가 날짜를 String으로 받아 인증 뒤에 파싱하는 이유를 여기서 고정한다.
+        mockMvc.perform(get(URL).param("from", "어제"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("ADMIN_UNAUTHORIZED"));
     }
 
     // === 조립 ===

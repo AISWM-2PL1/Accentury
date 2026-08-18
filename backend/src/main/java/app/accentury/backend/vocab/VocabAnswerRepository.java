@@ -27,4 +27,13 @@ public interface VocabAnswerRepository extends JpaRepository<VocabAnswer, String
     @Modifying
     @Query("delete from VocabAnswer a where a.createdAt < :cutoff")
     long deleteByCreatedAtBefore(@Param("cutoff") Instant cutoff);
+
+    /**
+     * 재응시 시 이전 세션의 답안 즉시 폐기 (KAN-107). 호출부에 트랜잭션 필요.
+     * 잠금 규칙과 안전 논증은 {@link app.accentury.backend.session.SessionService}의
+     * purgeForRetake javadoc이 정본이다.
+     */
+    @Modifying
+    @Query("delete from VocabAnswer a where a.sessionId = :sessionId")
+    long deleteBySessionId(@Param("sessionId") String sessionId);
 }

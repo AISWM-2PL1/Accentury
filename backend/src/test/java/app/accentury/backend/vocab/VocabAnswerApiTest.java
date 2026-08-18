@@ -98,10 +98,8 @@ class VocabAnswerApiTest extends IntegrationTest {
                 AnalysisJobStatus.PROCESSING, now));
         analysisJobRepository.save(new AnalysisJob("a_test-2", session.id(), "v1", 2, "k2",
                 AnalysisJobStatus.PROCESSING, now));
-        AnalysisJob failedOnly = new AnalysisJob("a_test-3", session.id(), "v2", 1, "k3",
-                AnalysisJobStatus.PROCESSING, now);
-        failedOnly.markRetryableFailed("AUDIO_TOO_QUIET");
-        analysisJobRepository.save(failedOnly);
+        analysisJobRepository.save(new AnalysisJob("a_test-3", session.id(), "v2", 1, "k3",
+                AnalysisJobStatus.RETRYABLE_FAILED, now));
 
         mockMvc.perform(answer(session, "w1", "with-voice", body("w1a")))
                 .andExpect(status().isOk())

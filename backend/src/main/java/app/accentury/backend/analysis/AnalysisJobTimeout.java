@@ -6,7 +6,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.concurrent.TimeUnit;
@@ -44,8 +43,11 @@ public class AnalysisJobTimeout {
     }
 
     @Scheduled(initialDelay = 30, fixedDelay = 30, timeUnit = TimeUnit.SECONDS)
-    @Transactional
     public void failStuckJobs() {
+        // 두 정리는 서로 독립이라 한 트랜잭션으로 묶을 이유가 없고, 묶으면 위험하다.
+        // (KAN-107 리뷰 P2) - 첫 벌크 UPDATE의 행 잠금을 쥔 채 두 번째 문장을 실행하면,
+        // 재응시 폐기의 세션 단위 벌크 DELETE(잠금 획득 순서가 다른 문장)와 순환 대기가
+        // 될 수 있다. 문장마다 자기 트랜잭션으로 끊는다 - 잠금은 문장이 끝나면 풀린다.
         Instant now = Instant.now();
         int stuck = repository.failStartedBefore(
                 now.minus(properties.analysis().processingTimeout()),

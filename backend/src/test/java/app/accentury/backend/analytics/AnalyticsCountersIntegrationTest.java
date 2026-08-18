@@ -1,9 +1,9 @@
 package app.accentury.backend.analytics;
 
 import app.accentury.backend.IntegrationTest;
-import app.accentury.backend.analysis.AnalysisJob;
+import app.accentury.backend.SessionTestFlow;
+import app.accentury.backend.SessionTestFlow.SessionHandle;
 import app.accentury.backend.analysis.AnalysisJobRepository;
-import app.accentury.backend.analysis.AnalysisJobStatus;
 import app.accentury.backend.analysis.AnalysisJobTransitions;
 import app.accentury.backend.common.AccenturyProperties;
 import app.accentury.backend.result.TestResultRepository;
@@ -12,15 +12,13 @@ import app.accentury.backend.session.SessionService;
 import app.accentury.backend.session.TestSessionRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.metamodel.Attribute;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.support.TransactionTemplate;
-import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
@@ -40,9 +38,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static app.accentury.backend.SessionTestFlow.CORRECT_CHOICES;
+import static app.accentury.backend.SessionTestFlow.completeUrl;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
@@ -54,10 +53,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 @AutoConfigureMockMvc
 class AnalyticsCountersIntegrationTest extends IntegrationTest {
-
-    /** seed 정본의 어휘 정답표 - 전부 이대로 제출하면 단어 점수 100이다 */
-    private static final Map<String, String> CORRECT_CHOICES =
-            Map.of("w1", "w1a", "w2", "w2b", "w3", "w3a", "w4", "w4b", "w5", "w5a");
 
     @Autowired
     private MockMvc mockMvc;
@@ -101,13 +96,20 @@ class AnalyticsCountersIntegrationTest extends IntegrationTest {
     @Autowired
     private TransactionTemplate transactionTemplate;
 
+    private SessionTestFlow flow;
+
+    @BeforeEach
+    void setUpFlow() {
+        flow = new SessionTestFlow(mockMvc, objectMapper, analysisJobRepository, transitions);
+    }
+
     // === AC - 세션 생성과 결과 생성 시 각각 카운터가 증가한다 ===
 
     @Test
     void 세션_생성은_응시_시도를_1_올린다() throws Exception {
         Snapshot before = snapshot();
 
-        createSession();
+        flow.createSession();
 
         Snapshot after = snapshot();
         assertEquals(1, after.sessionsStarted() - before.sessionsStarted());
@@ -117,13 +119,13 @@ class AnalyticsCountersIntegrationTest extends IntegrationTest {
 
     @Test
     void 결과_확정은_완주와_등급과_점수를_함께_올린다() throws Exception {
-        SessionHandle session = createSession();
+        SessionHandle session = flow.createSession();
         Snapshot before = snapshot();
         // 억양 75(원점수 평균), 단어 60(3/5 정답), 종합 (75x2+60)/3 = 70 → 명예주민
-        answerVocab(session, Map.of("w1", "w1a", "w2", "w2b", "w3", "w3a", "w4", "w4a", "w5", "w5b"));
-        completeVoice(session, Map.of("v1", 60, "v2", 70, "v3", 80, "v4", 90, "v5", 75));
+        flow.answerVocab(session, Map.of("w1", "w1a", "w2", "w2b", "w3", "w3a", "w4", "w4a", "w5", "w5b"));
+        flow.completeVoice(session, Map.of("v1", 60, "v2", 70, "v3", 80, "v4", 90, "v5", 75));
 
-        complete(session, "counted");
+        flow.complete(session, "counted");
 
         Snapshot after = snapshot();
         assertEquals(1, after.sessionsCompleted() - before.sessionsCompleted());
@@ -138,14 +140,14 @@ class AnalyticsCountersIntegrationTest extends IntegrationTest {
     @Test
     void 완료_재시도는_완주를_두_번_세지_않는다() throws Exception {
         // 완료는 자연 멱등이다 (§3.6 - 재시도는 READY 재확인) - 카운터도 같아야 한다
-        SessionHandle session = createSession();
-        answerVocab(session, CORRECT_CHOICES);
-        completeVoice(session, Map.of("v1", 75, "v2", 75, "v3", 75, "v4", 75, "v5", 75));
-        complete(session, "first");
+        SessionHandle session = flow.createSession();
+        flow.answerVocab(session, CORRECT_CHOICES);
+        flow.completeVoice(session);
+        flow.complete(session, "first");
         Snapshot before = snapshot();
 
-        complete(session, "second");
-        complete(session, "third");
+        flow.complete(session, "second");
+        flow.complete(session, "third");
 
         Snapshot after = snapshot();
         assertEquals(0, after.sessionsCompleted() - before.sessionsCompleted());
@@ -154,9 +156,9 @@ class AnalyticsCountersIntegrationTest extends IntegrationTest {
 
     @Test
     void 완주하지_못한_세션은_완주로_세지_않는다() throws Exception {
-        SessionHandle session = createSession();
+        SessionHandle session = flow.createSession();
         Snapshot before = snapshot();
-        answerVocab(session, CORRECT_CHOICES); // 음성 5문항 미제출
+        flow.answerVocab(session, CORRECT_CHOICES); // 음성 5문항 미제출
 
         mockMvc.perform(post(completeUrl(session))
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + session.token())
@@ -258,7 +260,7 @@ class AnalyticsCountersIntegrationTest extends IntegrationTest {
 
     @Test
     void 식별자는_세션과_무관한_일자와_버전_조합이다() throws Exception {
-        SessionHandle session = createSession();
+        SessionHandle session = flow.createSession();
 
         DailyCounter row = countersRepository.findById(todayId()).orElseThrow();
         assertEquals(todayId(), row.id());
@@ -270,10 +272,10 @@ class AnalyticsCountersIntegrationTest extends IntegrationTest {
 
     @Test
     void 결과와_세션이_파기돼도_카운터는_남는다() throws Exception {
-        SessionHandle session = createSession();
-        answerVocab(session, CORRECT_CHOICES);
-        completeVoice(session, Map.of("v1", 75, "v2", 75, "v3", 75, "v4", 75, "v5", 75));
-        complete(session, "retention");
+        SessionHandle session = flow.createSession();
+        flow.answerVocab(session, CORRECT_CHOICES);
+        flow.completeVoice(session);
+        flow.complete(session, "retention");
         Snapshot afterComplete = snapshot();
         assertNotNull(resultRepository.findBySessionId(session.id()).orElseThrow());
 
@@ -288,53 +290,6 @@ class AnalyticsCountersIntegrationTest extends IntegrationTest {
     }
 
     // === 조립 ===
-
-    private record SessionHandle(String id, String token) {
-    }
-
-    private SessionHandle createSession() throws Exception {
-        MvcResult result = mockMvc.perform(post("/v0/sessions")
-                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
-                .andExpect(status().isCreated())
-                .andReturn();
-        JsonNode json = objectMapper.readTree(result.getResponse().getContentAsString());
-        return new SessionHandle(json.get("sessionId").asString(), json.get("sessionToken").asString());
-    }
-
-    private static String completeUrl(SessionHandle session) {
-        return "/v0/sessions/" + session.id() + "/complete";
-    }
-
-    private void complete(SessionHandle session, String idempotencyKey) throws Exception {
-        mockMvc.perform(post(completeUrl(session))
-                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + session.token())
-                        .header("Idempotency-Key", idempotencyKey))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("READY"));
-    }
-
-    private void answerVocab(SessionHandle session, Map<String, String> choiceByItem) throws Exception {
-        for (Map.Entry<String, String> entry : choiceByItem.entrySet()) {
-            mockMvc.perform(post("/v0/sessions/" + session.id() + "/vocab-items/"
-                            + entry.getKey() + "/answer")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content("{\"choiceId\": \"" + entry.getValue() + "\"}")
-                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + session.token())
-                            .header("Idempotency-Key", "vocab-" + entry.getKey()))
-                    .andExpect(status().isOk());
-        }
-    }
-
-    /** 문항마다 시도 1건을 심고 주어진 원점수로 성공 종결한다 */
-    private void completeVoice(SessionHandle session, Map<String, Integer> scoreByItem) {
-        Instant base = Instant.now();
-        for (Map.Entry<String, Integer> entry : scoreByItem.entrySet()) {
-            AnalysisJob job = analysisJobRepository.save(new AnalysisJob(
-                    "a_" + UUID.randomUUID(), session.id(), entry.getKey(),
-                    1, "k-" + UUID.randomUUID(), AnalysisJobStatus.PROCESSING, base));
-            transitions.complete(job.id(), entry.getValue(), "OK", "stub-0.1", "sv-0.3");
-        }
-    }
 
     /** 세션과 결과의 수명을 과거로 되돌려 24시간 경과를 흉내낸다 */
     private void expire(String sessionId) {

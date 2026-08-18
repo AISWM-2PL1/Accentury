@@ -1,22 +1,28 @@
 package app.accentury.backend.session;
 
+import app.accentury.backend.analysis.AnalysisJobRepository;
 import app.accentury.backend.analytics.AnalyticsCounters;
 import app.accentury.backend.common.AccenturyProperties;
 import app.accentury.backend.common.ApiException;
 import app.accentury.backend.common.ErrorCode;
 import app.accentury.backend.common.RateLimits;
+import app.accentury.backend.result.TestResultRepository;
+import app.accentury.backend.vocab.VocabAnswerRepository;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 익명 세션의 생성과 인증, 만료 정리 (KAN-9).
+ * 익명 세션의 생성과 인증, 만료 정리, 재응시 즉시 폐기 (KAN-9, KAN-107).
  * <p>
  * 세션 저장소는 PostgreSQL이다 (2026-07-30 확정, §2.1) - {@code expires_at} 컬럼 +
  * 요청 시 만료 검사 + 주기 삭제로 TTL을 구현한다. Redis 전환은 BE 다중 인스턴스
@@ -28,16 +34,34 @@ public class SessionService {
     private static final Logger log = LoggerFactory.getLogger(SessionService.class);
 
     private final TestSessionRepository repository;
+    private final VocabAnswerRepository vocabAnswerRepository;
+    private final AnalysisJobRepository analysisJobRepository;
+    private final TestResultRepository testResultRepository;
     private final AccenturyProperties properties;
     private final RateLimits rateLimits;
     private final AnalyticsCounters counters;
+    private final TransactionTemplate transactionTemplate;
 
-    public SessionService(TestSessionRepository repository, AccenturyProperties properties,
-                          RateLimits rateLimits, AnalyticsCounters counters) {
+    public SessionService(TestSessionRepository repository,
+                          VocabAnswerRepository vocabAnswerRepository,
+                          AnalysisJobRepository analysisJobRepository,
+                          TestResultRepository testResultRepository,
+                          AccenturyProperties properties,
+                          RateLimits rateLimits, AnalyticsCounters counters,
+                          TransactionTemplate transactionTemplate) {
         this.repository = repository;
+        this.vocabAnswerRepository = vocabAnswerRepository;
+        this.analysisJobRepository = analysisJobRepository;
+        this.testResultRepository = testResultRepository;
         this.properties = properties;
         this.rateLimits = rateLimits;
         this.counters = counters;
+        // 폐기+생성은 자신이 커밋 지점이어야 한다 (REQUIRES_NEW) - 바깥 트랜잭션에 합류하면
+        // "카운터는 커밋 뒤" 불변식이 깨져, 바깥이 롤백해도 존재한 적 없는 세션이 집계에
+        // 남는다 (2026-08-17 리뷰). 공용 템플릿 빈의 전파는 바꾸지 않도록 사본을 쓴다.
+        this.transactionTemplate = new TransactionTemplate(
+                Objects.requireNonNull(transactionTemplate.getTransactionManager()));
+        this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     /**
@@ -47,41 +71,138 @@ public class SessionService {
      * 호출 한 번마다 세션 행과 토큰이 생기므로, 막지 않으면 반복 호출만으로 저장소를
      * 채울 수 있다. 검사는 저장보다 먼저다.
      * <p>
+     * 재응시(다시 테스트하기)는 이전 세션의 토큰을 {@code Authorization: Bearer}로 함께
+     * 보낸다 (KAN-107, FR-TR-04, §3.1) - 이전 세션과 하위 데이터 전부를 즉시 폐기한 뒤 새
+     * 세션을 만들고, 폐기와 생성은 한 트랜잭션이다. 삭제만 커밋되고 생성이 실패하면
+     * 사용자에게 이전 결과도 새 세션도 없는 상태가 남기 때문이다 (티켓 요구 3).
+     * 유효하지 않은 토큰은 조용히 무시한다 - {@link #retakeTokenHash} 참고.
+     * <p>
      * 성공한 호출은 익명 집계의 응시 시도 1건이 된다 (KAN-106, FR-AN-10) - 세션과 무관한
-     * 숫자만 늘어나고, 그 증가가 실패해도 세션 생성은 성공한다.
+     * 숫자만 늘어나고, 그 증가가 실패해도 세션 생성은 성공한다. 재응시 폐기가 있어도
+     * 카운터는 되돌리지 않는다 - 이전 시도와 완주는 실제로 발생한 사실이다 (KAN-107 AC).
      *
-     * @param clientIp 요청 제한의 기준 IP - {@link app.accentury.backend.common.ClientIps}가
-     *                 신뢰 프록시 규칙으로 정한 값
+     * @param clientIp            요청 제한의 기준 IP - {@link app.accentury.backend.common.ClientIps}가
+     *                            신뢰 프록시 규칙으로 정한 값
+     * @param authorizationHeader 재응시일 때만 실려 오는 이전 세션의 {@code Authorization} 헤더 -
+     *                            이 엔드포인트는 인증 불필요이므로(§2.1) 없으면 최초 응시다
      */
-    public SessionResponse create(@Nullable CreateSessionRequest request, String clientIp) {
+    public SessionResponse create(@Nullable CreateSessionRequest request, String clientIp,
+                                  @Nullable String authorizationHeader) {
         rateLimits.check(RateLimits.Scope.SESSION_CREATE, clientIp);
 
+        String previousTokenHash = retakeTokenHash(authorizationHeader);
         Instant now = Instant.now();
         Instant expiresAt = now.plus(properties.session().ttl());
         String sessionId = SessionTokens.newSessionId();
         String token = SessionTokens.newToken();
 
         CreateSessionRequest.Client client = request != null ? request.client() : null;
-        repository.save(new TestSession(
-                sessionId,
-                SessionTokens.hash(token),
-                properties.testVersion(),
-                properties.scoreVersion(),
-                client != null && client.platform() != null ? client.platform().name() : null,
-                client != null ? client.appVersion() : null,
-                request != null ? request.campaignToken() : null,
-                now,
-                expiresAt));
+        @Nullable PurgeSummary purged = transactionTemplate.execute(tx -> {
+            PurgeSummary summary = null;
+            if (previousTokenHash != null) {
+                // 잠금 조회가 빈 것은 모르는 토큰이거나, 동시 재응시(더블탭)에 진 것이거나,
+                // 주기 삭제가 세션 행을 이미 지운 뒤다 - 어느 쪽이든 조용히 새 세션만 만든다
+                // (마지막 경우의 잔존 데이터는 purgeForRetake javadoc의 수용 한계 참고).
+                // 더블탭의 서버 측 방지는 하지 않는다 (2026-08-17 확정 - 피해가 고아 세션
+                // 1개와 카운터 1건이라 클라이언트 버튼 방지로 충분하다). 만료됐지만 주기
+                // 삭제 전인 세션은 여기서 지운다 - FR-TR-04의 목적이 즉시 파기이므로
+                // 만료 여부로 가르지 않는다.
+                summary = repository.lockByTokenHash(previousTokenHash)
+                        .map(this::purgeForRetake)
+                        .orElse(null);
+            }
+            repository.save(new TestSession(
+                    sessionId,
+                    SessionTokens.hash(token),
+                    properties.testVersion(),
+                    properties.scoreVersion(),
+                    client != null && client.platform() != null ? client.platform().name() : null,
+                    client != null ? client.appVersion() : null,
+                    request != null ? request.campaignToken() : null,
+                    now,
+                    expiresAt));
+            return summary;
+        });
+
+        if (purged != null) {
+            // 폐기 로그는 커밋이 확정된 뒤에만 남긴다 - 롤백됐는데 파기했다는 거짓 기록이
+            // 남으면 안 된다 (로그와 카운터는 커밋 뒤라는 규칙, CompletionService와 같다).
+            log.info("재응시로 이전 세션 즉시 폐기 sessionId={} answers={} attempts={} results={}",
+                    purged.sessionId(), purged.answers(), purged.attempts(), purged.results());
+        }
 
         // 토큰은 로그에 남기지 않는다 (§2.6, NFR-SC-07)
         log.info("세션 생성 sessionId={} platform={} testVersion={}",
                 sessionId, client != null ? client.platform() : null, properties.testVersion());
 
-        // 응시 시도 1건 (KAN-106) - save()가 자기 트랜잭션으로 이미 커밋된 뒤다.
-        // 실패는 카운터 쪽에서 삼킨다 - 통계가 세션 생성을 막으면 안 된다 (FR-AN-10)
+        // 응시 시도 1건 (KAN-106) - 폐기+생성 트랜잭션이 커밋된 뒤다.
+        // 실패는 카운터 쪽에서 삼킨다 - 통계가 세션 생성을 막으면 안 된다 (FR-AN-10).
         counters.recordSessionStarted(now, properties.testVersion(), properties.scoreVersion());
 
         return new SessionResponse(sessionId, token, properties.testVersion(), properties.scoreVersion(), expiresAt);
+    }
+
+    /**
+     * 이전 세션과 하위 데이터 전부를 즉시 폐기한다 (KAN-107, FR-TR-04, §5.5).
+     * <p>
+     * 삭제 대상은 어휘 답안(KAN-15), 음성 시도와 분석 상태 및 문항별 점수 누적분(KAN-24 -
+     * {@code analysis_job} 행이 셋을 겸한다), 최종 결과(KAN-25), 그리고 세션 행이다.
+     * 멱등 키는 별도 테이블이 아니라 답안/시도 행의 컬럼이므로 함께 사라진다 (§2.2).
+     * FK CASCADE 대신 명시적 벌크 삭제다 (2026-08-17 확정 - 선행 스키마가 FK 없이
+     * 평문 {@code session_id} 컬럼으로 만들어졌고, 보존 정리 잡도 테이블별로 돈다).
+     * <p>
+     * 세션 행 잠금({@link TestSessionRepository#lockByTokenHash}) 아래에서만 호출된다 -
+     * 제출 쓰기(KAN-15/23)와 완료 전이(KAN-16)가 같은 잠금으로 직렬화되므로, 폐기와
+     * 경합한 제출은 잠금 해제 후 세션이 없어 401로 끝나고 고아 행을 남기지 못한다.
+     * PROCESSING 시도의 행이 지워져도 늦게 도착한 AI 결과는 조건부 UPDATE 0행으로
+     * 버려진다 ({@link app.accentury.backend.analysis.AnalysisJobTransitions}).
+     * <p>
+     * 새 세션에는 이전 세션을 참조하는 필드를 두지 않는다 (KAN-9 AC - 엔티티 필드
+     * 허용 목록 테스트가 지킨다). 폐기 로그는 커밋이 확정된 뒤 {@link #create}가 남긴다 -
+     * 로그의 세션 ID는 운영 진단용 단명 기록이고, 영속 저장소에는 연결이 남지 않는다.
+     * 세션 하위 테이블을 새로 만들면 여기 삭제 한 줄도 함께 추가해야 한다 - 훅
+     * 인터페이스로 의존을 역전하라는 지적(2026-08-17 리뷰)은 기각한다: 프로토타입
+     * 범위에서 하위 테이블은 티켓이 나열한 이 셋으로 닫혀 있다.
+     * <p>
+     * 남는 한계 셋은 수용한다 (2026-08-17 리뷰 기각 근거):
+     * <ul>
+     *   <li>타이밍 부채널 - 유효한 토큰은 삭제 4문장, 모르는 토큰은 SELECT 1번이라 처리
+     *       시간이 갈라진다. 토큰이 256비트 난수라 열거가 불가능하고, 폐기라는 쓰기 자체를
+     *       없앨 수 없어 더미 쓰기 같은 완화는 프로토타입 과잉이다.</li>
+     *   <li>벌크 문장끼리의 드문 데드락 - 정리 잡의 벌크 문장과 잠금 획득 순서가 어긋날
+     *       수 있다. 다문장 잠금 보유는 스위퍼 쪽에서 끊었고({@code AnalysisJobTimeout}),
+     *       남는 단문장끼리의 경우는 DB가 한쪽을 끊으므로 재응시 재시도로 회복된다.</li>
+     *   <li>주기 삭제 뒤의 재응시 잔존 - {@link #purgeExpired}가 세션 행을 이미 지운
+     *       뒤의 재응시는 토큰으로 세션을 못 찾아 이 폐기가 조용히 건너뛰어지고, 미완주
+     *       세션의 답안과 시도 행이 테이블별 24시간 보존 정리까지 남는다. 잔존 행에는
+     *       토큰 해시도 IP도 없어 세션과 다시 연결할 수 없고(§5.5의 보존 한도 안),
+     *       완주 세션은 만료가 완료+24시간으로 연장되어({@link TestSession#markCompleted})
+     *       이 창이 사실상 닫힌다. 즉시성을 더 강화하려면 purgeExpired가 자식 테이블도
+     *       함께 지우도록 바꾸는 것이 다음 수다.</li>
+     * </ul>
+     */
+    private PurgeSummary purgeForRetake(TestSession previous) {
+        long answers = vocabAnswerRepository.deleteBySessionId(previous.id());
+        long attempts = analysisJobRepository.deleteBySessionId(previous.id());
+        long results = testResultRepository.deleteBySessionId(previous.id());
+        repository.delete(previous);
+        return new PurgeSummary(previous.id(), answers, attempts, results);
+    }
+
+    /** 재응시 폐기의 삭제 건수 - 로그는 커밋 뒤에만 남기므로 트랜잭션 밖으로 들고 나온다. */
+    private record PurgeSummary(String sessionId, long answers, long attempts, long results) {}
+
+    /**
+     * 재응시 요청의 {@code Authorization} 헤더에서 이전 토큰의 해시를 꺼낸다 (KAN-107).
+     * <p>
+     * 헤더 부재, 형식 오류, 빈 토큰 전부 401이 아니라 조용한 무시(null)다 - 어떤 입력도
+     * 201 외의 응답으로 갈라지면 이 엔드포인트가 토큰 존재 여부를 알려주는 오라클이 된다
+     * (티켓 요구 4). 모르는 토큰과 폐기된 토큰, 만료 후 삭제된 토큰이 전부 같은 응답을
+     * 받아야 최초 응시와 재응시가 구분되지 않는다.
+     */
+    private static @Nullable String retakeTokenHash(@Nullable String authorizationHeader) {
+        String token = bearerTokenOrNull(authorizationHeader);
+        return token == null ? null : SessionTokens.hash(token);
     }
 
     /**
@@ -127,11 +248,26 @@ public class SessionService {
 
     /** 헤더에서 Bearer 토큰을 꺼낸다. 부재나 형식 오류는 401 - 미인증과 만료를 구분해주지 않는다 */
     private static String bearerToken(@Nullable String authorizationHeader) {
-        if (authorizationHeader == null
-                || !authorizationHeader.regionMatches(true, 0, "Bearer ", 0, 7)) {
+        String token = bearerTokenOrNull(authorizationHeader);
+        if (token == null) {
             throw new ApiException(ErrorCode.SESSION_EXPIRED);
         }
-        return authorizationHeader.substring(7).strip();
+        return token;
+    }
+
+    /**
+     * Bearer 헤더 파싱의 유일한 정의 - 인증({@link #bearerToken})과 재응시
+     * ({@link #retakeTokenHash})가 같은 파서를 쓴다 (2026-08-17 리뷰). 규칙이 한쪽만
+     * 바뀌면 인증은 받는 헤더를 재응시가 조용히 놓쳐 폐기가 무증상으로 멈춘다.
+     * 부재, 형식 오류, 빈 토큰은 null - 실패 응답은 호출부가 정한다.
+     */
+    private static @Nullable String bearerTokenOrNull(@Nullable String authorizationHeader) {
+        if (authorizationHeader == null
+                || !authorizationHeader.regionMatches(true, 0, "Bearer ", 0, 7)) {
+            return null;
+        }
+        String token = authorizationHeader.substring(7).strip();
+        return token.isEmpty() ? null : token;
     }
 
     /**
