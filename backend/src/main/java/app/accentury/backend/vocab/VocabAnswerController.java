@@ -63,7 +63,7 @@ public class VocabAnswerController {
                                @Nullable String authorization,
 
                                // 계약상 필수다. required = false인 것은 누락을 Spring이 아니라
-                               // 서비스가 잡아 공통 오류 봉투로 응답하기 위한 것이다
+                               // 서비스가 잡아 공통 오류 봉투로 응답하기 위한 것이다.
                                @RequestHeader(value = "Idempotency-Key", required = false)
                                @Nullable String idempotencyKey,
 

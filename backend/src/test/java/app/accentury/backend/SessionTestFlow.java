@@ -30,11 +30,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 public final class SessionTestFlow {
 
-    /** seed 정본의 어휘 정답표 - 전부 이대로 제출하면 단어 점수 100이다 */
+    /** seed 정본의 어휘 정답표 - 전부 이대로 제출하면 단어 점수 100이다. */
     public static final Map<String, String> CORRECT_CHOICES =
             Map.of("w1", "w1a", "w2", "w2b", "w3", "w3a", "w4", "w4b", "w5", "w5a");
 
-    /** 발급된 세션의 핸들 - 경로 파라미터(id)와 Bearer 토큰만 나른다 */
+    /** 발급된 세션의 핸들 - 경로 파라미터(id)와 Bearer 토큰만 나른다. */
     public record SessionHandle(String id, String token) {
     }
 
@@ -88,7 +88,7 @@ public final class SessionTestFlow {
         completeVoice(session, Map.of("v1", 75, "v2", 75, "v3", 75, "v4", 75, "v5", 75));
     }
 
-    /** 문항마다 시도 1건을 심고 주어진 원점수로 성공 종결한다 */
+    /** 문항마다 시도 1건을 심고 주어진 원점수로 성공 종결한다. */
     public void completeVoice(SessionHandle session, Map<String, Integer> scoreByItem) {
         Instant base = Instant.now();
         for (Map.Entry<String, Integer> entry : scoreByItem.entrySet()) {

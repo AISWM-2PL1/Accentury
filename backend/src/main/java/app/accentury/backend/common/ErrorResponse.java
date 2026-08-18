@@ -19,11 +19,11 @@ import org.jspecify.annotations.Nullable;
  * </pre>
  *
  * @param code          오류 코드 (§2.4 네임스페이스: SESSION_* / ITEM_* / AUDIO_* / ANALYSIS_* / RESULT_* / RATE_*).
- *                      클라이언트 분기는 HTTP 상태가 아니라 이 값으로 한다
+ *                      클라이언트 분기는 HTTP 상태가 아니라 이 값으로 한다.
  * @param message       사용자에게 보여줄 수 있는 한국어 설명
  * @param retryable     같은 요청을 다시 시도하면 성공할 가능성이 있는지
  * @param retryAfterMs  재시도 가능 시각까지 남은 시간(ms). 요청 제한(429)에서만 사용, 그 외에는 null
- * @param correlationId 요청 추적 ID - 서버 로그에서 같은 요청을 찾는 키. CorrelationIdFilter가 부여한다
+ * @param correlationId 요청 추적 ID - 서버 로그에서 같은 요청을 찾는 키. CorrelationIdFilter가 부여한다.
  */
 public record ErrorResponse(
         String code,

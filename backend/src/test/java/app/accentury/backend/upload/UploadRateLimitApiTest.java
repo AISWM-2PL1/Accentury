@@ -57,14 +57,14 @@ class UploadRateLimitApiTest extends IntegrationTest {
                 .andExpect(jsonPath("$.retryable").value(true))
                 .andExpect(jsonPath("$.retryAfterMs").isNumber())
                 .andExpect(header().exists(HttpHeaders.RETRY_AFTER))
-                // 필터가 직접 쓰는 조기 429도 오류 응답 전역 캐시 금지 규칙을 따른다
+                // 필터가 직접 쓰는 조기 429도 오류 응답 전역 캐시 금지 규칙을 따른다.
                 .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"));
     }
 
     @Test
     void 조기_429에도_CORS_헤더가_붙는다() throws Exception {
         // 웹 클라이언트가 429 본문과 Retry-After를 읽으려면 필터의 조기 응답에도
-        // Access-Control-Allow-Origin이 있어야 한다 (Codex sol 리뷰 P2)
+        // Access-Control-Allow-Origin이 있어야 한다 (Codex sol 리뷰 P2).
         SessionHandle session = createSession();
         mockMvc.perform(upload(session, "cors-1", "9.9.9.4")).andExpect(status().isAccepted());
         mockMvc.perform(upload(session, "cors-2", "9.9.9.4")).andExpect(status().isAccepted());
@@ -77,7 +77,7 @@ class UploadRateLimitApiTest extends IntegrationTest {
     @Test
     void 인코딩이나_matrix_파라미터_경로로도_제한을_우회할_수_없다() throws Exception {
         // MVC는 %72ecording과 recording;x=1을 모두 recording으로 라우팅한다 -
-        // 필터도 같은 정규화로 매칭해야 한다 (Codex sol 리뷰 P1)
+        // 필터도 같은 정규화로 매칭해야 한다 (Codex sol 리뷰 P1).
         SessionHandle session = createSession();
         mockMvc.perform(upload(session, "evade-1", "9.9.9.5")).andExpect(status().isAccepted());
         mockMvc.perform(upload(session, "evade-2", "9.9.9.5")).andExpect(status().isAccepted());
@@ -128,7 +128,7 @@ class UploadRateLimitApiTest extends IntegrationTest {
 
     private RequestBuilder upload(SessionHandle session, String idempotencyKey, String clientIp,
                                   @Nullable String origin, String lastSegment) {
-        // URI.create - 문자열 템플릿은 %72 같은 사전 인코딩을 재인코딩해 raw URI 재현이 안 된다
+        // URI.create - 문자열 템플릿은 %72 같은 사전 인코딩을 재인코딩해 raw URI 재현이 안 된다.
         var builder = multipart(java.net.URI.create(
                 "/v0/sessions/" + session.id() + "/voice-items/v1/" + lastSegment))
                 .file(new MockMultipartFile("audio", "recording.wav", "audio/wav",
@@ -138,7 +138,7 @@ class UploadRateLimitApiTest extends IntegrationTest {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + session.token())
                 .header("Idempotency-Key", idempotencyKey)
                 // 첫 값은 클라이언트 위조분, 마지막 값이 프록시가 붙인 실제 IP다 -
-                // 제한이 마지막 값을 기준으로 걸리는지까지 함께 검증한다
+                // 제한이 마지막 값을 기준으로 걸리는지까지 함께 검증한다.
                 .header("X-Forwarded-For", "203.0.113.99, " + clientIp);
         if (origin != null) {
             builder = builder.header(HttpHeaders.ORIGIN, origin);

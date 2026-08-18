@@ -33,7 +33,7 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
 
     private static final Logger log = LoggerFactory.getLogger(HttpAnalysisDispatcher.class);
 
-    /** 재전송 대기의 기본 단위 - n번째 재전송 전에 n배로 기다린다. 설정 검증({@link AnalysisDispatchConfig})이 참조한다 */
+    /** 재전송 대기의 기본 단위 - n번째 재전송 전에 n배로 기다린다. 설정 검증({@link AnalysisDispatchConfig})이 참조한다. */
     static final long RETRY_BACKOFF_MS = 300;
 
     private final AiAnalysisClient client;
@@ -100,19 +100,19 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
 
     @Override
     public void dispatch(AnalysisRequest request) {
-        // 워커는 요청 스레드가 아니다 - 추적 ID(§2.2)를 여기서 붙잡아 워커 MDC로 넘긴다
+        // 워커는 요청 스레드가 아니다 - 추적 ID(§2.2)를 여기서 붙잡아 워커 MDC로 넘긴다.
         String requestScoped = MDC.get(CorrelationIdFilter.MDC_KEY);
         String correlationId = requestScoped != null ? requestScoped : "c_" + UUID.randomUUID();
         backlog.started();
         // 복귀는 finally로 - RuntimeException만 잡으면 스레드 생성 불가(OOM) 같은 Error에서
-        // 카운터가 새고, 누적 30건이면 pollAfterMs가 3000에 영구 고정된다 (Codex 리뷰)
+        // 카운터가 새고, 누적 30건이면 pollAfterMs가 3000에 영구 고정된다 (Codex 리뷰).
         boolean submitted = false;
         try {
             executor.execute(() -> run(request, correlationId));
             submitted = true;
         } finally {
             if (!submitted) {
-                // 워커가 뜨지 못했으니 버퍼를 지울 주체도 여기뿐이다 (KAN-27 소유권 계약)
+                // 워커가 뜨지 못했으니 버퍼를 지울 주체도 여기뿐이다 (KAN-27 소유권 계약).
                 request.wipeAudio();
                 backlog.finished();
             }
@@ -131,14 +131,14 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
             }
             apply(request.analysisJobId(), analyzeWithRetry(request, correlationId));
         } catch (RuntimeException e) {
-            // 종결을 놓치면 사용자는 타임아웃 스위퍼까지 대기 화면에 묶인다 - 어떤 예외도 종결로 바꾼다
+            // 종결을 놓치면 사용자는 타임아웃 스위퍼까지 대기 화면에 묶인다 - 어떤 예외도 종결로 바꾼다.
             log.error("분석 전달 워커 실패 jobId={}", request.analysisJobId(), e);
             try {
                 transitions.fail(request.analysisJobId(), AnalysisJobStatus.RETRYABLE_FAILED,
                         ErrorCode.INTERNAL_ERROR.name());
             } catch (RuntimeException failure) {
                 // 종결 저장까지 실패하면 삼키고 스위퍼에 맡긴다 - 여기서 던지면 인라인 실행기
-                // 경로에서 dispatch()의 복귀와 겹쳐 백로그가 이중 감소한다 (Codex 리뷰)
+                // 경로에서 dispatch()의 복귀와 겹쳐 백로그가 이중 감소한다 (Codex 리뷰).
                 log.error("종결 저장 실패 - 타임아웃 스위퍼가 마무리한다 jobId={}",
                         request.analysisJobId(), failure);
             }
@@ -146,18 +146,18 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
             // 이 작업이 복구 시험 자리를 물고 있었다면 놓아준다 (KAN-28). 성공이나 실패로
             // 판정이 난 경우엔 회로가 이미 자리를 비웠으므로 아무 일도 일어나지 않고, AI에
             // 닿지도 못한 경우(이미 종결된 작업, 워커에서 터진 예상 밖 예외)에만 실제로
-            // 풀린다 - 그대로 두면 trialTimeout(60초) 동안 다른 업로드가 전부 503이다
+            // 풀린다 - 그대로 두면 trialTimeout(60초) 동안 다른 업로드가 전부 503이다.
             circuitBreaker.releaseTrial(request.analysisJobId());
             // 종결 즉시 원본 음성을 지운다 (KAN-27) - 성공, 판정 실패, 예산 소진, 예외,
             // 이미 종결된 작업이라 AI를 부르지 않은 경우까지 전부 이 finally를 지난다.
-            // 재전송은 analyzeWithRetry 안에서 이미 끝났으므로 여기서 지워도 늦지 않다
+            // 재전송은 analyzeWithRetry 안에서 이미 끝났으므로 여기서 지워도 늦지 않다.
             request.wipeAudio();
             MDC.remove(CorrelationIdFilter.MDC_KEY);
             backlog.finished();
         }
     }
 
-    /** 성공이나 판정 실패면 결과를, 재전송 예산까지 소진하면 null을 돌려주며 직접 종결한다 */
+    /** 성공이나 판정 실패면 결과를, 재전송 예산까지 소진하면 null을 돌려주며 직접 종결한다. */
     private AiAnalysisClient.@Nullable Outcome analyzeWithRetry(
             AnalysisRequest request, String correlationId) {
         for (int attempt = 0; ; attempt++) {
@@ -167,7 +167,7 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
                 // 이 시도는 AI에 닿지 않았으므로 시도 예산에서 빠지는 ANALYSIS_UNAVAILABLE로
                 // 종결한다 (§2.5 - 서버 사정으로 사용자의 문항별 상한이 깎이면 안 된다).
                 // 재전송 중에 열렸다면 앞선 시도는 GPU를 썼을 수 있지만, 작업 하나에 사유는
-                // 하나이고 장애 구간에서는 사용자에게 유리한 쪽으로 접는다
+                // 하나이고 장애 구간에서는 사용자에게 유리한 쪽으로 접는다.
                 log.info("AI 회로가 전달을 허용하지 않아 건너뛴다 jobId={}", request.analysisJobId());
                 transitions.fail(request.analysisJobId(), AnalysisJobStatus.RETRYABLE_FAILED,
                         ErrorCode.ANALYSIS_UNAVAILABLE.name());
@@ -179,10 +179,10 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
                     // 응답은 왔지만 계약(§4.1)과 다르다 - 같은 오디오에 같은 답이 올 것이므로
                     // 재전송하지는 않되, 회로에는 실패로 센다 (KAN-28). 성공으로 세면 응답만
                     // 하고 고장 난 AI 앞에서 회로가 영영 닫혀 있어 업로드마다 GPU 슬롯을
-                    // 태우고, 섞여 오는 진짜 5xx의 연속 카운터까지 매번 0으로 되돌린다
+                    // 태우고, 섞여 오는 진짜 5xx의 연속 카운터까지 매번 0으로 되돌린다.
                     circuitBreaker.recordFailure(request.analysisJobId());
                 } else {
-                    // 판정 실패(§4.1 422)도 AI가 살아서 답한 것이다 - 가용성 실패가 아니다
+                    // 판정 실패(§4.1 422)도 AI가 살아서 답한 것이다 - 가용성 실패가 아니다.
                     circuitBreaker.recordSuccess(request.analysisJobId());
                 }
                 return outcome;
@@ -205,7 +205,7 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
         }
     }
 
-    /** AI가 답은 했지만 계약(§4.1)을 어겼는가 - 재전송 대상은 아니지만 가용성 실패다 (KAN-28) */
+    /** AI가 답은 했지만 계약(§4.1)을 어겼는가 - 재전송 대상은 아니지만 가용성 실패다 (KAN-28). */
     private static boolean contractViolation(AiAnalysisClient.Outcome outcome) {
         return outcome instanceof AiAnalysisClient.Rejected rejected
                 && rejected.cause() == AiAnalysisClient.Rejected.Cause.CONTRACT_VIOLATION;
@@ -233,12 +233,12 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
                     rejected.retryable() ? AnalysisJobStatus.RETRYABLE_FAILED : AnalysisJobStatus.FAILED,
                     rejected.errorCode());
             case null -> {
-                // analyzeWithRetry가 이미 종결했다
+                // analyzeWithRetry가 이미 종결했다.
             }
         }
     }
 
-    /** 서버 종료 등으로 끊기면 false - 워커를 붙잡아두지 않고 종결로 넘어간다 */
+    /** 서버 종료 등으로 끊기면 false - 워커를 붙잡아두지 않고 종결로 넘어간다. */
     private boolean backoff(int attempt) {
         try {
             Thread.sleep(retryBackoffMs * attempt);

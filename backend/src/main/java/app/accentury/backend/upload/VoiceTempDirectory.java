@@ -60,7 +60,7 @@ public class VoiceTempDirectory {
 
     private static final Logger log = LoggerFactory.getLogger(VoiceTempDirectory.class);
 
-    /** 소유자 전용(rwx------) - 같은 호스트의 다른 계정이 임시파일을 읽지 못하게 한다 (NFR-SC-07) */
+    /** 소유자 전용(rwx------) - 같은 호스트의 다른 계정이 임시파일을 읽지 못하게 한다 (NFR-SC-07). */
     private static final Set<PosixFilePermission> OWNER_ONLY =
             PosixFilePermissions.fromString("rwx------");
 
@@ -70,7 +70,7 @@ public class VoiceTempDirectory {
         this.directory = prepare(verify(properties.upload().tempDir(), multipart));
         // 디렉터리 경로는 설정값이고 파일 단위 경로가 아니라 로그로 남긴다 - 운영자가
         // 잔존 파일 알림(KAN-38)을 받았을 때 어디를 볼지 알아야 한다. 개별 파일명은
-        // 어디에도 남기지 않는다 (§2.6)
+        // 어디에도 남기지 않는다 (§2.6).
         log.info("업로드 임시 디렉터리 준비 완료 dir={}", directory);
     }
 
@@ -90,13 +90,13 @@ public class VoiceTempDirectory {
         Path directory = Path.of(configuredDir).toAbsolutePath().normalize();
 
         // 메모리 전용 불변식 - 파트 하나가 threshold를 넘는 순간 컨테이너가 디스크로 흘린다.
-        // max-request-size가 상한이므로 threshold가 그 이상이면 넘길 방법이 없다
+        // max-request-size가 상한이므로 threshold가 그 이상이면 넘길 방법이 없다.
         DataSize threshold = multipart.getFileSizeThreshold();
         DataSize maxRequest = multipart.getMaxRequestSize();
         // 무제한 표기를 먼저 끊는다 (Codex 리뷰 P1) - 서블릿 규약의 -1은 "상한 없음"인데
         // 부등식으로는 2MB보다 작은 값이라 아래 검사를 그대로 통과한다. 즉 max-request-size를
         // -1로 두면 검사가 통과하면서 실제로는 어떤 크기의 파트든 디스크로 흘러간다.
-        // max-file-size도 같은 이유로 본다 - 파트 하나의 상한이 사라지면 요청 상한만 남는다
+        // max-file-size도 같은 이유로 본다 - 파트 하나의 상한이 사라지면 요청 상한만 남는다.
         requireBounded("file-size-threshold", threshold);
         requireBounded("max-request-size", maxRequest);
         requireBounded("max-file-size", multipart.getMaxFileSize());
@@ -107,7 +107,7 @@ public class VoiceTempDirectory {
         }
 
         // 불변식이 깨졌을 때를 대비한 안전장치라, 임시파일이 생긴다면 반드시 청소 잡이
-        // 보는 디렉터리여야 한다. 공용 임시 디렉터리로 흩어지면 스윕도 권한 제한도 없다
+        // 보는 디렉터리여야 한다. 공용 임시 디렉터리로 흩어지면 스윕도 권한 제한도 없다.
         String location = multipart.getLocation();
         if (location == null || location.isBlank()
                 || !Path.of(location).toAbsolutePath().normalize().equals(directory)) {
@@ -118,7 +118,7 @@ public class VoiceTempDirectory {
         return directory;
     }
 
-    /** {@code -1}(무제한)이나 0을 거부한다 - 부등식 검사만으로는 걸러지지 않는 값들이다 */
+    /** {@code -1}(무제한)이나 0을 거부한다 - 부등식 검사만으로는 걸러지지 않는 값들이다. */
     private static void requireBounded(String name, @Nullable DataSize size) {
         if (size == null || size.toBytes() <= 0) {
             throw new IllegalStateException("spring.servlet.multipart." + name + "(" + size
@@ -132,10 +132,10 @@ public class VoiceTempDirectory {
      * Tomcat이 요청마다 존재를 확인하므로(클래스 주석), 이 디렉터리가 없는 동안에는 업로드가
      * 전부 500이다. 여기서 되돌리지 않으면 프로세스를 재시작할 때까지 복구되지 않는다.
      *
-     * @return 다시 만들었으면 true - 그 사이의 업로드는 이미 실패한 뒤다
+     * @return 다시 만들었으면 true - 그 사이의 업로드는 이미 실패한 뒤다.
      */
     public boolean ensureExists() {
-        // 링크로 바꿔치기된 경우도 "정상 아님"이라 prepare()의 검사를 다시 태운다
+        // 링크로 바꿔치기된 경우도 "정상 아님"이라 prepare()의 검사를 다시 태운다.
         if (Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
             return false;
         }
@@ -145,7 +145,7 @@ public class VoiceTempDirectory {
         return true;
     }
 
-    /** 전용 디렉터리를 만들고 소유자 전용 권한을 강제한다 - 이미 있으면 정체를 확인한 뒤 권한만 다시 맞춘다 */
+    /** 전용 디렉터리를 만들고 소유자 전용 권한을 강제한다 - 이미 있으면 정체를 확인한 뒤 권한만 다시 맞춘다. */
     static Path prepare(Path directory) {
         try {
             Path parent = directory.getParent();
@@ -156,24 +156,24 @@ public class VoiceTempDirectory {
             try {
                 // 먼저 만들어 보고, 이미 있을 때만 정체를 확인한다 - "확인 후 생성"은 그
                 // 사이에 링크가 끼어드는 창을 남긴다. 권한은 생성과 원자적으로 준다 -
-                // 만들고 나서 chmod하면 그 찰나에 umask가 열어 둔 디렉터리가 노출된다
+                // 만들고 나서 chmod하면 그 찰나에 umask가 열어 둔 디렉터리가 노출된다.
                 if (posix) {
                     Files.createDirectory(directory, PosixFilePermissions.asFileAttribute(OWNER_ONLY));
                 } else {
                     Files.createDirectory(directory);
                 }
-                // 우리가 방금 원자적으로 만들었다 - 더 확인할 것이 없다
+                // 우리가 방금 원자적으로 만들었다 - 더 확인할 것이 없다.
                 return directory;
             } catch (FileAlreadyExistsException e) {
                 requireOwnedDirectory(directory);
             }
             if (posix) {
-                // 기존 디렉터리의 느슨한 권한(앞선 배포, 수동 조작)을 다시 조인다
+                // 기존 디렉터리의 느슨한 권한(앞선 배포, 수동 조작)을 다시 조인다.
                 Files.setPosixFilePermissions(directory, OWNER_ONLY);
                 // chmod는 링크를 따라가므로 위 검사와 이 호출 사이가 창이다 (Codex 리뷰).
                 // NIO에는 원자적 무링크 열기가 없어 창 자체를 없앨 수는 없지만, 남의
                 // 디렉터리에 권한을 걸어 놓고 그대로 지나가는 것은 막는다 - 바뀌었으면
-                // 여기서 기동이 끊기고 뒤따르는 기동 정리(purgeLeftovers)가 돌지 않는다
+                // 여기서 기동이 끊기고 뒤따르는 기동 정리(purgeLeftovers)가 돌지 않는다.
                 requireOwnedDirectory(directory);
             }
         } catch (IOException e) {
@@ -209,7 +209,7 @@ public class VoiceTempDirectory {
         UserPrincipal owner = Files.getOwner(directory, LinkOption.NOFOLLOW_LINKS);
         UserPrincipal self = currentOwner(directory);
         // 우리를 식별하지 못하면 소유자 검사만 건너뛴다 - 위의 링크 검사와 아래 권한 강제는
-        // 그대로 간다. 확인 불가를 기동 실패로 바꾸면 안전장치가 곧 장애 원인이 된다
+        // 그대로 간다. 확인 불가를 기동 실패로 바꾸면 안전장치가 곧 장애 원인이 된다.
         if (self != null && !owner.equals(self)) {
             throw new IllegalStateException("업로드 임시 디렉터리의 소유자가 현재 프로세스가 아니다"
                     + " - owner=" + owner.getName());
@@ -245,7 +245,7 @@ public class VoiceTempDirectory {
                     Files.deleteIfExists(probe);
                 } catch (IOException e) {
                     // 탐침 정리 실패로 기동을 막지 않는다 - 빈 파일 하나이고, 전용
-                    // 디렉터리 바깥이라 스윕 대상도 아니다
+                    // 디렉터리 바깥이라 스윕 대상도 아니다.
                     log.warn("소유자 확인용 탐침 파일을 지우지 못했다 reason={}",
                             e.getClass().getSimpleName());
                 }

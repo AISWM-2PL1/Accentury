@@ -14,7 +14,7 @@ import java.util.List;
  * @param status       PROCESSING(분석 대기) 또는 READY(결과 확정)
  * @param pendingItems PROCESSING일 때만 - 분석이 끝나기를 기다리는 문항, seq 순서
  * @param pollAfterMs  PROCESSING일 때만 - 다음 완료 시도까지 기다릴 시간(ms). 서버가
- *                     통제하고 혼잡 시 올린다 (§5.3 규칙 1, 상태 조회와 같은 산출)
+ *                     통제하고 혼잡 시 올린다 (§5.3 규칙 1, 상태 조회와 같은 산출).
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record CompleteResponse(Status status, @Nullable List<String> pendingItems, @Nullable Long pollAfterMs) {

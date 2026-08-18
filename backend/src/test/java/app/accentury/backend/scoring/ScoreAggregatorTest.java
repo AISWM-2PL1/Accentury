@@ -119,7 +119,7 @@ class ScoreAggregatorTest {
 
     @Test
     void 종합_점수는_표시된_정수_점수의_가중_평균_반올림이다() {
-        // 억양 79, 단어 0 → (158 + 0) / 3 = 52.67 → 53. 등급도 반올림된 종합 점수로 판정한다
+        // 억양 79, 단어 0 → (158 + 0) / 3 = 52.67 → 53. 등급도 반올림된 종합 점수로 판정한다.
         AggregateScore score = aggregator.aggregate("sv-0.3", definition(),
                 voiceScores(79, 79, 79, 79, 79), answersWithCorrect(0));
         assertEquals(53, score.overall());
@@ -197,7 +197,7 @@ class ScoreAggregatorTest {
 
     @Test
     void 정의의_scoreVersion이_채점_버전과_다르면_집계를_거부한다() {
-        // 한쪽 정의의 정답표에 다른 쪽 정책의 가중치와 경계가 섞이는 것을 막는다 (Codex sol 리뷰 P2)
+        // 한쪽 정의의 정답표에 다른 쪽 정책의 가중치와 경계가 섞이는 것을 막는다 (Codex sol 리뷰 P2).
         TestDefinition base = definition();
         TestDefinition otherVersion = new TestDefinition(base.testVersion(), "sv-9.9",
                 base.dialect(), base.estimatedDurationSec(), base.items());
@@ -227,7 +227,7 @@ class ScoreAggregatorTest {
 
     // === 픽스처 ===
 
-    /** 모든 음성 원점수와 정답 수를 같은 값 계열로 맞춰 종합 점수가 정확히 그 값이 되게 한다 */
+    /** 모든 음성 원점수와 정답 수를 같은 값 계열로 맞춰 종합 점수가 정확히 그 값이 되게 한다. */
     private String tierCodeAt(int overall) {
         AggregateScore score = aggregator.aggregate("sv-0.3", definition(),
                 voiceScores(overall, overall, overall, overall, overall), answersWithCorrect(overall / 20));
@@ -258,7 +258,7 @@ class ScoreAggregatorTest {
         return PropertiesFixture.versions("gn-2026.08.1", scoreVersion);
     }
 
-    /** 정본 구성과 같은 음성 5 + 어휘 5. 어휘 정답은 항상 a 선택지다 */
+    /** 정본 구성과 같은 음성 5 + 어휘 5. 어휘 정답은 항상 a 선택지다. */
     private static TestDefinition definition() {
         List<TestDefinition.Item> items = new ArrayList<>();
         for (int i = 1; i <= 5; i++) {

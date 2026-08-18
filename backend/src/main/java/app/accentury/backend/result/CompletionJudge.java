@@ -34,8 +34,8 @@ class CompletionJudge {
     /**
      * 판정 결과 - 목록 세 개는 서로 배타이고 전부 비어 있으면 완주다.
      *
-     * @param missingItems          업로드된 시도(음성)나 답안(어휘)이 없는 문항 (§5.1 - 로컬 재녹음은 시도가 아니다)
-     * @param retakeItems           시도가 전부 실패로 끝난 문항 - 재녹음(새 시도)으로만 풀린다
+     * @param missingItems          업로드된 시도(음성)나 답안(어휘)이 없는 문항 (§5.1 - 로컬 재녹음은 시도가 아니다).
+     * @param retakeItems           시도가 전부 실패로 끝난 문항 - 재녹음(새 시도)으로만 풀린다.
      * @param pendingItems          대표 상태가 분석 중인 문항
      * @param intonationScoreByItem 음성 itemId → 채점 대상(최신 성공 시도)의 AI 원점수 0~100
      * @param chosenChoiceIdByItem  어휘 itemId → 제출된 choiceId
@@ -73,15 +73,15 @@ class CompletionJudge {
                     } else {
                         switch (representative.status()) {
                             case PROCESSING -> pending.add(item.itemId());
-                            // COMPLETED의 점수가 null이면 데이터 오염이다 - 집계가 크게 실패한다 (KAN-21)
+                            // COMPLETED의 점수가 null이면 데이터 오염이다 - 집계가 크게 실패한다 (KAN-21).
                             case COMPLETED -> intonationScoreByItem.put(item.itemId(),
                                     representative.intonationScore());
                             // FAILED(재녹음 무익)도 retake로 묶는다 (2026-08-13 확정, Codex sol 리뷰
                             // P2 기각) - §3.7이 실패 종류를 구분하지 않고, 새 시도가 세션 내 유일한
                             // 복구 경로다. 문항별 retryable의 정본은 §3.4 상태 조회이고, FAILED가
-                            // 반복되면 시도 상한(§2.5) → 429 → 재응시(§3.1)로 수렴한다
+                            // 반복되면 시도 상한(§2.5) → 429 → 재응시(§3.1)로 수렴한다.
                             case RETRYABLE_FAILED, FAILED -> retake.add(item.itemId());
-                            // 상태가 추가되면 조용한 문항 누락 대신 여기서 즉시 실패한다
+                            // 상태가 추가되면 조용한 문항 누락 대신 여기서 즉시 실패한다.
                             default -> throw new IllegalStateException(
                                     "완주 판정 규칙이 없는 분석 상태다: " + representative.status());
                         }
@@ -98,7 +98,7 @@ class CompletionJudge {
             }
         }
         // 점수 맵은 Map.copyOf를 쓰지 않는다 - COMPLETED인데 점수가 null인 오염 데이터는
-        // 여기서 뜻 없는 NPE가 아니라 집계 검증(ScoreAggregator)의 명시적 실패로 잡는다
+        // 여기서 뜻 없는 NPE가 아니라 집계 검증(ScoreAggregator)의 명시적 실패로 잡는다.
         return new Judgment(List.copyOf(missing), List.copyOf(retake), List.copyOf(pending),
                 intonationScoreByItem, chosenChoiceIdByItem);
     }

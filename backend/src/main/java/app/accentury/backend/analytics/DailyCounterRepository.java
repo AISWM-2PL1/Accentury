@@ -20,10 +20,10 @@ import java.util.Optional;
  */
 public interface DailyCounterRepository extends Repository<DailyCounter, String> {
 
-    /** 단건 조회 - 내부 조회와 테스트가 쓴다 */
+    /** 단건 조회 - 내부 조회와 테스트가 쓴다. */
     Optional<DailyCounter> findById(String id);
 
-    /** 행 수 - 테스트가 쓴다 */
+    /** 행 수 - 테스트가 쓴다. */
     long count();
 
     /**
@@ -40,7 +40,7 @@ public interface DailyCounterRepository extends Repository<DailyCounter, String>
      * long 12개를 위치 인자로 나르면 자리바꿈이 컴파일을 통과해 카운터가 조용히 오염되고,
      * 컬럼 목록이 레코드, 이 쿼리, 전달 계층 세 곳에 복제된다. 지금은 이 쿼리 한 곳이다.
      *
-     * @return 1이면 증가 완료, 0이면 그 키의 행이 아직 없다 (첫 증가라 INSERT가 필요하다)
+     * @return 1이면 증가 완료, 0이면 그 키의 행이 아직 없다 (첫 증가라 INSERT가 필요하다).
      */
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""

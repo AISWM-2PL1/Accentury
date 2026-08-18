@@ -58,13 +58,13 @@ class TestDefinitionApiTest extends IntegrationTest {
     void 활성_버전_조회는_200과_명세의_5개_최상위_필드를_반환한다() throws Exception {
         mockMvc.perform(get(activePath()))
                 .andExpect(status().isOk())
-                // 응답의 두 버전은 seed에서 오고 설정에서 오지 않는다 - 일치는 기동 검사가 강제한다
+                // 응답의 두 버전은 seed에서 오고 설정에서 오지 않는다 - 일치는 기동 검사가 강제한다.
                 .andExpect(jsonPath("$.testVersion").value(properties.testVersion()))
                 .andExpect(jsonPath("$.scoreVersion").value(properties.scoreVersion()))
                 .andExpect(jsonPath("$.dialect").value("GYEONGNAM"))
                 .andExpect(jsonPath("$.estimatedDurationSec").value(240))
                 .andExpect(jsonPath("$.items.length()").value(10))
-                // §3.2 응답은 정확히 5개 필드 - 늘면 이 테스트가 알려준다
+                // §3.2 응답은 정확히 5개 필드 - 늘면 이 테스트가 알려준다.
                 .andExpect(jsonPath("$").value(aMapWithSize(5)));
     }
 
@@ -94,13 +94,13 @@ class TestDefinitionApiTest extends IntegrationTest {
             }
             voiceCount++;
             // 정의 원본에는 없고 응답에서 서버 상수로 채우는 값이다 - 계약(§3.2)은 문항별 필드를 유지한다.
-            // 리터럴로 두어 상수가 바뀌면 클라이언트 계약 변경으로 드러나게 한다 (KAN-23)
+            // 리터럴로 두어 상수가 바뀌면 클라이언트 계약 변경으로 드러나게 한다 (KAN-23).
             assertEquals(10000, item.get("maxDurationMs").asInt(), "음성 문항은 최대 10초다 (KAN-23)");
             JsonNode guideF0 = item.get("guideF0");
             assertEquals("semitone", guideF0.get("unit").asString());
             assertEquals(10, guideF0.get("frameIntervalMs").asInt());
             assertTrue(guideF0.get("values").size() > 0, "guideF0.values는 비어 있으면 안 된다");
-            // 허용 밴드는 required다 (2026-08-09 확정, §3.2, §6) - 발행 검증이 길이까지 강제한다
+            // 허용 밴드는 required다 (2026-08-09 확정, §3.2, §6) - 발행 검증이 길이까지 강제한다.
             assertEquals(guideF0.get("values").size(), guideF0.get("bandLow").size());
             assertEquals(guideF0.get("values").size(), guideF0.get("bandHigh").size());
             assertProperties(guideF0, "guideF0",
@@ -121,13 +121,13 @@ class TestDefinitionApiTest extends IntegrationTest {
                 continue;
             }
             vocabularyCount++;
-            // 정답이나 음성 필드가 붙으면 안 된다
+            // 정답이나 음성 필드가 붙으면 안 된다.
             assertProperties(item, "VOCABULARY 문항",
                     Set.of("itemId", "seq", "type", "prompt", "choices"));
             JsonNode choices = item.get("choices");
             assertEquals(4, choices.size(), "어휘 문항은 4지선다다 (SRS 확정)");
             for (JsonNode choice : choices) {
-                // 정오 표시가 있으면 안 된다 (KAN-13 정오 미노출)
+                // 정오 표시가 있으면 안 된다 (KAN-13 정오 미노출).
                 assertProperties(choice, "선택지", Set.of("choiceId", "text"));
             }
         }
@@ -153,7 +153,7 @@ class TestDefinitionApiTest extends IntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(header().exists("ETag"))
                 .andExpect(header().string("Cache-Control", containsString("immutable")))
-                // 공유 캐시 미사용 - CDN 미도입 확정으로 public이 아니라 private다 (2026-08-09, KAN-101)
+                // 공유 캐시 미사용 - CDN 미도입 확정으로 public이 아니라 private다 (2026-08-09, KAN-101).
                 .andExpect(header().string("Cache-Control", containsString("private")))
                 .andReturn();
 
@@ -187,7 +187,7 @@ class TestDefinitionApiTest extends IntegrationTest {
     @Test
     void 신규_발행_후에도_이전_버전_정의는_계속_제공된다() throws Exception {
         // 활성 버전이 아니지만, 먼저 발행된 gn-2026.07.0에 고정된 세션도
-        // 자기 정의를 계속 받는다 - 활성 전환이 진행 중 세션에 영향을 주지 않는다 (KAN-26 AC)
+        // 자기 정의를 계속 받는다 - 활성 전환이 진행 중 세션에 영향을 주지 않는다 (KAN-26 AC).
         mockMvc.perform(get("/v0/tests/gn-2026.07.0"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.testVersion").value("gn-2026.07.0"))
@@ -203,7 +203,7 @@ class TestDefinitionApiTest extends IntegrationTest {
                 .andExpect(jsonPath("$.code").value("RESOURCE_NOT_FOUND"))
                 .andExpect(jsonPath("$.correlationId").exists())
                 // 404는 지시자가 없으면 휴리스틱 캐싱 대상이다(RFC 9110 §15.1) - 정상 응답이
-                // 1년 immutable인 API라 캐시에 눌러앉은 오류는 반복 재생된다 (Claude 리뷰 P2)
+                // 1년 immutable인 API라 캐시에 눌러앉은 오류는 반복 재생된다 (Claude 리뷰 P2).
                 .andExpect(header().string("Cache-Control", containsString("no-store")));
     }
 
@@ -214,7 +214,7 @@ class TestDefinitionApiTest extends IntegrationTest {
      * 그대로 재사용하므로, 내부에 필드가 늘면 응답으로 그대로 새어 나간다.
      * 필드 개수 고정 대신 이름 기준으로 막는다 (Claude 리뷰 P3).
      *
-     * @param required 반드시 있어야 하는 필드 - 이 밖의 필드는 노출로 간주한다
+     * @param required 반드시 있어야 하는 필드 - 이 밖의 필드는 노출로 간주한다.
      */
     private static void assertProperties(JsonNode node, String what, Set<String> required) {
         Set<String> actual = new LinkedHashSet<>(node.propertyNames());

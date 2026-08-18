@@ -10,7 +10,7 @@ import java.time.Instant;
  *
  * @param sessionId    {@code s_...} - 이후 API의 경로 파라미터
  * @param sessionToken {@code st_...} - {@code Authorization: Bearer}로 보낼 불투명 토큰
- * @param testVersion  이 세션에 고정된 테스트 정의 버전 - {@code GET /v0/tests/{testVersion}}에 그대로 넣는다 (§5.4)
+ * @param testVersion  이 세션에 고정된 테스트 정의 버전 - {@code GET /v0/tests/{testVersion}}에 그대로 넣는다 (§5.4).
  * @param scoreVersion 이 세션에 고정된 점수 산정 버전
  * @param expiresAt    토큰 만료 시각 (UTC) - 기본 30분
  */

@@ -86,9 +86,9 @@ public class CompletionService {
      * 하지 않고 확정 사실을 여기 실어 밖으로 내보낸다.
      *
      * @param confirmedScore 이 호출이 결과를 새로 확정했을 때의 집계 결과. 그 외(이미 완료된
-     *                       세션의 재시도, 아직 분석 중)는 null이다 - 완주는 세션당 1회만 센다
+     *                       세션의 재시도, 아직 분석 중)는 null이다 - 완주는 세션당 1회만 센다.
      * @param confirmedAt    결과 행의 {@code createdAt}과 같은 시각 - 집계 일자가 결과 행과
-     *                       어긋나지 않게 트랜잭션 안에서 정한 값을 그대로 쓴다
+     *                       어긋나지 않게 트랜잭션 안에서 정한 값을 그대로 쓴다.
      */
     private record Outcome(CompleteResponse response,
                            @Nullable AggregateScore confirmedScore,
@@ -103,21 +103,21 @@ public class CompletionService {
                               @Nullable String idempotencyKey) {
         TestSession session = sessionService.authenticateBearer(sessionId, authorization);
         // 완료는 자연 멱등이라(완료 후 재시도 = READY 재확인) 키 값 대조는 없지만,
-        // 비용 발생 POST의 계약(§2.2 - 업로드/답안/완료)이므로 존재는 강제한다
+        // 비용 발생 POST의 계약(§2.2 - 업로드/답안/완료)이므로 존재는 강제한다.
         IdempotencyKeys.require(idempotencyKey);
-        // 인증 뒤, 잠금 전 - 폭주 폴링이 세션 행 잠금까지 도달하지 못하게 끊는다 (KAN-16 AC)
+        // 인증 뒤, 잠금 전 - 폭주 폴링이 세션 행 잠금까지 도달하지 못하게 끊는다 (KAN-16 AC).
         rateLimits.check(RateLimits.Scope.COMPLETE, session.id());
 
         long pollAfterMs = pollIntervals.pollAfterMs();
         Outcome outcome = Objects.requireNonNull(transactionTemplate.execute(tx -> {
-            // 잠금 재조회가 빈 것은 동시 삭제(만료 정리)를 뜻하므로 만료와 같게 응답한다
+            // 잠금 재조회가 빈 것은 동시 삭제(만료 정리)를 뜻하므로 만료와 같게 응답한다.
             TestSession locked = sessionRepository.lockById(session.id())
                     .orElseThrow(() -> new ApiException(ErrorCode.SESSION_EXPIRED));
-            // 만료도 잠금 아래에서 재확인한다 - 제출 경로(KAN-15/23)와 같은 이유의 재검사다
+            // 만료도 잠금 아래에서 재확인한다 - 제출 경로(KAN-15/23)와 같은 이유의 재검사다.
             if (locked.isExpired(Instant.now())) {
                 throw new ApiException(ErrorCode.SESSION_EXPIRED);
             }
-            // 완료 재시도는 READY를 다시 준다 - 결과를 중복 생성하지 않는다 (AC, §3.6)
+            // 완료 재시도는 READY를 다시 준다 - 결과를 중복 생성하지 않는다 (AC, §3.6).
             if (locked.isCompleted()) {
                 return Outcome.pending(CompleteResponse.ready());
             }
@@ -126,7 +126,7 @@ public class CompletionService {
 
         AggregateScore confirmed = outcome.confirmedScore();
         if (confirmed != null) {
-            // 점수와 등급은 로그에 남기지 않는다 - 결과 공개는 /result 한 곳이다 (§2.6의 취지)
+            // 점수와 등급은 로그에 남기지 않는다 - 결과 공개는 /result 한 곳이다 (§2.6의 취지).
             log.info("테스트 완료 sessionId={} testVersion={} scoreVersion={}",
                     session.id(), session.testVersion(), session.scoreVersion());
             // 완주 1건과 등급, 점수 (KAN-106) - 트랜잭션이 커밋된 이 자리여야 한다.
@@ -147,12 +147,12 @@ public class CompletionService {
 
         // 우선순위: 미제출 > 실패 > 분석 중 (2026-08-13 확정) - 아래 주석은 각 갈래의 §3.6 계약
         if (!judgment.missingItems().isEmpty()) {
-            // 422 - 제출부터 해야 한다. 건너뛰기가 없으므로(§5.6) 재시도해도 안 바뀐다 (retryable=false)
+            // 422 - 제출부터 해야 한다. 건너뛰기가 없으므로(§5.6) 재시도해도 안 바뀐다 (retryable=false).
             throw new ItemsApiException(ErrorCode.RESULT_INCOMPLETE,
                     ItemsApiException.ItemsField.MISSING_ITEMS, judgment.missingItems());
         }
         if (!judgment.retakeItems().isEmpty()) {
-            // 409 - 성공도 진행 중도 없는 문항은 기다려도 안 바뀐다. 재녹음(새 시도)으로만 풀린다 (§3.7과 같은 코드)
+            // 409 - 성공도 진행 중도 없는 문항은 기다려도 안 바뀐다. 재녹음(새 시도)으로만 풀린다 (§3.7과 같은 코드).
             throw new ItemsApiException(ErrorCode.RESULT_RETAKE_REQUIRED,
                     ItemsApiException.ItemsField.RETAKE_ITEMS, judgment.retakeItems());
         }

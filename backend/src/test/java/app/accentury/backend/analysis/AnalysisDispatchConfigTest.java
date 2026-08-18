@@ -23,14 +23,14 @@ class AnalysisDispatchConfigTest {
     void 실행_잔류_한도가_재전송_최악_소요_이하면_기동을_거부한다() {
         // ai-timeout 10s x (재시도 2 + 1) + 백오프 0.9s = 30.9s > processing-timeout 30s
         AnalysisDispatchConfig config = new AnalysisDispatchConfig();
-        // 검증이 조립보다 먼저 실행되므로 협력자는 쓰이지 않는다
+        // 검증이 조립보다 먼저 실행되므로 협력자는 쓰이지 않는다.
         assertThrows(IllegalStateException.class, () -> config.analysisDispatcher(
                 props(Duration.ofSeconds(30)), null, null, null, null));
     }
 
     @Test
     void 기본_설정_조합은_검증을_통과해_실제_디스패처를_조립한다() {
-        // 기본값 60s > 30.9s - 기본 설정이 스스로 어긋나면 여기서 잡힌다
+        // 기본값 60s > 30.9s - 기본 설정이 스스로 어긋나면 여기서 잡힌다.
         AnalysisDispatcher dispatcher = new AnalysisDispatchConfig().analysisDispatcher(
                 props(Duration.ofSeconds(60)), new ThreadPoolTaskExecutor(), null,
                 new AnalysisBacklog(), new ObjectMapper());
@@ -38,7 +38,7 @@ class AnalysisDispatchConfigTest {
         assertInstanceOf(HttpAnalysisDispatcher.class, dispatcher);
     }
 
-    /** 기본값 조합에 ai-base-url만 지정한 설정 - processing-timeout만 시나리오별로 바꾼다 */
+    /** 기본값 조합에 ai-base-url만 지정한 설정 - processing-timeout만 시나리오별로 바꾼다. */
     private static AccenturyProperties props(Duration processingTimeout) {
         return PropertiesFixture.withAnalysis(
                 PropertiesFixture.analysis(30, "http://ai.test", processingTimeout));

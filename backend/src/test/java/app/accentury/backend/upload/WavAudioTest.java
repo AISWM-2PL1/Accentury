@@ -32,7 +32,7 @@ class WavAudioTest {
     @Test
     void fmt_앞의_다른_청크는_건너뛴다() {
         byte[] standard = WavFixtures.standardWav(1000);
-        // RIFF/WAVE 헤더(12바이트) 뒤에 LIST 청크를 끼워 넣는다
+        // RIFF/WAVE 헤더(12바이트) 뒤에 LIST 청크를 끼워 넣는다.
         ByteBuffer buf = ByteBuffer.allocate(standard.length + 12).order(ByteOrder.LITTLE_ENDIAN);
         buf.put(standard, 0, 12);
         buf.put("LIST".getBytes(StandardCharsets.US_ASCII)).putInt(4)
@@ -47,7 +47,7 @@ class WavAudioTest {
     @Test
     void 홀수_크기_청크의_패딩_바이트를_건너뛴다() {
         // RIFF 규격 - 홀수 크기 청크 뒤에는 1바이트 패딩이 붙는다.
-        // 건너뛰지 않으면 다음 청크 경계가 1바이트 밀려 정상 파일을 415로 거부한다
+        // 건너뛰지 않으면 다음 청크 경계가 1바이트 밀려 정상 파일을 415로 거부한다.
         byte[] standard = WavFixtures.standardWav(1000);
         ByteBuffer buf = ByteBuffer.allocate(standard.length + 12).order(ByteOrder.LITTLE_ENDIAN);
         buf.put(standard, 0, 12);
@@ -86,7 +86,7 @@ class WavAudioTest {
 
     @Test
     void data_청크가_없으면_거부한다() {
-        // fmt 청크까지만 남긴다 (12 + 8 + 16 = 36바이트)
+        // fmt 청크까지만 남긴다 (12 + 8 + 16 = 36바이트).
         assertUnsupported(Arrays.copyOf(WavFixtures.standardWav(1000), 36));
     }
 
@@ -102,14 +102,14 @@ class WavAudioTest {
         // 16-bit mono인데 data가 1바이트 - 완결된 샘플이 없는 깨진 파일 (Codex sol 리뷰 P2)
         byte[] wav = Arrays.copyOf(WavFixtures.standardWav(0), 45);
         ByteBuffer.wrap(wav).order(ByteOrder.LITTLE_ENDIAN)
-                .putInt(4, wav.length - 8)  // RIFF 크기는 정합하게 두고 프레임 정렬만 망가뜨린다
+                .putInt(4, wav.length - 8)  // RIFF 크기는 정합하게 두고 프레임 정렬만 망가뜨린다.
                 .putInt(40, 1);
         assertUnsupported(wav);
     }
 
     @Test
     void byteRate나_blockAlign이_파생값과_다르면_거부한다() {
-        // 16kHz mono 16-bit이면 byteRate=32000, blockAlign=2여야 한다 (Codex sol 리뷰 P2)
+        // 16kHz mono 16-bit이면 byteRate=32000, blockAlign=2여야 한다 (Codex sol 리뷰 P2).
         byte[] wrongByteRate = WavFixtures.standardWav(1000);
         ByteBuffer.wrap(wrongByteRate).order(ByteOrder.LITTLE_ENDIAN).putInt(28, 999);
         assertUnsupported(wrongByteRate);

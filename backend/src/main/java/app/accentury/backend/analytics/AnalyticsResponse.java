@@ -16,17 +16,17 @@ import java.util.Map;
  *
  * @param from   조회 시작 일자 (포함)
  * @param to     조회 종료 일자 (포함)
- * @param zone   일자 경계를 정한 타임존 - 이 값을 모르면 "8월 17일"이 언제인지 알 수 없다
- * @param rows   일자와 버전별 한 줄 - 저장된 행 그대로다
- * @param totals 기간 전체 합산 - 버전이 섞이므로 등급 분포와 평균은 참고값이다
+ * @param zone   일자 경계를 정한 타임존 - 이 값을 모르면 "8월 17일"이 언제인지 알 수 없다.
+ * @param rows   일자와 버전별 한 줄 - 저장된 행 그대로다.
+ * @param totals 기간 전체 합산 - 버전이 섞이므로 등급 분포와 평균은 참고값이다.
  */
 public record AnalyticsResponse(LocalDate from, LocalDate to, String zone,
                                 List<Row> rows, Counts totals) {
 
     /**
      * @param date         집계 일자 ({@code zone} 기준)
-     * @param testVersion  테스트 정의 버전 - 다르면 문항이 다르므로 같은 통계가 아니다
-     * @param scoreVersion 점수 버전 - 다르면 등급 경계가 다르므로 분포를 비교할 수 없다
+     * @param testVersion  테스트 정의 버전 - 다르면 문항이 다르므로 같은 통계가 아니다.
+     * @param scoreVersion 점수 버전 - 다르면 등급 경계가 다르므로 분포를 비교할 수 없다.
      */
     public record Row(LocalDate date, String testVersion, String scoreVersion, Counts counts) {
     }
@@ -37,13 +37,13 @@ public record AnalyticsResponse(LocalDate from, LocalDate to, String zone,
      * @param completionRate    완주율 (완주/시도) - 시도가 0이면 null이다. 소수점 넷째 자리 반올림.
      *                          시도와 완주를 각자 일어난 날에 세므로 자정을 넘겨 끝낸 응시는
      *                          두 날에 갈라진다 - 하루 단위로는 1.0을 넘거나 시도 0에 완주만
-     *                          있는 행이 나올 수 있고, 그건 기간 합계로 봐야 한다 (버그가 아니다)
-     * @param tiers             등급 code → 누적 수. 순서는 rank 오름차순이다
-     * @param scoredCount       점수 합에 들어간 건수 - 평균의 분모다
-     * @param sums              점수 합 - 평균의 검산에 쓴다 (개별 점수 행이 없으므로 이것이 원본이다)
+     *                          있는 행이 나올 수 있고, 그건 기간 합계로 봐야 한다 (버그가 아니다).
+     * @param tiers             등급 code → 누적 수. 순서는 rank 오름차순이다.
+     * @param scoredCount       점수 합에 들어간 건수 - 평균의 분모다.
+     * @param sums              점수 합 - 평균의 검산에 쓴다 (개별 점수 행이 없으므로 이것이 원본이다).
      * @param averages          세 점수 평균 - {@code scoredCount}가 0이면 null이다. 소수점 둘째 자리 반올림
      */
-    // 값이 없는 평균과 완주율은 필드를 통째로 뺀다 - 0으로 나눌 수 없는 것과 0인 것은 다르다
+    // 값이 없는 평균과 완주율은 필드를 통째로 뺀다 - 0으로 나눌 수 없는 것과 0인 것은 다르다.
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record Counts(long sessionsStarted, long sessionsCompleted,
                          @Nullable Double completionRate,

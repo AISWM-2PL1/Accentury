@@ -30,7 +30,7 @@ public class AnalysisJobTransitions {
      * 실행 시작 선점 - 워커가 AI를 호출하기 직전에 부른다.
      *
      * @return false면 이미 종결됐거나 다른 워커가 선점한 작업이다 - AI(GPU)를 호출하면
-     *         안 된다 (Codex sol 리뷰 P1 - 타임아웃 종결 후의 유령 호출 차단)
+     *         안 된다 (Codex sol 리뷰 P1 - 타임아웃 종결 후의 유령 호출 차단).
      */
     @Transactional
     public boolean start(String jobId) {
@@ -51,7 +51,7 @@ public class AnalysisJobTransitions {
             // 지워진 작업이다. 여기서는 구분할 수 없으므로 로그가 두 경우를 모두 말해야 한다.
             log.warn("늦은 분석 결과를 버린다 - 이미 종결됐거나 재응시 폐기로 삭제된 작업이다 jobId={}", jobId);
         } else {
-            // 점수는 로그에 남기지 않는다 - 결과 공개는 /result 한 곳이다 (§3.4, KAN-12)
+            // 점수는 로그에 남기지 않는다 - 결과 공개는 /result 한 곳이다 (§3.4, KAN-12).
             log.info("분석 완료 jobId={} modelVersion={}", jobId, modelVersion);
         }
     }

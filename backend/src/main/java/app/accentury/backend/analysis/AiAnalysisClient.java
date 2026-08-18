@@ -15,7 +15,7 @@ public interface AiAnalysisClient {
     /**
      * 음성 1건을 동기로 분석한다 - 비동기화는 호출부({@link HttpAnalysisDispatcher}) 책임이다.
      *
-     * @param correlationId BE 요청에서 전파된 추적 ID (§2.2) - AI까지 흘러간다
+     * @param correlationId BE 요청에서 전파된 추적 ID (§2.2) - AI까지 흘러간다.
      * @throws AiUnavailableException 연결 실패, 타임아웃, 5xx - 재전송해볼 수 있는 장애
      */
     Outcome analyze(AnalysisDispatcher.AnalysisRequest request, String correlationId);
@@ -25,7 +25,7 @@ public interface AiAnalysisClient {
      * 회로 차단기(KAN-28)의 복구 판정 전용이다. 추론을 태우지 않으므로 GPU도, 사용자의
      * 시도 예산(§2.5)도 쓰지 않는다.
      *
-     * @return 응답이 없거나 UP이 아니면 false - 예외를 던지지 않는다
+     * @return 응답이 없거나 UP이 아니면 false - 예외를 던지지 않는다.
      */
     boolean healthy();
 
@@ -35,7 +35,7 @@ public interface AiAnalysisClient {
     /**
      * 분석 성공 (§4.1 200 OK).
      *
-     * @param intonationScore 0~100 원값 - 20점 만점 환산은 BE 집계(KAN-21, 25)가 한다 (§4.3)
+     * @param intonationScore 0~100 원값 - 20점 만점 환산은 BE 집계(KAN-21, 25)가 한다 (§4.3).
      */
     record Completed(int intonationScore, String qualityCode,
                      String modelVersion, String scoreVersion) implements Outcome {
@@ -44,9 +44,9 @@ public interface AiAnalysisClient {
     /**
      * 분석 판정 실패 (§4.1 422) 또는 계약 위반 응답.
      *
-     * @param errorCode 상태 응답의 error.code로 그대로 나간다 (§3.4, 예: AUDIO_TOO_QUIET)
-     * @param retryable 재녹음(새 시도)이 도움이 되는가 - RETRYABLE_FAILED와 FAILED를 가른다
-     * @param cause     이 거절이 <b>AI의 상태</b>에 대해 말해주는 것 - 회로 차단기(KAN-28)가 읽는다
+     * @param errorCode 상태 응답의 error.code로 그대로 나간다 (§3.4, 예: AUDIO_TOO_QUIET).
+     * @param retryable 재녹음(새 시도)이 도움이 되는가 - RETRYABLE_FAILED와 FAILED를 가른다.
+     * @param cause     이 거절이 <b>AI의 상태</b>에 대해 말해주는 것 - 회로 차단기(KAN-28)가 읽는다.
      */
     record Rejected(String errorCode, boolean retryable, Cause cause) implements Outcome {
 
@@ -59,13 +59,13 @@ public interface AiAnalysisClient {
          * 회로가 영영 닫혀 있는다.
          */
         enum Cause {
-            /** AI가 계약대로 판정했다 (§4.1 422) - 서버는 정상이다 */
+            /** AI가 계약대로 판정했다 (§4.1 422) - 서버는 정상이다. */
             JUDGED,
-            /** 응답은 왔지만 계약(§4.1)과 다르다 - 답은 하지만 쓸 수 없는 상태다 */
+            /** 응답은 왔지만 계약(§4.1)과 다르다 - 답은 하지만 쓸 수 없는 상태다. */
             CONTRACT_VIOLATION
         }
 
-        /** 계약대로 온 판정 실패 (§4.1 422) - AI는 정상이다 */
+        /** 계약대로 온 판정 실패 (§4.1 422) - AI는 정상이다. */
         static Rejected judged(String errorCode, boolean retryable) {
             return new Rejected(errorCode, retryable, Cause.JUDGED);
         }
@@ -79,7 +79,7 @@ public interface AiAnalysisClient {
         }
     }
 
-    /** 일시 장애 - 호출부가 재전송 예산({@code aiRetries}) 안에서 다시 시도한다 */
+    /** 일시 장애 - 호출부가 재전송 예산({@code aiRetries}) 안에서 다시 시도한다. */
     class AiUnavailableException extends RuntimeException {
 
         /**
@@ -87,7 +87,7 @@ public interface AiAnalysisClient {
          * (Codex sol 리뷰 P2 - 도달한 5xx를 미도달과 묶으면 상한이 우회된다).
          */
         public enum Kind {
-            /** 연결, 전송 실패 - AI에 도달하지 않았다. GPU 미소모라 예산에서 뺀다 */
+            /** 연결, 전송 실패 - AI에 도달하지 않았다. GPU 미소모라 예산에서 뺀다. */
             UNREACHED,
             /** 응답 대기 초과 - 도달했고 추론이 진행 중일 수 있다. 예산에 포함 */
             TIMED_OUT,

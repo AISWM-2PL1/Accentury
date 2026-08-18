@@ -41,7 +41,7 @@ class AnalysisAvailabilityProbeTest {
     @Test
     void 판정할_것이_없는_구현에서는_아무_일도_일어나지_않는다() {
         // AI 서버 없이 BE만 띄우는 개발 모드(NoopAnalysisDispatcher)에서도 스케줄은 돈다 -
-        // 기본 구현이 비어 있지 않으면 그 환경이 매초 예외로 로그를 채운다
+        // 기본 구현이 비어 있지 않으면 그 환경이 매초 예외로 로그를 채운다.
         AnalysisAvailabilityProbe probe = new AnalysisAvailabilityProbe(new NoopAnalysisDispatcher());
 
         probe.probe();

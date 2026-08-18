@@ -78,7 +78,7 @@ class SessionServiceTest extends IntegrationTest {
         ApiException e = assertThrows(ApiException.class,
                 () -> service.authenticate(created.sessionId(), "st_never-issued-token"));
 
-        // 만료 후 삭제된 토큰과 구분하지 않는다 - 존재 여부 노출은 추측 단서가 된다
+        // 만료 후 삭제된 토큰과 구분하지 않는다 - 존재 여부 노출은 추측 단서가 된다.
         assertEquals(ErrorCode.SESSION_EXPIRED, e.code());
     }
 
@@ -95,7 +95,7 @@ class SessionServiceTest extends IntegrationTest {
     @Test
     void 만료된_토큰은_다른_세션을_가리켜도_403이_아니라_401이다() {
         // Codex sol 리뷰 P1 - 만료 검사가 ID 비교보다 늦으면, 주기 삭제 전의 만료 토큰만
-        // 403을 받아서 "아직 저장소에 남아 있다"는 사실이 새어 나간다
+        // 403을 받아서 "아직 저장소에 남아 있다"는 사실이 새어 나간다.
         saveSessionExpiredAt(Instant.now().minus(1, ChronoUnit.MINUTES), "st_expired_3");
         SessionResponse other = service.create(null, "127.0.0.1", null);
 
@@ -123,7 +123,7 @@ class SessionServiceTest extends IntegrationTest {
     @Test
     void 세션에는_개인_식별_컬럼이_없다() {
         // 엔티티에 컬럼을 추가하면 이 목록도 갱신해야 한다 - 개인 식별 정보가
-        // 슬쩍 들어오는 것을 리뷰가 아니라 테스트가 막는다
+        // 슬쩍 들어오는 것을 리뷰가 아니라 테스트가 막는다.
         Set<String> allowed = Set.of("id", "tokenHash", "testVersion", "scoreVersion",
                 "platform", "appVersion", "campaignToken", "createdAt", "expiresAt",
                 "completedAt");   // 완료 가드 (KAN-15/16) - 시각뿐, 식별 정보 아님

@@ -47,17 +47,17 @@ class SessionApiTest extends IntegrationTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.sessionId").value(startsWith("s_")))
                 .andExpect(jsonPath("$.sessionToken").value(startsWith("st_")))
-                // KAN-9 AC - 응답에 testVersion과 scoreVersion이 모두 포함된다
+                // KAN-9 AC - 응답에 testVersion과 scoreVersion이 모두 포함된다.
                 .andExpect(jsonPath("$.testVersion").value("gn-2026.08.1"))
                 .andExpect(jsonPath("$.scoreVersion").value("sv-0.3"))
                 .andExpect(jsonPath("$.expiresAt").exists())
-                // §3.1 응답은 정확히 5개 필드 - 늘면 이 테스트가 알려준다
+                // §3.1 응답은 정확히 5개 필드 - 늘면 이 테스트가 알려준다.
                 .andExpect(jsonPath("$").value(aMapWithSize(5)));
     }
 
     @Test
     void 바디_없이도_세션이_생성된다() throws Exception {
-        // §3.1 - campaignToken과 client 모두 optional. 웹(KAN-31)은 아무 정보 없이 시작할 수 있다
+        // §3.1 - campaignToken과 client 모두 optional. 웹(KAN-31)은 아무 정보 없이 시작할 수 있다.
         mockMvc.perform(post("/v0/sessions"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.sessionId").value(startsWith("s_")));

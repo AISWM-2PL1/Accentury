@@ -49,7 +49,7 @@ public class AnalysisStatusService {
         List<AnalysisStatusResponse.Item> items = new ArrayList<>();
         for (TestDefinition.Item item : registry.get(session.testVersion()).definition().items()) {
             if (item.type() != TestDefinition.ItemType.VOICE) {
-                continue; // 어휘 문항은 분석 대상이 아니다 (§3.5 - AI를 거치지 않는다)
+                continue; // 어휘 문항은 분석 대상이 아니다 (§3.5 - AI를 거치지 않는다).
             }
             List<AnalysisJob> attempts = attemptsByItem.get(item.itemId());
             items.add(attempts == null
@@ -80,7 +80,7 @@ public class AnalysisStatusService {
      * 같은 문항을 다르게 말하는 일이 없다: 대표가 PROCESSING이면 완료 대기, COMPLETED면
      * 그 작업이 곧 채점 대상(최신 성공 시도, §5.1)이고, 실패면 재녹음 대상이다.
      *
-     * @return itemId -> 대표 작업. 시도가 없는 문항은 키가 없다
+     * @return itemId -> 대표 작업. 시도가 없는 문항은 키가 없다.
      */
     @Transactional(readOnly = true)
     public Map<String, AnalysisJob> representativeByItem(String sessionId) {

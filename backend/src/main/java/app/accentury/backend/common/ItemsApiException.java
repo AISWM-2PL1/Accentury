@@ -13,7 +13,7 @@ import java.util.List;
  */
 public class ItemsApiException extends ApiException {
 
-    /** 확장 필드 이름 - 오류 코드의 의미와 짝이 정해져 있다 (§3.6, §3.7) */
+    /** 확장 필드 이름 - 오류 코드의 의미와 짝이 정해져 있다 (§3.6, §3.7). */
     public enum ItemsField {
         MISSING_ITEMS,
         RETAKE_ITEMS,

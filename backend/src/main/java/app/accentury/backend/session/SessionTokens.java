@@ -36,7 +36,7 @@ final class SessionTokens {
         return "st_" + BASE64_URL.encodeToString(bytes);
     }
 
-    /** 저장과 조회용 SHA-256 해시 (hex 64자). 토큰 원문은 DB에 넣지 않는다 (§2.1) */
+    /** 저장과 조회용 SHA-256 해시 (hex 64자). 토큰 원문은 DB에 넣지 않는다 (§2.1). */
     static String hash(String token) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");

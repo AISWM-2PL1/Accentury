@@ -42,7 +42,7 @@ class TestDefinitionRegistryTest {
 
     @Test
     void 허용_밴드가_없으면_발행_거부다() {
-        // bandLow와 bandHigh는 required다 (2026-08-09 확정, §3.2, §6)
+        // bandLow와 bandHigh는 required다 (2026-08-09 확정, §3.2, §6).
         TestDefinition broken = withItem(valid(), "v2",
                 item -> new TestDefinition.Item(item.itemId(), item.seq(), item.type(), item.prompt(),
                         new TestDefinition.GuideF0("semitone", 10, List.of(0.1, 0.2, 0.3), null, null),
@@ -112,7 +112,7 @@ class TestDefinitionRegistryTest {
     @Test
     void 식별자가_저장_컬럼_길이를_넘으면_발행_거부다() {
         // 제출 저장 컬럼이 varchar(40)이다 - 발행 검증이 막지 않으면 정의 조회와 답안
-        // 검증은 통과하고 제출 시점의 INSERT가 500으로 터진다 (Codex sol 리뷰 P2)
+        // 검증은 통과하고 제출 시점의 INSERT가 500으로 터진다 (Codex sol 리뷰 P2).
         TestDefinition longItemId = withItem(valid(), "w2",
                 item -> new TestDefinition.Item("w".repeat(41), item.seq(), item.type(), item.prompt(),
                         null, item.choices(), item.correctChoiceId()));
@@ -144,7 +144,7 @@ class TestDefinitionRegistryTest {
     @Test
     void 활성_버전의_seed가_없으면_기동에_실패한다() {
         AccenturyProperties noSuchVersion = props("gn-9999.99.9", "sv-0.3");
-        // 픽스처가 던지는 예외까지 assertThrows에 잡히면 검사를 잃은 회귀도 통과한다 - 람다 밖에서 만든다
+        // 픽스처가 던지는 예외까지 assertThrows에 잡히면 검사를 잃은 회귀도 통과한다 - 람다 밖에서 만든다.
         ScorePolicyRegistry policies = policies();
         assertThrows(IllegalStateException.class,
                 () -> new TestDefinitionRegistry(JsonMapper.builder().build(), noSuchVersion, policies));
@@ -152,7 +152,7 @@ class TestDefinitionRegistryTest {
 
     @Test
     void 활성_버전의_scoreVersion이_설정과_다르면_기동에_실패한다() {
-        // 세션(설정값 고정)과 정의 응답(seed값)이 서로 다른 채점 버전을 가리키는 배포를 막는다 (Codex sol 리뷰 P2)
+        // 세션(설정값 고정)과 정의 응답(seed값)이 서로 다른 채점 버전을 가리키는 배포를 막는다 (Codex sol 리뷰 P2).
         AccenturyProperties mismatched = props("gn-2026.08.1", "sv-9.9");
         ScorePolicyRegistry policies = policies();
         IllegalStateException rejected = assertThrows(IllegalStateException.class,
@@ -163,7 +163,7 @@ class TestDefinitionRegistryTest {
     @Test
     void 정의가_참조하는_scoreVersion의_정책이_없으면_기동에_실패한다() {
         // scoreVersion 참조 유효 검증 (§6, KAN-21) - 활성이 아닌 정의라도 참조가 끊기면 발행 거부.
-        // 정책 seed는 classpath 고정이라, 참조 실패 상황은 조회를 막은 레지스트리로 재현한다
+        // 정책 seed는 classpath 고정이라, 참조 실패 상황은 조회를 막은 레지스트리로 재현한다.
         ScorePolicyRegistry noPolicies = new ScorePolicyRegistry(
                 JsonMapper.builder().build(), props("gn-2026.08.1", "sv-0.3")) {
             @Override
@@ -191,17 +191,17 @@ class TestDefinitionRegistryTest {
 
     // === 픽스처 ===
 
-    /** 실제 seed(sv-0.3)를 로드한 점수 정책 레지스트리 - 정의의 scoreVersion 참조 검증에 쓰인다 */
+    /** 실제 seed(sv-0.3)를 로드한 점수 정책 레지스트리 - 정의의 scoreVersion 참조 검증에 쓰인다. */
     private static ScorePolicyRegistry policies() {
         return new ScorePolicyRegistry(JsonMapper.builder().build(), props("gn-2026.08.1", "sv-0.3"));
     }
 
-    /** 레지스트리 기동 검사용 설정. 업로드, CORS 등 무관한 항목은 기본값과 같게 둔다 */
+    /** 레지스트리 기동 검사용 설정. 업로드, CORS 등 무관한 항목은 기본값과 같게 둔다. */
     private static AccenturyProperties props(String testVersion, String scoreVersion) {
         return PropertiesFixture.versions(testVersion, scoreVersion);
     }
 
-    /** 정본 구성과 같은 5+5와 seq 교차 정의. 각 테스트가 한 곳씩 망가뜨린다 */
+    /** 정본 구성과 같은 5+5와 seq 교차 정의. 각 테스트가 한 곳씩 망가뜨린다. */
     private static TestDefinition valid() {
         List<TestDefinition.Item> items = new ArrayList<>();
         for (int i = 1; i <= 5; i++) {

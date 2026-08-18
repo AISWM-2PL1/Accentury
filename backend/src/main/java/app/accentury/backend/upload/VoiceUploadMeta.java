@@ -33,7 +33,7 @@ record VoiceUploadMeta(@Nullable Long durationMs, @Nullable ClientQuality client
         } catch (JacksonException e) {
             throw new ApiException(ErrorCode.VALIDATION_FAILED, "meta 파트가 올바른 JSON이 아닙니다.");
         }
-        // JSON 리터럴 "null"은 예외 없이 null로 역직렬화된다 - 500이 아니라 400이어야 한다 (Codex sol 리뷰 P2)
+        // JSON 리터럴 "null"은 예외 없이 null로 역직렬화된다 - 500이 아니라 400이어야 한다 (Codex sol 리뷰 P2).
         if (meta == null) {
             throw new ApiException(ErrorCode.VALIDATION_FAILED, "meta 파트가 비어 있습니다.");
         }

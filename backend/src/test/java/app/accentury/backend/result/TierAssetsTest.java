@@ -24,7 +24,7 @@ class TierAssetsTest {
     void 유효한_설정은_소문자_키를_대문자_code로_조회한다() {
         TierAssets assets = new TierAssets(props(validResult()));
 
-        // 설정 키는 소문자(relaxed binding), 저장된 등급 code는 대문자다 - 조회가 잇는다
+        // 설정 키는 소문자(relaxed binding), 저장된 등급 code는 대문자다 - 조회가 잇는다.
         assertEquals("honorary 코멘트", assets.assetFor("HONORARY").comment());
         assertEquals("https://img.test/native.png", assets.assetFor("NATIVE").imageUrl());
         assertEquals("나는 외지인!", assets.assetFor("OUTSIDER").shareText());
@@ -43,7 +43,7 @@ class TierAssetsTest {
 
     @Test
     void 모르는_등급_code의_자산은_기동_거부다() {
-        // 오타(honorery 등)는 조용한 누락으로 이어진다 - 5개 검사만으로는 오타+누락 조합을 못 잡는다
+        // 오타(honorery 등)는 조용한 누락으로 이어진다 - 5개 검사만으로는 오타+누락 조합을 못 잡는다.
         Map<String, AccenturyProperties.TierAsset> tiers = new HashMap<>(validTiers());
         tiers.put("legend", tiers.get("native"));
 
@@ -82,7 +82,7 @@ class TierAssetsTest {
                 "native", new AccenturyProperties.TierAsset("native 코멘트", "https://img.test/native.png", "나는 토박이!"));
     }
 
-    /** 기본값 조합에 result만 갈아끼운 설정 - 검증 대상은 result뿐이다 */
+    /** 기본값 조합에 result만 갈아끼운 설정 - 검증 대상은 result뿐이다. */
     private static AccenturyProperties props(AccenturyProperties.Result result) {
         return PropertiesFixture.withResult(result);
     }

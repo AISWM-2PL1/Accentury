@@ -14,18 +14,18 @@ import app.accentury.backend.scoring.ScorePolicyRegistry;
  *
  * @param sessionsStarted   응시 시도 증가분 (0 또는 1)
  * @param sessionsCompleted 완주 증가분 (0 또는 1)
- * @param tierOutsider      등급별 증가분 - 완주 1건이 정확히 하나만 1이다
+ * @param tierOutsider      등급별 증가분 - 완주 1건이 정확히 하나만 1이다.
  * @param intonationSum     억양 점수 증가분 (0~100)
  * @param vocabularySum     단어 점수 증가분 (0~100)
  * @param overallSum        종합 점수 증가분 (0~100)
- * @param scoredCount       점수 합에 들어간 건수 증가분 - 세 평균의 공통 분모다
+ * @param scoredCount       점수 합에 들어간 건수 증가분 - 세 평균의 공통 분모다.
  */
 record CounterDelta(long sessionsStarted, long sessionsCompleted,
                     long tierOutsider, long tierTraveler, long tierWannabe,
                     long tierHonorary, long tierNative,
                     long intonationSum, long vocabularySum, long overallSum, long scoredCount) {
 
-    /** 응시 시도 1건 - {@code POST /v0/sessions} 성공 (KAN-9). 이 시점에는 점수도 등급도 없다 */
+    /** 응시 시도 1건 - {@code POST /v0/sessions} 성공 (KAN-9). 이 시점에는 점수도 등급도 없다. */
     static CounterDelta sessionStarted() {
         return new CounterDelta(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
     }
@@ -36,7 +36,7 @@ record CounterDelta(long sessionsStarted, long sessionsCompleted,
      * @throws IllegalArgumentException 모르는 등급 code - 세는 자리가 없는 등급이 조용히
      *                                  버려지면 분포 합과 완주 수가 어긋난다.
      *                                  {@link ScorePolicyRegistry#TIER_CODES} 발행 검증이
-     *                                  앞에서 막고 있어 실제로는 도달하지 않는다
+     *                                  앞에서 막고 있어 실제로는 도달하지 않는다.
      */
     static CounterDelta completion(AggregateScore score) {
         String code = score.tier().code();

@@ -9,7 +9,7 @@ import org.jspecify.annotations.Nullable;
  */
 public final class IdempotencyKeys {
 
-    /** 저장 컬럼 길이와 같다 - 검증 없이 저장하면 400이 아니라 500이 된다 */
+    /** 저장 컬럼 길이와 같다 - 검증 없이 저장하면 400이 아니라 500이 된다. */
     public static final int MAX_LENGTH = 100;
 
     private IdempotencyKeys() {

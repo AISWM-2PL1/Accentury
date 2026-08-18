@@ -17,14 +17,14 @@ public class AnalysisBacklog {
 
     private final AtomicInteger inFlight = new AtomicInteger();
 
-    /** 전달 접수 - 워커 큐에 들어가는 시점에 센다 */
+    /** 전달 접수 - 워커 큐에 들어가는 시점에 센다. */
     public void started() {
         inFlight.incrementAndGet();
     }
 
     /**
      * 종결 - 성공이든 실패든 워커가 작업을 놓는 시점. 0 밑으로는 내려가지 않는다 -
-     * 이중 복귀가 음수로 쌓이면 혼잡 감지가 조용히 무력화된다 (Codex 리뷰)
+     * 이중 복귀가 음수로 쌓이면 혼잡 감지가 조용히 무력화된다 (Codex 리뷰).
      */
     public void finished() {
         inFlight.updateAndGet(n -> n > 0 ? n - 1 : 0);

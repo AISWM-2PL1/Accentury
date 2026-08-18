@@ -55,7 +55,7 @@ class ScorePolicyRegistryTest {
 
     @Test
     void 첫_등급의_minScore가_0이_아니면_발행_거부다() {
-        // 0~19점 구간의 등급이 없어지는 판정 불능 정책을 막는다
+        // 0~19점 구간의 등급이 없어지는 판정 불능 정책을 막는다.
         ScorePolicy broken = withTier(valid(), "OUTSIDER",
                 tier -> new ScorePolicy.Tier(tier.code(), tier.name(), tier.rank(), 5));
         IllegalStateException rejected =
@@ -95,7 +95,7 @@ class ScorePolicyRegistryTest {
 
     @Test
     void 계약에_없는_등급_code는_발행_거부다() {
-        // code는 클라이언트가 등급별 자산을 찾는 키다 - 오타(HONORAY)는 발행 시점에 잡는다 (Codex sol 리뷰 P2)
+        // code는 클라이언트가 등급별 자산을 찾는 키다 - 오타(HONORAY)는 발행 시점에 잡는다 (Codex sol 리뷰 P2).
         ScorePolicy broken = withTier(valid(), "HONORARY",
                 tier -> new ScorePolicy.Tier("HONORAY", tier.name(), tier.rank(), tier.minScore()));
         IllegalStateException rejected =
@@ -122,7 +122,7 @@ class ScorePolicyRegistryTest {
 
     @Test
     void 가중치가_상한을_넘으면_발행_거부다() {
-        // 상한 없는 가중치는 집계기의 int 산술을 오버플로시킬 수 있다 (Codex sol 리뷰 P2)
+        // 상한 없는 가중치는 집계기의 int 산술을 오버플로시킬 수 있다 (Codex sol 리뷰 P2).
         assertThrows(IllegalStateException.class, () -> ScorePolicyRegistry.validate(
                 new ScorePolicy("sv-0.3", 10_000_000, 10_000_000, valid().tiers())));
         assertThrows(IllegalStateException.class, () -> ScorePolicyRegistry.validate(
@@ -140,13 +140,13 @@ class ScorePolicyRegistryTest {
 
     @Test
     void 발행되지_않은_점수_버전_조회는_배포_사고다() {
-        // 세션이 고정한 버전(§5.4)의 정책이 사라진 상황 - 클라이언트 404가 아니라 500이어야 한다
+        // 세션이 고정한 버전(§5.4)의 정책이 사라진 상황 - 클라이언트 404가 아니라 500이어야 한다.
         assertThrows(IllegalStateException.class, () -> registry().get("sv-0.0"));
     }
 
     @Test
     void 발행된_정책의_등급_표는_불변이다() {
-        // 소비자가 리스트를 고치면 레지스트리 안의 정책이 바뀌어 결정성이 깨진다 (Codex sol 리뷰 P2)
+        // 소비자가 리스트를 고치면 레지스트리 안의 정책이 바뀌어 결정성이 깨진다 (Codex sol 리뷰 P2).
         List<ScorePolicy.Tier> tiers = registry().get("sv-0.3").tiers();
         assertThrows(UnsupportedOperationException.class, tiers::removeLast);
     }
@@ -157,12 +157,12 @@ class ScorePolicyRegistryTest {
         return new ScorePolicyRegistry(JsonMapper.builder().build(), props("sv-0.3"));
     }
 
-    /** 레지스트리 기동 검사용 설정. 점수 버전 외 항목은 기본값과 같게 둔다 */
+    /** 레지스트리 기동 검사용 설정. 점수 버전 외 항목은 기본값과 같게 둔다. */
     private static AccenturyProperties props(String scoreVersion) {
         return PropertiesFixture.versions("gn-2026.08.1", scoreVersion);
     }
 
-    /** sv-0.3과 같은 5등급 정책. 각 테스트가 한 곳씩 망가뜨린다 */
+    /** sv-0.3과 같은 5등급 정책. 각 테스트가 한 곳씩 망가뜨린다. */
     private static ScorePolicy valid() {
         return new ScorePolicy("sv-0.3", 2, 1, List.of(
                 new ScorePolicy.Tier("OUTSIDER", "외지인", 1, 0),

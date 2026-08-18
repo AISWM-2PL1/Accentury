@@ -11,7 +11,7 @@ import org.jspecify.annotations.Nullable;
  * 모든 필드가 선택이고 바디 자체를 생략해도 세션이 만들어진다 -
  * 권역 파라미터 없음(경남 고정), 개인 식별 정보 없음.
  *
- * @param campaignToken 공유 유입 계측 코드 (개인 식별 불가). 저장되므로 안전한 문자만 허용한다
+ * @param campaignToken 공유 유입 계측 코드 (개인 식별 불가). 저장되므로 안전한 문자만 허용한다.
  * @param client        플랫폼과 앱 버전 - 익명 집계용
  */
 public record CreateSessionRequest(

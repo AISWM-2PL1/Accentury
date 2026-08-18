@@ -44,7 +44,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     private static final CacheControl NO_STORE = CacheControl.noStore();
 
     /**
-     * 비즈니스 예외 - ErrorCode가 상태와 retryable을 이미 알고 있다
+     * 비즈니스 예외 - ErrorCode가 상태와 retryable을 이미 알고 있다.
      */
     @ExceptionHandler(ApiException.class)
     public ResponseEntity<ErrorResponse> handleApi(ApiException e) {
@@ -73,7 +73,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(ItemsApiException.class)
     public ResponseEntity<ItemsErrorResponse> handleApiWithItems(ItemsApiException e) {
         String correlationId = CorrelationIdFilter.current();
-        // 문항 ID는 정의 공개 정보라 로그에 남겨도 결과를 유추할 수 없다 (§2.6과 무충돌)
+        // 문항 ID는 정의 공개 정보라 로그에 남겨도 결과를 유추할 수 없다 (§2.6과 무충돌).
         log.warn("[{}] {} - {} {}", correlationId, e.code(), e.getMessage(), e.itemIds());
         return ResponseEntity.status(e.code().status())
                 .cacheControl(NO_STORE)
@@ -94,7 +94,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     }
 
     /**
-     * 그 외 전부 → 500. 내부 정보는 숨기고 로그에만 남긴다 (NFR-SC-07)
+     * 그 외 전부 → 500. 내부 정보는 숨기고 로그에만 남긴다 (NFR-SC-07).
      */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleUnexpected(Exception e) {
@@ -126,7 +126,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         String message = (ex instanceof MethodArgumentNotValidException manv)
                 ? firstFieldError(manv)
                 : code.defaultMessage();
-        // headers()는 빌더 내부로 복사하므로, 프레임워크가 넘긴 헤더를 건드리지 않고 지시자를 얹는다
+        // headers()는 빌더 내부로 복사하므로, 프레임워크가 넘긴 헤더를 건드리지 않고 지시자를 얹는다.
         return ResponseEntity.status(statusCode).headers(headers).cacheControl(NO_STORE)
                 .body(envelope(code, message));
     }
@@ -139,7 +139,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
             case 400 -> ErrorCode.VALIDATION_FAILED;
             case 404 -> ErrorCode.RESOURCE_NOT_FOUND;
             // multipart 크기 초과는 컨트롤러 도달 전에 프레임워크가 MaxUploadSizeExceededException으로
-            // 끊는다 - 이 API에서 413은 음성 업로드(§3.3)뿐이므로 AUDIO_TOO_LARGE로 매핑한다
+            // 끊는다 - 이 API에서 413은 음성 업로드(§3.3)뿐이므로 AUDIO_TOO_LARGE로 매핑한다.
             case 413 -> ErrorCode.AUDIO_TOO_LARGE;
             case 405 -> ErrorCode.METHOD_NOT_ALLOWED;
             case 415 -> ErrorCode.MEDIA_TYPE_UNSUPPORTED;

@@ -38,14 +38,14 @@ public class ScorePolicyRegistry {
      * 클라이언트 계약이고 결과 화면과 공유 이미지(KAN-29, 30)가 code별 고정 자산을 가지므로,
      * 오타나 순서 바뀜은 발행 시점에 거부해야 한다 (Codex sol 리뷰 P2). 표시 이름과 경계는
      * seed가 정본이지만 code 집합 변경은 클라이언트 배포가 함께 필요한 별개 결정이다.
-     * 등급별 자산 설정 검증(TierAssets, KAN-25)도 이 목록이 기준이다
+     * 등급별 자산 설정 검증(TierAssets, KAN-25)도 이 목록이 기준이다.
      */
     public static final List<String> TIER_CODES = List.of("OUTSIDER", "TRAVELER", "WANNABE", "HONORARY", "NATIVE");
 
     /**
      * 가중치 상한 - 가중치는 비율값(sv-0.3: 2:1)이라 이 범위면 충분하다. 집계 산술은
      * long이라 오버플로하지 않지만(ScoreAggregator), 자릿수 오타 같은 비정상 비율은
-     * 발행 시점에 거른다 (Codex sol 리뷰 P2)
+     * 발행 시점에 거른다 (Codex sol 리뷰 P2).
      */
     static final int MAX_WEIGHT = 100;
 
@@ -106,7 +106,7 @@ public class ScorePolicyRegistry {
         }
     }
 
-    /** 파일명과 본문 버전이 어긋난 seed는 사고의 씨앗이라 발행을 거부한다 */
+    /** 파일명과 본문 버전이 어긋난 seed는 사고의 씨앗이라 발행을 거부한다. */
     private static void requireMatchingFilename(Resource seed, ScorePolicy policy) {
         String filename = seed.getFilename();
         require(filename == null || filename.equals(policy.scoreVersion() + ".json"),
@@ -120,7 +120,7 @@ public class ScorePolicyRegistry {
      */
     static void validate(ScorePolicy policy) {
         require(hasText(policy.scoreVersion()), "scoreVersion이 비어 있다");
-        // 가중치 0은 한 축을 무단 폐기하는 것이라 새 점수 버전 논의 없이는 실수다 (§4.3 - 2:1 확정)
+        // 가중치 0은 한 축을 무단 폐기하는 것이라 새 점수 버전 논의 없이는 실수다 (§4.3 - 2:1 확정).
         require(policy.intonationWeight() > 0 && policy.intonationWeight() <= MAX_WEIGHT,
                 "intonationWeight는 1~" + MAX_WEIGHT + "이어야 한다: " + policy.intonationWeight());
         require(policy.vocabularyWeight() > 0 && policy.vocabularyWeight() <= MAX_WEIGHT,

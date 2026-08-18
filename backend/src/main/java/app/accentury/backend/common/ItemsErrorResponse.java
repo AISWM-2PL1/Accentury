@@ -20,7 +20,7 @@ public record ItemsErrorResponse(
 
         boolean retryable,
 
-        // 공통 봉투와 같은 자리 - 이 확장이 붙는 409/422는 요청 제한이 아니라 항상 null이다
+        // 공통 봉투와 같은 자리 - 이 확장이 붙는 409/422는 요청 제한이 아니라 항상 null이다.
         @Nullable Long retryAfterMs,
 
         String correlationId,

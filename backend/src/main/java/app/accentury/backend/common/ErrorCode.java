@@ -23,7 +23,7 @@ public enum ErrorCode {
     // === ITEM_* : 문항 (KAN-10, 13, 15) ===
     ITEM_NOT_IN_VERSION(HttpStatus.UNPROCESSABLE_CONTENT, false, "이 테스트 버전에 없는 문항입니다."),
     ITEM_WRONG_TYPE(HttpStatus.CONFLICT, false, "문항 유형이 올바르지 않습니다."),
-    // 새 키의 재제출 거절 (KAN-15) - 확정 플로우(§5.7)에 답 변경이 없어 클라이언트 오류로 본다
+    // 새 키의 재제출 거절 (KAN-15) - 확정 플로우(§5.7)에 답 변경이 없어 클라이언트 오류로 본다.
     ITEM_ALREADY_ANSWERED(HttpStatus.CONFLICT, false, "이미 답변한 문항입니다."),
 
     // === AUDIO_* : 음성 업로드 (KAN-23) ===
@@ -45,7 +45,7 @@ public enum ErrorCode {
 
     // === RATE_* : 요청 제한 (KAN-23, KAN-28) ===
     RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, true, "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요."),
-    // 시간이 지나도 풀리지 않는 상한이므로 retryable=false - RATE_LIMITED와 다르다
+    // 시간이 지나도 풀리지 않는 상한이므로 retryable=false - RATE_LIMITED와 다르다.
     RATE_RETAKE_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, false, "이 문항의 업로드 횟수 상한을 넘었습니다. (최대 5회)"),
 
     // === ADMIN_* : 운영자 전용 API (§6, KAN-106) ===

@@ -33,11 +33,11 @@ public class TestResult {
     @Column(name = "session_id", nullable = false, length = 40)
     private String sessionId;
 
-    /** 세션이 생성 시점에 고정한 테스트 정의 버전 (§5.4) - §3.7 응답에 그대로 실린다 */
+    /** 세션이 생성 시점에 고정한 테스트 정의 버전 (§5.4) - §3.7 응답에 그대로 실린다. */
     @Column(name = "test_version", nullable = false, length = 40)
     private String testVersion;
 
-    /** 집계에 쓴 점수 버전 - 이 값 하나로 가중치와 경계를 재현할 수 있다 (KAN-21 AC) */
+    /** 집계에 쓴 점수 버전 - 이 값 하나로 가중치와 경계를 재현할 수 있다 (KAN-21 AC). */
     @Column(name = "score_version", nullable = false, length = 20)
     private String scoreVersion;
 
@@ -49,7 +49,7 @@ public class TestResult {
     @Column(nullable = false)
     private int vocabulary;
 
-    /** 종합 점수 0~100 - 가중 평균 (sv-0.3: 억양 2 : 단어 1). 등급 판정의 입력이다 */
+    /** 종합 점수 0~100 - 가중 평균 (sv-0.3: 억양 2 : 단어 1). 등급 판정의 입력이다. */
     @Column(nullable = false)
     private int overall;
 
@@ -69,7 +69,7 @@ public class TestResult {
     @Column(name = "tier_count", nullable = false)
     private int tierCount;
 
-    /** {@code /complete}가 결과를 확정한 시각 - 세션의 completed_at과 같은 트랜잭션에 기록된다 */
+    /** {@code /complete}가 결과를 확정한 시각 - 세션의 completed_at과 같은 트랜잭션에 기록된다. */
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 

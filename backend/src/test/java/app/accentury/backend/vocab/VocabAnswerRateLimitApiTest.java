@@ -38,7 +38,7 @@ class VocabAnswerRateLimitApiTest extends IntegrationTest {
     void 세션당_한도를_넘으면_429와_Retry_After다() throws Exception {
         SessionHandle session = createSession();
         mockMvc.perform(answer(session, "w1", "w1a", "v-1")).andExpect(status().isOk());
-        // 같은 키의 재전송도 요청 한 번이다 - 제한은 멱등 판별보다 앞이다
+        // 같은 키의 재전송도 요청 한 번이다 - 제한은 멱등 판별보다 앞이다.
         mockMvc.perform(answer(session, "w1", "w1a", "v-1")).andExpect(status().isOk());
 
         mockMvc.perform(answer(session, "w2", "w2b", "v-2"))
