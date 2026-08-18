@@ -40,11 +40,11 @@ public class AnalysisJob {
     @Column(name = "item_id", nullable = false, length = 40)
     private String itemId;
 
-    /** 같은 문항의 몇 번째 시도인지 (1부터). 표시용이며 채점 순서는 createdAt 기준이다 */
+    /** 같은 문항의 몇 번째 시도인지 (1부터). 표시용이며 채점 순서는 createdAt 기준이다. */
     @Column(nullable = false)
     private int attempt;
 
-    /** 클라이언트가 보낸 Idempotency-Key. 시도 단위 멱등의 기준이다 (§5.2) */
+    /** 클라이언트가 보낸 Idempotency-Key. 시도 단위 멱등의 기준이다 (§5.2). */
     @Column(name = "idempotency_key", nullable = false, length = 100)
     private String idempotencyKey;
 
@@ -67,7 +67,7 @@ public class AnalysisJob {
     @Column(name = "quality_code", length = 40)
     private @Nullable String qualityCode;
 
-    /** 실패 사유 코드 (§3.4 error.code, 예: AUDIO_TOO_QUIET) - 실패 상태에서만 값이 있다 */
+    /** 실패 사유 코드 (§3.4 error.code, 예: AUDIO_TOO_QUIET) - 실패 상태에서만 값이 있다. */
     @Column(name = "error_code", length = 40)
     private @Nullable String errorCode;
 
@@ -81,7 +81,7 @@ public class AnalysisJob {
 
     /**
      * 워커가 AI 호출 실행을 시작한 시각 - 큐 대기 중이면 null. 타임아웃 판정이
-     * "큐에서 기다리는 중"(정상)과 "실행이 오래 걸림"(잔류)을 가르는 기준이다 (Codex sol 리뷰 P1)
+     * "큐에서 기다리는 중"(정상)과 "실행이 오래 걸림"(잔류)을 가르는 기준이다 (Codex sol 리뷰 P1).
      */
     @Column(name = "started_at")
     private @Nullable Instant startedAt;

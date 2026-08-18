@@ -52,12 +52,12 @@ public class ResultService {
      */
     @Transactional(readOnly = true)
     public ResultResponse result(String sessionId, @Nullable String authorization) {
-        // /result 전용 인증 - 완료된 세션은 만료 후에도 통과시켜 410이 401보다 먼저 선다 (KAN-25)
+        // /result 전용 인증 - 완료된 세션은 만료 후에도 통과시켜 410이 401보다 먼저 선다 (KAN-25).
         TestSession session = sessionService.authenticateBearerForResult(sessionId, authorization);
 
         if (session.isCompleted()) {
             // 완료 세션의 결과 부재는 만료 정리가 먼저 지운 것이다 - 저장은 완료 전이와 같은
-            // 트랜잭션이라(KAN-16) 그 외의 부재는 없다. 행이 남아 있어도 만료면 같은 410이다 (§5.5)
+            // 트랜잭션이라(KAN-16) 그 외의 부재는 없다. 행이 남아 있어도 만료면 같은 410이다 (§5.5).
             TestResult result = resultRepository.findBySessionId(session.id())
                     .filter(found -> !found.isExpired(Instant.now()))
                     .orElseThrow(() -> new ApiException(ErrorCode.RESULT_EXPIRED));
@@ -65,7 +65,7 @@ public class ResultService {
                     tierAssets.webTestUrl());
         }
 
-        // 미완료 세션 - 만료는 인증이 이미 401로 걸렀으니 여기는 진행 중 세션뿐이다
+        // 미완료 세션 - 만료는 인증이 이미 401로 걸렀으니 여기는 진행 중 세션뿐이다.
         TestDefinition definition = registry.get(session.testVersion()).definition();
         CompletionJudge.Judgment judgment = judge.judge(session.id(), definition);
         if (!judgment.missingItems().isEmpty()) {
@@ -79,7 +79,7 @@ public class ResultService {
         // 분석 중이거나, 전부 갖춰졌지만 /complete가 아직 확정하지 않은 세션이다. 후자도
         // 여기서 결과를 만들지 않고 NOT_READY로 낸다 (조회는 만들지 않는다) - pendingItems가
         // 빈 목록이면 클라이언트가 기다릴 문항이 없다는 뜻 그대로이고, 완료 확정은 §5.7
-        // 흐름대로 /complete 폴링이 맡는다
+        // 흐름대로 /complete 폴링이 맡는다.
         throw new ItemsApiException(ErrorCode.RESULT_NOT_READY,
                 ItemsApiException.ItemsField.PENDING_ITEMS, judgment.pendingItems());
     }

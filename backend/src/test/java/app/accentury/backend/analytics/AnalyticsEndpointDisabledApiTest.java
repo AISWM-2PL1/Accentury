@@ -35,7 +35,7 @@ class AnalyticsEndpointDisabledApiTest extends IntegrationTest {
 
     @Test
     void 토큰이_설정되지_않으면_경로가_404다() throws Exception {
-        // 다른 없는 경로와 구분되지 않는다 - 있는데 잠겼다는 신호조차 주지 않는다
+        // 다른 없는 경로와 구분되지 않는다 - 있는데 잠겼다는 신호조차 주지 않는다.
         mockMvc.perform(get("/admin/v0/analytics"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("RESOURCE_NOT_FOUND"));
@@ -43,7 +43,7 @@ class AnalyticsEndpointDisabledApiTest extends IntegrationTest {
 
     @Test
     void 집계_조회_서비스는_토큰과_무관하게_있다() {
-        // 엔드포인트만 조건부다 - 조회 자체는 테스트와 운영 DB 직접 조회의 공통 계산이다
+        // 엔드포인트만 조건부다 - 조회 자체는 테스트와 운영 DB 직접 조회의 공통 계산이다.
         assertEquals(1, context.getBeanNamesForType(AnalyticsQueryService.class).length);
     }
 }

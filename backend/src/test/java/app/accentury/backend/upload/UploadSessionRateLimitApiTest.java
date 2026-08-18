@@ -58,7 +58,7 @@ class UploadSessionRateLimitApiTest extends IntegrationTest {
 
     @Test
     void 다른_세션은_같은_IP라도_영향을_받지_않는다() throws Exception {
-        // 공유 IP 뒤의 정상 응시자를 서로 막지 않는 것이 세션 단위로 나눈 이유다
+        // 공유 IP 뒤의 정상 응시자를 서로 막지 않는 것이 세션 단위로 나눈 이유다.
         SessionHandle exhausted = createSession();
         mockMvc.perform(upload(exhausted, "e-1", "8.8.9.1")).andExpect(status().isAccepted());
         mockMvc.perform(upload(exhausted, "e-2", "8.8.9.1")).andExpect(status().isAccepted());

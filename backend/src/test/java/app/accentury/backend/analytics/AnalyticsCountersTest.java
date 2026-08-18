@@ -35,7 +35,7 @@ class AnalyticsCountersTest {
     @Test
     void 일자는_설정_타임존_기준으로_자른다() {
         RecordingStore store = new RecordingStore();
-        // UTC로는 8월 16일 23:00이지만 KST로는 8월 17일 08:00이다
+        // UTC로는 8월 16일 23:00이지만 KST로는 8월 17일 08:00이다.
         counters(store, "Asia/Seoul").recordSessionStarted(
                 Instant.parse("2026-08-16T23:00:00Z"), TEST_VERSION, "sv-0.3");
 
@@ -116,7 +116,7 @@ class AnalyticsCountersTest {
     @Test
     void 증가분_계산이_실패해도_예외를_던지지_않는다() {
         // 등급 백스톱과 키 구분자 검사는 정상 저장소에서도 던질 수 있다. 이 예외가 삼킴 경계
-        // 밖(인자 계산 자리)에서 터지면 결과가 커밋된 뒤 /complete가 500이 된다 (Fable 리뷰 P2)
+        // 밖(인자 계산 자리)에서 터지면 결과가 커밋된 뒤 /complete가 500이 된다 (Fable 리뷰 P2).
         AnalyticsCounters counters = counters(new RecordingStore(), "Asia/Seoul");
         Instant at = Instant.parse("2026-08-17T01:00:00Z");
 
@@ -148,7 +148,7 @@ class AnalyticsCountersTest {
     @Test
     void 세는_자리가_없는_등급은_거부한다() {
         // 등급 code는 클라이언트 계약이라 발행 검증이 앞에서 막지만(KAN-21),
-        // 여기서 조용히 버리면 등급 분포 합과 완주 수가 어긋난 채로 남는다
+        // 여기서 조용히 버리면 등급 분포 합과 완주 수가 어긋난 채로 남는다.
         assertThrows(IllegalArgumentException.class,
                 () -> CounterDelta.completion(score("LEGEND", 90, 90, 90)));
     }
@@ -166,7 +166,7 @@ class AnalyticsCountersTest {
                 new ScorePolicy.Tier(tierCode, "이름", 4, 60), 5);
     }
 
-    /** 행의 존재 여부만 흉내내는 저장소 - 호출 순서를 그대로 기록한다 */
+    /** 행의 존재 여부만 흉내내는 저장소 - 호출 순서를 그대로 기록한다. */
     private static class RecordingStore implements CounterStore {
 
         final List<String> calls = new ArrayList<>();
@@ -186,7 +186,7 @@ class AnalyticsCountersTest {
         }
     }
 
-    /** 어느 갈래로 가도 실패하는 저장소 - DB 장애를 흉내낸다 */
+    /** 어느 갈래로 가도 실패하는 저장소 - DB 장애를 흉내낸다. */
     private static final class FailingStore implements CounterStore {
 
         @Override

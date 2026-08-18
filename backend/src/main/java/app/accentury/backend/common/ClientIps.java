@@ -38,7 +38,7 @@ public class ClientIps {
             // 프록시 없이 뜬 서버에는 이것이 맞는 기본값이라 기동을 세우지는 않는다. 다만
             // 로드밸런서 뒤라면 전원이 그 IP 하나를 공유해 서로의 한도를 깎으므로(KAN-28 §2.5)
             // 배포 로그에 반드시 남겨야 한다 - 이 설정의 잘못은 예외도 오류도 없이 "왜 남들
-            // 때문에 429가 나지"로만 드러나서, 경고가 없으면 부하 테스트에서야 발견된다
+            // 때문에 429가 나지"로만 드러나서, 경고가 없으면 부하 테스트에서야 발견된다.
             log.warn("accentury.trusted-proxies가 비어 있다 - X-Forwarded-For를 무시하고 접속 IP만"
                     + " 요청 제한 키로 쓴다. 프록시나 로드밸런서 뒤에 배포했다면 그 대역을 반드시 지정해야 한다");
         } else {
@@ -47,11 +47,11 @@ public class ClientIps {
         }
     }
 
-    /** 이 요청의 제한 기준 IP. 판정할 수 없으면 직접 접속 IP를 그대로 쓴다 */
+    /** 이 요청의 제한 기준 IP. 판정할 수 없으면 직접 접속 IP를 그대로 쓴다. */
     public String resolve(HttpServletRequest request) {
         String peer = request.getRemoteAddr();
         if (trustedProxies.isEmpty() || !isTrusted(peer)) {
-            // 신뢰 프록시 뒤가 아니다 - 헤더는 상대가 직접 쓴 값이므로 읽지 않는다
+            // 신뢰 프록시 뒤가 아니다 - 헤더는 상대가 직접 쓴 값이므로 읽지 않는다.
             return peer;
         }
         String header = request.getHeader(FORWARDED_FOR);
@@ -62,14 +62,14 @@ public class ClientIps {
         for (int i = hops.length - 1; i >= 0; i--) {
             String hop = normalize(hops[i]);
             if (hop == null) {
-                // 형식 불명 - 이 값도 그 왼쪽도 믿을 수 없다
+                // 형식 불명 - 이 값도 그 왼쪽도 믿을 수 없다.
                 return peer;
             }
             if (!isTrusted(hop)) {
                 return hop;
             }
         }
-        // 전부 신뢰 프록시다 - 체인 안에서 시작된 요청이므로 직접 접속 IP가 최선의 키다
+        // 전부 신뢰 프록시다 - 체인 안에서 시작된 요청이므로 직접 접속 IP가 최선의 키다.
         return peer;
     }
 
@@ -85,20 +85,20 @@ public class ClientIps {
     private static @Nullable String normalize(String hop) {
         String value = hop.strip();
         if (value.startsWith("[")) {
-            // [2001:db8::1]:443 - 대괄호 안이 주소다
+            // [2001:db8::1]:443 - 대괄호 안이 주소다.
             int end = value.indexOf(']');
             value = end > 0 ? value.substring(1, end) : "";
         } else if (value.indexOf(':') != value.lastIndexOf(':')) {
-            // 콜론이 둘 이상이면 대괄호 없는 IPv6다 - 포트가 붙을 수 없는 형태다
+            // 콜론이 둘 이상이면 대괄호 없는 IPv6다 - 포트가 붙을 수 없는 형태다.
             return literal(value) != null ? value : null;
         } else if (value.indexOf(':') > 0) {
-            // 1.2.3.4:5678 - 콜론이 하나면 IPv4 + 포트다
+            // 1.2.3.4:5678 - 콜론이 하나면 IPv4 + 포트다.
             value = value.substring(0, value.indexOf(':'));
         }
         return literal(value) != null ? value : null;
     }
 
-    /** 이름 해석 없이 IP 리터럴만 받는다 - 요청 경로에서 DNS를 타면 안 된다 */
+    /** 이름 해석 없이 IP 리터럴만 받는다 - 요청 경로에서 DNS를 타면 안 된다. */
     private static @Nullable InetAddress literal(String value) {
         try {
             return InetAddress.ofLiteral(value);
@@ -120,7 +120,7 @@ public class ClientIps {
             InetAddress address = literal(addressPart);
             if (address == null) {
                 // 설정 오류를 조용히 "신뢰 안 함"으로 흘리면 배포에서 전원이 한 키를 공유한다 -
-                // 기동 시점에 세운다
+                // 기동 시점에 세운다.
                 throw new IllegalArgumentException(
                         "accentury.trusted-proxies 값이 IP나 CIDR이 아니다: " + value);
             }
@@ -145,7 +145,7 @@ public class ClientIps {
         boolean matches(InetAddress candidate) {
             byte[] bytes = candidate.getAddress();
             if (bytes.length != prefix.length) {
-                // IPv4와 IPv6은 섞어서 비교하지 않는다 - 필요하면 두 대역을 각각 설정한다
+                // IPv4와 IPv6은 섞어서 비교하지 않는다 - 필요하면 두 대역을 각각 설정한다.
                 return false;
             }
             int fullBytes = bits / 8;

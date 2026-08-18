@@ -36,7 +36,7 @@ class CompleteRateLimitApiTest extends IntegrationTest {
     @Test
     void 세션당_한도를_넘으면_429와_Retry_After다() throws Exception {
         SessionHandle session = createSession();
-        // 미제출 세션이라 제한 전까지는 422다 - 제한은 완주 판정보다 먼저 걸린다
+        // 미제출 세션이라 제한 전까지는 422다 - 제한은 완주 판정보다 먼저 걸린다.
         mockMvc.perform(complete(session, "c-1")).andExpect(status().isUnprocessableContent());
         mockMvc.perform(complete(session, "c-2")).andExpect(status().isUnprocessableContent());
 
@@ -49,7 +49,7 @@ class CompleteRateLimitApiTest extends IntegrationTest {
 
     @Test
     void 다른_세션은_영향을_받지_않는다() throws Exception {
-        // 세션 단위인 이유 - NAT 뒤의 여러 정상 응시자가 서로의 한도를 깎으면 안 된다
+        // 세션 단위인 이유 - NAT 뒤의 여러 정상 응시자가 서로의 한도를 깎으면 안 된다.
         SessionHandle exhausted = createSession();
         mockMvc.perform(complete(exhausted, "e-1")).andExpect(status().isUnprocessableContent());
         mockMvc.perform(complete(exhausted, "e-2")).andExpect(status().isUnprocessableContent());

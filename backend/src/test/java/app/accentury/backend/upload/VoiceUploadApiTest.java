@@ -90,7 +90,7 @@ class VoiceUploadApiTest extends IntegrationTest {
 
     @Test
     void 문항당_업로드_시도_상한은_5회다() throws Exception {
-        // §2.5, §5.1 (2026-08-09 확정) - GPU 비용 보호. 업로드 전 로컬 재녹음은 세지 않는다
+        // §2.5, §5.1 (2026-08-09 확정) - GPU 비용 보호. 업로드 전 로컬 재녹음은 세지 않는다.
         SessionHandle session = createSession();
         for (int i = 1; i <= 5; i++) {
             mockMvc.perform(upload(session, "v4", "cap-" + i))
@@ -101,10 +101,10 @@ class VoiceUploadApiTest extends IntegrationTest {
         mockMvc.perform(upload(session, "v4", "cap-6"))
                 .andExpect(status().isTooManyRequests())
                 .andExpect(jsonPath("$.code").value("RATE_RETAKE_EXCEEDED"))
-                // 시간이 지나도 풀리지 않는 상한이라 retryable=false - RATE_LIMITED와 다르다
+                // 시간이 지나도 풀리지 않는 상한이라 retryable=false - RATE_LIMITED와 다르다.
                 .andExpect(jsonPath("$.retryable").value(false));
 
-        // 같은 키의 재전송은 상한과 무관하게 저장된 작업을 돌려받는다 (§5.2)
+        // 같은 키의 재전송은 상한과 무관하게 저장된 작업을 돌려받는다 (§5.2).
         mockMvc.perform(upload(session, "v4", "cap-5"))
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.attempt").value(5));
@@ -114,7 +114,7 @@ class VoiceUploadApiTest extends IntegrationTest {
     void AI가_분석한_판정_실패도_시도_상한에_포함된다() throws Exception {
         // 상한의 목적이 GPU 비용 보호다 - AI가 분석까지 한 실패(AUDIO_TOO_QUIET 등)를 빼면
         // 불량 녹음 반복으로 상한을 무한 우회한다 (Codex sol 리뷰 P1). 전달 실패가 안 세지는
-        // 쪽은 VoiceUploadDispatchFailureTest가 검증한다
+        // 쪽은 VoiceUploadDispatchFailureTest가 검증한다.
         SessionHandle session = createSession();
         for (int i = 1; i <= 5; i++) {
             String jobId = uploadAndGetJobId(session, "v5", "judged-" + i);
@@ -145,7 +145,7 @@ class VoiceUploadApiTest extends IntegrationTest {
     @Test
     void 완료된_세션에는_409_SESSION_COMPLETED다() throws Exception {
         // 완료 상태는 KAN-15에서 도입 - 가드가 없으면 /complete 뒤의 업로드가 GPU를
-        // 소모하고 확정된 세션 상태를 흔든다 (Codex sol 리뷰 P2)
+        // 소모하고 확정된 세션 상태를 흔든다 (Codex sol 리뷰 P2).
         SessionHandle session = createSession();
         TestSession stored = sessionRepository.findById(session.id()).orElseThrow();
         stored.markCompleted(Instant.now(), stored.expiresAt());
@@ -256,7 +256,7 @@ class VoiceUploadApiTest extends IntegrationTest {
 
     @Test
     void durationMs가_없거나_양수가_아니면_400이다() throws Exception {
-        // 4개 clientQuality 필드와 함께 durationMs도 필수다 (2026-08-06 확정, §3.3)
+        // 4개 clientQuality 필드와 함께 durationMs도 필수다 (2026-08-06 확정, §3.3).
         SessionHandle session = createSession();
         String quality = """
                 "clientQuality": {"rms": 0.11, "peak": 0.83, "silenceRatio": 0.12, "clipped": false}""";
@@ -279,7 +279,7 @@ class VoiceUploadApiTest extends IntegrationTest {
 
     @Test
     void Idempotency_Key가_100자를_넘으면_400이다() throws Exception {
-        // 컬럼 길이가 100이라 검증이 없으면 저장 시점에 500이 된다
+        // 컬럼 길이가 100이라 검증이 없으면 저장 시점에 500이 된다.
         mockMvc.perform(upload(createSession(), "v1", "k".repeat(101)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
@@ -324,7 +324,7 @@ class VoiceUploadApiTest extends IntegrationTest {
 
     @Test
     void 오디오가_1MB를_넘으면_413_AUDIO_TOO_LARGE다() throws Exception {
-        // 33초 분량 = 약 1.06MB - 크기 검사(413)가 길이 검사(422)보다 먼저다
+        // 33초 분량 = 약 1.06MB - 크기 검사(413)가 길이 검사(422)보다 먼저다.
         mockMvc.perform(upload(createSession(), "v1", "too-large", WavFixtures.standardWav(33_000)))
                 .andExpect(status().isContentTooLarge())
                 .andExpect(jsonPath("$.code").value("AUDIO_TOO_LARGE"));
@@ -332,7 +332,7 @@ class VoiceUploadApiTest extends IntegrationTest {
 
     @Test
     void 문항_최대_길이를_넘으면_422_AUDIO_TOO_LONG이다() throws Exception {
-        // 상한은 전 문항 공통 상수 VOICE_MAX_DURATION_MS(10초) - 11초는 크기(352KB)는 통과하고 길이에서 걸린다
+        // 상한은 전 문항 공통 상수 VOICE_MAX_DURATION_MS(10초) - 11초는 크기(352KB)는 통과하고 길이에서 걸린다.
         mockMvc.perform(upload(createSession(), "v1", "too-long", WavFixtures.standardWav(11_000)))
                 .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.code").value("AUDIO_TOO_LONG"));
@@ -345,7 +345,7 @@ class VoiceUploadApiTest extends IntegrationTest {
         // 분석으로 넘어가지 못한 오디오도 파기 대상이다 (Codex sol 리뷰 P1) - 서비스가
         // MultipartFile.getBytes()로 뜬 사본에는 컨테이너의 요청 종료 정리가 닿지 않는다.
         // MockMultipartFile은 getBytes()에서 내부 배열을 그대로 주므로, 서비스가 지웠는지를
-        // 여기서 그대로 확인할 수 있다
+        // 여기서 그대로 확인할 수 있다.
         byte[] audio = WavFixtures.wav(44_100, 1, 16, 1000);
 
         mockMvc.perform(upload(createSession(), "v1", "wipe-format", audio))
@@ -360,7 +360,7 @@ class VoiceUploadApiTest extends IntegrationTest {
         mockMvc.perform(upload(session, "v1", "wipe-replay")).andExpect(status().isAccepted());
         byte[] replay = WavFixtures.standardWav(3000);
 
-        // 저장된 작업을 그대로 돌려주는 경로 - dispatch()가 없어 소유권이 넘어가지 않는다
+        // 저장된 작업을 그대로 돌려주는 경로 - dispatch()가 없어 소유권이 넘어가지 않는다.
         mockMvc.perform(upload(session, "v1", "wipe-replay", replay))
                 .andExpect(status().isAccepted());
 

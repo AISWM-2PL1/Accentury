@@ -91,7 +91,7 @@ class AnalysisStatusApiTest extends IntegrationTest {
                 .andExpect(jsonPath("$.items[0].quality").value("OK"))
                 .andReturn();
 
-        // 문항 중간 점수 미노출 (KAN-12, KAN-24 AC) - 필드 이름 자체가 응답에 없어야 한다
+        // 문항 중간 점수 미노출 (KAN-12, KAN-24 AC) - 필드 이름 자체가 응답에 없어야 한다.
         String body = result.getResponse().getContentAsString();
         assertFalse(body.contains("intonationScore"), "상태 응답에 점수가 실렸다: " + body);
         assertFalse(body.contains("\"score"), "상태 응답에 점수 필드가 실렸다: " + body);
@@ -121,7 +121,7 @@ class AnalysisStatusApiTest extends IntegrationTest {
         transitions.complete(first.id(), 80, "OK", "rmvpe-0.2", "sv-0.3");
         transitions.fail(second.id(), AnalysisJobStatus.RETRYABLE_FAILED, "AUDIO_TOO_QUIET");
 
-        // 채점 대상(1차 성공)이 살아 있으므로 재녹음을 유도하지 않는다 (§3.6, §5.1)
+        // 채점 대상(1차 성공)이 살아 있으므로 재녹음을 유도하지 않는다 (§3.6, §5.1).
         mockMvc.perform(statuses(session))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items[0].status").value("COMPLETED"))
@@ -136,7 +136,7 @@ class AnalysisStatusApiTest extends IntegrationTest {
         saveJob(session, "v1", 2, base.plusSeconds(10));
         transitions.complete(first.id(), 80, "OK", "rmvpe-0.2", "sv-0.3");
 
-        // 새 결과가 채점 대상을 갈아치울 수 있으므로 대기 화면은 기다려야 한다
+        // 새 결과가 채점 대상을 갈아치울 수 있으므로 대기 화면은 기다려야 한다.
         mockMvc.perform(statuses(session))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items[0].status").value("PROCESSING"));
@@ -146,7 +146,7 @@ class AnalysisStatusApiTest extends IntegrationTest {
     void 성공보다_새로운_시도가_분석_중이면_최신_실패에도_PROCESSING이다() throws Exception {
         // [성공, 분석 중, 실패] - 분석 중인 2차가 성공하면 채점 대상(최신 성공)이 1차에서
         // 2차로 바뀐다. 여기서 COMPLETED를 보고하면 /complete가 옛 점수로 결과를 영구
-        // 확정할 수 있으므로 기다려야 한다 (Codex sol 리뷰 P1)
+        // 확정할 수 있으므로 기다려야 한다 (Codex sol 리뷰 P1).
         SessionHandle session = createSession();
         Instant base = Instant.now().minusSeconds(60);
         AnalysisJob first = saveJob(session, "v1", 1, base);
@@ -164,7 +164,7 @@ class AnalysisStatusApiTest extends IntegrationTest {
     @Test
     void 성공이_없고_이전_시도가_아직_분석_중이면_최신_실패라도_PROCESSING이다() throws Exception {
         // 겹친 업로드에서 새 시도가 먼저 실패한 경우 - 아직 도는 이전 시도가 성공하면
-        // 채점 대상이 되므로, 실패를 보고해 폴링을 멈추게 하면 안 된다 (Codex sol 리뷰 P2)
+        // 채점 대상이 되므로, 실패를 보고해 폴링을 멈추게 하면 안 된다 (Codex sol 리뷰 P2).
         SessionHandle session = createSession();
         Instant base = Instant.now().minusSeconds(60);
         saveJob(session, "v1", 1, base);
@@ -179,7 +179,7 @@ class AnalysisStatusApiTest extends IntegrationTest {
 
     @Test
     void 상태_응답은_캐시되지_않는다() throws Exception {
-        // 폴링 응답이 캐시에서 재사용되면 완료가 가려진다 (Codex sol 리뷰 P2)
+        // 폴링 응답이 캐시에서 재사용되면 완료가 가려진다 (Codex sol 리뷰 P2).
         SessionHandle session = createSession();
         AnalysisJob job = saveJob(session, "v1", 1, Instant.now());
 
@@ -202,7 +202,7 @@ class AnalysisStatusApiTest extends IntegrationTest {
         SessionHandle session = createSession();
         AnalysisJob job = saveJob(session, "v1", 1, Instant.now());
         // 임계치와 간격은 설정이 정본이다 - 값을 복사하면 설정 변경 시 엉뚱한 이유로 깨진다.
-        // 공유 빈을 직접 올리므로 이 테스트는 다른 테스트와 병렬 실행하면 안 된다 (finally 복원)
+        // 공유 빈을 직접 올리므로 이 테스트는 다른 테스트와 병렬 실행하면 안 된다 (finally 복원).
         int threshold = properties.analysis().congestionThreshold();
         int congested = (int) properties.analysis().congestedPollAfterMs();
         int base = (int) properties.analysis().pollAfterMs();
@@ -223,7 +223,7 @@ class AnalysisStatusApiTest extends IntegrationTest {
             }
         }
 
-        // 밀림이 풀리면 즉시 기준 간격으로 돌아온다
+        // 밀림이 풀리면 즉시 기준 간격으로 돌아온다.
         mockMvc.perform(statuses(session))
                 .andExpect(jsonPath("$.pollAfterMs").value(base));
     }

@@ -61,7 +61,7 @@ public class TestDefinitionController {
             WebRequest request) {
         TestDefinitionRegistry.PublishedDefinition published = registry.get(testVersion);
         if (request.checkNotModified(published.etag())) {
-            return null;    // Spring이 304 Not Modified + ETag 헤더를 만든다
+            return null;    // Spring이 304 Not Modified + ETag 헤더를 만든다.
         }
         return ResponseEntity.ok()
                 .eTag(published.etag())

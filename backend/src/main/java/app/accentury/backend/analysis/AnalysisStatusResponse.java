@@ -11,12 +11,12 @@ import java.util.List;
  * 세션 버전의 음성 문항 5개가 seq 순서로 전부 실린다 - 시도가 없는 문항은
  * {@code NOT_SUBMITTED}다. <b>점수는 절대 싣지 않는다</b> (KAN-12 - 문항 중간 점수 미노출).
  *
- * @param pollAfterMs 다음 조회까지 기다릴 시간(ms) - 서버가 통제하고 혼잡 시 올린다 (§5.3)
+ * @param pollAfterMs 다음 조회까지 기다릴 시간(ms) - 서버가 통제하고 혼잡 시 올린다 (§5.3).
  * @param items       음성 문항별 대표 상태 - seq 오름차순 고정
  */
 public record AnalysisStatusResponse(long pollAfterMs, List<Item> items) {
 
-    /** 문항 단위 상태 - 작업 상태({@link AnalysisJobStatus})에 "시도 없음"을 더한 표현이다 (§3.4) */
+    /** 문항 단위 상태 - 작업 상태({@link AnalysisJobStatus})에 "시도 없음"을 더한 표현이다 (§3.4). */
     public enum Status {
         NOT_SUBMITTED,
         PROCESSING,
@@ -45,7 +45,7 @@ public record AnalysisStatusResponse(long pollAfterMs, List<Item> items) {
 
         /**
          * @param retryable 재녹음(새 시도)이 도움이 되는가 - RETRYABLE_FAILED면 true다.
-         *                  시도 상한(KAN-28, §2.5)은 별개로 적용된다
+         *                  시도 상한(KAN-28, §2.5)은 별개로 적용된다.
          */
         public record Error(String code, boolean retryable) {
         }

@@ -45,7 +45,7 @@ class AiCircuitBreaker {
 
     private static final Logger log = LoggerFactory.getLogger(AiCircuitBreaker.class);
 
-    /** 쿨다운 배수 상한 - 기본 5초 기준 최대 80초. 그 이상 벌리면 복구가 사용자에게 늦게 보인다 */
+    /** 쿨다운 배수 상한 - 기본 5초 기준 최대 80초. 그 이상 벌리면 복구가 사용자에게 늦게 보인다. */
     private static final int MAX_BACKOFF_SHIFT = 4;
 
     private enum State {
@@ -59,16 +59,16 @@ class AiCircuitBreaker {
 
     private State state = State.CLOSED;
 
-    /** 닫힘 상태의 연속 실패 - 임계치에 닿으면 연다 */
+    /** 닫힘 상태의 연속 실패 - 임계치에 닿으면 연다. */
     private int consecutiveFailures;
 
-    /** 연속으로 실패한 시험 횟수 - 쿨다운 백오프의 지수다 */
+    /** 연속으로 실패한 시험 횟수 - 쿨다운 백오프의 지수다. */
     private int recoveryFailures;
 
-    /** 마지막 health 프로브 시각. 여는 순간에도 채워 첫 프로브까지 쿨다운을 준다 */
+    /** 마지막 health 프로브 시각. 여는 순간에도 채워 첫 프로브까지 쿨다운을 준다. */
     private @Nullable Instant lastProbeAt;
 
-    /** 시험 자리를 잡은 시각 - 결론이 나지 않아도 이 시간이 지나면 자리를 놓아준다 */
+    /** 시험 자리를 잡은 시각 - 결론이 나지 않아도 이 시간이 지나면 자리를 놓아준다. */
     private @Nullable Instant trialStartedAt;
 
     /**
@@ -92,7 +92,7 @@ class AiCircuitBreaker {
      * @param probeInterval    열림 상태의 기본 쿨다운이자 health 프로브 간격
      * @param trialTimeout     반열림 시험이 결론을 내지 못했을 때 슬롯을 놓아주는 한도.
      *                         분석 1건의 실행 잔류 한도(§3.4)와 같은 값을 쓴다 - 그보다
-     *                         짧게 잡으면 살아 있는 시험을 두고 두 번째 시험이 나간다
+     *                         짧게 잡으면 살아 있는 시험을 두고 두 번째 시험이 나간다.
      */
     AiCircuitBreaker(int failureThreshold, Duration probeInterval, Duration trialTimeout, Clock clock) {
         if (failureThreshold < 1) {
@@ -100,13 +100,13 @@ class AiCircuitBreaker {
                     "circuit-failure-threshold는 1 이상이어야 한다: " + failureThreshold);
         }
         // 0이면 cooldown()이 어떤 백오프 배수에도 0을 돌려줘, 열려 있는 내내 스케줄 틱마다
-        // (1초) health 프로브가 나간다 - 지수 백오프가 통째로 무력화되고 복구 중인 AI를 두드린다
+        // (1초) health 프로브가 나간다 - 지수 백오프가 통째로 무력화되고 복구 중인 AI를 두드린다.
         if (probeInterval.isZero() || probeInterval.isNegative()) {
             throw new IllegalArgumentException(
                     "circuit-probe-interval은 0보다 커야 한다: " + probeInterval);
         }
         // 0이면 시험 자리가 잡히는 즉시 만료로 보여 "시험 1건" 약속이 깨진다 - 반열림에서
-        // 큐에 남은 작업까지 한꺼번에 AI로 나간다
+        // 큐에 남은 작업까지 한꺼번에 AI로 나간다.
         if (trialTimeout.isZero() || trialTimeout.isNegative()) {
             throw new IllegalArgumentException(
                     "복구 시험 한도(processing-timeout)는 0보다 커야 한다: " + trialTimeout);
@@ -166,7 +166,7 @@ class AiCircuitBreaker {
         };
     }
 
-    /** 시험 자리가 아직 살아 있는가 - 한도를 넘긴 자리는 비어 있는 것으로 본다 */
+    /** 시험 자리가 아직 살아 있는가 - 한도를 넘긴 자리는 비어 있는 것으로 본다. */
     private boolean trialBusy(Instant now) {
         return trialStartedAt != null && now.isBefore(trialStartedAt.plus(trialTimeout));
     }
@@ -179,7 +179,7 @@ class AiCircuitBreaker {
     /**
      * AI가 응답했다 - 판정 실패(§4.1 422)도 서버가 살아 있다는 증거이므로 성공이다.
      *
-     * @param jobId 이 결과를 낸 분석 작업 - 반열림에서 <b>시험 작업의 결과인지</b> 가른다
+     * @param jobId 이 결과를 낸 분석 작업 - 반열림에서 <b>시험 작업의 결과인지</b> 가른다.
      */
     synchronized void recordSuccess(String jobId) {
         consecutiveFailures = 0;
@@ -190,7 +190,7 @@ class AiCircuitBreaker {
             // 그래서 recordFailure의 OPEN 처리(뒤늦은 실패는 무시)와 비대칭이다. AI가
             // 오르내리는 구간에서는 이 성공 하나로 닫혔다가 다시 열릴 수 있다는 뜻이지만,
             // "실제 분석이 성공했다"는 시험과 같은 종류의 증거라 그대로 받기로 했다
-            // (2026-08-16 확인). 진동이 문제가 되면 여기부터 좁힌다
+            // (2026-08-16 확인). 진동이 문제가 되면 여기부터 좁힌다.
             case OPEN -> {
                 log.info("AI 회로 닫힘 - 열린 뒤 도착한 분석이 성공했다");
                 close();
@@ -201,7 +201,7 @@ class AiCircuitBreaker {
                     close();
                 }
                 // 시험이 아닌 작업(회로가 열리기 전에 출발한 호출)의 뒤늦은 성공은
-                // 판정에 쓰지 않는다 - 복구 여부는 시험 결과가 정한다
+                // 판정에 쓰지 않는다 - 복구 여부는 시험 결과가 정한다.
             }
         }
     }
@@ -209,7 +209,7 @@ class AiCircuitBreaker {
     /**
      * AI 일시 장애(연결 실패, 타임아웃, 5xx)다.
      *
-     * @param jobId 이 실패를 낸 분석 작업 - 반열림에서 시험 작업의 실패만 회로를 다시 연다
+     * @param jobId 이 실패를 낸 분석 작업 - 반열림에서 시험 작업의 실패만 회로를 다시 연다.
      */
     synchronized void recordFailure(String jobId) {
         switch (state) {
@@ -224,15 +224,15 @@ class AiCircuitBreaker {
                 if (!jobId.equals(trialJobId)) {
                     // 회로가 열리기 전에 출발한 호출의 뒤늦은 실패다 - 그 판정은 이미 회로를
                     // 여는 데 쓰였다. 시험 실패로 오인하면 복구된 AI를 두고 회로가 다시 열리고
-                    // 쿨다운까지 두 배로 벌어진다 (Codex sol 리뷰 P2)
+                    // 쿨다운까지 두 배로 벌어진다 (Codex sol 리뷰 P2).
                     return;
                 }
                 // 시험이 실패했다 - health는 UP인데 추론이 안 되는 상태다. 임계치를 다시
-                // 채울 것 없이 곧바로 열고, 다음 시험까지의 쿨다운을 두 배로 벌린다
+                // 채울 것 없이 곧바로 열고, 다음 시험까지의 쿨다운을 두 배로 벌린다.
                 recoveryFailures++;
                 open("복구 시험 실패 " + recoveryFailures + "회");
             }
-            // 이미 열려 있다 - 열리기 전에 출발한 호출의 뒤늦은 실패다
+            // 이미 열려 있다 - 열리기 전에 출발한 호출의 뒤늦은 실패다.
             case OPEN -> { }
         }
     }
@@ -280,7 +280,7 @@ class AiCircuitBreaker {
      */
     synchronized void probeSucceeded(long probeGeneration) {
         if (state != State.OPEN || probeGeneration != generation) {
-            // 이 프로브가 나간 뒤 회로가 닫혔거나 다시 열렸다 - 옛 판정은 버린다
+            // 이 프로브가 나간 뒤 회로가 닫혔거나 다시 열렸다 - 옛 판정은 버린다.
             return;
         }
         log.info("AI health 프로브 성공 - 분석 1건으로 복구를 시험한다");
@@ -288,7 +288,7 @@ class AiCircuitBreaker {
         clearTrial();
     }
 
-    /** health가 응답하지 않는다 - 열린 채로 다음 주기를 기다린다. 사용자 요청은 한 건도 쓰지 않는다 */
+    /** health가 응답하지 않는다 - 열린 채로 다음 주기를 기다린다. 사용자 요청은 한 건도 쓰지 않는다. */
     synchronized void probeFailed(long probeGeneration) {
         if (state == State.OPEN && probeGeneration == generation) {
             log.debug("AI health 프로브 실패 - 회로를 계속 열어 둔다");
@@ -319,7 +319,7 @@ class AiCircuitBreaker {
         trialJobId = null;
     }
 
-    /** 시험이 연속 실패할수록 두 배씩 벌어지는 쿨다운 - 장애가 길수록 시험을 덜 낭비한다 */
+    /** 시험이 연속 실패할수록 두 배씩 벌어지는 쿨다운 - 장애가 길수록 시험을 덜 낭비한다. */
     private Duration cooldown() {
         return probeInterval.multipliedBy(1L << Math.min(recoveryFailures, MAX_BACKOFF_SHIFT));
     }

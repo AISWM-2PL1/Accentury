@@ -48,7 +48,7 @@ public class TestDefinitionRegistry {
     static final int VOICE_COUNT = 5;
     static final int VOCABULARY_COUNT = 5;
 
-    /** 어휘 문항은 4지선다다 (SRS 확정, KAN-13) */
+    /** 어휘 문항은 4지선다다 (SRS 확정, KAN-13). */
     static final int CHOICE_COUNT = 4;
 
     /**
@@ -63,8 +63,8 @@ public class TestDefinitionRegistry {
 
     /**
      * @param definition 정답 포함 원본 - 서버 내부용 (KAN-15 답안 저장, KAN-21 채점)
-     * @param response   정답 제외 공개용 - 그대로 직렬화해 응답한다
-     * @param etag       응답 본문 SHA-256의 강한 ETag - 버전 경로가 불변이라 재검증은 항상 304다 (§3.2)
+     * @param response   정답 제외 공개용 - 그대로 직렬화해 응답한다.
+     * @param etag       응답 본문 SHA-256의 강한 ETag - 버전 경로가 불변이라 재검증은 항상 304다 (§3.2).
      */
     public record PublishedDefinition(TestDefinition definition, TestDefinitionResponse response, String etag) {
     }
@@ -75,13 +75,13 @@ public class TestDefinitionRegistry {
             TestDefinition definition = read(objectMapper, seed);
             validate(definition);
             // scoreVersion 참조 유효 검증 (§6, KAN-21) - 활성 버전만 보면 비활성 정의에 고정된
-            // 세션이 완료 시점에 500을 맞는다. 발행되는 모든 정의를 본다 (Codex sol 리뷰 P2)
+            // 세션이 완료 시점에 500을 맞는다. 발행되는 모든 정의를 본다 (Codex sol 리뷰 P2).
             require(scorePolicies.isPublished(definition.scoreVersion()),
                     "정의가 참조하는 scoreVersion(" + definition.scoreVersion()
                             + ")의 점수 정책 seed가 없다: " + definition.testVersion());
             requireMatchingFilename(seed, definition);
 
-            // 응답은 seq 오름차순 고정 (KAN-10 AC - 순서 고정). seed 순서에 의존하지 않는다
+            // 응답은 seq 오름차순 고정 (KAN-10 AC - 순서 고정). seed 순서에 의존하지 않는다.
             List<TestDefinition.Item> ordered = definition.items().stream()
                     .sorted(Comparator.comparingInt(TestDefinition.Item::seq))
                     .toList();
@@ -99,7 +99,7 @@ public class TestDefinitionRegistry {
         require(active != null,
                 "활성 버전(accentury.test-version=" + properties.testVersion() + ")의 정의 seed가 없다");
         // 세션은 설정의 scoreVersion으로, 정의 응답은 seed의 scoreVersion으로 고정되므로
-        // 둘이 어긋나면 한 세션이 두 채점 버전에 걸린다 - 기동을 막는다 (Codex sol 리뷰 P2)
+        // 둘이 어긋나면 한 세션이 두 채점 버전에 걸린다 - 기동을 막는다 (Codex sol 리뷰 P2).
         require(active.definition().scoreVersion().equals(properties.scoreVersion()),
                 "활성 버전의 scoreVersion(" + active.definition().scoreVersion()
                         + ")이 설정(accentury.score-version=" + properties.scoreVersion() + ")과 다르다");
@@ -107,7 +107,7 @@ public class TestDefinitionRegistry {
                 published.size(), published.keySet(), properties.testVersion());
     }
 
-    /** 발행된 정의를 찾는다. 미발행 버전은 404 - 존재 여부 외 어떤 정보도 주지 않는다 (KAN-10 요구) */
+    /** 발행된 정의를 찾는다. 미발행 버전은 404 - 존재 여부 외 어떤 정보도 주지 않는다 (KAN-10 요구). */
     public PublishedDefinition get(String testVersion) {
         PublishedDefinition found = published.get(testVersion);
         if (found == null) {
@@ -156,7 +156,7 @@ public class TestDefinitionRegistry {
         }
     }
 
-    /** 파일명과 본문 버전이 어긋난 seed는 사고의 씨앗이라 발행을 거부한다 */
+    /** 파일명과 본문 버전이 어긋난 seed는 사고의 씨앗이라 발행을 거부한다. */
     private static void requireMatchingFilename(Resource seed, TestDefinition definition) {
         String filename = seed.getFilename();
         require(filename == null || filename.equals(definition.testVersion() + ".json"),

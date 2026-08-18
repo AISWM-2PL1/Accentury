@@ -36,7 +36,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 그러지 않으면 실행 순서가 결과를 바꾼다.
  */
 @SpringBootTest(properties = {
-        // 빈 값 - 배포 기본값 그대로다 (application-test.yml의 신뢰 목록을 덮는다)
+        // 빈 값 - 배포 기본값 그대로다 (application-test.yml의 신뢰 목록을 덮는다).
         "accentury.trusted-proxies=",
         "accentury.upload.rate-limit-per-minute=2",
         "accentury.session.rate-limit-per-minute=2"})
@@ -56,7 +56,7 @@ class TrustedProxyDefaultApiTest extends IntegrationTest {
     @Test
     void 위조한_X_Forwarded_For로_업로드_제한을_쪼갤_수_없다() throws Exception {
         // 헤더를 읽는다면 세 요청이 서로 다른 키가 되어 전부 통과한다 - 그것이 곧 우회다.
-        // 신뢰 목록이 비어 있으므로 셋 다 같은 접속 IP 하나로 세어야 한다
+        // 신뢰 목록이 비어 있으므로 셋 다 같은 접속 IP 하나로 세어야 한다.
         String peer = "198.51.100.10";
         SessionHandle session = createSession(peer);
 
@@ -73,7 +73,7 @@ class TrustedProxyDefaultApiTest extends IntegrationTest {
     @Test
     void 위조한_X_Forwarded_For로_세션_생성_제한을_쪼갤_수_없다() throws Exception {
         // 인증이 없는 유일한 쓰기 경로라(§3.1) IP가 유일한 키다 - 여기가 뚫리면 세션을
-        // 무한히 찍어내 뒤따르는 세션 단위 제한까지 통째로 무의미해진다
+        // 무한히 찍어내 뒤따르는 세션 단위 제한까지 통째로 무의미해진다.
         String peer = "198.51.100.20";
 
         mockMvc.perform(sessionRequest(peer, "172.16.0.1")).andExpect(status().isCreated());
@@ -89,7 +89,7 @@ class TrustedProxyDefaultApiTest extends IntegrationTest {
     private record SessionHandle(String id, String token) {
     }
 
-    /** MockMvc의 기본 접속 IP는 모든 요청이 같다 - 테스트끼리 창을 나누려면 직접 준다 */
+    /** MockMvc의 기본 접속 IP는 모든 요청이 같다 - 테스트끼리 창을 나누려면 직접 준다. */
     private static RequestPostProcessor from(String peer) {
         return request -> {
             request.setRemoteAddr(peer);

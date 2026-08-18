@@ -15,7 +15,7 @@ interface CounterStore {
     /**
      * 있는 행에 증가분을 원자적으로 더한다 (read-modify-write 금지 - 티켓 제약).
      *
-     * @return false면 그 키의 행이 아직 없다 - {@link #insert}로 만들어야 한다
+     * @return false면 그 키의 행이 아직 없다 - {@link #insert}로 만들어야 한다.
      */
     boolean increment(String id, CounterDelta delta);
 
@@ -23,7 +23,7 @@ interface CounterStore {
      * 그 날의 첫 행을 증가분을 담은 채로 만든다.
      *
      * @throws RuntimeException 같은 키를 다른 요청이 먼저 만든 경우 (유니크 제약 위반) -
-     *                          호출부가 UPDATE로 되돌아가는 신호다
+     *                          호출부가 UPDATE로 되돌아가는 신호다.
      */
     void insert(LocalDate statDate, String testVersion, String scoreVersion, CounterDelta delta);
 }

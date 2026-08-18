@@ -47,7 +47,7 @@ class CounterFailureIsolationApiTest extends IntegrationTest {
         }
     }
 
-    /** 집계 DB 장애를 흉내낸다 - 증가도 생성도 전부 실패한다 */
+    /** 집계 DB 장애를 흉내낸다 - 증가도 생성도 전부 실패한다. */
     static final class AlwaysFailingStore implements CounterStore {
 
         @Override
@@ -92,7 +92,7 @@ class CounterFailureIsolationApiTest extends IntegrationTest {
     @Test
     void 끼운_저장소가_정말_실패한다() {
         // 이 확인이 없으면 아래 두 테스트가 "실패해도 괜찮다"가 아니라
-        // "실패하지 않았다"를 통과시킬 수 있다
+        // "실패하지 않았다"를 통과시킬 수 있다.
         assertTrue(store instanceof AlwaysFailingStore);
     }
 
@@ -118,7 +118,7 @@ class CounterFailureIsolationApiTest extends IntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("READY"));
 
-        // 결과 행까지 정상 저장됐다 - 집계 실패가 완료 트랜잭션을 오염시키지 않았다는 뜻이다
+        // 결과 행까지 정상 저장됐다 - 집계 실패가 완료 트랜잭션을 오염시키지 않았다는 뜻이다.
         assertTrue(resultRepository.findBySessionId(session.id()).isPresent());
         assertEquals(rowsBefore, countersRepository.count(), "실패한 증가가 행을 남기지 않는다");
     }

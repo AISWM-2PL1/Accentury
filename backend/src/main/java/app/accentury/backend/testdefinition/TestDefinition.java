@@ -62,10 +62,10 @@ public record TestDefinition(
      * @param frameIntervalMs 시간축 샘플링 간격
      * @param values          정규화된 semitone 배열. 무성 구간은 null 원소다 - 단위가
      *                        정규화 semitone이라 0은 평균 음높이라는 유효한 값이고, 무성을
-     *                        숫자로 겹쳐 표현할 방법이 없다 (2026-08-17 확정, KAN-102)
+     *                        숫자로 겹쳐 표현할 방법이 없다 (2026-08-17 확정, KAN-102).
      * @param bandLow         허용 밴드 하한 - required (2026-08-09 확정, §3.2, §6),
-     *                        values와 길이가 같아야 하며 발행 검증이 강제한다
-     * @param bandHigh        허용 밴드 상한 - required, 길이 규칙은 bandLow와 같다
+     *                        values와 길이가 같아야 하며 발행 검증이 강제한다.
+     * @param bandHigh        허용 밴드 상한 - required, 길이 규칙은 bandLow와 같다.
      */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record GuideF0(
@@ -76,7 +76,7 @@ public record TestDefinition(
             @Nullable List<Double> bandHigh) {
     }
 
-    /** 4지선다 선택지. 정오 정보는 없다 - 정답은 문항의 {@code correctChoiceId}에만 있다 */
+    /** 4지선다 선택지. 정오 정보는 없다 - 정답은 문항의 {@code correctChoiceId}에만 있다. */
     public record Choice(String choiceId, String text) {
     }
 }

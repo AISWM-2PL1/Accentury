@@ -12,7 +12,7 @@ import java.time.Instant;
  * 제외라 없다 (2026-07-22 확정). 값의 정본은 확정 시점의 {@link TestResult} 행(점수, 등급)과
  * 설정({@link TierAssets} - 코멘트, 공유 자산)이다.
  *
- * @param status       READY 하나뿐 - 준비 전(409)과 만료(410)는 오류 봉투로 나간다 (§3.7)
+ * @param status       READY 하나뿐 - 준비 전(409)과 만료(410)는 오류 봉투로 나간다 (§3.7).
  * @param scores       억양, 단어, 종합 점수 (KAN-21 집계값 그대로)
  * @param tier         5등급 캐릭터 (KAN-29 표와 1:1)
  * @param comment      등급별 진단 코멘트
@@ -40,7 +40,7 @@ public record ResultResponse(Status status, Scores scores, Tier tier, String com
     public record Share(String imageUrl, String text, String webTestUrl) {
     }
 
-    /** 확정 결과 행 + 등급 자산 설정 → 응답. 자산의 빈 값 없음은 기동 검증이 보장한다 (TierAssets) */
+    /** 확정 결과 행 + 등급 자산 설정 → 응답. 자산의 빈 값 없음은 기동 검증이 보장한다 (TierAssets). */
     static ResultResponse of(TestResult result, AccenturyProperties.TierAsset asset, String webTestUrl) {
         return new ResultResponse(
                 Status.READY,

@@ -18,7 +18,7 @@ class NoopAnalysisDispatcher implements AnalysisDispatcher {
     @Override
     public void dispatch(AnalysisRequest request) {
         request.wipeAudio();
-        // 오디오 바이트는 로그에 남기지 않는다 (§2.6, NFR-SC-07)
+        // 오디오 바이트는 로그에 남기지 않는다 (§2.6, NFR-SC-07).
         log.debug("분석 전달 생략 jobId={} itemId={} - ai-base-url 미설정 개발 모드",
                 request.analysisJobId(), request.itemId());
     }

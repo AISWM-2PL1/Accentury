@@ -52,7 +52,7 @@ class AnalysisDispatchConfig {
         int retries = properties.analysis().aiRetries();
         // 실행 잔류 한도(processing-timeout)는 AI 재전송 최악 소요보다 길어야 한다 - 짧으면
         // 살아 있는 워커의 작업을 스위퍼가 먼저 종결해, 이미 버려진 작업에 GPU를 쓰고 성공
-        // 결과까지 폐기한다. 문서(AccenturyProperties)로만 있던 관계를 기동 시점에 강제한다
+        // 결과까지 폐기한다. 문서(AccenturyProperties)로만 있던 관계를 기동 시점에 강제한다.
         long worstCaseMs = properties.analysis().aiTimeout().toMillis() * (retries + 1)
                 + HttpAnalysisDispatcher.RETRY_BACKOFF_MS * retries * (retries + 1) / 2;
         if (properties.analysis().processingTimeout().toMillis() <= worstCaseMs) {
@@ -60,15 +60,15 @@ class AnalysisDispatchConfig {
                     + properties.analysis().processingTimeout() + ")이 AI 재전송 최악 소요("
                     + worstCaseMs + "ms)보다 짧다 - ai-timeout, ai-retries와 함께 조정해야 한다");
         }
-        // Boot의 RestClient.Builder 자동 구성은 webmvc 스타터에 없다 - 내부 호출 하나라 정적 빌더로 충분하다
+        // Boot의 RestClient.Builder 자동 구성은 webmvc 스타터에 없다 - 내부 호출 하나라 정적 빌더로 충분하다.
         RestClient restClient = restClient(aiBaseUrl, properties.analysis().aiTimeout());
         // 회로 복구 프로브는 추론을 태우지 않으므로 훨씬 짧게 기다린다 (KAN-28) -
-        // 스케줄러 스레드를 오래 붙들면 같은 풀의 다른 잡이 밀린다
+        // 스케줄러 스레드를 오래 붙들면 같은 풀의 다른 잡이 밀린다.
         RestClient healthRestClient = restClient(aiBaseUrl, properties.analysis().aiHealthTimeout());
         AiCircuitBreaker circuitBreaker = new AiCircuitBreaker(
                 properties.analysis().circuitFailureThreshold(),
                 properties.analysis().circuitProbeInterval(),
-                // 반열림 시험의 슬롯 해제 한도 - 분석 1건의 실행 잔류 한도와 같은 값이다
+                // 반열림 시험의 슬롯 해제 한도 - 분석 1건의 실행 잔류 한도와 같은 값이다.
                 properties.analysis().processingTimeout(), Clock.systemUTC());
         return new HttpAnalysisDispatcher(
                 new RestAiAnalysisClient(restClient, healthRestClient, objectMapper),

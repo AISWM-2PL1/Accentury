@@ -28,7 +28,7 @@ class FixedWindowRateLimiter {
         this.clock = clock;
     }
 
-    /** 한도 초과면 429 + Retry-After (§2.2) - 윈도우가 끝날 때까지 남은 시간을 알려준다 */
+    /** 한도 초과면 429 + Retry-After (§2.2) - 윈도우가 끝날 때까지 남은 시간을 알려준다. */
     void check(String key) {
         Instant now = clock.instant();
         Window window = windows.compute(key, (unused, current) ->
@@ -41,7 +41,7 @@ class FixedWindowRateLimiter {
         }
     }
 
-    /** 지나간 윈도우 정리 - 무계정 특성상 키가 무한히 쌓이는 것을 막는다. 스케줄은 {@link RateLimits}가 건다 */
+    /** 지나간 윈도우 정리 - 무계정 특성상 키가 무한히 쌓이는 것을 막는다. 스케줄은 {@link RateLimits}가 건다. */
     void evictExpired() {
         Instant cutoff = clock.instant().minus(WINDOW);
         windows.entrySet().removeIf(entry -> entry.getValue().start().isBefore(cutoff));

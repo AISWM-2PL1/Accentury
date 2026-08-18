@@ -100,7 +100,7 @@ public final class LogMasking {
         masked = AUTHORIZATION.matcher(masked).replaceAll(LogMasking::maskAuthorization);
         masked = SESSION_TOKEN.matcher(masked).replaceAll("st_***");
         masked = NAMED_SECRET.matcher(masked).replaceAll(matchResult -> {
-            // 값이 따옴표로 열렸으면 닫아 준다 - 로그 한 줄이 JSON으로 읽히던 것을 깨지 않는다
+            // 값이 따옴표로 열렸으면 닫아 준다 - 로그 한 줄이 JSON으로 읽히던 것을 깨지 않는다.
             boolean quoted = matchResult.group(3) != null;
             return Matcher.quoteReplacement(matchResult.group(1) + matchResult.group(2)
                     + (quoted ? "\"***\"" : "***"));
@@ -129,7 +129,7 @@ public final class LogMasking {
             String scheme = space > 0 ? quoted.substring(0, space) + " " : "";
             replacement = "\"" + scheme + "***\"";
         } else {
-            // 그룹 5가 있으면 그룹 4는 스킴이고, 없으면 그룹 4 자체가 자격증명이다
+            // 그룹 5가 있으면 그룹 4는 스킴이고, 없으면 그룹 4 자체가 자격증명이다.
             replacement = matchResult.group(5) != null ? matchResult.group(4) + " ***" : "***";
         }
         return Matcher.quoteReplacement(name + separator + replacement);

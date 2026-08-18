@@ -16,7 +16,7 @@ import java.util.List;
  * @param intonationWeight 억양 점수 가중치 (sv-0.3: 2 - 음성 가중치 2배)
  * @param vocabularyWeight 단어 점수 가중치 (sv-0.3: 1)
  * @param tiers            등급 5개 - rank 오름차순, {@code minScore}는 하한(포함).
- *                         경계값이 상위 등급에 포함되는 규칙이 이 표현에서 저절로 나온다
+ *                         경계값이 상위 등급에 포함되는 규칙이 이 표현에서 저절로 나온다.
  */
 public record ScorePolicy(
         String scoreVersion,
@@ -26,7 +26,7 @@ public record ScorePolicy(
 
     public ScorePolicy {
         // Jackson이 만드는 가변 리스트가 레지스트리 밖에서 변형되지 않게 불변 복사한다 -
-        // 발행 후 불변이 결정성의 전제다 (Codex sol 리뷰 P2). null은 발행 검증이 크기로 거른다
+        // 발행 후 불변이 결정성의 전제다 (Codex sol 리뷰 P2). null은 발행 검증이 크기로 거른다.
         tiers = tiers == null ? List.of() : List.copyOf(tiers);
     }
 
@@ -36,7 +36,7 @@ public record ScorePolicy(
      * @param code     클라이언트 계약 코드 (예: HONORARY) - §3.7 tier.code
      * @param name     표시 이름 (예: 명예주민) - 서버가 내려주는 값이라 앱 배포 없이 교체 가능 (§3.7)
      * @param rank     1(외지인)~5(경남 토박이) - §3.7 tier.rank
-     * @param minScore 이 등급이 되는 최소 종합 점수 (포함) - 상한은 다음 등급의 하한이 정한다
+     * @param minScore 이 등급이 되는 최소 종합 점수 (포함) - 상한은 다음 등급의 하한이 정한다.
      */
     public record Tier(String code, String name, int rank, int minScore) {
     }

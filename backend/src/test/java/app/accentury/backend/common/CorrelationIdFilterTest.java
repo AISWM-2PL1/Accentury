@@ -60,7 +60,7 @@ class CorrelationIdFilterTest {
 
     @Test
     void 형식을_벗어난_ID는_무시하고_새로_발급한다() throws Exception {
-        // 줄바꿈이 들어간 값을 그대로 로그에 쓰면 가짜 로그 줄을 삽입할 수 있다 (로그 위조)
+        // 줄바꿈이 들어간 값을 그대로 로그에 쓰면 가짜 로그 줄을 삽입할 수 있다 (로그 위조).
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.addHeader(CorrelationIdFilter.HEADER, "abc\n2026-07-30 INFO 가짜로그");
         MockHttpServletResponse response = new MockHttpServletResponse();
@@ -95,7 +95,7 @@ class CorrelationIdFilterTest {
 
         filter.doFilter(request, response, (req, res) -> { });
 
-        // 톰캣은 스레드를 재사용한다 - 남아 있으면 다음 요청이 앞 사람 ID를 물려받는다
+        // 톰캣은 스레드를 재사용한다 - 남아 있으면 다음 요청이 앞 사람 ID를 물려받는다.
         assertThat(MDC.get(CorrelationIdFilter.MDC_KEY)).isNull();
     }
 
@@ -115,7 +115,7 @@ class CorrelationIdFilterTest {
 
     @Test
     void current는_필터_밖에서_unknown을_반환한다() {
-        // GlobalExceptionHandler가 필터를 안 거친 경로에서 불려도 NPE가 나지 않는다
+        // GlobalExceptionHandler가 필터를 안 거친 경로에서 불려도 NPE가 나지 않는다.
         assertThat(CorrelationIdFilter.current()).isEqualTo("unknown");
 
         MDC.put(CorrelationIdFilter.MDC_KEY, "c_test");

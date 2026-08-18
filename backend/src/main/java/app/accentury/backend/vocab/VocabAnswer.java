@@ -37,7 +37,7 @@ public class VocabAnswer {
     @Column(name = "item_id", nullable = false, length = 40)
     private String itemId;
 
-    /** 사용자가 고른 선택지 - 세션 버전의 해당 문항 선택지임을 서비스가 검증한다 */
+    /** 사용자가 고른 선택지 - 세션 버전의 해당 문항 선택지임을 서비스가 검증한다. */
     @Column(name = "choice_id", nullable = false, length = 40)
     private String choiceId;
 
@@ -45,7 +45,7 @@ public class VocabAnswer {
     @Column(name = "is_correct", nullable = false)
     private boolean correct;
 
-    /** 클라이언트가 보낸 Idempotency-Key - 재전송(같은 키)과 재제출(새 키)을 가른다 (§5.2) */
+    /** 클라이언트가 보낸 Idempotency-Key - 재전송(같은 키)과 재제출(새 키)을 가른다 (§5.2). */
     @Column(name = "idempotency_key", nullable = false, length = 100)
     private String idempotencyKey;
 

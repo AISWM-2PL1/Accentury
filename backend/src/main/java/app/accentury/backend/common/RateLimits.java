@@ -33,7 +33,7 @@ import java.util.concurrent.TimeUnit;
 @Component
 public class RateLimits {
 
-    /** 제한 축 - 이름이 곧 "무엇을 무엇으로 세는가"다 */
+    /** 제한 축 - 이름이 곧 "무엇을 무엇으로 세는가"다. */
     public enum Scope {
         /** {@code POST /v0/sessions} - IP당 (인증 없는 유일한 쓰기 경로, §3.1) */
         SESSION_CREATE,
@@ -59,12 +59,12 @@ public class RateLimits {
         for (Scope scope : Scope.values()) {
             Integer limit = limitsPerMinute.get(scope);
             if (limit == null) {
-                // 축을 추가하고 한도를 안 정하면 그 경로만 조용히 무제한이 된다 - 기동 시점에 세운다
+                // 축을 추가하고 한도를 안 정하면 그 경로만 조용히 무제한이 된다 - 기동 시점에 세운다.
                 throw new IllegalStateException("요청 제한 한도가 없는 범위: " + scope);
             }
             if (limit < 1) {
                 // 없는 한도의 반대쪽 사고다 - 0이면 첫 요청부터 429라 그 경로가 통째로 막힌다.
-                // 한도가 네 개 설정 섹션에 흩어져 있어(§2.5) 부분만 채운 배포 설정에서 나온다
+                // 한도가 네 개 설정 섹션에 흩어져 있어(§2.5) 부분만 채운 배포 설정에서 나온다.
                 throw new IllegalStateException(
                         "요청 제한 한도는 1 이상이어야 한다: " + scope + "=" + limit);
             }
@@ -73,7 +73,7 @@ public class RateLimits {
         this.limiters = Map.copyOf(byScope);
     }
 
-    /** 설정에서 범위별 한도를 뽑는다 - 한도가 어느 설정 키에서 오는지가 여기 한 곳에 있다 */
+    /** 설정에서 범위별 한도를 뽑는다 - 한도가 어느 설정 키에서 오는지가 여기 한 곳에 있다. */
     private static Map<Scope, Integer> limitsFrom(AccenturyProperties properties) {
         return Map.of(
                 Scope.SESSION_CREATE, properties.session().rateLimitPerMinute(),
@@ -97,7 +97,7 @@ public class RateLimits {
         limiters.values().forEach(FixedWindowRateLimiter::evictExpired);
     }
 
-    /** 추적 중인 키 수 - 정리가 실제로 맵을 줄이는지 확인하는 관찰점이다 */
+    /** 추적 중인 키 수 - 정리가 실제로 맵을 줄이는지 확인하는 관찰점이다. */
     int trackedKeys(Scope scope) {
         return limiters.get(scope).trackedKeys();
     }

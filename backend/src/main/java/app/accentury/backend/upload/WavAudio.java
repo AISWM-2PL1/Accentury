@@ -32,7 +32,7 @@ record WavAudio(int sampleRate, int channels, int bitsPerSample, long durationMs
             ByteBuffer buf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
             require(readTag(buf).equals("RIFF"));
             // 컨테이너 크기는 실제 파일 크기와 일치해야 한다 - 어긋난 파일은 디코더마다
-            // RIFF 경계 해석이 갈려 분석 단계에서야 실패한다 (Codex sol 리뷰 P2)
+            // RIFF 경계 해석이 갈려 분석 단계에서야 실패한다 (Codex sol 리뷰 P2).
             long riffSize = Integer.toUnsignedLong(buf.getInt());
             require(riffSize == bytes.length - 8L);
             require(readTag(buf).equals("WAVE"));
@@ -45,7 +45,7 @@ record WavAudio(int sampleRate, int channels, int bitsPerSample, long durationMs
             int blockAlign = 0;
             Long dataSize = null;
 
-            // 청크 순회 - fmt와 data 사이에 다른 청크(LIST 등)가 있어도 건너뛴다
+            // 청크 순회 - fmt와 data 사이에 다른 청크(LIST 등)가 있어도 건너뛴다.
             while (buf.remaining() >= 8 && (audioFormat == null || dataSize == null)) {
                 String chunkId = readTag(buf);
                 long chunkSize = Integer.toUnsignedLong(buf.getInt());
@@ -65,21 +65,21 @@ record WavAudio(int sampleRate, int channels, int bitsPerSample, long durationMs
                 } else {
                     skip(buf, chunkSize);
                 }
-                // RIFF 규격 - 홀수 크기 청크는 1바이트 패딩된다
+                // RIFF 규격 - 홀수 크기 청크는 1바이트 패딩된다.
                 if (chunkSize % 2 == 1 && buf.hasRemaining()) {
                     buf.get();
                 }
             }
 
-            // 샘플이 하나도 없는 헤더뿐인 파일은 녹음이 아니다 (Codex sol 리뷰 P2)
+            // 샘플이 하나도 없는 헤더뿐인 파일은 녹음이 아니다 (Codex sol 리뷰 P2).
             require(audioFormat != null && dataSize != null && dataSize > 0);
             require(audioFormat == PCM);
             require(sampleRate > 0 && channels > 0 && bitsPerSample >= 8 && bitsPerSample % 8 == 0);
 
-            // 프레임(샘플 x 채널) 단위로 나누어떨어지지 않는 data는 깨진 파일이다 (Codex sol 리뷰 P2)
+            // 프레임(샘플 x 채널) 단위로 나누어떨어지지 않는 data는 깨진 파일이다 (Codex sol 리뷰 P2).
             long frameSize = (long) channels * (bitsPerSample / 8);
             require(dataSize % frameSize == 0);
-            // 선언 필드끼리 어긋난 헤더는 디코더마다 해석이 갈린다 - 파생값과 일치해야 한다 (Codex sol 리뷰 P2)
+            // 선언 필드끼리 어긋난 헤더는 디코더마다 해석이 갈린다 - 파생값과 일치해야 한다 (Codex sol 리뷰 P2).
             require(blockAlign == frameSize);
             require(byteRate == frameSize * sampleRate);
 

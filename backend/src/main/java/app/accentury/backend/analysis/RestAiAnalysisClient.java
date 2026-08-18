@@ -59,7 +59,7 @@ class RestAiAnalysisClient implements AiAnalysisClient {
     @Override
     public Outcome analyze(AnalysisDispatcher.AnalysisRequest request, String correlationId) {
         // MultipartBodyBuilder는 리액티브 스트림 클래스를 끌어와(클래스패스에 없음) 쓰지 않는다 -
-        // FormHttpMessageConverter가 처리하는 HttpEntity 파트 맵으로 충분하다
+        // FormHttpMessageConverter가 처리하는 HttpEntity 파트 맵으로 충분하다.
         MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
         body.add("audio", part(new NamedBytes(request.audio()), MediaType.parseMediaType("audio/wav")));
         body.add("meta", part(objectMapper.writeValueAsString(new AnalyzeMeta(
@@ -104,7 +104,7 @@ class RestAiAnalysisClient implements AiAnalysisClient {
                     }));
         } catch (RuntimeException e) {
             // 연결 실패, 타임아웃, 계약과 다른 본문 - 전부 "아직 아니다"로 접는다.
-            // 프로브는 실패해도 회로를 열린 채로 두는 것이 전부라 던질 이유가 없다
+            // 프로브는 실패해도 회로를 열린 채로 두는 것이 전부라 던질 이유가 없다.
             log.debug("AI health 프로브 실패: {}", e.toString());
             return false;
         }
@@ -119,13 +119,13 @@ class RestAiAnalysisClient implements AiAnalysisClient {
     private Outcome map(AnalysisDispatcher.AnalysisRequest request, int statusCode,
                         InputStream responseBody) {
         if (statusCode >= 500) {
-            // 요청이 AI까지 갔다 - 미도달(UNREACHED)과 구분해야 시도 예산이 정확하다
+            // 요청이 AI까지 갔다 - 미도달(UNREACHED)과 구분해야 시도 예산이 정확하다.
             throw new AiUnavailableException("AI 5xx 응답: " + statusCode,
                     AiUnavailableException.Kind.SERVER_ERROR, null);
         }
         if (statusCode == HttpStatus.TOO_MANY_REQUESTS.value()) {
             // 과부하 셰딩 - 도달은 했지만 추론 전에 거절됐다. GPU 미소모이므로 미도달과 같은
-            // 예산 취급이어야 서버 사정만으로 시도 상한(§2.5)이 깎이지 않는다 (Codex 리뷰)
+            // 예산 취급이어야 서버 사정만으로 시도 상한(§2.5)이 깎이지 않는다 (Codex 리뷰).
             throw new AiUnavailableException("AI 과부하 응답: 429",
                     AiUnavailableException.Kind.UNREACHED, null);
         }
@@ -148,12 +148,12 @@ class RestAiAnalysisClient implements AiAnalysisClient {
             if (code == null) {
                 // 판정 코드가 없거나 계약(§2.4)에 없는 코드다 - 재녹음으로 해결된다는 근거가
                 // 없어 비재시도이고, 미검증 문자열을 DB 컬럼(40자)과 클라이언트로 흘리지
-                // 않는다 (Codex 리뷰 - "OK"나 모르는 코드가 error.code로 나가면 안 된다)
+                // 않는다 (Codex 리뷰 - "OK"나 모르는 코드가 error.code로 나가면 안 된다).
                 log.error("AI 판정 코드가 계약에 없다 code={}", rawCode);
                 return Rejected.contractViolation();
             }
             // AI가 retryable을 생략하면 코드 정의(§2.4)의 기본값을 따른다 - 생략을 false로
-            // 읽으면 AUDIO_TOO_QUIET가 재녹음 불가로 굳어 문항이 막힌다 (Codex 리뷰)
+            // 읽으면 AUDIO_TOO_QUIET가 재녹음 불가로 굳어 문항이 막힌다 (Codex 리뷰).
             boolean retryable = parsed.retryable() != null ? parsed.retryable()
                     : code.retryable();
             return Rejected.judged(code.name(), retryable && code != ErrorCode.INTERNAL_ERROR);
@@ -165,17 +165,17 @@ class RestAiAnalysisClient implements AiAnalysisClient {
     }
 
     private Outcome completed(AnalysisDispatcher.AnalysisRequest request, AnalyzeResponse parsed) {
-        // 점수는 채점 입력이다 - 범위 밖 값을 저장하면 집계(KAN-21)가 오염되므로 여기서 끊는다
+        // 점수는 채점 입력이다 - 범위 밖 값을 저장하면 집계(KAN-21)가 오염되므로 여기서 끊는다.
         if (parsed.intonationScore() == null
                 || parsed.intonationScore() < 0 || parsed.intonationScore() > 100
                 || parsed.modelVersion() == null || parsed.scoreVersion() == null) {
-            // 점수 원값은 로그에도 남기지 않는다 - 점수 공개는 /result 한 곳이다 (Codex sol 리뷰 P2)
+            // 점수 원값은 로그에도 남기지 않는다 - 점수 공개는 /result 한 곳이다 (Codex sol 리뷰 P2).
             log.error("AI 성공 응답에 필수 필드가 없거나 점수가 0~100 밖이다 scoreMissing={} modelVersion={}",
                     parsed.intonationScore() == null, parsed.modelVersion());
             return Rejected.contractViolation();
         }
         // 세션은 생성 시점 점수 버전에 고정된다 (§5.4) - 구버전 AI가 다른 버전으로 채점한
-        // 점수를 받으면 한 세션에 두 채점 버전이 섞인다. 계약 위반으로 끊는다 (Codex sol 리뷰 P1)
+        // 점수를 받으면 한 세션에 두 채점 버전이 섞인다. 계약 위반으로 끊는다 (Codex sol 리뷰 P1).
         if (!request.scoreVersion().equals(parsed.scoreVersion())) {
             log.error("AI가 다른 점수 버전으로 응답했다 expected={} actual={}",
                     request.scoreVersion(), parsed.scoreVersion());
@@ -200,7 +200,7 @@ class RestAiAnalysisClient implements AiAnalysisClient {
     }
 
     private static boolean isTimeout(ResourceAccessException e) {
-        // JDK HttpClient는 HttpTimeoutException, 고전 커넥터는 SocketTimeoutException을 던진다
+        // JDK HttpClient는 HttpTimeoutException, 고전 커넥터는 SocketTimeoutException을 던진다.
         for (Throwable cause = e.getCause(); cause != null; cause = cause.getCause()) {
             if (cause instanceof SocketTimeoutException || cause instanceof HttpTimeoutException) {
                 return true;
@@ -209,12 +209,12 @@ class RestAiAnalysisClient implements AiAnalysisClient {
         return false;
     }
 
-    /** §4.1 요청 meta 파트 - 순서와 이름은 명세 예시 그대로다 */
+    /** §4.1 요청 meta 파트 - 순서와 이름은 명세 예시 그대로다. */
     record AnalyzeMeta(String correlationId, String itemId, String testVersion,
                        String scoreVersion, long durationMs) {
     }
 
-    /** §4.1 응답 - 필요한 필드만 읽는다. segments, confidence, processingMs는 BE가 쓰지 않는다 */
+    /** §4.1 응답 - 필요한 필드만 읽는다. segments, confidence, processingMs는 BE가 쓰지 않는다. */
     record AnalyzeResponse(@Nullable String status, @Nullable Integer intonationScore,
                            @Nullable Quality quality, @Nullable Boolean retryable,
                            @Nullable String modelVersion, @Nullable String scoreVersion) {
@@ -223,11 +223,11 @@ class RestAiAnalysisClient implements AiAnalysisClient {
         }
     }
 
-    /** §4.2 health 응답 - 회로 복구 판정에 쓰는 필드만 읽는다 (모델 버전은 KAN-22) */
+    /** §4.2 health 응답 - 회로 복구 판정에 쓰는 필드만 읽는다 (모델 버전은 KAN-22). */
     record HealthResponse(@Nullable String status) {
     }
 
-    /** multipart 파트에 파일명을 주기 위한 래퍼 - 없으면 일부 서버 프레임워크가 파일 파트로 안 받는다 */
+    /** multipart 파트에 파일명을 주기 위한 래퍼 - 없으면 일부 서버 프레임워크가 파일 파트로 안 받는다. */
     private static final class NamedBytes extends ByteArrayResource {
 
         private NamedBytes(byte[] bytes) {

@@ -19,7 +19,7 @@ class AnalyticsControllerTest {
     @Test
     void 사람이_지어낸_짧은_토큰은_기동을_실패시킨다() {
         // admin123 같은 값이 배포되면 무제한 추측이 열린다 - 여기서 세우지 않으면
-        // 운영에 존재할 수 있게 된다
+        // 운영에 존재할 수 있게 된다.
         IllegalStateException thrown = assertThrows(IllegalStateException.class,
                 () -> AnalyticsController.requireStrongToken("admin123"));
 
@@ -36,7 +36,7 @@ class AnalyticsControllerTest {
     @Test
     void 빈_토큰도_거부한다() {
         // @ConditionalOnProperty는 값이 있는지만 보므로 빈 값을 통과시킨다 -
-        // 조건과 검증이 겹쳐야 하는 자리다
+        // 조건과 검증이 겹쳐야 하는 자리다.
         assertThrows(IllegalStateException.class, () -> AnalyticsController.requireStrongToken("   "));
         assertThrows(IllegalStateException.class, () -> AnalyticsController.requireStrongToken(null));
     }

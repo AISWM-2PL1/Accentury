@@ -35,38 +35,38 @@ import java.time.LocalDate;
                 columnNames = {"stat_date", "test_version", "score_version"}))
 public class DailyCounter {
 
-    /** 키 셋을 잇는 구분자 - 버전 문자열(gn-2026.08.1, sv-0.3)에 나오지 않는 문자다 */
+    /** 키 셋을 잇는 구분자 - 버전 문자열(gn-2026.08.1, sv-0.3)에 나오지 않는 문자다. */
     private static final String KEY_SEPARATOR = "|";
 
-    /** 형식: {@code 2026-08-17|gn-2026.08.1|sv-0.3} - {@link #idOf}가 만드는 유도 값이다 */
+    /** 형식: {@code 2026-08-17|gn-2026.08.1|sv-0.3} - {@link #idOf}가 만드는 유도 값이다. */
     @Id
     @Column(length = 100)
     private String id;
 
     /**
      * 집계 일자 - 설정된 타임존 기준의 하루다.
-     * 컬럼명이 {@code date}가 아닌 것은 여러 DB에서 예약어라서다 (API 응답 필드명은 {@code date})
+     * 컬럼명이 {@code date}가 아닌 것은 여러 DB에서 예약어라서다 (API 응답 필드명은 {@code date}).
      */
     @Column(name = "stat_date", nullable = false)
     private LocalDate statDate;
 
-    /** 이 행이 집계한 테스트 정의 버전 (§5.4) - 문항이 다르면 통계를 섞지 않는다 */
+    /** 이 행이 집계한 테스트 정의 버전 (§5.4) - 문항이 다르면 통계를 섞지 않는다. */
     @Column(name = "test_version", nullable = false, length = 40)
     private String testVersion;
 
-    /** 이 행이 집계한 점수 버전 - 가중치와 등급 경계가 다르면 분포를 섞지 않는다 (KAN-21) */
+    /** 이 행이 집계한 점수 버전 - 가중치와 등급 경계가 다르면 분포를 섞지 않는다 (KAN-21). */
     @Column(name = "score_version", nullable = false, length = 20)
     private String scoreVersion;
 
-    /** 응시 시도 수 - {@code POST /v0/sessions} 성공 건수 (KAN-9). 재응시도 새 시도로 센다 */
+    /** 응시 시도 수 - {@code POST /v0/sessions} 성공 건수 (KAN-9). 재응시도 새 시도로 센다. */
     @Column(name = "sessions_started", nullable = false)
     private long sessionsStarted;
 
-    /** 완주 수 - {@code /complete}가 결과를 확정한 건수 (KAN-16). 시도 수와의 비가 완주율이다 */
+    /** 완주 수 - {@code /complete}가 결과를 확정한 건수 (KAN-16). 시도 수와의 비가 완주율이다. */
     @Column(name = "sessions_completed", nullable = false)
     private long sessionsCompleted;
 
-    /** 등급별 누적 - 순서와 이름은 {@code ScorePolicyRegistry.TIER_CODES}와 1:1이다 (KAN-21) */
+    /** 등급별 누적 - 순서와 이름은 {@code ScorePolicyRegistry.TIER_CODES}와 1:1이다 (KAN-21). */
     @Column(name = "tier_outsider", nullable = false)
     private long tierOutsider;
 
@@ -82,7 +82,7 @@ public class DailyCounter {
     @Column(name = "tier_native", nullable = false)
     private long tierNative;
 
-    /** 억양 점수 합 - 평균은 {@code scoredCount}로 나눈다. 개별 점수는 남기지 않는다 */
+    /** 억양 점수 합 - 평균은 {@code scoredCount}로 나눈다. 개별 점수는 남기지 않는다. */
     @Column(name = "intonation_sum", nullable = false)
     private long intonationSum;
 
@@ -94,7 +94,7 @@ public class DailyCounter {
     @Column(name = "overall_sum", nullable = false)
     private long overallSum;
 
-    /** 점수 합에 들어간 건수 - 세 평균의 공통 분모다 (완주 1건당 세 점수가 함께 들어온다) */
+    /** 점수 합에 들어간 건수 - 세 평균의 공통 분모다 (완주 1건당 세 점수가 함께 들어온다). */
     @Column(name = "scored_count", nullable = false)
     private long scoredCount;
 
@@ -102,7 +102,7 @@ public class DailyCounter {
         // JPA 전용
     }
 
-    /** 첫 증가가 만드는 행 - 0에서 시작하지 않고 그 증가분을 이미 담은 채로 태어난다 */
+    /** 첫 증가가 만드는 행 - 0에서 시작하지 않고 그 증가분을 이미 담은 채로 태어난다. */
     DailyCounter(LocalDate statDate, String testVersion, String scoreVersion, CounterDelta delta) {
         this.id = idOf(statDate, testVersion, scoreVersion);
         this.statDate = statDate;

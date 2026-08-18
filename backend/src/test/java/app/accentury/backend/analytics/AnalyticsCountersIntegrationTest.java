@@ -139,7 +139,7 @@ class AnalyticsCountersIntegrationTest extends IntegrationTest {
 
     @Test
     void 완료_재시도는_완주를_두_번_세지_않는다() throws Exception {
-        // 완료는 자연 멱등이다 (§3.6 - 재시도는 READY 재확인) - 카운터도 같아야 한다
+        // 완료는 자연 멱등이다 (§3.6 - 재시도는 READY 재확인) - 카운터도 같아야 한다.
         SessionHandle session = flow.createSession();
         flow.answerVocab(session, CORRECT_CHOICES);
         flow.completeVoice(session);
@@ -176,7 +176,7 @@ class AnalyticsCountersIntegrationTest extends IntegrationTest {
     void 동시_증가가_몰려도_유실되지_않는다() throws Exception {
         // 첫 증가(INSERT)와 나머지(UPDATE)가 뒤섞이는 순간이 가장 위험하다. 다른 테스트가
         // 이미 오늘 행을 만들어 뒀으면 그 갈래가 통째로 안 걸리므로, 이 실행에만 있는
-        // 버전 문자열을 써서 <b>행 부재를 보장</b>한다 (Fable 리뷰 P3)
+        // 버전 문자열을 써서 <b>행 부재를 보장</b>한다 (Fable 리뷰 P3).
         String testVersion = "gn-race-" + UUID.randomUUID().toString().substring(0, 8);
         int threads = 16;
         ExecutorService pool = Executors.newFixedThreadPool(threads);
@@ -214,7 +214,7 @@ class AnalyticsCountersIntegrationTest extends IntegrationTest {
     void 같은_키를_두_번_만들면_두_번째는_실패한다() {
         // 첫 행 생성 경합의 복구는 "INSERT가 정말 예외로 끝난다"에 통째로 기대고 있다.
         // 조용히 성공하거나 절대값으로 덮어쓰면 그날의 증가가 통째로 사라지므로,
-        // 가짜 저장소가 아니라 진짜 DB에서 이 성질을 못박는다 (Fable 리뷰 P3)
+        // 가짜 저장소가 아니라 진짜 DB에서 이 성질을 못박는다 (Fable 리뷰 P3).
         LocalDate day = LocalDate.of(2026, 5, 5);
         String testVersion = "gn-dup-" + UUID.randomUUID().toString().substring(0, 8);
         String id = DailyCounter.idOf(day, testVersion, "sv-0.3");
@@ -224,7 +224,7 @@ class AnalyticsCountersIntegrationTest extends IntegrationTest {
                 () -> store.insert(day, testVersion, "sv-0.3", CounterDelta.sessionStarted()),
                 "유니크 제약 위반이 예외로 올라와야 UPDATE 복귀 갈래가 성립한다");
 
-        // 실패한 두 번째는 흔적을 남기지 않았고, 복구 갈래(UPDATE)는 그대로 동작한다
+        // 실패한 두 번째는 흔적을 남기지 않았고, 복구 갈래(UPDATE)는 그대로 동작한다.
         assertEquals(1, countersRepository.findById(id).orElseThrow().sessionsStarted());
         assertTrue(store.increment(id, CounterDelta.sessionStarted()));
         assertEquals(2, countersRepository.findById(id).orElseThrow().sessionsStarted());
@@ -233,11 +233,11 @@ class AnalyticsCountersIntegrationTest extends IntegrationTest {
     @Test
     void 버전에_키_구분자가_들어가면_남의_행을_건드리지_않고_버린다() {
         // 서로 다른 키 셋이 같은 식별자로 접히면 조용히 남의 행에 합산된다 (Fable 리뷰 P3).
-        // 증가는 실패하지만 사용자 요청 경로와 마찬가지로 예외는 새지 않는다
+        // 증가는 실패하지만 사용자 요청 경로와 마찬가지로 예외는 새지 않는다.
         Instant at = Instant.now();
         assertDoesNotThrow(() -> counters.recordSessionStarted(at, "gn-a|b", "sv-0.3"));
 
-        // ("gn-a|b", "sv-0.3")과 ("gn-a", "b|sv-0.3")이 함께 접히던 자리다
+        // ("gn-a|b", "sv-0.3")과 ("gn-a", "b|sv-0.3")이 함께 접히던 자리다.
         String collidingId = LocalDate.now(properties.analytics().zone()) + "|gn-a|b|sv-0.3";
         assertTrue(countersRepository.findById(collidingId).isEmpty());
     }
@@ -247,7 +247,7 @@ class AnalyticsCountersIntegrationTest extends IntegrationTest {
     @Test
     void 집계_행에는_허용된_숫자와_키만_있다() {
         // 컬럼 목록을 통째로 고정한다 - 나중에 "세션 ID 하나쯤"이 늘면 이 테스트가 먼저 깨진다.
-        // 세션 ID, 토큰, IP, 개별 점수 행은 어떤 이름으로도 여기 들어올 수 없다 (티켓 핵심 제약)
+        // 세션 ID, 토큰, IP, 개별 점수 행은 어떤 이름으로도 여기 들어올 수 없다 (티켓 핵심 제약).
         Set<String> attributes = entityManager.getMetamodel().entity(DailyCounter.class)
                 .getAttributes().stream().map(Attribute::getName).collect(Collectors.toSet());
 
@@ -279,7 +279,7 @@ class AnalyticsCountersIntegrationTest extends IntegrationTest {
         Snapshot afterComplete = snapshot();
         assertNotNull(resultRepository.findBySessionId(session.id()).orElseThrow());
 
-        // 24시간이 지난 상태를 만든다 - 행이 저장 시점에 확정한 expires_at을 과거로 되돌린다
+        // 24시간이 지난 상태를 만든다 - 행이 저장 시점에 확정한 expires_at을 과거로 되돌린다.
         expire(session.id());
         resultRetention.purgeExpired();
         sessionService.purgeExpired();
@@ -291,7 +291,7 @@ class AnalyticsCountersIntegrationTest extends IntegrationTest {
 
     // === 조립 ===
 
-    /** 세션과 결과의 수명을 과거로 되돌려 24시간 경과를 흉내낸다 */
+    /** 세션과 결과의 수명을 과거로 되돌려 24시간 경과를 흉내낸다. */
     private void expire(String sessionId) {
         transactionTemplate.executeWithoutResult(tx -> {
             Instant past = Instant.now().minusSeconds(3_600);
@@ -308,7 +308,7 @@ class AnalyticsCountersIntegrationTest extends IntegrationTest {
                 properties.testVersion(), properties.scoreVersion());
     }
 
-    /** 오늘 행의 값 - 아직 없으면 전부 0이다 */
+    /** 오늘 행의 값 - 아직 없으면 전부 0이다. */
     private Snapshot snapshot() {
         return countersRepository.findById(todayId())
                 .map(c -> new Snapshot(c.sessionsStarted(), c.sessionsCompleted(),

@@ -74,7 +74,7 @@ public class VoiceTempSweeper {
                 .register(meterRegistry);
         // 삭제 실패와 훑기 실패를 가른다 (Codex 리뷰) - 이름이 delete.failures인 카운터에
         // 디렉터리 목록 오류까지 섞으면, 알림을 받은 운영자가 삭제 권한을 들여다보는 동안
-        // 실제 원인(마운트, 권한, 소실)은 그대로 남는다. 잔존 게이지가 멎는 것도 이쪽이다
+        // 실제 원인(마운트, 권한, 소실)은 그대로 남는다. 잔존 게이지가 멎는 것도 이쪽이다.
         this.deleteFailures = Counter.builder("accentury.upload.temp.delete.failures")
                 .description("임시파일 삭제 실패 누적 - 임계치 알림 대상 (KAN-38)")
                 .register(meterRegistry);
@@ -99,7 +99,7 @@ public class VoiceTempSweeper {
     @PostConstruct
     void purgeLeftovers() {
         // 나이를 아예 보지 않는다 - 보존 기간 0으로 두면 시각이 뒤로 돌아갔거나(NTP 되감기)
-        // 수정 시각이 미래인 파일이 살아남는다 (Codex sol 리뷰 P2)
+        // 수정 시각이 미래인 파일이 살아남는다 (Codex sol 리뷰 P2).
         SweepResult result = sweepBefore(tempDirectory.directory(), Instant.now(), Instant.MAX);
         publish(result);
         if (result.deleted() > 0 || result.anyFailure()) {
@@ -122,7 +122,7 @@ public class VoiceTempSweeper {
         SweepResult result = sweep(tempDirectory.directory(), Instant.now(), retention);
         publish(result);
         if (result.deleted() > 0 || result.anyFailure()) {
-            // 잔여물이 있었다는 것 자체가 비정상 종료의 신호다 - warn으로 남긴다
+            // 잔여물이 있었다는 것 자체가 비정상 종료의 신호다 - warn으로 남긴다.
             log.warn("업로드 임시파일 정리 - 삭제 {}건({}바이트), 삭제 실패 {}건, 훑기 실패 {}건, "
                             + "잔존 {}건, 최장 잔존 {}초",
                     result.deleted(), result.deletedBytes(), result.deleteFailures(),
@@ -130,7 +130,7 @@ public class VoiceTempSweeper {
         }
     }
 
-    /** 복구 실패로 청소까지 멈추지는 않는다 - 다음 주기에 다시 시도한다 */
+    /** 복구 실패로 청소까지 멈추지는 않는다 - 다음 주기에 다시 시도한다. */
     private void heal() {
         try {
             tempDirectory.ensureExists();
@@ -142,7 +142,7 @@ public class VoiceTempSweeper {
     private void publish(SweepResult result) {
         // 훑기에 실패했으면 잔존 수를 모른다 - 0으로 덮어써 "깨끗하다"고 보고하면 정리가
         // 막힌 바로 그 순간에 알림이 조용해진다. 직전 값을 그대로 두고, 값이 멎었다는
-        // 사실은 scan.failures가 알린다 (Codex 리뷰 - 삭제 실패 쪽과 같은 이유다)
+        // 사실은 scan.failures가 알린다 (Codex 리뷰 - 삭제 실패 쪽과 같은 이유다).
         if (result.scanned()) {
             residualFiles.set(result.remaining());
             oldestResidualSeconds.set(result.oldestRemainingSeconds());
@@ -159,7 +159,7 @@ public class VoiceTempSweeper {
         return sweepBefore(directory, now, now.minus(retention));
     }
 
-    /** {@code cutoff}보다 오래된 파일을 지운다 - 기동 정리는 {@link Instant#MAX}로 전부 지운다 */
+    /** {@code cutoff}보다 오래된 파일을 지운다 - 기동 정리는 {@link Instant#MAX}로 전부 지운다. */
     private static SweepResult sweepBefore(Path directory, Instant now, Instant cutoff) {
         int deleted = 0;
         long deletedBytes = 0;
@@ -177,11 +177,11 @@ public class VoiceTempSweeper {
                     // 링크를 따라가지 않는다 (Codex 리뷰) - 따라가면 끊어진 링크가
                     // NoSuchFileException으로 보여 "이미 지워졌다"로 넘어가고, 정작 링크는
                     // 영영 남으면서 잔존 집계에도 빠져 디렉터리가 깨끗하다고 보고된다.
-                    // 링크가 살아 있을 때 크기를 대상 파일에서 읽는 문제도 같이 없앤다
+                    // 링크가 살아 있을 때 크기를 대상 파일에서 읽는 문제도 같이 없앤다.
                     attributes = Files.readAttributes(entry, BasicFileAttributes.class,
                             LinkOption.NOFOLLOW_LINKS);
                 } catch (NoSuchFileException e) {
-                    // 컨테이너나 앞선 스윕이 먼저 지웠다 - 멱등의 정상 경로다
+                    // 컨테이너나 앞선 스윕이 먼저 지웠다 - 멱등의 정상 경로다.
                     continue;
                 } catch (IOException e) {
                     scanFailures++;
@@ -189,7 +189,7 @@ public class VoiceTempSweeper {
                     continue;
                 }
                 // 디렉터리는 우리가 만드는 것이 아니라 지우지 않는다 - 다만 잔존으로 세어
-                // 사람 눈에 띄게 한다. 그 외(일반 파일, 심볼릭 링크 등)는 모두 정리 대상이다
+                // 사람 눈에 띄게 한다. 그 외(일반 파일, 심볼릭 링크 등)는 모두 정리 대상이다.
                 if (attributes.isDirectory()) {
                     remaining++;
                     continue;
@@ -207,7 +207,7 @@ public class VoiceTempSweeper {
                         log.warn("임시파일 삭제 실패 reason={}", e.getClass().getSimpleName());
                         // 지우지 못한 파일은 그대로 남아 있다 - 아래로 흘려 잔존으로 센다.
                         // 실패만 세고 넘기면 정리가 막힌 그 순간에 잔존 게이지가 0을 가리켜
-                        // 알림(KAN-38)이 거꾸로 조용해진다 (Codex sol 리뷰 P2)
+                        // 알림(KAN-38)이 거꾸로 조용해진다 (Codex sol 리뷰 P2).
                     }
                 }
                 remaining++;
@@ -219,7 +219,7 @@ public class VoiceTempSweeper {
             // UncheckedIOException을 같이 잡는 이유는 Files.list가 지연 평가이기 때문이다
             // (Codex 리뷰) - 순회 도중의 오류는 IOException이 아니라 이쪽으로 나오고,
             // 놓치면 @PostConstruct인 purgeLeftovers에서 새어 컨텍스트 기동이 실패한다.
-            // scanned=false로 두어 잔존 집계를 폐기한다 - 도중에 끊긴 수는 진실이 아니다
+            // scanned=false로 두어 잔존 집계를 폐기한다 - 도중에 끊긴 수는 진실이 아니다.
             scanned = false;
             scanFailures++;
             log.warn("업로드 임시 디렉터리를 읽지 못했다 reason={}", e.getClass().getSimpleName());
@@ -232,11 +232,11 @@ public class VoiceTempSweeper {
      * 스윕 1회의 집계 - 로그와 게이지의 유일한 입력이다.
      * 경로나 파일명은 여기 담기지 않으므로 그대로 로그에 써도 안전하다 (NFR-SC-07).
      *
-     * @param deleteFailures         지우려다 실패한 건수 - 파일은 그대로 남아 잔존에도 포함된다
+     * @param deleteFailures         지우려다 실패한 건수 - 파일은 그대로 남아 잔존에도 포함된다.
      * @param scanFailures           디렉터리나 파일 정보를 읽지 못한 건수
      * @param remaining              보존 기간이 아직 안 지나 남겨 둔 파일 수
      * @param oldestRemainingSeconds 남겨 둔 파일 중 최장 잔존 시간 (없으면 0)
-     * @param scanned                디렉터리를 끝까지 훑었는가 - false면 잔존 값은 의미가 없다
+     * @param scanned                디렉터리를 끝까지 훑었는가 - false면 잔존 값은 의미가 없다.
      */
     record SweepResult(int deleted, long deletedBytes, int deleteFailures, int scanFailures,
                        int remaining, long oldestRemainingSeconds, boolean scanned) {

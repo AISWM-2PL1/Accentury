@@ -79,7 +79,7 @@ class UploadRateLimitFilter extends OncePerRequestFilter {
         return RECORDING_PATH.matches(path.pathWithinApplication());
     }
 
-    /** 429 + Retry-After + 공통 오류 봉투 - GlobalExceptionHandler의 429 응답과 같은 형태다 */
+    /** 429 + Retry-After + 공통 오류 봉투 - GlobalExceptionHandler의 429 응답과 같은 형태다. */
     private void writeRateLimited(HttpServletResponse response, ApiException e) throws IOException {
         Long retryAfterMs = e.retryAfterMs();
         response.setStatus(e.code().status().value());

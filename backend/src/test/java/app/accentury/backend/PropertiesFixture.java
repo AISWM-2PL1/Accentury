@@ -22,22 +22,22 @@ public final class PropertiesFixture {
     private PropertiesFixture() {
     }
 
-    /** 활성 버전만 바꾼 설정 - 레지스트리 기동 검증(KAN-10, 21)이 쓴다 */
+    /** 활성 버전만 바꾼 설정 - 레지스트리 기동 검증(KAN-10, 21)이 쓴다. */
     public static AccenturyProperties versions(String testVersion, String scoreVersion) {
         return properties(testVersion, scoreVersion, analysis(), result(), List.of());
     }
 
-    /** 분석 정책만 바꾼 설정 - 폴링 간격(KAN-24)과 디스패처 조립(KAN-24, 28) 검증이 쓴다 */
+    /** 분석 정책만 바꾼 설정 - 폴링 간격(KAN-24)과 디스패처 조립(KAN-24, 28) 검증이 쓴다. */
     public static AccenturyProperties withAnalysis(AccenturyProperties.Analysis analysis) {
         return properties("gn-2026.08.1", "sv-0.3", analysis, result(), List.of());
     }
 
-    /** 결과 자산만 바꾼 설정 - 등급 자산 기동 검증(KAN-25)이 쓴다 */
+    /** 결과 자산만 바꾼 설정 - 등급 자산 기동 검증(KAN-25)이 쓴다. */
     public static AccenturyProperties withResult(AccenturyProperties.Result result) {
         return properties("gn-2026.08.1", "sv-0.3", analysis(), result, List.of());
     }
 
-    /** 신뢰 프록시만 바꾼 설정 - 요청 제한 기준 IP 판정(KAN-28)이 쓴다 */
+    /** 신뢰 프록시만 바꾼 설정 - 요청 제한 기준 IP 판정(KAN-28)이 쓴다. */
     public static AccenturyProperties withTrustedProxies(List<String> trustedProxies) {
         return properties("gn-2026.08.1", "sv-0.3", analysis(), result(), trustedProxies);
     }
@@ -64,12 +64,12 @@ public final class PropertiesFixture {
         return new AccenturyProperties.Result(null, Map.of());
     }
 
-    /** 집계 정책만 바꾼 설정 - 일자 경계와 조회 상한(KAN-106) 검증이 쓴다 */
+    /** 집계 정책만 바꾼 설정 - 일자 경계와 조회 상한(KAN-106) 검증이 쓴다. */
     public static AccenturyProperties withAnalytics(AccenturyProperties.Analytics analytics) {
         return properties("gn-2026.08.1", "sv-0.3", analysis(), result(), List.of(), analytics);
     }
 
-    /** application.yml 기본값 그대로의 집계 정책 (KAN-106) - 내부 조회 토큰은 미설정이 기본이다 */
+    /** application.yml 기본값 그대로의 집계 정책 (KAN-106) - 내부 조회 토큰은 미설정이 기본이다. */
     public static AccenturyProperties.Analytics analytics() {
         return new AccenturyProperties.Analytics(ZoneId.of("Asia/Seoul"), null, 366);
     }

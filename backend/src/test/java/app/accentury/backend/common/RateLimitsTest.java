@@ -47,7 +47,7 @@ class RateLimitsTest {
 
     @Test
     void 범위가_다르면_같은_키라도_창이_다르다() {
-        // 세션 하나가 업로드 한도를 다 써도 답안 제출과 완료 폴링까지 막히면 안 된다 (§2.5)
+        // 세션 하나가 업로드 한도를 다 써도 답안 제출과 완료 폴링까지 막히면 안 된다 (§2.5).
         RateLimits limits = limits(1, new SteppingClock());
         limits.check(RateLimits.Scope.VOICE_UPLOAD_SESSION, "s_1");
         assertThrows(ApiException.class,
@@ -72,7 +72,7 @@ class RateLimitsTest {
 
     @Test
     void 정리는_지나간_윈도우만_지운다() {
-        // 무계정 웹이라 IP와 세션 키가 무한히 쌓이는 것을 막는 것이 정리의 목적이다
+        // 무계정 웹이라 IP와 세션 키가 무한히 쌓이는 것을 막는 것이 정리의 목적이다.
         SteppingClock clock = new SteppingClock();
         RateLimits limits = limits(2, clock);
         limits.check(RateLimits.Scope.VOICE_UPLOAD_IP, "1.2.3.4");
@@ -89,7 +89,7 @@ class RateLimitsTest {
 
     @Test
     void 정리가_활성_윈도우의_카운트를_잃지_않는다() {
-        // 정리가 과하게 지우면 한도에 걸린 키가 즉시 풀려 제한이 무력화된다
+        // 정리가 과하게 지우면 한도에 걸린 키가 즉시 풀려 제한이 무력화된다.
         SteppingClock clock = new SteppingClock();
         RateLimits limits = limits(2, clock);
         limits.check(RateLimits.Scope.VOICE_UPLOAD_IP, "1.2.3.4");
@@ -104,7 +104,7 @@ class RateLimitsTest {
 
     @Test
     void 한도가_빠진_범위가_있으면_조립에_실패한다() {
-        // 축을 추가하고 한도를 안 정하면 그 경로만 조용히 무제한이 된다
+        // 축을 추가하고 한도를 안 정하면 그 경로만 조용히 무제한이 된다.
         Map<RateLimits.Scope, Integer> incomplete = new EnumMap<>(RateLimits.Scope.class);
         incomplete.put(RateLimits.Scope.SESSION_CREATE, 10);
 
@@ -115,7 +115,7 @@ class RateLimitsTest {
     @Test
     void 한도가_1보다_작으면_조립에_실패한다() {
         // 없는 한도의 반대쪽 사고다 - 0이면 첫 요청부터 429라 그 경로가 통째로 막힌다.
-        // 한도가 네 개 설정 섹션에 흩어져 있어 부분만 채운 배포 설정에서 나온다
+        // 한도가 네 개 설정 섹션에 흩어져 있어 부분만 채운 배포 설정에서 나온다.
         Map<RateLimits.Scope, Integer> zeroed = new EnumMap<>(RateLimits.Scope.class);
         for (RateLimits.Scope scope : RateLimits.Scope.values()) {
             zeroed.put(scope, 10);

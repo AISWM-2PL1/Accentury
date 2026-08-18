@@ -10,7 +10,7 @@ import java.util.Optional;
 
 public interface TestResultRepository extends JpaRepository<TestResult, String> {
 
-    /** 결과 조회의 진입점 - (session_id) 유니크라 단건이다 ({@code /result}, KAN-25) */
+    /** 결과 조회의 진입점 - (session_id) 유니크라 단건이다 ({@code /result}, KAN-25). */
     Optional<TestResult> findBySessionId(String sessionId);
 
     /**

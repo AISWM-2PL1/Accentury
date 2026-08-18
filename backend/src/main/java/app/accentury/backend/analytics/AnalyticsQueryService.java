@@ -41,15 +41,15 @@ public class AnalyticsQueryService {
      * 빠진 경계의 기본값은 <b>비대칭</b>이다 (2026-08-17 확정).
      * <ul>
      *   <li>둘 다 없으면 오늘 하루</li>
-     *   <li>{@code from}만 있으면 그 날부터 <b>오늘까지</b> - "이 날부터"라는 자연스러운 질의다</li>
+     *   <li>{@code from}만 있으면 그 날부터 <b>오늘까지</b> - "이 날부터"라는 자연스러운 질의다.</li>
      *   <li>{@code to}만 있으면 <b>그 하루</b> - 여기서도 오늘을 기본값으로 잡으면 과거 날짜
-     *       하나를 보려던 호출자가 보낸 적도 없는 {@code from}이 뒤라는 400을 받는다</li>
+     *       하나를 보려던 호출자가 보낸 적도 없는 {@code from}이 뒤라는 400을 받는다.</li>
      * </ul>
      *
-     * @param from null이면 {@code to}가 정한다 (둘 다 null이면 오늘, 설정 타임존 기준)
+     * @param from null이면 {@code to}가 정한다 (둘 다 null이면 오늘, 설정 타임존 기준).
      * @param to   null이면 오늘
      * @throws ApiException 400 - 역전된 기간이나 상한을 넘는 기간. 실수로 전 기간을 훑는
-     *                      질의가 운영 DB를 붙잡지 않게 막는다
+     *                      질의가 운영 DB를 붙잡지 않게 막는다.
      */
     @Transactional(readOnly = true)
     public AnalyticsResponse query(@Nullable LocalDate from, @Nullable LocalDate to) {

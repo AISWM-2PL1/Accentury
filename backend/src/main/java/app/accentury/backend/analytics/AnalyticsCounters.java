@@ -54,8 +54,8 @@ public class AnalyticsCounters {
      * 완주 1건과 그 등급, 점수 (KAN-16 - {@code /complete}가 결과를 확정한 뒤).
      * 완료 재시도는 결과를 다시 만들지 않으므로 여기도 오지 않는다 (§3.6 멱등).
      *
-     * @param at    결과가 확정된 시각 - 결과 행의 {@code createdAt}과 같은 값이라 일자가 어긋나지 않는다
-     * @param score 집계 결과 (KAN-21) - 등급과 세 점수를 그대로 더한다
+     * @param at    결과가 확정된 시각 - 결과 행의 {@code createdAt}과 같은 값이라 일자가 어긋나지 않는다.
+     * @param score 집계 결과 (KAN-21) - 등급과 세 점수를 그대로 더한다.
      */
     public void recordSessionCompleted(Instant at, String testVersion, AggregateScore score) {
         record(at, testVersion, score.scoreVersion(), () -> CounterDelta.completion(score));

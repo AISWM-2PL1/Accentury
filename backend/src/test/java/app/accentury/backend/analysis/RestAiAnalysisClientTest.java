@@ -39,7 +39,7 @@ class RestAiAnalysisClientTest {
     void setUp() {
         RestClient.Builder builder = RestClient.builder().baseUrl("http://ai.test");
         server = MockRestServiceServer.bindTo(builder).build();
-        // 분석과 health가 같은 서버를 보게 한다 - 타임아웃만 다른 두 클라이언트다
+        // 분석과 health가 같은 서버를 보게 한다 - 타임아웃만 다른 두 클라이언트다.
         RestClient restClient = builder.build();
         client = new RestAiAnalysisClient(restClient, restClient, new ObjectMapper());
     }
@@ -77,14 +77,14 @@ class RestAiAnalysisClientTest {
                 assertInstanceOf(AiAnalysisClient.Rejected.class, client.analyze(request(), "c_test"));
         assertEquals("AUDIO_TOO_QUIET", rejected.errorCode());
         assertTrue(rejected.retryable());
-        // 계약대로 온 판정이다 - AI는 살아 있으므로 회로에 실패로 세면 안 된다 (KAN-28)
+        // 계약대로 온 판정이다 - AI는 살아 있으므로 회로에 실패로 세면 안 된다 (KAN-28).
         assertEquals(AiAnalysisClient.Rejected.Cause.JUDGED, rejected.cause());
     }
 
     @Test
     void 계약_위반_응답은_판정과_다른_사유로_구분된다() {
         // 둘 다 재전송하지 않는 Rejected지만 "AI가 정상인가"가 다르다 - 이 구분이 없으면
-        // 응답만 하고 고장 난 AI 앞에서 회로가 영영 닫혀 있는다 (KAN-28)
+        // 응답만 하고 고장 난 AI 앞에서 회로가 영영 닫혀 있는다 (KAN-28).
         server.expect(requestTo("http://ai.test/internal/v0/analyze"))
                 .andRespond(withStatus(HttpStatus.OK).body("""
                         { "status": "OK", "intonationScore": 999, "modelVersion": "rmvpe-0.2",
@@ -109,7 +109,7 @@ class RestAiAnalysisClientTest {
         AiAnalysisClient.Rejected rejected =
                 assertInstanceOf(AiAnalysisClient.Rejected.class, client.analyze(request(), "c_test"));
         // §2.4에서 AUDIO_TOO_QUIET는 재녹음으로 해결되는 코드다 - 생략을 false로 읽으면
-        // 재녹음이 도움이 되는 실패가 FAILED로 굳어 문항이 막힌다 (Codex 리뷰)
+        // 재녹음이 도움이 되는 실패가 FAILED로 굳어 문항이 막힌다 (Codex 리뷰).
         assertEquals("AUDIO_TOO_QUIET", rejected.errorCode());
         assertTrue(rejected.retryable());
     }
@@ -123,7 +123,7 @@ class RestAiAnalysisClientTest {
 
         AiAnalysisClient.Rejected rejected =
                 assertInstanceOf(AiAnalysisClient.Rejected.class, client.analyze(request(), "c_test"));
-        // "OK"는 오류 코드가 아니다 - 미검증 문자열을 DB 컬럼(40자)과 error.code로 흘리지 않는다
+        // "OK"는 오류 코드가 아니다 - 미검증 문자열을 DB 컬럼(40자)과 error.code로 흘리지 않는다.
         assertEquals("INTERNAL_ERROR", rejected.errorCode());
         assertFalse(rejected.retryable());
     }
@@ -137,7 +137,7 @@ class RestAiAnalysisClientTest {
                 assertThrows(AiAnalysisClient.AiUnavailableException.class,
                         () -> client.analyze(request(), "c_test"));
         // 추론 전에 거절된 셰딩이라 GPU 미소모다 - 서버 사정만으로 시도 상한(§2.5)이
-        // 깎이면 안 되므로 미도달(UNREACHED)과 같은 예산 취급이어야 한다 (Codex 리뷰)
+        // 깎이면 안 되므로 미도달(UNREACHED)과 같은 예산 취급이어야 한다 (Codex 리뷰).
         assertEquals(AiAnalysisClient.AiUnavailableException.Kind.UNREACHED, e.kind());
     }
 
@@ -149,7 +149,7 @@ class RestAiAnalysisClientTest {
         AiAnalysisClient.AiUnavailableException e =
                 assertThrows(AiAnalysisClient.AiUnavailableException.class,
                         () -> client.analyze(request(), "c_test"));
-        // 요청이 AI까지 갔다 - 시도 예산 판정이 미도달과 달라진다 (Codex sol 리뷰 P2)
+        // 요청이 AI까지 갔다 - 시도 예산 판정이 미도달과 달라진다 (Codex sol 리뷰 P2).
         assertEquals(AiAnalysisClient.AiUnavailableException.Kind.SERVER_ERROR, e.kind());
     }
 
@@ -192,7 +192,7 @@ class RestAiAnalysisClientTest {
 
     @Test
     void 점수_버전이_요청과_다르면_계약_위반으로_끊는다() {
-        // 세션은 생성 시점 버전에 고정된다 (§5.4) - 구버전 AI의 점수를 받으면 채점 버전이 섞인다
+        // 세션은 생성 시점 버전에 고정된다 (§5.4) - 구버전 AI의 점수를 받으면 채점 버전이 섞인다.
         server.expect(requestTo("http://ai.test/internal/v0/analyze"))
                 .andRespond(withSuccess("""
                         { "status": "OK", "intonationScore": 78, "quality": { "code": "OK" },
@@ -232,7 +232,7 @@ class RestAiAnalysisClientTest {
     @Test
     void health가_UP이_아니면_아직_복구가_아니다() {
         // 프로세스는 떴지만 모델이 아직 안 올라온 상태(KAN-22가 채운다)를 UP으로 읽으면,
-        // 회로를 열어 준 직후 사용자 요청이 다시 실패한다
+        // 회로를 열어 준 직후 사용자 요청이 다시 실패한다.
         server.expect(requestTo("http://ai.test/internal/v0/health"))
                 .andRespond(withSuccess("{ \"status\": \"WARMING_UP\" }", MediaType.APPLICATION_JSON));
 
@@ -253,7 +253,7 @@ class RestAiAnalysisClientTest {
 
     @Test
     void health는_연결_실패에도_예외를_던지지_않는다() {
-        // 프로브 실패는 "아직 아니다"가 전부다 - 스케줄 잡으로 예외가 새면 다음 주기가 멎는다
+        // 프로브 실패는 "아직 아니다"가 전부다 - 스케줄 잡으로 예외가 새면 다음 주기가 멎는다.
         server.expect(requestTo("http://ai.test/internal/v0/health"))
                 .andRespond(request -> {
                     throw new java.net.SocketTimeoutException("연결 지연 시뮬레이션");

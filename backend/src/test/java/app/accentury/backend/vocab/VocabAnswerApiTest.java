@@ -71,7 +71,7 @@ class VocabAnswerApiTest extends IntegrationTest {
     @Test
     void 정오가_저장되고_응답에는_노출되지_않는다() throws Exception {
         // 어휘 채점은 AI를 거치지 않는다 - 서버 정답표 대조 결과가 행에 남고(KAN-21 입력),
-        // 정답이든 오답이든 클라이언트가 받는 필드는 같다 (KAN-13 - 정오 미노출)
+        // 정답이든 오답이든 클라이언트가 받는 필드는 같다 (KAN-13 - 정오 미노출).
         SessionHandle session = createSession();
 
         MvcResult correct = mockMvc.perform(answer(session, "w1", "c-1", body("w1a")))
@@ -91,7 +91,7 @@ class VocabAnswerApiTest extends IntegrationTest {
     void 음성_업로드가_있던_문항도_진행도에_센다() throws Exception {
         // 진행도는 전체 10문항 기준이다 (2026-08-11 확정) - 음성은 §3.4 대표 상태의
         // "NOT_SUBMITTED 아님"과 같은 기준이라, 재녹음 중복은 문항 1개로 접히고
-        // 실패한 시도만 있는 문항도 제출된 것으로 센다
+        // 실패한 시도만 있는 문항도 제출된 것으로 센다.
         SessionHandle session = createSession();
         Instant now = Instant.now();
         analysisJobRepository.save(new AnalysisJob("a_test-1", session.id(), "v1", 1, "k1",
@@ -124,7 +124,7 @@ class VocabAnswerApiTest extends IntegrationTest {
 
     @Test
     void 같은_키로_다른_답을_보내면_400이다() throws Exception {
-        // 키 오용 - 새 답에는 새 키를 쓴다 (§5.2). 저장된 답은 바뀌지 않는다
+        // 키 오용 - 새 답에는 새 키를 쓴다 (§5.2). 저장된 답은 바뀌지 않는다.
         SessionHandle session = createSession();
         mockMvc.perform(answer(session, "w1", "reused", body("w1a")))
                 .andExpect(status().isOk());
@@ -139,7 +139,7 @@ class VocabAnswerApiTest extends IntegrationTest {
 
     @Test
     void 새_키의_재제출은_409_ITEM_ALREADY_ANSWERED다() throws Exception {
-        // 확정 플로우(§5.7)에 답 변경 UI가 없다 - 재제출은 거절한다 (2026-08-11 확정)
+        // 확정 플로우(§5.7)에 답 변경 UI가 없다 - 재제출은 거절한다 (2026-08-11 확정).
         SessionHandle session = createSession();
         mockMvc.perform(answer(session, "w1", "first", body("w1a")))
                 .andExpect(status().isOk());
@@ -221,7 +221,7 @@ class VocabAnswerApiTest extends IntegrationTest {
     void 이_문항의_선택지가_아니면_422_ITEM_NOT_IN_VERSION이다() throws Exception {
         SessionHandle session = createSession();
 
-        // 같은 버전의 다른 문항 선택지 - 버전 전체가 아니라 문항 단위로 검증한다
+        // 같은 버전의 다른 문항 선택지 - 버전 전체가 아니라 문항 단위로 검증한다.
         mockMvc.perform(answer(session, "w1", "other-item-choice", body("w2a")))
                 .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.code").value("ITEM_NOT_IN_VERSION"));
@@ -267,7 +267,7 @@ class VocabAnswerApiTest extends IntegrationTest {
 
     @Test
     void Idempotency_Key가_100자를_넘으면_400이다() throws Exception {
-        // 컬럼 길이가 100이라 검증이 없으면 저장 시점에 500이 된다
+        // 컬럼 길이가 100이라 검증이 없으면 저장 시점에 500이 된다.
         mockMvc.perform(answer(createSession(), "w1", "k".repeat(101), body("w1a")))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));

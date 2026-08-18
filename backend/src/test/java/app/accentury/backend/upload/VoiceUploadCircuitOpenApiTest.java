@@ -54,12 +54,12 @@ class VoiceUploadCircuitOpenApiTest extends IntegrationTest {
         }
     }
 
-    /** 회로 상태를 테스트가 직접 여닫는 디스패처 - 실제 판정은 AiCircuitBreakerTest가 본다 */
+    /** 회로 상태를 테스트가 직접 여닫는 디스패처 - 실제 판정은 AiCircuitBreakerTest가 본다. */
     static class CircuitDispatcher implements AnalysisDispatcher {
 
         volatile boolean open;
 
-        /** 반열림 흉내 - available()이 시험 자리를 잡아 한 번만 true를 준다 */
+        /** 반열림 흉내 - available()이 시험 자리를 잡아 한 번만 true를 준다. */
         volatile boolean singleTrial;
         volatile boolean trialTaken;
         volatile int dispatches;
@@ -100,7 +100,7 @@ class VoiceUploadCircuitOpenApiTest extends IntegrationTest {
 
     @BeforeEach
     void closeCircuit() {
-        // 컨텍스트를 공유하므로 앞 테스트가 열어 둔 회로를 물려받지 않게 되돌린다
+        // 컨텍스트를 공유하므로 앞 테스트가 열어 둔 회로를 물려받지 않게 되돌린다.
         dispatcher.open = false;
         dispatcher.singleTrial = false;
         dispatcher.trialTaken = false;
@@ -125,7 +125,7 @@ class VoiceUploadCircuitOpenApiTest extends IntegrationTest {
     @Test
     void 회로가_열려도_문항당_시도_예산은_깎이지_않는다() throws Exception {
         // 서버 사정으로 상한(§2.5 - 문항당 5회)이 소모되면, 복구된 뒤 정상 응시자가
-        // 자기 잘못 없이 429 RATE_RETAKE_EXCEEDED에 막힌다
+        // 자기 잘못 없이 429 RATE_RETAKE_EXCEEDED에 막힌다.
         SessionHandle session = createSession();
         dispatcher.open = true;
         for (int i = 0; i < VoiceUploadService.MAX_ATTEMPTS_PER_ITEM + 1; i++) {
@@ -143,7 +143,7 @@ class VoiceUploadCircuitOpenApiTest extends IntegrationTest {
     @Test
     void 회로가_열려도_이미_접수된_시도의_재전송은_그대로_받는다() throws Exception {
         // 같은 키의 재전송은 저장된 작업을 돌려주는 것뿐이라 AI를 부르지 않는다 (§5.2) -
-        // 여기서 503을 주면 네트워크가 끊긴 정상 사용자가 접수된 시도를 잃는다
+        // 여기서 503을 주면 네트워크가 끊긴 정상 사용자가 접수된 시도를 잃는다.
         SessionHandle session = createSession();
         mockMvc.perform(upload(session, "replay")).andExpect(status().isAccepted());
 
@@ -159,7 +159,7 @@ class VoiceUploadCircuitOpenApiTest extends IntegrationTest {
     void 시도_상한에_걸린_업로드는_반열림의_시험_자리를_뺏지_않는다() throws Exception {
         // 반열림에서 accepts()는 복구 시험 자리를 잡는 호출이다 - 어차피 429로 거절될
         // 요청이 그 자리를 물고 놓아주지 않으면, 멀쩡한 다른 세션의 복구가 시험 한도만큼
-        // 늦어진다 (Codex sol 리뷰 P2)
+        // 늦어진다 (Codex sol 리뷰 P2).
         SessionHandle capped = createSession();
         for (int i = 0; i < VoiceUploadService.MAX_ATTEMPTS_PER_ITEM; i++) {
             mockMvc.perform(upload(capped, "cap-" + i)).andExpect(status().isAccepted());
@@ -177,7 +177,7 @@ class VoiceUploadCircuitOpenApiTest extends IntegrationTest {
     @Test
     void AI_장애가_세션과_테스트_정의_API로_전파되지_않는다() throws Exception {
         // AC - 분석이 죽어도 응시 시작과 문항 조회는 살아 있어야 한다.
-        // 두 경로는 AI를 부르지 않으므로 회로와 무관하다
+        // 두 경로는 AI를 부르지 않으므로 회로와 무관하다.
         dispatcher.open = true;
 
         SessionHandle session = createSession();

@@ -45,7 +45,7 @@ class SessionCreateRateLimitApiTest extends IntegrationTest {
 
     @Test
     void 다른_IP는_영향을_받지_않는다() throws Exception {
-        // 한 사람의 폭주가 다른 응시자의 시작을 막으면 안 된다
+        // 한 사람의 폭주가 다른 응시자의 시작을 막으면 안 된다.
         mockMvc.perform(create("9.8.7.2")).andExpect(status().isCreated());
         mockMvc.perform(create("9.8.7.2")).andExpect(status().isCreated());
         mockMvc.perform(create("9.8.7.2")).andExpect(status().isTooManyRequests());
@@ -57,7 +57,7 @@ class SessionCreateRateLimitApiTest extends IntegrationTest {
         return post("/v0/sessions")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{}")
-                // 첫 값은 클라이언트 위조분, 마지막 값이 프록시가 붙인 실제 IP다
+                // 첫 값은 클라이언트 위조분, 마지막 값이 프록시가 붙인 실제 IP다.
                 .header("X-Forwarded-For", "203.0.113.99, " + clientIp);
     }
 }

@@ -71,7 +71,7 @@ public class VoiceUploadController {
      * @param sessionId      세션 생성 응답의 {@code sessionId}
      * @param itemId         테스트 정의의 음성 문항 {@code itemId} (예: {@code v1})
      * @param authorization  {@code Bearer } + 세션 토큰
-     * @param idempotencyKey 같은 녹음의 재전송을 구분하는 키. 재전송이면 같은 값, 새 녹음이면 새 값을 쓴다
+     * @param idempotencyKey 같은 녹음의 재전송을 구분하는 키. 재전송이면 같은 값, 새 녹음이면 새 값을 쓴다.
      * @param audio          녹음 파일. WAV 16kHz mono 16-bit, 최대 1MB
      * @param metaJson       녹음 메타데이터 JSON - {@code durationMs}와 {@code clientQuality}의 4개 필드가 모두 필수다.
      *                       예: {@code {"durationMs":3420,"clientQuality":{"rms":0.12,"peak":0.81,"silenceRatio":0.08,"clipped":false}}}
@@ -86,7 +86,7 @@ public class VoiceUploadController {
                                @Nullable String authorization,
 
                                // 계약상 필수다. required = false인 것은 누락을 Spring이 아니라
-                               // 서비스가 잡아 공통 오류 봉투로 응답하기 위한 것이다
+                               // 서비스가 잡아 공통 오류 봉투로 응답하기 위한 것이다.
                                @RequestHeader(value = "Idempotency-Key", required = false)
                                @Nullable String idempotencyKey,
 

@@ -33,12 +33,12 @@ import java.time.Instant;
         indexes = @Index(name = "ux_test_session_token_hash", columnList = "token_hash", unique = true))
 public class TestSession implements Persistable<String> {
 
-    /** 형식: {@code s_} + UUID. 클라이언트 경로 파라미터로 쓰인다 */
+    /** 형식: {@code s_} + UUID. 클라이언트 경로 파라미터로 쓰인다. */
     @Id
     @Column(length = 40)
     private String id;
 
-    /** 세션 토큰의 SHA-256 해시 (hex 64자). 토큰 원문은 어디에도 저장하지 않는다 */
+    /** 세션 토큰의 SHA-256 해시 (hex 64자). 토큰 원문은 어디에도 저장하지 않는다. */
     @Column(name = "token_hash", nullable = false, length = 64)
     private String tokenHash;
 
@@ -126,7 +126,7 @@ public class TestSession implements Persistable<String> {
      *
      * @param completedAt     완료 확정 시각
      * @param resultExpiresAt 함께 저장되는 결과의 만료 시각 - 세션과 결과가 같은 순간
-     *                        만료돼 "세션과 결과는 24시간 후 파기 → 이후 조회 410"(§5.5)이 성립한다
+     *                        만료돼 "세션과 결과는 24시간 후 파기 → 이후 조회 410"(§5.5)이 성립한다.
      */
     public void markCompleted(Instant completedAt, Instant resultExpiresAt) {
         this.completedAt = completedAt;

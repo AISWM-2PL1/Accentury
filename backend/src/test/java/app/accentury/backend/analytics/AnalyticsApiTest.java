@@ -32,10 +32,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class AnalyticsApiTest extends IntegrationTest {
 
     private static final String URL = "/admin/v0/analytics";
-    /** 최소 길이(32자) 검증을 통과해야 컨텍스트가 뜬다 - 운영 토큰은 무작위 발급이다 */
+    /** 최소 길이(32자) 검증을 통과해야 컨텍스트가 뜬다 - 운영 토큰은 무작위 발급이다. */
     static final String TOKEN = "test-admin-token-0123456789abcdef";
 
-    /** 다른 테스트의 세션이 섞이지 않게 과거 일자에 직접 심는다 */
+    /** 다른 테스트의 세션이 섞이지 않게 과거 일자에 직접 심는다. */
     private static final LocalDate DAY = LocalDate.of(2026, 3, 1);
     private static final LocalDate NEXT_DAY = LocalDate.of(2026, 3, 2);
 
@@ -64,7 +64,7 @@ class AnalyticsApiTest extends IntegrationTest {
                 entityManager.createQuery("delete from DailyCounter").executeUpdate());
         // 3/1 sv-0.3: 시도 10, 완주 4 (명예주민 3 + 경남 토박이 1), 억양 합 300 / 단어 240 / 종합 280
         insert(DAY, "sv-0.3", 10, 4, 0, 0, 0, 3, 1, 300, 240, 280, 4);
-        // 3/1 sv-0.4: 같은 일자 다른 점수 버전 - 등급 경계가 달라 섞으면 안 되므로 별도 행이다
+        // 3/1 sv-0.4: 같은 일자 다른 점수 버전 - 등급 경계가 달라 섞으면 안 되므로 별도 행이다.
         insert(DAY, "sv-0.4", 5, 1, 1, 0, 0, 0, 0, 40, 20, 33, 1);
         // 3/2 sv-0.3: 기간 조회가 일자로도 갈라지는지 보는 행
         insert(NEXT_DAY, "sv-0.3", 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
@@ -93,10 +93,10 @@ class AnalyticsApiTest extends IntegrationTest {
     void 등급_누적_수와_점수_평균을_반환한다() throws Exception {
         mockMvc.perform(query(DAY, DAY))
                 .andExpect(status().isOk())
-                // 내부 지표라도 중간 캐시에 남기지 않는다
+                // 내부 지표라도 중간 캐시에 남기지 않는다.
                 .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"))
                 .andExpect(jsonPath("$.zone").value("Asia/Seoul"))
-                // 같은 일자에 두 버전을 심어 뒀다 - 아래 단언은 그중 sv-0.3 행이다
+                // 같은 일자에 두 버전을 심어 뒀다 - 아래 단언은 그중 sv-0.3 행이다.
                 .andExpect(jsonPath("$.rows.length()").value(2))
                 .andExpect(jsonPath("$.rows[0].date").value("2026-03-01"))
                 .andExpect(jsonPath("$.rows[0].testVersion").value("gn-2026.08.1"))
@@ -104,13 +104,13 @@ class AnalyticsApiTest extends IntegrationTest {
                 .andExpect(jsonPath("$.rows[0].counts.sessionsStarted").value(10))
                 .andExpect(jsonPath("$.rows[0].counts.sessionsCompleted").value(4))
                 .andExpect(jsonPath("$.rows[0].counts.completionRate").value(0.4))
-                // 5등급 전부 나온다 - 0인 등급이 빠지면 분포를 읽을 수 없다
+                // 5등급 전부 나온다 - 0인 등급이 빠지면 분포를 읽을 수 없다.
                 .andExpect(jsonPath("$.rows[0].counts.tiers.OUTSIDER").value(0))
                 .andExpect(jsonPath("$.rows[0].counts.tiers.TRAVELER").value(0))
                 .andExpect(jsonPath("$.rows[0].counts.tiers.WANNABE").value(0))
                 .andExpect(jsonPath("$.rows[0].counts.tiers.HONORARY").value(3))
                 .andExpect(jsonPath("$.rows[0].counts.tiers.NATIVE").value(1))
-                // 평균 = 합 / 건수. 합도 함께 주므로 검산할 수 있다 (개별 점수 행이 없다)
+                // 평균 = 합 / 건수. 합도 함께 주므로 검산할 수 있다 (개별 점수 행이 없다).
                 .andExpect(jsonPath("$.rows[0].counts.sums.intonation").value(300))
                 .andExpect(jsonPath("$.rows[0].counts.averages.intonation").value(75.0))
                 .andExpect(jsonPath("$.rows[0].counts.averages.vocabulary").value(60.0))
@@ -120,7 +120,7 @@ class AnalyticsApiTest extends IntegrationTest {
     @Test
     void 같은_일자라도_점수_버전이_다르면_행이_갈라진다() throws Exception {
         // 하루만 조회해도 두 행이다 - 일자 차이가 아니라 버전 차이로 갈린다는 뜻이고,
-        // 같은 일자 안에서는 버전 오름차순이다 (리포트 비교의 전제)
+        // 같은 일자 안에서는 버전 오름차순이다 (리포트 비교의 전제).
         mockMvc.perform(query(DAY, DAY))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.rows.length()").value(2))
@@ -128,7 +128,7 @@ class AnalyticsApiTest extends IntegrationTest {
                 .andExpect(jsonPath("$.rows[0].scoreVersion").value("sv-0.3"))
                 .andExpect(jsonPath("$.rows[1].date").value("2026-03-01"))
                 .andExpect(jsonPath("$.rows[1].scoreVersion").value("sv-0.4"))
-                // 두 행의 등급 분포가 서로 섞이지 않았다
+                // 두 행의 등급 분포가 서로 섞이지 않았다.
                 .andExpect(jsonPath("$.rows[0].counts.tiers.HONORARY").value(3))
                 .andExpect(jsonPath("$.rows[0].counts.tiers.OUTSIDER").value(0))
                 .andExpect(jsonPath("$.rows[1].counts.tiers.HONORARY").value(0))
@@ -140,7 +140,7 @@ class AnalyticsApiTest extends IntegrationTest {
         mockMvc.perform(query(DAY, NEXT_DAY))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.rows.length()").value(3))
-                // 정렬은 일자 우선, 그 다음 버전이다
+                // 정렬은 일자 우선, 그 다음 버전이다.
                 .andExpect(jsonPath("$.rows[2].date").value("2026-03-02"))
                 .andExpect(jsonPath("$.totals.sessionsStarted").value(17))
                 .andExpect(jsonPath("$.totals.sessionsCompleted").value(5))
@@ -156,7 +156,7 @@ class AnalyticsApiTest extends IntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.rows.length()").value(0))
                 .andExpect(jsonPath("$.totals.sessionsStarted").value(0))
-                // 0으로 나누지 않는다 - 없는 평균은 0이 아니라 null이다
+                // 0으로 나누지 않는다 - 없는 평균은 0이 아니라 null이다.
                 .andExpect(jsonPath("$.totals.averages").doesNotExist())
                 .andExpect(jsonPath("$.totals.completionRate").doesNotExist());
     }
@@ -181,7 +181,7 @@ class AnalyticsApiTest extends IntegrationTest {
     @Test
     void to만_지정하면_그_하루다() throws Exception {
         // 여기서도 from을 오늘로 잡으면 과거 하루를 보려던 호출자가 보낸 적도 없는
-        // from이 뒤라는 400을 받는다 (2026-08-17 확정 - 빠진 경계는 비대칭 기본값)
+        // from이 뒤라는 400을 받는다 (2026-08-17 확정 - 빠진 경계는 비대칭 기본값).
         mockMvc.perform(get(URL).header(AnalyticsController.TOKEN_HEADER, TOKEN)
                         .param("to", DAY.toString()))
                 .andExpect(status().isOk())
