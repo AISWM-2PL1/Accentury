@@ -111,13 +111,23 @@ function deliverResult(itemId: string) {
   })
 }
 
+/** 어휘 문항에 답한다 — 보기를 고르고 [다음]으로 확정 (KAN-13 선택 UI) */
+function answerVocabulary() {
+  fireEvent.click(screen.getByRole('radio', { name: '보기1' }))
+  fireEvent.click(screen.getByRole('button', { name: '다음' }))
+}
+
 /**
  * 브리지가 없는 환경에서 현재 문항을 한 칸 진행시킨다 — 음성은 개발용 제출 버튼,
- * 어휘는 보기 버튼이다. fireEvent를 쓰는 이유는 act로 감싸 리렌더까지 흘려보내기 위해서다.
+ * 어휘는 보기 선택 + [다음]이다. fireEvent를 쓰는 이유는 act로 감싸 리렌더까지 흘려보내기 위해서다.
  */
 function advance() {
   const devSubmit = screen.queryByRole('button', { name: '제출 (개발용)' })
-  fireEvent.click(devSubmit ?? screen.getByRole('button', { name: '보기1' }))
+  if (devSubmit) {
+    fireEvent.click(devSubmit)
+  } else {
+    answerVocabulary()
+  }
 }
 
 afterEach(() => {
@@ -197,7 +207,7 @@ describe('문항 진행', () => {
 
     expect(screen.getByText('분석 대기 화면 (KAN-14 예정)')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '제출 (개발용)' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '보기1' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('radio', { name: '보기1' })).not.toBeInTheDocument()
   })
 
   it('진행 중 저장된 스냅샷으로 다시 열면 그 문항에서 이어진다', async () => {
@@ -252,7 +262,7 @@ describe('VOICE 문항 — 네이티브 녹음 화면 전환 (KAN-100)', () => {
     await findRecordingWait()
 
     deliverResult('item-1')
-    fireEvent.click(screen.getByRole('button', { name: '보기1' })) // 어휘 문항 2
+    answerVocabulary() // 어휘 문항 2
 
     expect(await screen.findByText('음성 문항 3')).toBeInTheDocument()
     expect(startVoiceItem).toHaveBeenCalledTimes(2)
@@ -316,15 +326,15 @@ describe('VOICE 문항 — 네이티브 녹음 화면 전환 (KAN-100)', () => {
   })
 })
 
-describe('VOCABULARY 문항 — 보기 선택 (정식 구현은 KAN-13)', () => {
-  it('보기 목록을 그리고, 고르면 다음 문항으로 넘어간다', async () => {
+describe('VOCABULARY 문항 — 보기 선택 (KAN-13)', () => {
+  it('보기를 고르고 [다음]을 누르면 다음 문항으로 넘어간다', async () => {
     stubBridge()
     renderScreen(okFetch())
     await findRecordingWait()
     deliverResult('item-1')
 
     expect(screen.getByText('어휘 문항 2')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '보기1' }))
+    answerVocabulary()
 
     expect(await screen.findByText('음성 문항 3')).toBeInTheDocument()
     expect(screen.getByText('3/10')).toBeInTheDocument()

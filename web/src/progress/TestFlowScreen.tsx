@@ -191,7 +191,9 @@ function TestRunner({
         <VocabularyItemScreen
           key={current.itemId}
           item={current}
-          onSubmitted={() => submit(current.itemId)}
+          // 고른 choiceId는 아직 버린다 — 서버 제출(POST .../answer) 결선이 Stage 3에서
+          // 이 자리에 끼면, 제출 성공 후에만 submit(진행 전진)이 불리게 바뀐다.
+          onSubmit={() => submit(current.itemId)}
         />
       )}
     </main>
