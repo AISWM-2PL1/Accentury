@@ -112,6 +112,24 @@ describe('제출 수명주기', () => {
     await waitFor(() => expect(onSubmitted).toHaveBeenCalledTimes(1))
   })
 
+  it('성공한 뒤에도 잠금이 풀리지 않는다 — 호출자가 화면을 걷을 때까지 재제출 창이 없다', async () => {
+    // 성공 후 setSubmitting(false)를 부르지 않는 것이 이 화면의 설계다. 호출자가 다음 문항으로
+    // 넘겨 이 컴포넌트를 내리기까지 한 프레임이라도 잠금이 풀리면, [다음] 연타가 두 번째 제출을
+    // 만든다. 그 편도 잠금을 여기서 못 박는다 — 실패 시에만 풀리는 코드가 회귀하면 깨진다.
+    const { submitSpy, onSubmitted } = renderScreen()
+
+    choose('부추')
+    pressNext()
+    await waitFor(() => expect(onSubmitted).toHaveBeenCalledTimes(1))
+
+    // 호출자(상태 머신)가 화면을 갈아끼우지 않은 상태를 재현한다 — 실제로는 여기서 언마운트된다
+    expect(screen.getByRole('button', { name: '제출 중…' })).toBeDisabled()
+    screen.getAllByRole('radio').forEach((radio) => expect(radio).toBeDisabled())
+
+    fireEvent.click(screen.getByRole('button', { name: '제출 중…' }))
+    expect(submitSpy).toHaveBeenCalledTimes(1)
+  })
+
   it('제출 중에는 보기와 버튼이 잠기고 "제출 중…"이 보인다', async () => {
     // 풀리지 않는 제출 — 진행 중 상태를 고정해 놓고 화면을 검사한다
     renderScreen(() => new Promise<VocabSubmitResult>(() => {}))
