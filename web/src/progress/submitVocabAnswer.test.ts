@@ -43,12 +43,30 @@ describe('요청 형태', () => {
 
   it('빈 값이 있으면 네트워크를 타기 전에 끊는다', async () => {
     const fetchImpl = vi.fn<FetchLike>()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
 
     await expect(submitVocabAnswer(submission({ sessionToken: ' ' }), fetchImpl)).rejects.toMatchObject({
       name: 'VocabSubmitError',
       retryable: false,
+      // 어느 값이 비었는지는 code에 남는다 — 화면 문구는 사용자용이라 진단이 안 실린다
+      code: 'CLIENT_MISSING_sessionToken',
     })
     expect(fetchImpl).not.toHaveBeenCalled()
+    vi.restoreAllMocks()
+  })
+
+  it('가드 실패 문구는 사용자용이다 — 내부 필드 이름이 화면에 나가지 않는다', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const thrown: unknown = await submitVocabAnswer(submission({ sessionId: '' }), vi.fn<FetchLike>())
+      .then(() => null)
+      .catch((e: unknown) => e)
+
+    expect(thrown).toBeInstanceOf(VocabSubmitError)
+    const { message } = thrown as VocabSubmitError
+    expect(message).toBe('답안을 보낼 수 없어요. 앱을 다시 시작해 주세요')
+    expect(message).not.toContain('sessionId')
+    vi.restoreAllMocks()
   })
 })
 

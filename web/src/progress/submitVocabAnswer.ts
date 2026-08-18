@@ -70,9 +70,14 @@ export async function submitVocabAnswer(
 
   // 빈 값이면 요청이 엉뚱한 URL이나 401로 나가 원인을 화면에서 알 수 없게 된다.
   // 네트워크를 타기 전에 끊는다 (fetchTestDefinition의 빈 testVersion 가드와 같은 이유).
+  //
+  // 사용자에게 보이는 문구와 개발자가 볼 진단을 나눈다 — 이 실패는 앱이 값을 못 넘긴 상황이라
+  // 사용자가 할 수 있는 게 없고, 필드 이름을 화면에 띄워 봐야 "비난 없는 카피"(ux-ui.md) 톤만
+  // 깨진다. 어느 값이 비었는지는 code와 콘솔에 남겨 진단 경로를 잃지 않는다.
   for (const [name, value] of Object.entries({ sessionId, itemId, choiceId, sessionToken, idempotencyKey })) {
     if (value.trim() === '') {
-      throw new VocabSubmitError(`${name}이(가) 없어 답안을 제출할 수 없습니다`, null, false)
+      console.error(`[vocab] 답안 제출에 필요한 값이 비어 있습니다: ${name}`)
+      throw new VocabSubmitError('답안을 보낼 수 없어요. 앱을 다시 시작해 주세요', `CLIENT_MISSING_${name}`, false)
     }
   }
 
