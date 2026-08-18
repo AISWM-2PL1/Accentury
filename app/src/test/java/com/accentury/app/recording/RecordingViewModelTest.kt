@@ -49,6 +49,14 @@ class RecordingViewModelTest {
         }
     }
 
+    /** 청크 사이에 시간을 두어 진행 중 상태를 중간에 들여다볼 수 있게 한다 */
+    private fun delayedChunks(count: Int, amplitude: Int = 1000): Flow<ShortArray> = flow {
+        repeat(count) {
+            kotlinx.coroutines.delay(100)
+            emit(ShortArray(CHUNK_SIZE) { i -> if (i % 2 == 0) amplitude.toShort() else (-amplitude).toShort() })
+        }
+    }
+
     @Test
     fun `시작 직후 Recording 상태가 되고 완료 시 Review로 전이된다`() = runTest(dispatcher) {
         val vm = viewModelWith(chunksOf(16))
@@ -88,6 +96,47 @@ class RecordingViewModelTest {
         val second = (vm.uiState.value as RecordingUiState.Review).attemptId
 
         assertNotEquals(first, second)
+    }
+
+    @Test
+    fun `Recording 상태의 pitchFrames는 청크를 넘기며 누적된다`() = runTest(dispatcher) {
+        val vm = viewModelWith(delayedChunks(4))
+
+        vm.startRecording()
+        assertEquals(emptyList<RecordingEngine.PitchFrame>(), (vm.uiState.value as RecordingUiState.Recording).pitchFrames)
+
+        dispatcher.scheduler.advanceTimeBy(150)
+        val first = (vm.uiState.value as RecordingUiState.Recording).pitchFrames
+        assertTrue("첫 청크에서 프레임이 나와야 한다", first.isNotEmpty())
+
+        dispatcher.scheduler.advanceTimeBy(100)
+        val second = (vm.uiState.value as RecordingUiState.Recording).pitchFrames
+        assertTrue("프레임이 늘어야 한다: ${first.size} -> ${second.size}", second.size > first.size)
+        // 앞 청크의 프레임이 그대로 앞에 남아 있다 - 곡선이 매번 다시 그려져도 과거가 안 잘린다
+        assertEquals(first, second.take(first.size))
+
+        vm.reset()
+        advanceUntilIdle()
+    }
+
+    @Test
+    fun `두 번째 녹음은 빈 누적으로 시작한다`() = runTest(dispatcher) {
+        val vm = viewModelWith(delayedChunks(4))
+
+        vm.startRecording()
+        dispatcher.scheduler.advanceTimeBy(150)
+        val afterFirstChunk = (vm.uiState.value as RecordingUiState.Recording).pitchFrames.size
+        advanceUntilIdle()
+        assertTrue(vm.uiState.value is RecordingUiState.Review)
+
+        vm.retryRecording()
+        dispatcher.scheduler.advanceTimeBy(150)
+        val frames = (vm.uiState.value as RecordingUiState.Recording).pitchFrames
+        assertEquals(afterFirstChunk, frames.size)
+        assertEquals(0L, frames.first().timestampMs)
+
+        vm.reset()
+        advanceUntilIdle()
     }
 
     @Test

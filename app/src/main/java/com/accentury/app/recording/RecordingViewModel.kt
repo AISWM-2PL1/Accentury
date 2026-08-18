@@ -31,6 +31,9 @@ class RecordingViewModel(
         _uiState.value = RecordingUiState.Recording(elapsedMs = 0L, rms = 0.0)
         recordingJob = viewModelScope.launch {
             var peakRms = 0.0
+            // 녹음 1회분 누적. 상한이 있는 목록이다 - 녹음이 10초에서 끊기고 프레임은 32ms
+            // 간격이라 최대 313개 남짓이라, 링버퍼 없이 그냥 쌓아도 된다.
+            val pitchFrames = ArrayList<RecordingEngine.PitchFrame>()
             val outcome = engine.record { progress ->
                 if (progress.rms > peakRms) peakRms = progress.rms
                 if (BuildConfig.DEBUG) {
@@ -40,7 +43,14 @@ class RecordingViewModel(
                     val f0 = lastPitch?.let { String.format(java.util.Locale.US, "%.1f", it) } ?: "-"
                     android.util.Log.d(TAG, "rec $attemptId elapsed=${progress.elapsedMs} rms=${progress.rms.toInt()} frames=${progress.pitchFrames.size} f0=$f0")
                 }
-                _uiState.value = RecordingUiState.Recording(progress.elapsedMs, progress.rms)
+                pitchFrames += progress.pitchFrames
+                // 상태에 넣는 목록은 복사본이다 - 그대로 넘기면 다음 청크의 += 가 이미 방출한
+                // 상태의 내용까지 바꿔 버려 Compose가 변화를 못 알아챈다.
+                _uiState.value = RecordingUiState.Recording(
+                    elapsedMs = progress.elapsedMs,
+                    rms = progress.rms,
+                    pitchFrames = pitchFrames.toList(),
+                )
             }
             when (outcome) {
                 is RecordingEngine.Outcome.Success -> {
