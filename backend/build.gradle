@@ -20,18 +20,25 @@ repositories {
 dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	// 스키마는 Flyway 마이그레이션(db/migration)만 만든다 - ddl-auto는 validate (KAN-123).
+	implementation 'org.springframework.boot:spring-boot-starter-flyway'
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
 	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
 	compileOnly 'org.projectlombok:lombok'
 	runtimeOnly 'org.postgresql:postgresql'
+	// Flyway 10부터 PostgreSQL 지원이 flyway-core 밖의 별도 모듈이다 - 빠지면 기동 시
+	// "Unsupported Database: PostgreSQL"로 죽는다.
+	runtimeOnly 'org.flywaydb:flyway-database-postgresql'
 	annotationProcessor 'org.projectlombok:lombok'
 	testImplementation 'org.springframework.boot:spring-boot-starter-actuator-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-data-jpa-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-validation-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+	// 테스트 DB는 Testcontainers PostgreSQL이다 (KAN-123 확정) - H2 호환 모드가 못 잡는
+	// PG 전용 문법이 마이그레이션에 들어와도 테스트가 배포 전에 잡는다. Docker가 필요하다.
+	testImplementation 'org.springframework.boot:spring-boot-testcontainers'
+	testImplementation 'org.testcontainers:testcontainers-postgresql'
 	testCompileOnly 'org.projectlombok:lombok'
-	// 테스트는 Docker DB 없이 돌아야 한다 (CI 대비) - 인메모리 H2 사용 (Codex 리뷰 P1 반영)
-	testRuntimeOnly 'com.h2database:h2'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 	testAnnotationProcessor 'org.projectlombok:lombok'
 }

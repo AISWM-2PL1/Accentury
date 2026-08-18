@@ -84,7 +84,7 @@ public class SessionService {
      * @param clientIp            요청 제한의 기준 IP - {@link app.accentury.backend.common.ClientIps}가
      *                            신뢰 프록시 규칙으로 정한 값
      * @param authorizationHeader 재응시일 때만 실려 오는 이전 세션의 {@code Authorization} 헤더 -
-     *                            이 엔드포인트는 인증 불필요이므로(§2.1) 없으면 최초 응시다
+     *                            이 엔드포인트는 인증 불필요이므로(§2.1) 없으면 최초 응시다.
      */
     public SessionResponse create(@Nullable CreateSessionRequest request, String clientIp,
                                   @Nullable String authorizationHeader) {
@@ -131,7 +131,7 @@ public class SessionService {
                     purged.sessionId(), purged.answers(), purged.attempts(), purged.results());
         }
 
-        // 토큰은 로그에 남기지 않는다 (§2.6, NFR-SC-07)
+        // 토큰은 로그에 남기지 않는다 (§2.6, NFR-SC-07).
         log.info("세션 생성 sessionId={} platform={} testVersion={}",
                 sessionId, client != null ? client.platform() : null, properties.testVersion());
 
@@ -148,8 +148,9 @@ public class SessionService {
      * 삭제 대상은 어휘 답안(KAN-15), 음성 시도와 분석 상태 및 문항별 점수 누적분(KAN-24 -
      * {@code analysis_job} 행이 셋을 겸한다), 최종 결과(KAN-25), 그리고 세션 행이다.
      * 멱등 키는 별도 테이블이 아니라 답안/시도 행의 컬럼이므로 함께 사라진다 (§2.2).
-     * FK CASCADE 대신 명시적 벌크 삭제다 (2026-08-17 확정 - 선행 스키마가 FK 없이
-     * 평문 {@code session_id} 컬럼으로 만들어졌고, 보존 정리 잡도 테이블별로 돈다).
+     * baseline(KAN-123)이 세션 FK에 ON DELETE CASCADE를 확정한 뒤에도 명시적 벌크
+     * 삭제를 유지한다 (2026-08-18 확정) - 잠금 획득 순서를 코드가 통제하고 삭제 건수를
+     * 로그로 남긴다. CASCADE는 코드가 삭제를 빠뜨렸을 때의 마지막 안전망이다.
      * <p>
      * 세션 행 잠금({@link TestSessionRepository#lockByTokenHash}) 아래에서만 호출된다 -
      * 제출 쓰기(KAN-15/23)와 완료 전이(KAN-16)가 같은 잠금으로 직렬화되므로, 폐기와
@@ -171,14 +172,15 @@ public class SessionService {
      *       없앨 수 없어 더미 쓰기 같은 완화는 프로토타입 과잉이다.</li>
      *   <li>벌크 문장끼리의 드문 데드락 - 정리 잡의 벌크 문장과 잠금 획득 순서가 어긋날
      *       수 있다. 다문장 잠금 보유는 스위퍼 쪽에서 끊었고({@code AnalysisJobTimeout}),
-     *       남는 단문장끼리의 경우는 DB가 한쪽을 끊으므로 재응시 재시도로 회복된다.</li>
-     *   <li>주기 삭제 뒤의 재응시 잔존 - {@link #purgeExpired}가 세션 행을 이미 지운
-     *       뒤의 재응시는 토큰으로 세션을 못 찾아 이 폐기가 조용히 건너뛰어지고, 미완주
-     *       세션의 답안과 시도 행이 테이블별 24시간 보존 정리까지 남는다. 잔존 행에는
-     *       토큰 해시도 IP도 없어 세션과 다시 연결할 수 없고(§5.5의 보존 한도 안),
-     *       완주 세션은 만료가 완료+24시간으로 연장되어({@link TestSession#markCompleted})
-     *       이 창이 사실상 닫힌다. 즉시성을 더 강화하려면 purgeExpired가 자식 테이블도
-     *       함께 지우도록 바꾸는 것이 다음 수다.</li>
+     *       남는 단문장끼리의 경우는 DB가 한쪽을 끊으므로 재응시 재시도로 회복된다.
+     *       baseline(KAN-123) 이후에는 {@link #purgeExpired}의 CASCADE 삭제도 하위
+     *       3테이블 행 잠금을 세션 단위 순서로 잡아 이 조합에 새로 들어온다 - 단일
+     *       인스턴스에서는 스케줄이 겹치지 않고 양쪽 다 주기 잡이라 다음 주기에 회복되지만,
+     *       다중 인스턴스 배포로 겹침이 상시화되면 재검토한다 (2026-08-18 리뷰).</li>
+     *   <li>주기 삭제 뒤의 재응시 - {@link #purgeExpired}가 세션 행을 이미 지운
+     *       뒤의 재응시는 토큰으로 세션을 못 찾아 이 폐기가 조용히 건너뛰어진다.
+     *       하위 행 잔존은 baseline(KAN-123)의 ON DELETE CASCADE가 세션 행 삭제와 함께
+     *       지우면서 닫혔다 - 이전에 "다음 수"로 적어 둔 강화가 그 티켓으로 실현됐다.</li>
      * </ul>
      */
     private PurgeSummary purgeForRetake(TestSession previous) {
@@ -246,7 +248,7 @@ public class SessionService {
         return session;
     }
 
-    /** 헤더에서 Bearer 토큰을 꺼낸다. 부재나 형식 오류는 401 - 미인증과 만료를 구분해주지 않는다 */
+    /** 헤더에서 Bearer 토큰을 꺼낸다. 부재나 형식 오류는 401 - 미인증과 만료를 구분해주지 않는다. */
     private static String bearerToken(@Nullable String authorizationHeader) {
         String token = bearerTokenOrNull(authorizationHeader);
         if (token == null) {
@@ -295,6 +297,12 @@ public class SessionService {
     /**
      * 만료 세션 주기 삭제 (§2.1). 요청 시 만료 검사가 이미 접근을 막고 있으므로
      * 이 잡은 저장소 크기 관리용이다 - 실패해도 보안에 영향 없다.
+     * <p>
+     * baseline(KAN-123)의 ON DELETE CASCADE 이후 이 DELETE는 하위 3테이블(답안, 시도,
+     * 결과)도 함께 지운다. 미완주 세션의 하위 행 수명이 테이블별 24시간 보존에서 세션
+     * TTL(30분) 언저리로 당겨지는데, 조회 경로가 전부 세션 인증을 요구해 사용자 영향은
+     * 없고 §5.5 보존 한도의 안쪽으로 움직이는 방향이다. 완주 세션은 만료가 결과 만료와
+     * 같아({@link TestSession#markCompleted}) 결과 수명이 줄지 않는다.
      */
     @Scheduled(initialDelay = 10, fixedDelay = 10, timeUnit = TimeUnit.MINUTES)
     @Transactional

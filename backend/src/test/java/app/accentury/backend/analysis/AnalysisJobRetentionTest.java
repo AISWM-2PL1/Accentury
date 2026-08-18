@@ -1,6 +1,8 @@
 package app.accentury.backend.analysis;
 
 import app.accentury.backend.IntegrationTest;
+import app.accentury.backend.TestSessions;
+import app.accentury.backend.session.TestSessionRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
@@ -17,11 +19,15 @@ class AnalysisJobRetentionTest extends IntegrationTest {
     private AnalysisJobRepository repository;
 
     @Autowired
+    private TestSessionRepository sessionRepository;
+
+    @Autowired
     private AnalysisJobRetention retention;
 
     @Test
     void 보존_기간이_지난_작업만_삭제된다() {
         Instant now = Instant.now();
+        TestSessions.ensure(sessionRepository, "s_retention");
         repository.save(new AnalysisJob("a_retention-old", "s_retention", "v1", 1, "old-key",
                 AnalysisJobStatus.PROCESSING, now.minus(Duration.ofHours(25))));
         repository.save(new AnalysisJob("a_retention-new", "s_retention", "v2", 1, "new-key",
