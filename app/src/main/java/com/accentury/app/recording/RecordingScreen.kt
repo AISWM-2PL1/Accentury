@@ -57,6 +57,16 @@ fun RecordingScreen(
     val guidePoints = remember(guideF0) {
         if (guideF0?.unit == "semitone") guideCurveDisplayPoints(guideF0.values) else emptyList()
     }
+    // 창 길이에는 unit 가드를 걸지 않는다. 위 가드는 "값을 어떻게 읽을 것인가"의 문제라
+    // 단위를 모르면 그릴 수 없지만, 길이는 간격 x 구간 수라서 단위와 무관하게 맞는다.
+    // 그래서 가이드를 못 그리는 경우에도 두 레인의 시간축은 여전히 같게 잡을 수 있다.
+    val windowMs = remember(guideF0) {
+        userCurveWindowMs(guideF0?.frameIntervalMs, guideF0?.values?.size)
+    }
+    // 녹음 중이 아니면 아래 레인은 빈 채로 둔다 - Review에서 곡선을 남겨 두는 건 별도 티켓이다.
+    val pitchFrames = (state as? RecordingUiState.Recording)?.pitchFrames.orEmpty()
+    // 프레임이 청크마다 늘어나므로 remember로 묶지 않는다 - 어차피 매 방출마다 다시 계산해야 한다.
+    val myPoints = userCurveDisplayPoints(pitchFrames, windowMs)
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -78,7 +88,7 @@ fun RecordingScreen(
         Spacer(modifier = Modifier.height(24.dp))
         CurveLane(label = "가이드", points = guidePoints, lineColor = GuideCurveColor)
         Spacer(modifier = Modifier.height(8.dp))
-        CurveLane(label = "내 억양")
+        CurveLane(label = "내 억양", points = myPoints, lineColor = MyCurveColor)
 
         Spacer(modifier = Modifier.weight(1f))
 
@@ -138,10 +148,18 @@ fun RecordingScreen(
 private val GuideCurveColor = Color(0xFFB0C4DE)
 
 /**
+ * 사용자 곡선 자리 - 시그니처 색이 들어올 슬롯이다. 가이드의 연한 B0C4DE보다 눈에 무겁게 잡아,
+ * 두 레인을 같이 봤을 때 주인공이 아래쪽이라는 위계가 색만으로 읽히게 한다.
+ * 가이드와 마찬가지로 확정 팔레트 전의 임시값이다.
+ */
+private val MyCurveColor = Color(0xFF3F6FBF)
+
+/**
  * 곡선 캔버스의 레인 하나 (ux-ui.md §D — 위/아래 2단, 같은 가로폭·같은 시간축).
- * 위 레인은 정적 가이드 곡선(KAN-102), 아래 레인은 사용자 곡선 자리다(후속 티켓).
+ * 위 레인은 정적 가이드 곡선(KAN-102), 아래 레인은 녹음 중 자라는 사용자 곡선(KAN-104)이다.
  *
- * 좌표는 [guideCurveDisplayPoints]가 만든 0..1 비율이고 여기서는 캔버스 크기만 곱한다 —
+ * 좌표는 [guideCurveDisplayPoints]와 [userCurveDisplayPoints]가 만든 0..1 비율이고
+ * 여기서는 캔버스 크기만 곱한다 -
  * 곡선 처리 규칙은 전부 저쪽(JVM 테스트 가능)에, 여기는 픽셀 변환만 남긴다.
  * 점이 없으면 빈 레인이다: 전부 무성이거나 구버전 웹이 곡선을 안 실어 보낸 경우고,
  * 곡선은 없어도 녹음은 성립하므로 오류 표시 없이 조용히 비워 둔다.
