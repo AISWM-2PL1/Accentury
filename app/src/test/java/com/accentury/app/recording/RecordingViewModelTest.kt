@@ -120,6 +120,20 @@ class RecordingViewModelTest {
     }
 
     @Test
+    fun `Review 상태에 녹음 전체의 pitchFrames가 남는다`() = runTest(dispatcher) {
+        val vm = viewModelWith(delayedChunks(4))
+
+        vm.startRecording()
+        advanceUntilIdle()
+
+        val review = vm.uiState.value as RecordingUiState.Review
+        // 4청크 x 2048샘플이면 프레이머가 (8192 - 2048) / 512 + 1 = 13개 창을 완성한다
+        assertEquals(13, review.pitchFrames.size)
+        // 녹음 중 마지막으로 방출된 누적과 같은 내용이어야 한다 - 완료 직전 곡선이 그대로 남는다
+        assertEquals(0L, review.pitchFrames.first().timestampMs)
+    }
+
+    @Test
     fun `두 번째 녹음은 빈 누적으로 시작한다`() = runTest(dispatcher) {
         val vm = viewModelWith(delayedChunks(4))
 

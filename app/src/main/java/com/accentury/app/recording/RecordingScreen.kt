@@ -63,8 +63,13 @@ fun RecordingScreen(
     val windowMs = remember(guideF0) {
         userCurveWindowMs(guideF0?.frameIntervalMs, guideF0?.values?.size)
     }
-    // 녹음 중이 아니면 아래 레인은 빈 채로 둔다 - Review에서 곡선을 남겨 두는 건 별도 티켓이다.
-    val pitchFrames = (state as? RecordingUiState.Recording)?.pitchFrames.orEmpty()
+    // 녹음 중에는 자라는 곡선, 완료 후에는 방금 녹음의 곡선을 남긴다 (2026-08-18 결정).
+    // 재녹음을 시작하면 Recording의 빈 목록으로 바뀌므로 지난 곡선이 새 녹음에 섞이지 않는다.
+    val pitchFrames = when (val s = state) {
+        is RecordingUiState.Recording -> s.pitchFrames
+        is RecordingUiState.Review -> s.pitchFrames
+        else -> emptyList()
+    }
     // 프레임이 청크마다 늘어나므로 remember로 묶지 않는다 - 어차피 매 방출마다 다시 계산해야 한다.
     val myPoints = userCurveDisplayPoints(pitchFrames, windowMs)
 
