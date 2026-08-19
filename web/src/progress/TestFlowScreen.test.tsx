@@ -92,9 +92,11 @@ function stubBridge() {
 /*
  * 첫 음성 문항이 브리지 판정까지 끝내기를 기다리는 두 입구.
  * 문항 문구만 기다리면 안 되는 이유: 정의 로딩과 전환 호출은 서로 다른 커밋이라, 문구가 뜬
- * 시점에는 아직 "녹음 화면을 여는 중"이고 판정 결과(대기 뷰냐 폴백이냐)가 나오기 전이다.
+ * 시점에는 아직 판정 결과(대기 뷰냐 폴백이냐)가 나오기 전이다.
+ * 대기 문구가 아니라 재진입 버튼을 기다린다 — KAN-146으로 대기 문구가 판정 전후에 같아졌기 때문에,
+ * 문구를 기다리면 판정이 나기 전 첫 프레임에서 이미 통과해 버려 동기화 지점 역할을 못 한다.
  */
-const findRecordingWait = () => screen.findByText('녹음 화면에서 진행 중…')
+const findRecordingWait = () => screen.findByRole('button', { name: '녹음 화면 다시 열기' })
 const findDevSubmit = () => screen.findByRole('button', { name: '제출 (개발용)' })
 
 /** 네이티브가 녹음을 마치고 결과를 돌려주는 상황 */
@@ -316,7 +318,9 @@ describe('VOICE 문항 — 네이티브 녹음 화면 전환 (KAN-100)', () => {
     await findDevSubmit()
 
     expect(screen.getByText('녹음 화면을 열 수 없어요 (앱 밖에서 실행 중)')).toBeInTheDocument()
-    expect(screen.queryByText('녹음 화면에서 진행 중…')).not.toBeInTheDocument()
+    // 폴백은 대기 뷰와 배타적이다 — 대기 문구도, 재진입 버튼도 남으면 안 된다
+    expect(screen.queryByText('잠시만요…')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '녹음 화면 다시 열기' })).not.toBeInTheDocument()
 
     advance()
 
