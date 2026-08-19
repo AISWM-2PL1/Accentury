@@ -81,16 +81,21 @@ fun RecordingScreen(
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            // 제출한 뒤에는 이탈 통로를 닫는다 - 이 시도는 이미 업로드에 올라가 결과를 기다리는
-            // 중이라 여기서 빠져나가면 웹과 네이티브가 서로 다른 문항을 보게 된다.
-            if (!submitting) {
-                TextButton(
-                    onClick = {
-                        viewModel.reset() // 이탈 즉시 녹음 중단·마이크 해제·PCM 폐기 (FR-DP-02)
-                        onExit()
-                    },
-                ) { Text("나가기") }
-            }
+            /*
+             * 제출한 뒤에는 이탈 통로를 닫는다 - 이 시도는 이미 업로드에 올라가 결과를 기다리는
+             * 중이라 여기서 빠져나가도 갈 곳이 없다(onRecordingExit이 Recording에서만 동작한다).
+             *
+             * 숨기지 않고 비활성으로 두는 이유: 버튼이 빠지면 이 Row의 높이가 줄어 아래 내용이
+             * 통째로 당겨 올라간다. [다음]을 누른 순간 문항 문구와 곡선이 한 번 튀어 오르는데,
+             * 화면을 붙들어 전환을 없애려는 이 티켓에서 그 흔들림이 제일 눈에 띈다 (실측 63px).
+             */
+            TextButton(
+                enabled = !submitting,
+                onClick = {
+                    viewModel.reset() // 이탈 즉시 녹음 중단·마이크 해제·PCM 폐기 (FR-DP-02)
+                    onExit()
+                },
+            ) { Text("나가기") }
             Spacer(modifier = Modifier.weight(1f))
             Text("$questionIndex / $totalQuestions")
         }
