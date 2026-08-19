@@ -84,12 +84,16 @@ private const val DEV_SESSION_TOKEN = "dev-token"
 private const val OVERLAY_FADE_MS = 200
 
 /*
- * [다음] 뒤 결과를 기다리며 오버레이를 붙들어 두는 상한 (KAN-146).
- * 업로드가 실패하면 결과는 영영 나오지 않으므로 상한이 없으면 화면이 걷히지 않는다. 2초는 로컬·
- * LTE에서 몇 백 ms에 끝나는 정상 업로드를 넉넉히 덮으면서, 실패했을 때 사용자가 "멈췄다"고
- * 느끼기 전에 웹으로 돌려보내는 값이다 — 그 뒤는 업로드 상태 바의 [재시도]가 받는다.
+ * 기다리는 시도의 업로드 자취가 아예 없을 때만 쓰는 상한 (KAN-146).
+ *
+ * 정상 경로에서는 시간으로 걷지 않는다 — 결과가 웹에 꽂혀 다음 문항이 그려질 때까지, 또는 업로드
+ * 실패가 확정될 때까지 화면을 붙든다. 그래야 [다음]과 다음 문항 사이에 대기 화면이 끼지 않는다.
+ *
+ * 남는 경우가 하나 있다: 프로세스 사망 복원처럼 대기 시도는 살아났는데 그 업로드가 메모리와 함께
+ * 사라져 물어볼 곳이 없을 때다. 결과도 실패도 영영 오지 않으므로 이때만 시간이 걷는다. 2초는 그
+ * 판정이 복원 직후 첫 컴포지션에 이미 끝나 있어, 화면이 굳어 보이지 않을 만큼만 기다리는 값이다.
  */
-private const val SUBMIT_HOLD_TIMEOUT_MS = 2_000L
+private const val ORPHANED_SUBMIT_TIMEOUT_MS = 2_000L
 
 // 세션에 고정될 정의 버전도 KAN-9 응답이 정본이다. 그전까지는 백엔드가 발행해 둔 정의를
 // 가리킨다 - 발행 입력이 DB로 옮겨지면서(KAN-26) classpath seed 파일은 폐기됐고, 지금 이
@@ -223,14 +227,23 @@ private fun TestFlow(modifier: Modifier = Modifier) {
             val overlayPhase = livePhase ?: lastLivePhase
 
             /*
-             * 붙들어 둔 화면의 상한 (KAN-146). 업로드가 실패하면 결과는 영영 나가지 않으므로
-             * 컨트롤러 혼자서는 이 화면을 걷을 수 없다 — 시간을 아는 쪽이 여기라서 여기서 건다.
-             * attemptId를 키로 두어, 결과가 먼저 나가 다음 문항으로 넘어가면 이 타이머는 취소된다.
+             * 자취 없는 제출을 걷는 최후 안전망 (KAN-146).
+             *
+             * 업로드가 살아 있는 동안에는 시간으로 걷지 않는다 — 끝나면 결과가 나가 다음 문항이
+             * 그려지고, 실패하면 onUploadsChanged가 그것도 종료로 보고 놓는다. 시간이 개입하면 느린
+             * 망에서 업로드가 아직 진행 중인데 화면을 놓아 버려, 이 티켓이 없애려던 대기 화면이 바로
+             * 그 구간에 다시 생긴다.
+             *
+             * 물어볼 업로드 자체가 없을 때만 시간이 걷는다 — 프로세스 사망 복원에서 대기 시도는
+             * saver가 살렸는데 업로드는 메모리와 함께 사라진 경우다. attemptId를 키로 두어 결과가
+             * 먼저 나가 다음 문항으로 넘어가면 타이머는 취소된다.
              */
             val submittingAttemptId = (phase as? TestFlowPhase.Submitting)?.attemptId
-            LaunchedEffect(submittingAttemptId) {
+            val awaitedUploadMissing = submittingAttemptId != null && uploads[submittingAttemptId] == null
+            LaunchedEffect(submittingAttemptId, awaitedUploadMissing) {
+                if (!awaitedUploadMissing) return@LaunchedEffect
                 val attemptId = submittingAttemptId ?: return@LaunchedEffect
-                delay(SUBMIT_HOLD_TIMEOUT_MS)
+                delay(ORPHANED_SUBMIT_TIMEOUT_MS)
                 flow.onSubmitTimeout(attemptId)
             }
 
