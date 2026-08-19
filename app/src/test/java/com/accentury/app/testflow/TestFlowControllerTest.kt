@@ -106,15 +106,48 @@ class TestFlowControllerTest {
         assertEquals(TestFlowPhase.Submitting(start, "at_1"), controller.phase)
     }
 
+    /*
+     * 결과를 조립했다는 것과 웹이 그것을 받아 다음 문항을 그렸다는 것은 다르다. 조립 자리에서 놓으면
+     * 걷힌 아래에 아직 앞 문항의 대기 화면이 남아 한 프레임 드러난다(실기에서 33ms 노출로 확인).
+     */
     @Test
-    fun `기다리던 시도의 결과가 나가면 그때 웹으로 돌아간다`() {
+    fun `결과를 조립한 것만으로는 화면을 놓지 않는다`() {
         val controller = TestFlowController()
-        controller.onStartVoiceItem(voiceItem(), micGranted = true)
+        val start = voiceItem()
+        controller.onStartVoiceItem(start, micGranted = true)
         controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
 
         controller.onUploadsChanged(mapOf("at_1" to UploadState.Done("job_1")))
 
+        assertEquals(TestFlowPhase.Submitting(start, "at_1"), controller.phase)
+    }
+
+    @Test
+    fun `주입이 끝나면 그때 웹으로 돌아간다`() {
+        val controller = TestFlowController()
+        controller.onStartVoiceItem(voiceItem(), micGranted = true)
+        controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
+        controller.onUploadsChanged(mapOf("at_1" to UploadState.Done("job_1")))
+
+        controller.onResultDelivered("at_1")
+
         assertEquals(TestFlowPhase.Web, controller.phase)
+    }
+
+    /*
+     * 앞 문항의 뒤늦은 주입 완료가 새로 뜬 화면을 걷어버리면, 사용자는 녹음 화면이 이유 없이
+     * 사라지는 것을 본다.
+     */
+    @Test
+    fun `다른 시도의 주입 완료는 지금 화면을 걷지 않는다`() {
+        val controller = TestFlowController()
+        val start = voiceItem(itemId = "item_3", number = 3)
+        controller.onStartVoiceItem(start, micGranted = true)
+        controller.onRecordingFinished("at_3", durationMs = 3_200, quality = QualityStatus.NORMAL)
+
+        controller.onResultDelivered("at_1")
+
+        assertEquals(TestFlowPhase.Submitting(start, "at_3"), controller.phase)
     }
 
     @Test
