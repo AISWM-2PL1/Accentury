@@ -13,6 +13,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -68,6 +71,14 @@ private const val DEV_BASE_URL = "http://10.0.2.2:8080"
 // 같은 상수를 쓰는 건 의도다 — 음성이 올라가는 세션과 웹이 진행을 저장하는 세션이 갈리면 안 된다.
 private const val DEV_SESSION_ID = "dev-session"
 private const val DEV_SESSION_TOKEN = "dev-token"
+
+/*
+ * 녹음 오버레이가 웹 위로 덮이고 걷히는 데 쓰는 페이드 길이 (KAN-146).
+ * 200ms는 Material의 짧은 전환 구간(150~250ms) 안이다. 더 짧으면 덮기·걷기가 여전히 "툭"
+ * 나타났다 사라지는 것으로 읽히고, 더 길면 [다음] 뒤 다음 문항까지가 느려진 것처럼 느껴진다.
+ * 문항당 두 번(등장·퇴장) 겪는 전환이라 길이에 인색한 쪽이 맞다.
+ */
+private const val OVERLAY_FADE_MS = 200
 
 // 세션에 고정될 정의 버전도 KAN-9 응답이 정본이다. 그전까지는 백엔드가 발행해 둔 정의를
 // 가리킨다 - 발행 입력이 DB로 옮겨지면서(KAN-26) classpath seed 파일은 폐기됐고, 지금 이
@@ -181,15 +192,63 @@ private fun TestFlow(modifier: Modifier = Modifier) {
             // 오버레이는 WebView 위, 업로드 상태 바 아래다 — 녹음 중에도 실패한 업로드의
             // 재시도 통로가 가려지지 않아야 한다.
             val phase = flow.phase
+
+            /*
+             * 퇴장 페이드 동안에도 그릴 문항이 필요하다 (KAN-146). phase가 Web으로 바뀌는 순간
+             * Recording.start는 사라지는데, 오버레이는 아직 화면에 남아 사라지는 중이다.
+             * 등장할 때는 recordingStart가 곧바로 있으므로 이 기억이 한 프레임 늦어도 상관없고,
+             * 퇴장할 때만 마지막 값이 쓰인다.
+             */
+            val recordingStart = (phase as? TestFlowPhase.Recording)?.start
+            var lastRecordingStart by remember { mutableStateOf<VoiceItemStart?>(null) }
+            LaunchedEffect(recordingStart) {
+                if (recordingStart != null) lastRecordingStart = recordingStart
+            }
+            val overlayStart = recordingStart ?: lastRecordingStart
+
+            // 권한 게이트가 서 있는 동안에는 오버레이를 띄우지 않는다 — 예전 when 분기의 순서가
+            // 주던 우선순위를 그대로 옮긴 것이다. 게이트는 페이드 없이 즉시 서고 걷힌다.
+            val gateShowing = startRequested && !testEntered || phase is TestFlowPhase.NeedsPermission
             when {
                 // 시작 게이트. 통과하면 테스트 URL이 로드되고 조건이 풀려 오버레이가 사라진다.
                 startRequested && !testEntered -> PermissionGate(onGranted = { testEntered = true })
 
                 // 문항 진입 시점의 게이트 — 통과하면 기다리던 문항의 녹음으로 곧장 들어간다.
                 phase is TestFlowPhase.NeedsPermission -> PermissionGate(onGranted = flow::onPermissionGranted)
+            }
 
-                phase is TestFlowPhase.Recording -> RecordingOverlay(
-                    start = phase.start,
+            // 패키지까지 적는 이유: 바깥 Column 때문에 ColumnScope 확장이 먼저 잡혀,
+            // Box 안에서 화면 전체를 덮어야 할 오버레이가 열 방향 배치로 해석된다.
+            androidx.compose.animation.AnimatedVisibility(
+                visible = !gateShowing && phase is TestFlowPhase.Recording,
+                enter = fadeIn(tween(OVERLAY_FADE_MS)),
+                exit = fadeOut(tween(OVERLAY_FADE_MS)),
+            ) {
+                // 퇴장 중에는 phase가 이미 Web이라 overlayStart의 마지막 값이 쓰인다.
+                val start = overlayStart ?: return@AnimatedVisibility
+
+                /*
+                 * 녹음 상태 되감기는 오버레이가 완전히 걷힌 뒤다 (KAN-146).
+                 * [다음] 자리에서 즉시 reset()을 부르면 퇴장 페이드 동안 화면이 대기 상태로 바뀌어,
+                 * 방금까지 [재녹음][다음]이던 자리가 '● 녹음' 하나로 갈아치워진 채 사라진다.
+                 *
+                 * 조건이 두 겹인 이유: 회전은 이 컴포지션을 통째로 버렸다가 다시 만들므로 dispose가
+                 * 돌지만 그때 phase는 여전히 같은 문항의 Recording이다 — 그 경우 되감으면 진행 중인
+                 * 녹음이 죽는다. 반대로 퇴장 도중 다음 문항이 들어와 같은 자리를 이어받는 경우는
+                 * phase가 Recording이어도 문항이 다르므로 되감아야 한다(안 그러면 새 문항이 앞 문항의
+                 * 확인 화면을 물려받는다).
+                 */
+                DisposableEffect(start.itemId) {
+                    onDispose {
+                        val current = flow.phase
+                        if (current !is TestFlowPhase.Recording || current.start.itemId != start.itemId) {
+                            viewModel.reset()
+                        }
+                    }
+                }
+
+                RecordingOverlay(
+                    start = start,
                     viewModel = viewModel,
                     onSubmit = { attemptId, durationMs, quality ->
                         // consumeRecording은 PCM을 넘기면서 뷰모델에서 지운다 (FR-DP-02: 보관하지 않음).
@@ -203,12 +262,12 @@ private fun TestFlow(modifier: Modifier = Modifier) {
                             uploadViewModel.enqueue(
                                 UploadRequest(
                                     attemptId = attemptId,
-                                    itemId = phase.start.itemId,
+                                    itemId = start.itemId,
                                     wavBytes = WavWriter.toWavBytes(pcm),
                                     durationMs = durationMs,
                                     clientQuality = AudioQuality.measure(pcm),
                                 ),
-                                label = "${phase.start.itemNumber}번 문항",
+                                label = "${start.itemNumber}번 문항",
                             )
                             // 업로드 완료를 기다리지 않고 웹으로 돌아간다 — 결과는 준비되는 대로
                             // 위의 LaunchedEffect가 따로 실어 보낸다.
@@ -216,6 +275,9 @@ private fun TestFlow(modifier: Modifier = Modifier) {
                         }
                     },
                     onExit = {
+                        // 이탈은 페이드를 기다리지 않고 그 자리에서 되감는다 — 녹음 중단·마이크 해제·
+                        // PCM 폐기는 FR-DP-02가 즉시를 요구한다. 퇴장 동안 대기 화면이 잠깐 비치는
+                        // 대가는 받아들인다.
                         viewModel.reset()
                         // 하네스와 달리 진행 전체를 초기화하지 않는다 — 나가기는 이 문항을 다시
                         // 시도하겠다는 뜻이라, 앞 문항들의 대기 시도까지 버리면 이미 끝난 업로드의
