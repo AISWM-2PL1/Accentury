@@ -48,6 +48,12 @@ fun RecordingScreen(
     onExit: () -> Unit,
     // 상단 레인의 정적 가이드 곡선 (KAN-102). null은 안 실어 보낸 구버전 웹 - 레인만 비운다.
     guideF0: GuideF0? = null,
+    /*
+     * 제출한 시도의 결과가 웹에 닿기를 기다리는 중인가 (KAN-146).
+     * 화면을 갈아끼우지 않고 이 화면 안에서 아래쪽만 바꾼다 - 문항 문구도 곡선도 제자리에 남아,
+     * [다음]을 누른 뒤 다음 문항이 뜰 때까지가 한 화면의 상태 변화로 읽힌다.
+     */
+    submitting: Boolean = false,
     viewModel: RecordingViewModel = viewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -75,12 +81,16 @@ fun RecordingScreen(
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(
-                onClick = {
-                    viewModel.reset() // 이탈 즉시 녹음 중단·마이크 해제·PCM 폐기 (FR-DP-02)
-                    onExit()
-                },
-            ) { Text("나가기") }
+            // 제출한 뒤에는 이탈 통로를 닫는다 - 이 시도는 이미 업로드에 올라가 결과를 기다리는
+            // 중이라 여기서 빠져나가면 웹과 네이티브가 서로 다른 문항을 보게 된다.
+            if (!submitting) {
+                TextButton(
+                    onClick = {
+                        viewModel.reset() // 이탈 즉시 녹음 중단·마이크 해제·PCM 폐기 (FR-DP-02)
+                        onExit()
+                    },
+                ) { Text("나가기") }
+            }
             Spacer(modifier = Modifier.weight(1f))
             Text("$questionIndex / $totalQuestions")
         }
@@ -97,7 +107,16 @@ fun RecordingScreen(
 
         Spacer(modifier = Modifier.weight(1f))
 
-        when (val s = state) {
+        if (submitting) {
+            /*
+             * 결과를 기다리는 동안의 하단. 버튼 자리를 문구 하나로 바꿔 "눌린 건 알아들었고 지금
+             * 처리 중"만 알린다 - 진행률이나 취소를 주지 않는 이유는 이 구간이 보통 1초 안쪽이고
+             * (상한도 호출자가 건다) 여기서 되돌릴 수 있는 것이 없기 때문이다.
+             */
+            Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("제출 중…")
+            }
+        } else when (val s = state) {
             is RecordingUiState.Idle -> {
                 RecordButton(text = "● 녹음", onClick = viewModel::startRecording)
             }

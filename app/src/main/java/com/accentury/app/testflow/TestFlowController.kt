@@ -36,6 +36,18 @@ sealed interface TestFlowPhase {
 
     /** 녹음 화면이 웹 위를 덮고 있다. */
     data class Recording(val start: VoiceItemStart) : TestFlowPhase
+
+    /**
+     * 녹음은 끝났고 그 시도의 결과가 웹에 닿기를 기다리는 중이다 (KAN-146). 오버레이는 그대로 서 있다.
+     *
+     * 예전에는 [다음]을 누른 순간 웹으로 돌아갔다. 그런데 결과는 업로드가 끝나야 나가므로 그 사이
+     * 웹의 대기 화면이 잠깐 드러났다가 다음 문항으로 교체됐다 — 음성 문항마다 반복되는 깜빡임의
+     * 마지막 조각이다. 결과가 나갈 때까지 화면을 붙들면 그 순간 자체가 없어진다.
+     *
+     * 무한정 기다리지는 않는다: 업로드가 실패하면 결과는 영영 나가지 않으므로 호출자가
+     * [onSubmitTimeout]으로 걷는다.
+     */
+    data class Submitting(val start: VoiceItemStart, val attemptId: String) : TestFlowPhase
 }
 
 /**
@@ -69,15 +81,24 @@ class TestFlowController private constructor(
     }
 
     /**
-     * 웹이 VOICE 문항에 진입했다. 이미 네이티브 화면이 떠 있으면 무시한다 — 브리지 콜백은 임의
-     * 타이밍에 오고(§8) 웹 리로드·이중 호출로 같은 요청이 두 번 들어올 수 있는데, 뒤늦은 요청이
-     * 진행 중인 녹음을 갈아치우면 이미 녹음된 음성을 잃는다.
+     * 웹이 VOICE 문항에 진입했다. 녹음 중이거나 권한 게이트가 서 있으면 무시한다 — 브리지 콜백은
+     * 임의 타이밍에 오고(§8) 웹 리로드·이중 호출로 같은 요청이 두 번 들어올 수 있는데, 뒤늦은
+     * 요청이 진행 중인 녹음을 갈아치우면 이미 녹음된 음성을 잃는다.
+     *
+     * 제출을 기다리는 중([TestFlowPhase.Submitting])에는 받아준다 (KAN-146). 그 가드가 지키려는
+     * 것은 아직 손에 있는 녹음인데, 제출 뒤에는 PCM이 이미 업로드로 넘어가 잃을 것이 없다.
+     * 반대로 여기서 막으면 웹이 다음 문항으로 넘어갔는데 네이티브가 따라가지 못해 진행이 멈춘다 —
+     * 진행의 정본은 웹이므로 웹이 다음 문항을 열면 화면도 따라가야 한다. 앞 시도의 결과는
+     * 대기 목록에 그대로 남아 준비되는 대로 실려 나간다.
      *
      * 같은 itemId가 다시 오는 것(재녹음)은 막지 않는다. 결과 유실·재시도 경로에서 자연스러운
      * 흐름이고, 중복 제출은 웹 상태 머신의 가드가 거른다.
      */
     fun onStartVoiceItem(start: VoiceItemStart, micGranted: Boolean) {
-        if (phase != TestFlowPhase.Web) return
+        when (phase) {
+            is TestFlowPhase.Recording, is TestFlowPhase.NeedsPermission -> return
+            else -> Unit
+        }
         phase = if (micGranted) TestFlowPhase.Recording(start) else TestFlowPhase.NeedsPermission(start)
     }
 
@@ -93,8 +114,11 @@ class TestFlowController private constructor(
     }
 
     /**
-     * 녹음을 마치고 제출했다. 업로드 완료를 기다리지 않고 웹으로 돌아간다 — 다음 문항을 붙드는
-     * 대신, 결과는 준비되는 대로 [onUploadsChanged]가 따로 실어 보낸다.
+     * 녹음을 마치고 제출했다. 결과가 웹에 나갈 때까지 [TestFlowPhase.Submitting]으로 화면을 붙든다
+     * (KAN-146) — 여기서 곧장 웹으로 돌아가면 결과가 도착하기 전의 대기 화면이 한 번 드러난다.
+     *
+     * 진행 자체는 여전히 업로드를 기다리지 않는다: 대기 시도는 지금 등록되고, 결과는 준비되는 대로
+     * [onUploadsChanged]가 실어 보낸다. 붙드는 것은 화면뿐이고 그것도 [onSubmitTimeout]이 상한을 건다.
      *
      * 녹음 화면 밖에서 오는 종료 통지는 무시한다. 이탈·회전으로 이미 화면이 내려간 뒤의 뒤늦은
      * 콜백이라 어느 문항의 시도인지 말할 수 없다.
@@ -107,6 +131,20 @@ class TestFlowController private constructor(
             durationMs = durationMs,
             quality = quality,
         )
+        phase = TestFlowPhase.Submitting(start, attemptId)
+    }
+
+    /**
+     * 붙들어 둔 화면의 상한 (KAN-146). 기다리던 시도의 결과가 그때까지도 나가지 않았으면 웹으로
+     * 되돌린다 — 업로드가 실패하면 [onUploadsChanged]는 그 시도를 영영 조립하지 않으므로, 이게
+     * 없으면 오버레이가 걷히지 않아 사용자가 스스로 빠져나올 수 없다.
+     *
+     * attemptId를 받아 대조하는 이유: 이미 결과가 나가 다음 문항으로 넘어간 뒤 뒤늦게 도착한
+     * 타이머가 새로 뜬 화면을 걷어버리면 안 된다.
+     */
+    fun onSubmitTimeout(attemptId: String) {
+        val awaiting = phase as? TestFlowPhase.Submitting ?: return
+        if (awaiting.attemptId != attemptId) return
         phase = TestFlowPhase.Web
     }
 
@@ -153,6 +191,15 @@ class TestFlowController private constructor(
             iterator.remove()
             delivered += result
         }
+        /*
+         * 기다리던 시도의 결과가 이번에 나갔으면 붙들고 있던 화면을 놓는다 (KAN-146).
+         * 호출자는 이 반환값을 곧바로 웹에 주입하므로, 화면이 걷히는 동안 아래에는 이미 다음 문항이
+         * 그려진다 — 걷힌 자리에 대기 화면이 드러나던 순간이 여기서 사라진다.
+         */
+        val awaiting = phase as? TestFlowPhase.Submitting
+        if (awaiting != null && delivered.any { it.attemptId == awaiting.attemptId }) {
+            phase = TestFlowPhase.Web
+        }
         return delivered
     }
 
@@ -161,12 +208,15 @@ class TestFlowController private constructor(
             TestFlowPhase.Web -> SavedPhase.WEB
             is TestFlowPhase.NeedsPermission -> SavedPhase.NEEDS_PERMISSION
             is TestFlowPhase.Recording -> SavedPhase.RECORDING
+            is TestFlowPhase.Submitting -> SavedPhase.SUBMITTING
         },
         start = when (val current = phase) {
             TestFlowPhase.Web -> null
             is TestFlowPhase.NeedsPermission -> current.pending
             is TestFlowPhase.Recording -> current.start
+            is TestFlowPhase.Submitting -> current.start
         },
+        attemptId = (phase as? TestFlowPhase.Submitting)?.attemptId,
         attempts = pendingAttempts.values.map {
             SavedAttempt(it.itemId, it.attemptId, it.durationMs, it.quality)
         },
@@ -202,12 +252,16 @@ class TestFlowController private constructor(
             } catch (_: Exception) {
                 return null
             }
-            // start 없는 NeedsPermission·Recording은 성립하지 않는 조합이라 웹으로 되돌린다.
+            // start 없는 NeedsPermission·Recording·Submitting은 성립하지 않는 조합이라 웹으로 되돌린다
+            // (Submitting은 attemptId까지 있어야 한다 — 어느 시도를 기다리는지 모르면 걷을 수도 없다).
             val start = flow.start
+            val attemptId = flow.attemptId
             val phase = when {
                 start == null -> TestFlowPhase.Web
                 flow.phase == SavedPhase.NEEDS_PERMISSION -> TestFlowPhase.NeedsPermission(start)
                 flow.phase == SavedPhase.RECORDING -> TestFlowPhase.Recording(start)
+                flow.phase == SavedPhase.SUBMITTING && attemptId != null ->
+                    TestFlowPhase.Submitting(start, attemptId)
                 else -> TestFlowPhase.Web
             }
             return TestFlowController(
@@ -229,11 +283,13 @@ class TestFlowController private constructor(
 private data class SavedFlow(
     val phase: SavedPhase,
     val start: VoiceItemStart? = null,
+    /** SUBMITTING이 기다리는 시도. 다른 페이즈에서는 null이다. */
+    val attemptId: String? = null,
     val attempts: List<SavedAttempt> = emptyList(),
 )
 
 @Serializable
-private enum class SavedPhase { WEB, NEEDS_PERMISSION, RECORDING }
+private enum class SavedPhase { WEB, NEEDS_PERMISSION, RECORDING, SUBMITTING }
 
 @Serializable
 private data class SavedAttempt(

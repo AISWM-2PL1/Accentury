@@ -63,6 +63,7 @@ import com.accentury.app.web.TestEntry
 import com.accentury.app.web.WebViewHost
 import com.accentury.app.web.buildWebUrl
 import com.accentury.app.web.webOrigin
+import kotlinx.coroutines.delay
 
 // 에뮬레이터에서 호스트 머신을 가리키는 주소. 실기기 테스트는 이 값만 바꾸면 된다.
 private const val DEV_BASE_URL = "http://10.0.2.2:8080"
@@ -79,6 +80,14 @@ private const val DEV_SESSION_TOKEN = "dev-token"
  * 문항당 두 번(등장·퇴장) 겪는 전환이라 길이에 인색한 쪽이 맞다.
  */
 private const val OVERLAY_FADE_MS = 200
+
+/*
+ * [다음] 뒤 결과를 기다리며 오버레이를 붙들어 두는 상한 (KAN-146).
+ * 업로드가 실패하면 결과는 영영 나오지 않으므로 상한이 없으면 화면이 걷히지 않는다. 2초는 로컬·
+ * LTE에서 몇 백 ms에 끝나는 정상 업로드를 넉넉히 덮으면서, 실패했을 때 사용자가 "멈췄다"고
+ * 느끼기 전에 웹으로 돌려보내는 값이다 — 그 뒤는 업로드 상태 바의 [재시도]가 받는다.
+ */
+private const val SUBMIT_HOLD_TIMEOUT_MS = 2_000L
 
 // 세션에 고정될 정의 버전도 KAN-9 응답이 정본이다. 그전까지는 백엔드가 발행해 둔 정의를
 // 가리킨다 - 발행 입력이 DB로 옮겨지면서(KAN-26) classpath seed 파일은 폐기됐고, 지금 이
@@ -194,17 +203,32 @@ private fun TestFlow(modifier: Modifier = Modifier) {
             val phase = flow.phase
 
             /*
-             * 퇴장 페이드 동안에도 그릴 문항이 필요하다 (KAN-146). phase가 Web으로 바뀌는 순간
-             * Recording.start는 사라지는데, 오버레이는 아직 화면에 남아 사라지는 중이다.
-             * 등장할 때는 recordingStart가 곧바로 있으므로 이 기억이 한 프레임 늦어도 상관없고,
-             * 퇴장할 때만 마지막 값이 쓰인다.
+             * 퇴장 페이드 동안에도 그릴 내용이 필요하다 (KAN-146). phase가 Web으로 바뀌는 순간
+             * 문항과 단계가 함께 사라지는데, 오버레이는 아직 화면에 남아 사라지는 중이다.
+             * 단계까지 붙드는 이유: 문항만 기억하면 퇴장하는 동안 '제출 중…'이 다시 녹음 화면으로
+             * 되돌아가 보인다. 등장·전환할 때는 현재 phase가 곧바로 있으므로 이 기억이 한 프레임
+             * 늦어도 상관없고, 퇴장할 때만 마지막 값이 쓰인다.
              */
-            val recordingStart = (phase as? TestFlowPhase.Recording)?.start
-            var lastRecordingStart by remember { mutableStateOf<VoiceItemStart?>(null) }
-            LaunchedEffect(recordingStart) {
-                if (recordingStart != null) lastRecordingStart = recordingStart
+            val livePhase = phase.takeIf {
+                it is TestFlowPhase.Recording || it is TestFlowPhase.Submitting
             }
-            val overlayStart = recordingStart ?: lastRecordingStart
+            var lastLivePhase by remember { mutableStateOf<TestFlowPhase?>(null) }
+            LaunchedEffect(livePhase) {
+                if (livePhase != null) lastLivePhase = livePhase
+            }
+            val overlayPhase = livePhase ?: lastLivePhase
+
+            /*
+             * 붙들어 둔 화면의 상한 (KAN-146). 업로드가 실패하면 결과는 영영 나가지 않으므로
+             * 컨트롤러 혼자서는 이 화면을 걷을 수 없다 — 시간을 아는 쪽이 여기라서 여기서 건다.
+             * attemptId를 키로 두어, 결과가 먼저 나가 다음 문항으로 넘어가면 이 타이머는 취소된다.
+             */
+            val submittingAttemptId = (phase as? TestFlowPhase.Submitting)?.attemptId
+            LaunchedEffect(submittingAttemptId) {
+                val attemptId = submittingAttemptId ?: return@LaunchedEffect
+                delay(SUBMIT_HOLD_TIMEOUT_MS)
+                flow.onSubmitTimeout(attemptId)
+            }
 
             // 권한 게이트가 서 있는 동안에는 오버레이를 띄우지 않는다 — 예전 when 분기의 순서가
             // 주던 우선순위를 그대로 옮긴 것이다. 게이트는 페이드 없이 즉시 서고 걷힌다.
@@ -220,35 +244,43 @@ private fun TestFlow(modifier: Modifier = Modifier) {
             // 패키지까지 적는 이유: 바깥 Column 때문에 ColumnScope 확장이 먼저 잡혀,
             // Box 안에서 화면 전체를 덮어야 할 오버레이가 열 방향 배치로 해석된다.
             androidx.compose.animation.AnimatedVisibility(
-                visible = !gateShowing && phase is TestFlowPhase.Recording,
+                visible = !gateShowing && livePhase != null,
                 enter = fadeIn(tween(OVERLAY_FADE_MS)),
                 exit = fadeOut(tween(OVERLAY_FADE_MS)),
             ) {
-                // 퇴장 중에는 phase가 이미 Web이라 overlayStart의 마지막 값이 쓰인다.
-                val start = overlayStart ?: return@AnimatedVisibility
+                // 퇴장 중에는 phase가 이미 Web이라 붙들어 둔 마지막 값이 쓰인다.
+                val start = when (val shown = overlayPhase) {
+                    is TestFlowPhase.Recording -> shown.start
+                    is TestFlowPhase.Submitting -> shown.start
+                    else -> null
+                } ?: return@AnimatedVisibility
+                val submitting = overlayPhase is TestFlowPhase.Submitting
 
                 /*
                  * 녹음 상태 되감기는 오버레이가 완전히 걷힌 뒤다 (KAN-146).
                  * [다음] 자리에서 즉시 reset()을 부르면 퇴장 페이드 동안 화면이 대기 상태로 바뀌어,
                  * 방금까지 [재녹음][다음]이던 자리가 '● 녹음' 하나로 갈아치워진 채 사라진다.
                  *
-                 * 조건이 두 겹인 이유: 회전은 이 컴포지션을 통째로 버렸다가 다시 만들므로 dispose가
-                 * 돌지만 그때 phase는 여전히 같은 문항의 Recording이다 — 그 경우 되감으면 진행 중인
-                 * 녹음이 죽는다. 반대로 퇴장 도중 다음 문항이 들어와 같은 자리를 이어받는 경우는
-                 * phase가 Recording이어도 문항이 다르므로 되감아야 한다(안 그러면 새 문항이 앞 문항의
-                 * 확인 화면을 물려받는다).
+                 * 조건이 "같은 문항이 아직 화면에 있는가"인 이유: 회전은 이 컴포지션을 통째로 버렸다가
+                 * 다시 만들므로 dispose가 돌지만 그때 phase는 여전히 같은 문항이다 — 그 경우 되감으면
+                 * 진행 중인 녹음이나 기다리는 중인 제출이 죽는다. 반대로 퇴장 도중 다음 문항이 들어와
+                 * 같은 자리를 이어받는 경우는 문항이 다르므로 되감아야 한다(안 그러면 새 문항이 앞
+                 * 문항의 확인 화면을 물려받는다).
                  */
                 DisposableEffect(start.itemId) {
                     onDispose {
-                        val current = flow.phase
-                        if (current !is TestFlowPhase.Recording || current.start.itemId != start.itemId) {
-                            viewModel.reset()
+                        val stillShowing = when (val current = flow.phase) {
+                            is TestFlowPhase.Recording -> current.start.itemId == start.itemId
+                            is TestFlowPhase.Submitting -> current.start.itemId == start.itemId
+                            else -> false
                         }
+                        if (!stillShowing) viewModel.reset()
                     }
                 }
 
                 RecordingOverlay(
                     start = start,
+                    submitting = submitting,
                     viewModel = viewModel,
                     onSubmit = { attemptId, durationMs, quality ->
                         // consumeRecording은 PCM을 넘기면서 뷰모델에서 지운다 (FR-DP-02: 보관하지 않음).
@@ -312,6 +344,8 @@ private fun TestFlow(modifier: Modifier = Modifier) {
 @Composable
 private fun RecordingOverlay(
     start: VoiceItemStart,
+    /** 제출한 시도의 결과를 기다리는 중 — 화면은 그대로 두고 하단만 바꾼다 (KAN-146). */
+    submitting: Boolean,
     viewModel: RecordingViewModel,
     onSubmit: (attemptId: String, durationMs: Long, quality: QualityStatus) -> Unit,
     onExit: () -> Unit,
@@ -324,6 +358,7 @@ private fun RecordingOverlay(
             onNext = onSubmit,
             onExit = onExit,
             guideF0 = start.guideF0,
+            submitting = submitting,
             viewModel = viewModel,
         )
     }

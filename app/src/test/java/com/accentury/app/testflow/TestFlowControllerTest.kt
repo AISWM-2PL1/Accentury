@@ -90,14 +90,87 @@ class TestFlowControllerTest {
         assertEquals(TestFlowPhase.Recording(start), controller.phase)
     }
 
+    /*
+     * KAN-146으로 뒤집힌 결정이다. 예전에는 [다음] 즉시 웹으로 돌아갔지만, 결과는 업로드가 끝나야
+     * 나가므로 그 사이 웹의 대기 화면이 한 번 드러났다. 진행이 업로드를 기다리지 않는다는 원칙은
+     * 그대로다 - 붙드는 것은 화면뿐이고 대기 시도는 즉시 등록된다(아래 조립 테스트가 그걸 본다).
+     */
     @Test
-    fun `녹음을 마치면 업로드를 기다리지 않고 웹으로 돌아간다`() {
+    fun `녹음을 마치면 결과가 나갈 때까지 화면을 붙든다`() {
         val controller = TestFlowController()
-        controller.onStartVoiceItem(voiceItem(), micGranted = true)
+        val start = voiceItem()
+        controller.onStartVoiceItem(start, micGranted = true)
 
         controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
 
+        assertEquals(TestFlowPhase.Submitting(start, "at_1"), controller.phase)
+    }
+
+    @Test
+    fun `기다리던 시도의 결과가 나가면 그때 웹으로 돌아간다`() {
+        val controller = TestFlowController()
+        controller.onStartVoiceItem(voiceItem(), micGranted = true)
+        controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
+
+        controller.onUploadsChanged(mapOf("at_1" to UploadState.Done("job_1")))
+
         assertEquals(TestFlowPhase.Web, controller.phase)
+    }
+
+    @Test
+    fun `업로드가 진행 중인 동안에는 화면을 계속 붙든다`() {
+        val controller = TestFlowController()
+        val start = voiceItem()
+        controller.onStartVoiceItem(start, micGranted = true)
+        controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
+
+        controller.onUploadsChanged(mapOf("at_1" to UploadState.InFlight))
+
+        assertEquals(TestFlowPhase.Submitting(start, "at_1"), controller.phase)
+    }
+
+    /*
+     * 업로드가 실패하면 onUploadsChanged는 그 시도를 영영 조립하지 않는다 - 상한이 없으면 오버레이가
+     * 걷히지 않아 사용자가 스스로 빠져나올 수 없다. 실패 뒤의 복구는 업로드 상태 바의 [재시도] 몫이다.
+     */
+    @Test
+    fun `결과가 오지 않아도 상한이 지나면 웹으로 돌려보낸다`() {
+        val controller = TestFlowController()
+        controller.onStartVoiceItem(voiceItem(), micGranted = true)
+        controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
+        controller.onUploadsChanged(mapOf("at_1" to UploadState.Failed(retryable = true, message = "연결 실패")))
+
+        controller.onSubmitTimeout("at_1")
+
+        assertEquals(TestFlowPhase.Web, controller.phase)
+    }
+
+    /*
+     * 결과가 먼저 나가 다음 문항이 뜬 뒤 뒤늦게 도착한 타이머가 새 화면을 걷어버리면, 사용자는
+     * 녹음 화면이 이유 없이 사라지는 것을 본다.
+     */
+    @Test
+    fun `다른 시도의 상한 통지는 지금 화면을 걷지 않는다`() {
+        val controller = TestFlowController()
+        val start = voiceItem(itemId = "item_2")
+        controller.onStartVoiceItem(start, micGranted = true)
+        controller.onRecordingFinished("at_2", durationMs = 3_200, quality = QualityStatus.NORMAL)
+
+        controller.onSubmitTimeout("at_1")
+
+        assertEquals(TestFlowPhase.Submitting(start, "at_2"), controller.phase)
+    }
+
+    @Test
+    fun `제출을 기다리는 중에 회전해도 같은 화면이 유지된다`() {
+        val controller = TestFlowController()
+        val start = voiceItem()
+        controller.onStartVoiceItem(start, micGranted = true)
+        controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
+
+        val restored = rotate(controller)
+
+        assertEquals(TestFlowPhase.Submitting(start, "at_1"), restored.phase)
     }
 
     @Test
