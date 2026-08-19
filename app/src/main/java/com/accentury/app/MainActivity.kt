@@ -55,6 +55,7 @@ import com.accentury.app.testflow.continuesFrom
 import com.accentury.app.testflow.TestFlowPhase
 import com.accentury.app.ui.theme.AccenturyTheme
 import com.accentury.app.upload.UploadRequest
+import com.accentury.app.upload.UploadState
 import com.accentury.app.upload.UploadStatusBar
 import com.accentury.app.upload.UploadViewModel
 import com.accentury.app.web.TestEntry
@@ -72,14 +73,12 @@ private const val DEV_SESSION_ID = "dev-session"
 private const val DEV_SESSION_TOKEN = "dev-token"
 
 /*
- * 기다리는 시도의 업로드 자취가 아예 없을 때만 쓰는 상한 (KAN-146).
+ * 업로드가 뒷받침하지 않는 붙들기를 걷는 상한 (KAN-146).
  *
- * 정상 경로에서는 시간으로 걷지 않는다 — 결과가 웹에 꽂혀 다음 문항이 그려질 때까지, 또는 업로드
- * 실패가 확정될 때까지 화면을 붙든다. 그래야 [다음]과 다음 문항 사이에 대기 화면이 끼지 않는다.
- *
- * 남는 경우가 하나 있다: 프로세스 사망 복원처럼 대기 시도는 살아났는데 그 업로드가 메모리와 함께
- * 사라져 물어볼 곳이 없을 때다. 결과도 실패도 영영 오지 않으므로 이때만 시간이 걷는다. 2초는 그
- * 판정이 복원 직후 첫 컴포지션에 이미 끝나 있어, 화면이 굳어 보이지 않을 만큼만 기다리는 값이다.
+ * 업로드가 진행 중인 동안에는 시간으로 걷지 않는다 — 끝날 때까지 현재 문항 화면을 유지한다.
+ * 진행 중이 아닌데도 화면이 붙들려 있다면 그건 곧 끝나야 할 짧은 창이거나(주입 완료 통지를 기다리는
+ * 몇 십 ms) 영영 끝나지 않을 상태(프로세스 사망 복원으로 업로드가 메모리와 함께 사라진 경우)다.
+ * 앞엣것은 이 상한이 오기 전에 스스로 풀리고, 뒤엣것은 이 상한만이 풀 수 있다.
  */
 private const val ORPHANED_SUBMIT_TIMEOUT_MS = 2_000L
 
@@ -159,7 +158,12 @@ private fun TestFlow(modifier: Modifier = Modifier) {
     LaunchedEffect(uploads, webView) {
         val view = webView ?: return@LaunchedEffect
         flow.onUploadsChanged(uploads).forEach { result ->
-            view.evaluateJavascript(itemResultDeliveryJs(result), null)
+            // 완료 콜백에서 화면을 놓는다 (KAN-146) — 주입이 끝났다는 것은 웹이 결과를 받아 다음
+            // 문항을 그리기 시작했다는 뜻이다. 조립 자리에서 놓으면 그 사이 한 프레임 동안 걷힌
+            // 아래에 아직 앞 문항의 대기 화면이 남아 드러난다. 콜백은 메인 스레드로 온다.
+            view.evaluateJavascript(itemResultDeliveryJs(result)) {
+                flow.onResultDelivered(result.attemptId)
+            }
         }
     }
 
@@ -223,9 +227,10 @@ private fun TestFlow(modifier: Modifier = Modifier) {
              * 먼저 나가 다음 문항으로 넘어가면 타이머는 취소된다.
              */
             val submittingAttemptId = (phase as? TestFlowPhase.Submitting)?.attemptId
-            val awaitedUploadMissing = submittingAttemptId != null && uploads[submittingAttemptId] == null
-            LaunchedEffect(submittingAttemptId, awaitedUploadMissing) {
-                if (!awaitedUploadMissing) return@LaunchedEffect
+            val awaitedUpload = submittingAttemptId?.let { uploads[it] }
+            val holdUnbacked = submittingAttemptId != null && awaitedUpload !is UploadState.InFlight
+            LaunchedEffect(submittingAttemptId, holdUnbacked) {
+                if (!holdUnbacked) return@LaunchedEffect
                 val attemptId = submittingAttemptId ?: return@LaunchedEffect
                 delay(ORPHANED_SUBMIT_TIMEOUT_MS)
                 flow.onSubmitTimeout(attemptId)
