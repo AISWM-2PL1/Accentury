@@ -69,8 +69,9 @@ private const val DEV_BASE_URL = "http://10.0.2.2:8080"
 private const val DEV_SESSION_ID = "dev-session"
 private const val DEV_SESSION_TOKEN = "dev-token"
 
-// 세션에 고정될 정의 버전도 KAN-9 응답이 정본이다. 그전까지는 백엔드 dev 리소스에 실제로 들어
-// 있는 정의(backend/src/main/resources/test-definitions/gn-2026.08.1.json)를 가리킨다.
+// 세션에 고정될 정의 버전도 KAN-9 응답이 정본이다. 그전까지는 백엔드가 발행해 둔 정의를
+// 가리킨다 - 발행 입력이 DB로 옮겨지면서(KAN-26) classpath seed 파일은 폐기됐고, 지금 이
+// 버전을 넣는 것은 backend/src/main/resources/db/migration/V2__test_definition_publish.sql이다.
 private const val DEV_TEST_VERSION = "gn-2026.08.1"
 
 class MainActivity : ComponentActivity() {

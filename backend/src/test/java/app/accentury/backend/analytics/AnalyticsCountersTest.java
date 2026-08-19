@@ -157,7 +157,7 @@ class AnalyticsCountersTest {
 
     private static AnalyticsCounters counters(CounterStore store, String zone) {
         AccenturyProperties properties = PropertiesFixture.withAnalytics(
-                new AccenturyProperties.Analytics(ZoneId.of(zone), null, 366));
+                new AccenturyProperties.Analytics(ZoneId.of(zone), 366));
         return new AnalyticsCounters(store, properties);
     }
 

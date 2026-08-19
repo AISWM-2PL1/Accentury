@@ -50,13 +50,17 @@ public final class LogMasking {
      * {@code sessionToken=...} / {@code "sessionToken": "..."} 처럼 이름이 붙어 나오는 값.
      * 토큰 형식이 바뀌어도(발급 규칙 변경) 이름 쪽에서 한 번 더 걸린다.
      * <p>
-     * 관리자 토큰(KAN-106)은 네 갈래 이름으로 새어 나올 수 있어 전부 넣는다 - HTTP 헤더
+     * 관리자 토큰(KAN-106, KAN-26)은 네 갈래 이름으로 새어 나올 수 있어 전부 넣는다 - HTTP 헤더
      * {@code X-Admin-Token}(프레임워크가 예외 메시지에 헤더를 실을 때), 설정 키
-     * {@code admin-token}(설정 덤프), 바인딩된 필드 {@code adminToken}(객체 toString),
-     * 그리고 환경 변수 {@code ACCENTURY_ANALYTICS_ADMINTOKEN}/{@code ..._ADMIN_TOKEN}
+     * {@code admin-token}과 점 표기 전체 키 {@code accentury.admin.token}(설정 덤프 - 마지막
+     * 마디가 {@code token} 한 단어라 다른 이름 어느 것에도 안 걸린다), 바인딩된 필드
+     * {@code adminToken}(객체 toString), 그리고 환경 변수
+     * {@code ACCENTURY_ADMIN_TOKEN}/{@code ACCENTURY_ADMINTOKEN}
      * (application.yml이 권하는 주입 경로라 환경 덤프에 이 철자로 나온다 - 밑줄이 단어
      * 문자여서 {@code \b}가 이름 중간에서 성립하지 않으므로, 전체 철자를 넣지 않으면
-     * 앞의 세 이름 어느 것에도 걸리지 않는다, 2026-08-17 리뷰).
+     * 앞의 세 이름 어느 것에도 걸리지 않는다, 2026-08-17 리뷰). 설정 키가
+     * {@code accentury.analytics.admin-token}에서 옮겨 왔지만(KAN-26) 끝의 {@code admin-token}이
+     * 그대로라 옛 철자도 계속 걸린다.
      * {@code Authorization}과 같은 등급의 자격증명인데 {@link #AUTHORIZATION}은 이름으로
      * 잡으므로 걸리지 않는다 - 새 시크릿 헤더를 늘리면 여기도 같이 늘려야 한다.
      * <p>
@@ -66,7 +70,8 @@ public final class LogMasking {
      * {@code sessionToken=abc itemId=v1}에서 뒤 필드까지 먹으면 안 된다.
      */
     private static final Pattern NAMED_SECRET = Pattern.compile(
-            "(?i)\\b(sessionToken|X-Admin-Token|adminToken|admin-token|ACCENTURY_ANALYTICS_ADMIN_?TOKEN)\\b"
+            "(?i)\\b(sessionToken|X-Admin-Token|adminToken|admin-token|accentury\\.admin\\.token"
+                    + "|ACCENTURY_ADMIN_?TOKEN|ACCENTURY_ANALYTICS_ADMIN_?TOKEN)\\b"
                     + "(\"?\\s*[=:]\\s*)(?:\"([^\"\\r\\n]*)\"|([^\\s\",;}]+))");
 
     /**

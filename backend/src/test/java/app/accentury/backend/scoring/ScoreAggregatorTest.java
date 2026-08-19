@@ -1,7 +1,5 @@
 package app.accentury.backend.scoring;
 
-import app.accentury.backend.PropertiesFixture;
-import app.accentury.backend.common.AccenturyProperties;
 import app.accentury.backend.testdefinition.TestDefinition;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.json.JsonMapper;
@@ -24,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ScoreAggregatorTest {
 
     private final ScoreAggregator aggregator = new ScoreAggregator(
-            new ScorePolicyRegistry(JsonMapper.builder().build(), props("sv-0.3")));
+            new ScorePolicyRegistry(JsonMapper.builder().build()));
 
     // === KAN-21 - 검산 가능성: 티켓의 예시 그대로 ===
 
@@ -252,10 +250,6 @@ class ScoreAggregatorTest {
             answers.put("w" + i, "w" + i + (i <= correct ? "a" : "b"));
         }
         return answers;
-    }
-
-    private static AccenturyProperties props(String scoreVersion) {
-        return PropertiesFixture.versions("gn-2026.08.1", scoreVersion);
     }
 
     /** 정본 구성과 같은 음성 5 + 어휘 5. 어휘 정답은 항상 a 선택지다. */

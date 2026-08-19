@@ -1,5 +1,21 @@
-{
-  "testVersion": "gn-2026.08.1",
+-- 테스트 전용 발행본 - 구버전 픽스처 gn-2026.07.0 (KAN-26).
+--
+-- 이 파일은 test 프로파일에서만 적용된다 (application-test.yml의 spring.flyway.locations가
+-- classpath:db/testdata를 추가한다). 운영 스키마에는 들어가지 않는다.
+--
+-- 이전에는 테스트 classpath의 seed 파일(test-definitions/gn-2026.07.0.json)이 하던 역할이다.
+-- 발행 입력이 DB로 바뀌었으므로(2026-08-09 확정) 픽스처도 같은 경로를 타야 한다 - 테스트가
+-- 운영과 다른 발행 경로로 정의를 넣으면, 정작 검증하려는 그 경로가 검증되지 않는다.
+--
+-- 이 두 번째 버전이 있어야 검증되는 것들이다.
+--   * 활성 전환과 롤백 (전환할 대상이 둘 이상이어야 성립한다)
+--   * 활성이 아닌 버전도 계속 조회된다 (§5.4 - 진행 중 세션 무영향, KAN-26 AC)
+--
+-- 버전 번호를 900으로 크게 잡은 것은 운영 마이그레이션(V1, V2, ...)과 번호가 부딪히지
+-- 않게 하려는 것이다. 적용 순서는 버전 오름차순이라 언제나 마지막에 붙는다.
+insert into test_definition (test_version, dialect, score_version, body, published_at)
+values ('gn-2026.07.0', 'GYEONGNAM', 'sv-0.3', $definition${
+  "testVersion": "gn-2026.07.0",
   "scoreVersion": "sv-0.3",
   "dialect": "GYEONGNAM",
   "estimatedDurationSec": 240,
@@ -195,4 +211,4 @@
       "correctChoiceId": "w5a"
     }
   ]
-}
+}$definition$, timestamp with time zone '2026-07-27T00:00:00Z');

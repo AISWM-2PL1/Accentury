@@ -2,6 +2,7 @@ package app.accentury.backend.analytics;
 
 import app.accentury.backend.IntegrationTest;
 import app.accentury.backend.common.AccenturyProperties;
+import app.accentury.backend.common.AdminAuth;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -28,7 +29,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * {@link AnalyticsEndpointDisabledApiTest}가 확인한다.
  */
 @AutoConfigureMockMvc
-@TestPropertySource(properties = "accentury.analytics.admin-token=" + AnalyticsApiTest.TOKEN)
+@TestPropertySource(properties = "accentury.admin.token=" + AnalyticsApiTest.TOKEN)
 class AnalyticsApiTest extends IntegrationTest {
 
     private static final String URL = "/admin/v0/analytics";
@@ -82,7 +83,7 @@ class AnalyticsApiTest extends IntegrationTest {
 
     @Test
     void 틀린_토큰은_401이다() throws Exception {
-        mockMvc.perform(get(URL).header(AnalyticsController.TOKEN_HEADER, "wrong"))
+        mockMvc.perform(get(URL).header(AdminAuth.TOKEN_HEADER, "wrong"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("ADMIN_UNAUTHORIZED"));
     }
@@ -170,7 +171,7 @@ class AnalyticsApiTest extends IntegrationTest {
         ResultActions call;
         do {
             today = LocalDate.now(properties.analytics().zone()).toString();
-            call = mockMvc.perform(get(URL).header(AnalyticsController.TOKEN_HEADER, TOKEN));
+            call = mockMvc.perform(get(URL).header(AdminAuth.TOKEN_HEADER, TOKEN));
         } while (!today.equals(LocalDate.now(properties.analytics().zone()).toString()));
 
         call.andExpect(status().isOk())
@@ -182,7 +183,7 @@ class AnalyticsApiTest extends IntegrationTest {
     void to만_지정하면_그_하루다() throws Exception {
         // 여기서도 from을 오늘로 잡으면 과거 하루를 보려던 호출자가 보낸 적도 없는
         // from이 뒤라는 400을 받는다 (2026-08-17 확정 - 빠진 경계는 비대칭 기본값).
-        mockMvc.perform(get(URL).header(AnalyticsController.TOKEN_HEADER, TOKEN)
+        mockMvc.perform(get(URL).header(AdminAuth.TOKEN_HEADER, TOKEN)
                         .param("to", DAY.toString()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.from").value("2026-03-01"))
@@ -200,7 +201,7 @@ class AnalyticsApiTest extends IntegrationTest {
         ResultActions call;
         do {
             today = LocalDate.now(properties.analytics().zone());
-            call = mockMvc.perform(get(URL).header(AnalyticsController.TOKEN_HEADER, TOKEN)
+            call = mockMvc.perform(get(URL).header(AdminAuth.TOKEN_HEADER, TOKEN)
                     .param("from", today.minusDays(3).toString()));
         } while (!today.equals(LocalDate.now(properties.analytics().zone())));
 
@@ -221,13 +222,13 @@ class AnalyticsApiTest extends IntegrationTest {
             day = LocalDate.now(properties.analytics().zone());
             mockMvc.perform(post("/v0/sessions").contentType(MediaType.APPLICATION_JSON).content("{}"))
                     .andExpect(status().isCreated());
-            call = mockMvc.perform(get(URL).header(AnalyticsController.TOKEN_HEADER, TOKEN));
+            call = mockMvc.perform(get(URL).header(AdminAuth.TOKEN_HEADER, TOKEN));
         } while (!day.equals(LocalDate.now(properties.analytics().zone())));
 
         call.andExpect(status().isOk())
                 .andExpect(jsonPath("$.rows.length()").value(1))
-                .andExpect(jsonPath("$.rows[0].testVersion").value(properties.testVersion()))
-                .andExpect(jsonPath("$.rows[0].scoreVersion").value(properties.scoreVersion()))
+                .andExpect(jsonPath("$.rows[0].testVersion").value(activeTestVersion()))
+                .andExpect(jsonPath("$.rows[0].scoreVersion").value(activeScoreVersion()))
                 .andExpect(jsonPath("$.rows[0].counts.sessionsStarted").value(1))
                 .andExpect(jsonPath("$.rows[0].counts.sessionsCompleted").value(0));
     }
@@ -250,7 +251,7 @@ class AnalyticsApiTest extends IntegrationTest {
 
     @Test
     void 날짜_형식이_아니면_400이다() throws Exception {
-        mockMvc.perform(get(URL).header(AnalyticsController.TOKEN_HEADER, TOKEN).param("from", "어제"))
+        mockMvc.perform(get(URL).header(AdminAuth.TOKEN_HEADER, TOKEN).param("from", "어제"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
     }
@@ -269,7 +270,7 @@ class AnalyticsApiTest extends IntegrationTest {
 
     private org.springframework.test.web.servlet.RequestBuilder query(LocalDate from, LocalDate to) {
         return get(URL)
-                .header(AnalyticsController.TOKEN_HEADER, TOKEN)
+                .header(AdminAuth.TOKEN_HEADER, TOKEN)
                 .param("from", from.toString())
                 .param("to", to.toString());
     }

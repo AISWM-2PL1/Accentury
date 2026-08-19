@@ -16,30 +16,32 @@ import java.util.Map;
  * <p>
  * 설정 레코드에 필드가 하나 늘 때마다 테스트 여섯 곳을 고치던 중복을 여기로 모았다
  * (KAN-28).
+ * <p>
+ * 활성 테스트 버전과 점수 버전은 여기 없다 - 설정이 아니라 DB가 정본이다 (KAN-26).
  */
 public final class PropertiesFixture {
 
     private PropertiesFixture() {
     }
 
-    /** 활성 버전만 바꾼 설정 - 레지스트리 기동 검증(KAN-10, 21)이 쓴다. */
-    public static AccenturyProperties versions(String testVersion, String scoreVersion) {
-        return properties(testVersion, scoreVersion, analysis(), result(), List.of());
+    /** 기본값 그대로의 설정 - 관심 있는 축이 따로 없는 테스트가 쓴다. */
+    public static AccenturyProperties defaults() {
+        return properties(analysis(), result(), List.of());
     }
 
     /** 분석 정책만 바꾼 설정 - 폴링 간격(KAN-24)과 디스패처 조립(KAN-24, 28) 검증이 쓴다. */
     public static AccenturyProperties withAnalysis(AccenturyProperties.Analysis analysis) {
-        return properties("gn-2026.08.1", "sv-0.3", analysis, result(), List.of());
+        return properties(analysis, result(), List.of());
     }
 
     /** 결과 자산만 바꾼 설정 - 등급 자산 기동 검증(KAN-25)이 쓴다. */
     public static AccenturyProperties withResult(AccenturyProperties.Result result) {
-        return properties("gn-2026.08.1", "sv-0.3", analysis(), result, List.of());
+        return properties(analysis(), result, List.of());
     }
 
     /** 신뢰 프록시만 바꾼 설정 - 요청 제한 기준 IP 판정(KAN-28)이 쓴다. */
     public static AccenturyProperties withTrustedProxies(List<String> trustedProxies) {
-        return properties("gn-2026.08.1", "sv-0.3", analysis(), result(), trustedProxies);
+        return properties(analysis(), result(), trustedProxies);
     }
 
     /** application.yml 기본값 그대로의 분석 정책 */
@@ -66,27 +68,36 @@ public final class PropertiesFixture {
 
     /** 집계 정책만 바꾼 설정 - 일자 경계와 조회 상한(KAN-106) 검증이 쓴다. */
     public static AccenturyProperties withAnalytics(AccenturyProperties.Analytics analytics) {
-        return properties("gn-2026.08.1", "sv-0.3", analysis(), result(), List.of(), analytics);
+        return properties(analysis(), result(), List.of(), analytics, admin());
     }
 
-    /** application.yml 기본값 그대로의 집계 정책 (KAN-106) - 내부 조회 토큰은 미설정이 기본이다. */
+    /** 관리자 토큰만 바꾼 설정 - 운영자 API 인증(KAN-106, KAN-26) 검증이 쓴다. */
+    public static AccenturyProperties withAdmin(AccenturyProperties.Admin admin) {
+        return properties(analysis(), result(), List.of(), analytics(), admin);
+    }
+
+    /** application.yml 기본값 그대로의 집계 정책 (KAN-106) */
     public static AccenturyProperties.Analytics analytics() {
-        return new AccenturyProperties.Analytics(ZoneId.of("Asia/Seoul"), null, 366);
+        return new AccenturyProperties.Analytics(ZoneId.of("Asia/Seoul"), 366);
     }
 
-    private static AccenturyProperties properties(String testVersion, String scoreVersion,
-                                                  AccenturyProperties.Analysis analysis,
+    /** application.yml 기본값 그대로의 관리자 설정 - 토큰은 미설정이 기본이다 (KAN-26). */
+    public static AccenturyProperties.Admin admin() {
+        return new AccenturyProperties.Admin(null);
+    }
+
+    private static AccenturyProperties properties(AccenturyProperties.Analysis analysis,
                                                   AccenturyProperties.Result result,
                                                   List<String> trustedProxies) {
-        return properties(testVersion, scoreVersion, analysis, result, trustedProxies, analytics());
+        return properties(analysis, result, trustedProxies, analytics(), admin());
     }
 
-    private static AccenturyProperties properties(String testVersion, String scoreVersion,
-                                                  AccenturyProperties.Analysis analysis,
+    private static AccenturyProperties properties(AccenturyProperties.Analysis analysis,
                                                   AccenturyProperties.Result result,
                                                   List<String> trustedProxies,
-                                                  AccenturyProperties.Analytics analytics) {
-        return new AccenturyProperties(testVersion, scoreVersion,
+                                                  AccenturyProperties.Analytics analytics,
+                                                  AccenturyProperties.Admin admin) {
+        return new AccenturyProperties(
                 new AccenturyProperties.Session(Duration.ofMinutes(30), 30),
                 analysis,
                 new AccenturyProperties.Upload(30, 60, null, Duration.ofMinutes(30)),
@@ -95,6 +106,7 @@ public final class PropertiesFixture {
                 new AccenturyProperties.Cors(List.of()),
                 result,
                 analytics,
+                admin,
                 trustedProxies);
     }
 }

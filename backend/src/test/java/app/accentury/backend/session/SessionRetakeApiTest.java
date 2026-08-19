@@ -182,7 +182,7 @@ class SessionRetakeApiTest extends IntegrationTest {
         Instant now = Instant.now();
         TestSession expired = sessionRepository.save(new TestSession(
                 SessionTokens.newSessionId(), SessionTokens.hash(token),
-                properties.testVersion(), properties.scoreVersion(), null, null, null,
+                activeTestVersion(), activeScoreVersion(), null, null, null,
                 now.minus(31, ChronoUnit.MINUTES), now.minus(1, ChronoUnit.MINUTES)));
 
         retake(token);
@@ -284,14 +284,14 @@ class SessionRetakeApiTest extends IntegrationTest {
         analysisJobRepository.save(new AnalysisJob("a_" + UUID.randomUUID(), sessionId,
                 "v2", 1, "ik-voice-2", AnalysisJobStatus.PROCESSING, now));
         testResultRepository.save(new TestResult("r_" + UUID.randomUUID(), sessionId,
-                properties.testVersion(), properties.scoreVersion(), 80, 80, 80,
+                activeTestVersion(), activeScoreVersion(), 80, 80, 80,
                 "HONORARY", "명예주민", 4, 5, now, now.plus(24, ChronoUnit.HOURS)));
     }
 
     /** 같은 DB를 다른 테스트와 함께 쓰므로 절대값이 아니라 증가분을 본다 (AnalyticsCountersIntegrationTest와 같은 규칙). */
     private long sessionsStartedToday() {
         String id = DailyCounter.idOf(LocalDate.now(properties.analytics().zone()),
-                properties.testVersion(), properties.scoreVersion());
+                activeTestVersion(), activeScoreVersion());
         return countersRepository.findById(id).map(DailyCounter::sessionsStarted).orElse(0L);
     }
 }

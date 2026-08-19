@@ -69,9 +69,12 @@ class LogMaskingTest extends IntegrationTest {
         assertEquals("X-Admin-Token: ***",
                 LogMasking.mask("X-Admin-Token: s3cr3t-admin-value"),
                 "요청 헤더로 찍힌 경우");
+        assertEquals("accentury.admin.token=***",
+                LogMasking.mask("accentury.admin.token=s3cr3t-admin-value"),
+                "설정 키로 찍힌 경우");
         assertEquals("accentury.analytics.admin-token=***",
                 LogMasking.mask("accentury.analytics.admin-token=s3cr3t-admin-value"),
-                "설정 키로 찍힌 경우");
+                "옛 설정 키로 찍힌 경우 - KAN-26에서 옮기기 전 이름이 남아 있는 배포도 덮는다");
         assertEquals("""
                 {"adminToken": "***"}""",
                 LogMasking.mask("""
@@ -80,12 +83,15 @@ class LogMaskingTest extends IntegrationTest {
         // 환경 변수 철자는 밑줄이 단어 문자라 \b가 이름 중간에서 성립하지 않는다 -
         // 전체 철자를 패턴에 넣지 않으면 위 세 이름 어느 것에도 걸리지 않는 자리다
         // (2026-08-17 리뷰). application.yml이 권하는 주입 경로가 정확히 이 철자다.
-        assertEquals("ACCENTURY_ANALYTICS_ADMINTOKEN=***",
-                LogMasking.mask("ACCENTURY_ANALYTICS_ADMINTOKEN=s3cr3t-admin-value"),
+        assertEquals("ACCENTURY_ADMINTOKEN=***",
+                LogMasking.mask("ACCENTURY_ADMINTOKEN=s3cr3t-admin-value"),
                 "환경 변수(대시 제거형)로 찍힌 경우");
+        assertEquals("ACCENTURY_ADMIN_TOKEN=***",
+                LogMasking.mask("ACCENTURY_ADMIN_TOKEN=s3cr3t-admin-value"),
+                "환경 변수(밑줄 분리형)로 찍힌 경우");
         assertEquals("ACCENTURY_ANALYTICS_ADMIN_TOKEN=***",
                 LogMasking.mask("ACCENTURY_ANALYTICS_ADMIN_TOKEN=s3cr3t-admin-value"),
-                "환경 변수(밑줄 분리형)로 찍힌 경우");
+                "옛 환경 변수 철자로 찍힌 경우");
     }
 
     @Test

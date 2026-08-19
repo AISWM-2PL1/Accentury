@@ -1,6 +1,8 @@
 package app.accentury.backend;
 
+import app.accentury.backend.testdefinition.TestDefinitionRegistry;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
@@ -34,4 +36,23 @@ import org.springframework.test.context.ActiveProfiles;
 @Import(PostgresTestcontainer.class)
 @ExtendWith(DatabaseWipeExtension.class)
 public abstract class IntegrationTest {
+
+    @Autowired
+    private TestDefinitionRegistry testDefinitions;
+
+    /**
+     * 지금 활성인 테스트 정의 버전.
+     * <p>
+     * 리터럴로 박지 않는 것은, 발행본이 계속 발행 상태로 남는 설계(§5.4 버전 불변) 때문에
+     * 버전을 로테이션해도 테스트가 조용히 통과하면서 은퇴한 정의만 검사하게 되기 때문이다
+     * (Claude 리뷰 P3). 정본이 설정에서 DB로 옮겨 오면서(KAN-26) 읽는 자리도 여기가 됐다.
+     */
+    protected final String activeTestVersion() {
+        return testDefinitions.active().definition().testVersion();
+    }
+
+    /** 활성 정의가 선언한 점수 버전 - 세션이 함께 고정하는 값이다 (§5.4). */
+    protected final String activeScoreVersion() {
+        return testDefinitions.active().definition().scoreVersion();
+    }
 }

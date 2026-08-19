@@ -1,7 +1,5 @@
 package app.accentury.backend.scoring;
 
-import app.accentury.backend.PropertiesFixture;
-import app.accentury.backend.common.AccenturyProperties;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -9,6 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -132,10 +131,12 @@ class ScorePolicyRegistryTest {
     // === 레지스트리 기동 검사 ===
 
     @Test
-    void 활성_점수_버전의_seed가_없으면_기동에_실패한다() {
-        IllegalStateException rejected = assertThrows(IllegalStateException.class,
-                () -> new ScorePolicyRegistry(JsonMapper.builder().build(), props("sv-9.9")));
-        assertTrue(rejected.getMessage().contains("sv-9.9"), rejected.getMessage());
+    void 정책_seed가_로드된다() {
+        // "활성 점수 버전의 seed가 있는가"를 여기서 묻던 검사는 KAN-26에서 자리를 옮겼다 -
+        // 활성 점수 버전이라는 설정 자체가 사라지고, 이제는 발행된 모든 테스트 정의가
+        // 참조하는 정책이 있는지를 TestDefinitionRegistry가 기동 시 확인한다.
+        assertTrue(registry().isPublished("sv-0.3"));
+        assertFalse(registry().isPublished("sv-9.9"));
     }
 
     @Test
@@ -154,12 +155,7 @@ class ScorePolicyRegistryTest {
     // === 픽스처 ===
 
     private static ScorePolicyRegistry registry() {
-        return new ScorePolicyRegistry(JsonMapper.builder().build(), props("sv-0.3"));
-    }
-
-    /** 레지스트리 기동 검사용 설정. 점수 버전 외 항목은 기본값과 같게 둔다. */
-    private static AccenturyProperties props(String scoreVersion) {
-        return PropertiesFixture.versions("gn-2026.08.1", scoreVersion);
+        return new ScorePolicyRegistry(JsonMapper.builder().build());
     }
 
     /** sv-0.3과 같은 5등급 정책. 각 테스트가 한 곳씩 망가뜨린다. */

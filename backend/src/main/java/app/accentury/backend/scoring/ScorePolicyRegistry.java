@@ -1,6 +1,5 @@
 package app.accentury.backend.scoring;
 
-import app.accentury.backend.common.AccenturyProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.Resource;
@@ -17,14 +16,18 @@ import java.util.Map;
 /**
  * 발행된 점수 버전 정책의 저장소 (KAN-21).
  * <p>
- * 프로토타입의 "발행"은 classpath seed({@code score-versions/*.json}) 로드다 -
- * {@link app.accentury.backend.testdefinition.TestDefinitionRegistry}와 같은 방식이고,
- * KAN-26의 DB 이관도 같이 따라간다. 시작 시 전부 로드하고 검증하므로 유효하지 않은
- * 정책이 있으면 서버가 뜨지 않는다. 로드 후에는 불변이라 잠금 없이 읽는다.
+ * 점수 정책의 "발행"은 classpath seed({@code score-versions/*.json}) 로드다. 시작 시 전부
+ * 로드하고 검증하므로 유효하지 않은 정책이 있으면 서버가 뜨지 않는다. 로드 후에는 불변이라
+ * 잠금 없이 읽는다.
  * <p>
- * 활성 테스트 정의의 scoreVersion과 설정(accentury.score-version)의 일치는
- * TestDefinitionRegistry가, 그 버전의 정책 seed 존재는 이 클래스가 기동 시 강제한다 -
- * 둘이 합쳐져 "채점할 수 없는 세션은 애초에 만들어지지 않는다"가 된다.
+ * <b>테스트 정의와 달리 DB로 옮기지 않았다</b> (KAN-26 범위). 옮길 이유였던 것 - 재배포 없는
+ * 전환과 롤백 - 이 여기에는 없기 때문이다. 활성 점수 버전은 따로 지정하는 값이 아니라 활성
+ * 테스트 정의가 선언한 값을 따르므로(§5.4), 점수 버전을 바꾸는 일은 곧 새 정의를 발행하는
+ * 일이다. 점수 정책 자체의 발행과 롤백이 필요해지면 그때 같은 형태로 옮긴다.
+ * <p>
+ * 어떤 정의든 자기가 참조하는 정책 seed가 있어야 한다는 검사는
+ * {@link app.accentury.backend.testdefinition.TestDefinitionRegistry}가 기동 시 전 정의에 대해
+ * 한다 ({@link #isPublished}) - 그래서 "채점할 수 없는 세션은 애초에 만들어지지 않는다".
  */
 @Component
 public class ScorePolicyRegistry {
@@ -51,7 +54,7 @@ public class ScorePolicyRegistry {
 
     private final Map<String, ScorePolicy> published = new HashMap<>();
 
-    public ScorePolicyRegistry(ObjectMapper objectMapper, AccenturyProperties properties) {
+    public ScorePolicyRegistry(ObjectMapper objectMapper) {
         for (Resource seed : loadSeeds()) {
             ScorePolicy policy = read(objectMapper, seed);
             validate(policy);
@@ -60,15 +63,14 @@ public class ScorePolicyRegistry {
             require(duplicate == null, "scoreVersion 중복 발행: " + policy.scoreVersion());
         }
 
-        require(published.containsKey(properties.scoreVersion()),
-                "활성 점수 버전(accentury.score-version=" + properties.scoreVersion() + ")의 정책 seed가 없다");
-        log.info("점수 정책 {}종 발행 완료: {} (활성: {})",
-                published.size(), published.keySet(), properties.scoreVersion());
+        require(!published.isEmpty(), "점수 정책 seed가 하나도 없다");
+        log.info("점수 정책 {}종 발행 완료: {}", published.size(), published.keySet());
     }
 
     /**
      * 발행 여부 - 테스트 정의 발행 검증(§6 "scoreVersion 참조 유효",
-     * {@link app.accentury.backend.testdefinition.TestDefinitionRegistry})이 기동 시 조회한다.
+     * {@link app.accentury.backend.testdefinition.TestDefinitionRegistry})이 기동 시 전 정의에
+     * 대해 조회한다. 참조가 끊긴 정의가 하나라도 있으면 서버가 뜨지 않는다.
      */
     public boolean isPublished(String scoreVersion) {
         return published.containsKey(scoreVersion);
