@@ -223,6 +223,8 @@ class TestFlowControllerTest {
         val results = controller.onUploadsChanged(mapOf("at_1" to UploadState.Done("job_1")))
 
         assertEquals(listOf("item_1"), results.map { it.itemId })
+        // 앞 시도의 결과가 나가면서 새 문항의 녹음 화면을 실수로 걷어버리면 안 된다
+        assertEquals(TestFlowPhase.Recording(voiceItem(itemId = "item_3", number = 3)), controller.phase)
     }
 
     @Test

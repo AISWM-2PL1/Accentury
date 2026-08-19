@@ -55,6 +55,7 @@ import com.accentury.app.permission.MicPermissionState
 import com.accentury.app.recording.RecordingScreen
 import com.accentury.app.recording.RecordingViewModel
 import com.accentury.app.testflow.TestFlowController
+import com.accentury.app.testflow.continuesFrom
 import com.accentury.app.testflow.TestFlowPhase
 import com.accentury.app.ui.theme.AccenturyTheme
 import com.accentury.app.upload.UploadRequest
@@ -252,41 +253,26 @@ private fun TestFlow(modifier: Modifier = Modifier) {
                 exit = fadeOut(tween(OVERLAY_FADE_MS)),
             ) {
                 // 퇴장 중에는 phase가 이미 Web이라 붙들어 둔 마지막 값이 쓰인다.
-                val start = when (val shown = overlayPhase) {
+                val shown = overlayPhase ?: return@AnimatedVisibility
+                val start = when (shown) {
                     is TestFlowPhase.Recording -> shown.start
                     is TestFlowPhase.Submitting -> shown.start
                     else -> null
                 } ?: return@AnimatedVisibility
-                val submitting = overlayPhase is TestFlowPhase.Submitting
+                val submitting = shown is TestFlowPhase.Submitting
 
                 /*
                  * 녹음 상태 되감기는 오버레이가 완전히 걷힌 뒤다 (KAN-146).
                  * [다음] 자리에서 즉시 reset()을 부르면 퇴장 페이드 동안 화면이 대기 상태로 바뀌어,
                  * 방금까지 [재녹음][다음]이던 자리가 '● 녹음' 하나로 갈아치워진 채 사라진다.
                  *
-                 * 조건은 "지금 보고 있던 것이 그대로 이어지는가"다. 회전은 이 컴포지션을 통째로
-                 * 버렸다가 다시 만들므로 dispose가 돌지만 그때 phase는 그대로다 — 그 경우 되감으면
-                 * 진행 중인 녹음이나 기다리는 중인 제출이 죽는다.
-                 *
-                 * 이어짐의 판정이 방향에 따라 다른 이유:
-                 * - 녹음 중이었다면 같은 문항의 녹음이거나 그 문항의 제출로 넘어간 것까지가 이어짐이다.
-                 *   [다음]으로 제출에 들어갈 때 되감으면 방금 그린 '내 억양' 곡선이 제출 화면에서 사라진다.
-                 * - 제출을 기다리던 중이었다면 같은 문항의 제출만 이어짐이다. 제출에서 녹음으로 되돌아온
-                 *   것은 그 문항을 처음부터 다시 하는 것이므로(웹이 결과를 못 받고 문항을 다시 열었을 때
-                 *   생긴다) 반드시 되감아야 한다 — 안 그러면 이미 제출해 PCM이 빠져나간 확인 화면이
-                 *   그대로 뜨고, 거기서 [다음]은 아무 일도 못 한다.
+                 * 되감을지의 판정(continuesFrom)은 컨트롤러 쪽에 둔다 — 화면 겹침의 정확성을 좌우하는
+                 * 판정을 Compose 안에 두면 JVM에서 검증할 수 없다는 것이 TestFlowController를 분리한
+                 * 이유 그대로다. 여기서는 "언제 물어보는가"만 정한다.
                  */
-                DisposableEffect(start.itemId, submitting) {
+                DisposableEffect(shown) {
                     onDispose {
-                        val current = flow.phase
-                        val continues = if (submitting) {
-                            current is TestFlowPhase.Submitting && current.start.itemId == start.itemId
-                        } else when (current) {
-                            is TestFlowPhase.Recording -> current.start.itemId == start.itemId
-                            is TestFlowPhase.Submitting -> current.start.itemId == start.itemId
-                            else -> false
-                        }
-                        if (!continues) viewModel.reset()
+                        if (!continuesFrom(shown, flow.phase)) viewModel.reset()
                     }
                 }
 

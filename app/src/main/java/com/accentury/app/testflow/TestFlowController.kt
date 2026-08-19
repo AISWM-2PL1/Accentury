@@ -51,6 +51,38 @@ sealed interface TestFlowPhase {
 }
 
 /**
+ * 화면에 떠 있던 [shown]이 [current]로 그대로 이어지는가 (KAN-146).
+ *
+ * 오버레이가 컴포지션에서 빠질 때 녹음 상태를 되감을지 정하는 판정이다. 회전은 컴포지션을 통째로
+ * 버렸다가 다시 만들므로 페이즈가 그대로여도 이 자리를 지나가는데, 그때 되감으면 진행 중인 녹음이나
+ * 기다리는 중인 제출이 죽는다.
+ *
+ * 판정이 방향에 따라 다르다:
+ * - 녹음 중이었다면 같은 문항의 녹음이거나 **그 문항의 제출로 넘어간 것까지** 이어짐이다.
+ *   [다음]으로 제출에 들어갈 때 되감으면 방금 그린 '내 억양' 곡선이 제출 화면에서 사라진다.
+ * - 제출을 기다리던 중이었다면 **같은 문항의 제출만** 이어짐이다. 제출에서 녹음으로 되돌아온 것은
+ *   그 문항을 처음부터 다시 하는 것이므로(웹이 결과를 못 받고 문항을 다시 열었을 때 생긴다) 되감아야
+ *   한다 — 안 그러면 이미 제출해 PCM이 빠져나간 확인 화면이 그대로 뜨고, 거기서 [다음]은 아무 일도
+ *   못 한다.
+ *
+ * 여기 있는 이유는 [TestFlowController]가 분리된 이유와 같다 — 화면 겹침의 정확성을 좌우하는 판정을
+ * Compose 안에 두면 JVM에서 검증할 수 없다.
+ */
+fun continuesFrom(shown: TestFlowPhase, current: TestFlowPhase): Boolean = when (shown) {
+    is TestFlowPhase.Submitting ->
+        current is TestFlowPhase.Submitting && current.start.itemId == shown.start.itemId
+
+    is TestFlowPhase.Recording -> when (current) {
+        is TestFlowPhase.Recording -> current.start.itemId == shown.start.itemId
+        is TestFlowPhase.Submitting -> current.start.itemId == shown.start.itemId
+        else -> false
+    }
+
+    // 오버레이가 떠 있지 않던 페이즈는 이어질 것도 없다.
+    else -> false
+}
+
+/**
  * 웹 ↔ 네이티브 화면 전환 오케스트레이션 (KAN-100). 브리지 콜백·권한 결과·녹음 종료·업로드
  * 완료가 여기로 모인다.
  *
