@@ -130,15 +130,34 @@ class TestFlowControllerTest {
     }
 
     /*
-     * 업로드가 실패하면 onUploadsChanged는 그 시도를 영영 조립하지 않는다 - 상한이 없으면 오버레이가
-     * 걷히지 않아 사용자가 스스로 빠져나올 수 없다. 실패 뒤의 복구는 업로드 상태 바의 [재시도] 몫이다.
+     * 업로드가 실패하면 결과는 영영 조립되지 않는다. 그걸 아는 자리에서 상한까지 기다리면 오버레이는
+     * "제출 중…"이라 말하는데 같은 화면의 업로드 상태 바는 이미 "업로드 실패 [재시도]"를 띄운다 -
+     * 한 화면이 서로 다른 두 말을 하는 구간이라 상한을 기다리지 않고 놓는다.
      */
     @Test
-    fun `결과가 오지 않아도 상한이 지나면 웹으로 돌려보낸다`() {
+    fun `업로드 실패가 확정되면 상한을 기다리지 않고 웹으로 돌려보낸다`() {
         val controller = TestFlowController()
         controller.onStartVoiceItem(voiceItem(), micGranted = true)
         controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
+
         controller.onUploadsChanged(mapOf("at_1" to UploadState.Failed(retryable = true, message = "연결 실패")))
+
+        assertEquals(TestFlowPhase.Web, controller.phase)
+    }
+
+    /*
+     * 상한은 위 두 경로(결과 도착·실패 확정) 어느 쪽도 오지 않는 경우를 받는 최후 안전망이다 -
+     * 프로세스 사망 복원처럼 업로드 키 자체가 사라져 상태를 물어볼 곳이 없을 때가 그렇다.
+     */
+    @Test
+    fun `업로드 자취가 없으면 상한이 지나서야 웹으로 돌려보낸다`() {
+        val controller = TestFlowController()
+        val start = voiceItem()
+        controller.onStartVoiceItem(start, micGranted = true)
+        controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
+
+        controller.onUploadsChanged(emptyMap())
+        assertEquals(TestFlowPhase.Submitting(start, "at_1"), controller.phase)
 
         controller.onSubmitTimeout("at_1")
 
@@ -171,6 +190,39 @@ class TestFlowControllerTest {
         val restored = rotate(controller)
 
         assertEquals(TestFlowPhase.Submitting(start, "at_1"), restored.phase)
+    }
+
+    /*
+     * 완화된 가드를 못 박는다 (KAN-146). 가드가 지키려는 것은 아직 손에 있는 녹음인데, 제출 뒤에는
+     * PCM이 이미 업로드로 넘어가 잃을 것이 없다. 반대로 여기서 막으면 웹이 다음 문항으로 넘어갔는데
+     * 네이티브가 따라가지 못해 진행이 멈춘다 - 진행의 정본은 웹이다.
+     */
+    @Test
+    fun `제출을 기다리는 중 도착한 다음 문항 요청은 받아준다`() {
+        val controller = TestFlowController()
+        controller.onStartVoiceItem(voiceItem(itemId = "item_1"), micGranted = true)
+        controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
+
+        val next = voiceItem(itemId = "item_3", number = 3)
+        controller.onStartVoiceItem(next, micGranted = true)
+
+        assertEquals(TestFlowPhase.Recording(next), controller.phase)
+    }
+
+    /*
+     * 화면이 다음 문항으로 넘어가도 앞 시도는 대기 목록에 그대로 남아야 한다 - 붙드는 것은 화면뿐이지
+     * 진행이 업로드를 기다리는 것이 아니다.
+     */
+    @Test
+    fun `다음 문항으로 넘어가도 앞 시도의 결과는 그대로 실려 나간다`() {
+        val controller = TestFlowController()
+        controller.onStartVoiceItem(voiceItem(itemId = "item_1"), micGranted = true)
+        controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
+        controller.onStartVoiceItem(voiceItem(itemId = "item_3", number = 3), micGranted = true)
+
+        val results = controller.onUploadsChanged(mapOf("at_1" to UploadState.Done("job_1")))
+
+        assertEquals(listOf("item_1"), results.map { it.itemId })
     }
 
     @Test

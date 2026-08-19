@@ -30,6 +30,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -213,7 +214,9 @@ private fun TestFlow(modifier: Modifier = Modifier) {
                 it is TestFlowPhase.Recording || it is TestFlowPhase.Submitting
             }
             var lastLivePhase by remember { mutableStateOf<TestFlowPhase?>(null) }
-            LaunchedEffect(livePhase) {
+            // LaunchedEffect가 아니라 SideEffect다 — 한 프레임 안에서 등장과 퇴장이 연달아 일어나면
+            // 키가 바뀌며 이펙트가 실행 전에 취소돼 기억이 비고, 퇴장 페이드가 빈 화면으로 돈다.
+            SideEffect {
                 if (livePhase != null) lastLivePhase = livePhase
             }
             val overlayPhase = livePhase ?: lastLivePhase
@@ -261,20 +264,29 @@ private fun TestFlow(modifier: Modifier = Modifier) {
                  * [다음] 자리에서 즉시 reset()을 부르면 퇴장 페이드 동안 화면이 대기 상태로 바뀌어,
                  * 방금까지 [재녹음][다음]이던 자리가 '● 녹음' 하나로 갈아치워진 채 사라진다.
                  *
-                 * 조건이 "같은 문항이 아직 화면에 있는가"인 이유: 회전은 이 컴포지션을 통째로 버렸다가
-                 * 다시 만들므로 dispose가 돌지만 그때 phase는 여전히 같은 문항이다 — 그 경우 되감으면
-                 * 진행 중인 녹음이나 기다리는 중인 제출이 죽는다. 반대로 퇴장 도중 다음 문항이 들어와
-                 * 같은 자리를 이어받는 경우는 문항이 다르므로 되감아야 한다(안 그러면 새 문항이 앞
-                 * 문항의 확인 화면을 물려받는다).
+                 * 조건은 "지금 보고 있던 것이 그대로 이어지는가"다. 회전은 이 컴포지션을 통째로
+                 * 버렸다가 다시 만들므로 dispose가 돌지만 그때 phase는 그대로다 — 그 경우 되감으면
+                 * 진행 중인 녹음이나 기다리는 중인 제출이 죽는다.
+                 *
+                 * 이어짐의 판정이 방향에 따라 다른 이유:
+                 * - 녹음 중이었다면 같은 문항의 녹음이거나 그 문항의 제출로 넘어간 것까지가 이어짐이다.
+                 *   [다음]으로 제출에 들어갈 때 되감으면 방금 그린 '내 억양' 곡선이 제출 화면에서 사라진다.
+                 * - 제출을 기다리던 중이었다면 같은 문항의 제출만 이어짐이다. 제출에서 녹음으로 되돌아온
+                 *   것은 그 문항을 처음부터 다시 하는 것이므로(웹이 결과를 못 받고 문항을 다시 열었을 때
+                 *   생긴다) 반드시 되감아야 한다 — 안 그러면 이미 제출해 PCM이 빠져나간 확인 화면이
+                 *   그대로 뜨고, 거기서 [다음]은 아무 일도 못 한다.
                  */
-                DisposableEffect(start.itemId) {
+                DisposableEffect(start.itemId, submitting) {
                     onDispose {
-                        val stillShowing = when (val current = flow.phase) {
+                        val current = flow.phase
+                        val continues = if (submitting) {
+                            current is TestFlowPhase.Submitting && current.start.itemId == start.itemId
+                        } else when (current) {
                             is TestFlowPhase.Recording -> current.start.itemId == start.itemId
                             is TestFlowPhase.Submitting -> current.start.itemId == start.itemId
                             else -> false
                         }
-                        if (!stillShowing) viewModel.reset()
+                        if (!continues) viewModel.reset()
                     }
                 }
 

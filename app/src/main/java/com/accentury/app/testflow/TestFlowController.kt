@@ -192,13 +192,22 @@ class TestFlowController private constructor(
             delivered += result
         }
         /*
-         * 기다리던 시도의 결과가 이번에 나갔으면 붙들고 있던 화면을 놓는다 (KAN-146).
-         * 호출자는 이 반환값을 곧바로 웹에 주입하므로, 화면이 걷히는 동안 아래에는 이미 다음 문항이
-         * 그려진다 — 걷힌 자리에 대기 화면이 드러나던 순간이 여기서 사라진다.
+         * 기다리던 시도가 끝났으면 붙들고 있던 화면을 놓는다 (KAN-146). 끝나는 방식은 둘이다.
+         *
+         * 결과가 나간 경우 — 호출자는 이 반환값을 곧바로 웹에 주입하므로, 화면이 걷히는 동안 아래에는
+         * 이미 다음 문항이 그려진다. 걷힌 자리에 대기 화면이 드러나던 순간이 여기서 사라진다.
+         *
+         * 업로드가 실패한 경우 — 결과는 영영 조립되지 않는다. 그걸 이미 아는 자리에서 상한까지
+         * 기다리면 오버레이는 "제출 중…"이라 말하는데 그 아래 업로드 상태 바는 같은 화면에서 이미
+         * "업로드 실패 [재시도]"를 띄우고 있다. 한 화면이 서로 다른 두 말을 하는 구간이라 바로 놓는다.
+         * 상한([onSubmitTimeout])은 이걸로도 안 걷히는 경우 — 업로드 키 자체가 사라진 복원 경로 —
+         * 만 받는 최후 안전망으로 남는다.
          */
         val awaiting = phase as? TestFlowPhase.Submitting
-        if (awaiting != null && delivered.any { it.attemptId == awaiting.attemptId }) {
-            phase = TestFlowPhase.Web
+        if (awaiting != null) {
+            val settled = delivered.any { it.attemptId == awaiting.attemptId } ||
+                uploads[awaiting.attemptId] is UploadState.Failed
+            if (settled) phase = TestFlowPhase.Web
         }
         return delivered
     }
