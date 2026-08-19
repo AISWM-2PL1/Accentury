@@ -144,11 +144,11 @@ fun RecordingScreen(
                         Button(
                             enabled = s.canProceed,
                             /*
-                             * 되감기(reset)를 여기서 부르지 않는다 (KAN-146). 화면이 페이드로 걷히므로,
-                             * 이 자리에서 되감으면 퇴장하는 동안 확인 화면이 대기 화면으로 갈아치워진
-                             * 채 사라진다. 되감기는 오버레이가 완전히 걷힌 뒤 호출자(MainActivity)가 한다.
-                             * onNext 안의 consumeRecording이 PCM을 이미 가져가므로(FR-DP-02) 되감기가
-                             * 늦어져도 음성 바이트가 남지는 않는다.
+                             * 되감기(reset)를 여기서 부르지 않는다 (KAN-146). [다음] 뒤에도 이 화면은
+                             * 결과가 나갈 때까지 제출 중 상태로 남으므로, 이 자리에서 되감으면 방금 그린
+                             * '내 억양' 곡선이 그 구간에서 사라진다. 되감기는 화면이 걷힌 뒤 호출자
+                             * (MainActivity)가 한다. onNext 안의 consumeRecording이 PCM을 이미
+                             * 가져가므로(FR-DP-02) 되감기가 늦어져도 음성 바이트가 남지는 않는다.
                              */
                             onClick = { onNext(s.attemptId, s.durationMs, s.quality) },
                         ) { Text("다음") }
