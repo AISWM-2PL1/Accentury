@@ -11,6 +11,15 @@ import { useEffect, useRef, useState } from 'react'
 import { startVoiceItem } from '../bridge/bridge'
 import type { VoiceItem } from './testDefinition'
 
+/*
+ * 브리지 판정 전후로 나뉘지 않는 단일 대기 문구 (KAN-146).
+ * 예전에는 "녹음 화면을 여는 중…" → "녹음 화면에서 진행 중…"으로 한 프레임 만에 문구가 갈아치워졌다.
+ * 사용자에게 그 둘은 구분되지 않는 같은 상태("기다리는 중")인데 화면만 두 번 움직여, 음성·어휘가
+ * 교차하는 진행에서 전환이 휙휙 바뀐다는 인상을 만들었다. 내부 구현(녹음 화면)을 굳이 이름 붙이지 않는
+ * 중립 문구 하나로 고정한다 — 네이티브 [나가기]로 이탈해 돌아왔을 때도 어색하지 않다.
+ */
+const WAITING_MESSAGE = '잠시만요…'
+
 export interface VoiceItemScreenProps {
   item: VoiceItem
   /** 진행 표기용 1-기반 순번. 네이티브 녹음 화면이 "3/10"을 그리는 데 쓴다 */
@@ -23,8 +32,8 @@ export interface VoiceItemScreenProps {
 export function VoiceItemScreen({ item, itemNumber, totalItems, onDevSubmitted }: VoiceItemScreenProps) {
   /*
    * 브리지 호출 결과. `null`은 아직 부르기 전이라는 뜻이다 — 호출은 effect에서 일어나므로
-   * 첫 렌더에는 결과가 없다. 성공을 미리 가정하지 않는 이유: 그러면 "녹음 화면에서 진행 중"이
-   * 아직 아무것도 알리지 않은 상태에서 먼저 나가고, 화면에 보이는 문구가 실제 상태보다 앞선다.
+   * 첫 렌더에는 결과가 없다. `null`과 `true`는 화면상 같은 대기 문구를 쓰지만 상태로는 계속 구분한다:
+   * 재진입 버튼은 브리지가 실제로 받아준 뒤에만 의미가 있고, `false`(브라우저 단독)는 아예 다른 화면이다.
    */
   const [bridgeAccepted, setBridgeAccepted] = useState<boolean | null>(null)
   /*
@@ -57,31 +66,7 @@ export function VoiceItemScreen({ item, itemNumber, totalItems, onDevSubmitted }
   return (
     <>
       <h1 style={{ fontSize: '20px', fontWeight: 600, margin: 0 }}>{item.prompt}</h1>
-      {bridgeAccepted === null ? (
-        // 호출 직전의 한 프레임. effect가 바로 뒤따르므로 사람 눈에는 걸리지 않는다
-        <p style={{ fontSize: '14px', margin: 0 }}>녹음 화면을 여는 중…</p>
-      ) : bridgeAccepted ? (
-        <>
-          {/*
-            네이티브 녹음 화면이 이 WebView 위를 덮으므로, 이 뷰가 실제로 보이는 건 전환 순간·
-            결과를 기다리는 복귀 직후·그리고 사용자가 녹음 화면에서 [나가기]로 이탈한 뒤다.
-          */}
-          <p style={{ fontSize: '14px', margin: 0 }}>녹음 화면에서 진행 중…</p>
-          {/*
-            [나가기] 이탈 뒤의 유일한 재진입 통로. 네이티브는 이탈을 웹에 알리지 않으므로(계약
-            최소 표면) 웹은 이탈과 "결과 대기 중"을 구분할 수 없다 — 대신 이 버튼은 녹음 중엔
-            네이티브 화면에 가려 누를 수 없고, 눌리더라도 네이티브 중복 방어(Stage 3)가 무시하므로
-            항상 노출해도 안전하다. 이 버튼이 없으면 이탈한 사용자는 이 문항에서 빠져나올 수 없다.
-          */}
-          <button
-            type="button"
-            onClick={requestRecording}
-            style={{ minHeight: '48px', minWidth: '160px', fontSize: '16px', cursor: 'pointer' }}
-          >
-            녹음 화면 다시 열기
-          </button>
-        </>
-      ) : (
+      {bridgeAccepted === false ? (
         <>
           {/*
             브리지가 없는 = 브라우저 단독 실행. 에뮬레이터 Chrome으로 진행 화면을 확인하는
@@ -97,6 +82,32 @@ export function VoiceItemScreen({ item, itemNumber, totalItems, onDevSubmitted }
           >
             제출 (개발용)
           </button>
+        </>
+      ) : (
+        <>
+          {/*
+            호출 직전(`null`)과 호출이 받아들여진 뒤(`true`)가 같은 문구를 공유한다. 분기를 이렇게
+            뒤집어 둔 이유는 이 <p>가 두 상태에서 같은 위치의 같은 노드로 남아야 React가 교체하지 않고,
+            그래야 전환 도중 문구가 흔들리지 않기 때문이다.
+            네이티브 녹음 화면이 이 WebView 위를 덮으므로, 이 뷰가 실제로 보이는 건 전환 순간·
+            결과를 기다리는 복귀 직후·그리고 사용자가 녹음 화면에서 [나가기]로 이탈한 뒤다.
+          */}
+          <p style={{ fontSize: '14px', margin: 0 }}>{WAITING_MESSAGE}</p>
+          {bridgeAccepted === true && (
+            /*
+              [나가기] 이탈 뒤의 유일한 재진입 통로. 네이티브는 이탈을 웹에 알리지 않으므로(계약
+              최소 표면) 웹은 이탈과 "결과 대기 중"을 구분할 수 없다 — 대신 이 버튼은 녹음 중엔
+              네이티브 화면에 가려 누를 수 없고, 눌리더라도 네이티브 중복 방어(Stage 3)가 무시하므로
+              항상 노출해도 안전하다. 이 버튼이 없으면 이탈한 사용자는 이 문항에서 빠져나올 수 없다.
+            */
+            <button
+              type="button"
+              onClick={requestRecording}
+              style={{ minHeight: '48px', minWidth: '160px', fontSize: '16px', cursor: 'pointer' }}
+            >
+              녹음 화면 다시 열기
+            </button>
+          )}
         </>
       )}
     </>
