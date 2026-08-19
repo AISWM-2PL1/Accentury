@@ -13,8 +13,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -76,12 +76,17 @@ private const val DEV_SESSION_ID = "dev-session"
 private const val DEV_SESSION_TOKEN = "dev-token"
 
 /*
- * 녹음 오버레이가 웹 위로 덮이고 걷히는 데 쓰는 페이드 길이 (KAN-146).
- * 200ms는 Material의 짧은 전환 구간(150~250ms) 안이다. 더 짧으면 덮기·걷기가 여전히 "툭"
- * 나타났다 사라지는 것으로 읽히고, 더 길면 [다음] 뒤 다음 문항까지가 느려진 것처럼 느껴진다.
- * 문항당 두 번(등장·퇴장) 겪는 전환이라 길이에 인색한 쪽이 맞다.
+ * 녹음 오버레이가 걷힐 때 쓰는 페이드 길이 (KAN-146).
+ * 200ms는 Material의 짧은 전환 구간(150~250ms) 안이다. 더 짧으면 걷기가 여전히 "툭" 사라지는
+ * 것으로 읽히고, 더 길면 [다음] 뒤 다음 문항까지가 느려진 것처럼 느껴진다.
+ *
+ * 등장에는 쓰지 않는다. 진행의 정본이 웹이라 웹이 음성 문항을 먼저 그려야 브리지가 호출되고,
+ * 그제서야 네이티브가 덮을 문항을 안다 — 즉 웹의 대기 화면이 한 프레임 그려지는 것은 구조상
+ * 피할 수 없다. 그 한 프레임은 지각 한계 아래지만, 등장 페이드를 걸면 그 화면이 페이드 내내
+ * 비쳐 보여 없앨 수 있었던 노출을 오히려 200ms로 늘린다. 그래서 등장은 즉시다 —
+ * 어휘 화면에서 녹음 화면으로 한 번에 갈아끼워지고, 중간 화면이 눈에 남지 않는다.
  */
-private const val OVERLAY_FADE_MS = 200
+private const val OVERLAY_FADE_OUT_MS = 200
 
 /*
  * 기다리는 시도의 업로드 자취가 아예 없을 때만 쓰는 상한 (KAN-146).
@@ -262,8 +267,8 @@ private fun TestFlow(modifier: Modifier = Modifier) {
             // Box 안에서 화면 전체를 덮어야 할 오버레이가 열 방향 배치로 해석된다.
             androidx.compose.animation.AnimatedVisibility(
                 visible = !gateShowing && livePhase != null,
-                enter = fadeIn(tween(OVERLAY_FADE_MS)),
-                exit = fadeOut(tween(OVERLAY_FADE_MS)),
+                enter = EnterTransition.None,
+                exit = fadeOut(tween(OVERLAY_FADE_OUT_MS)),
             ) {
                 // 퇴장 중에는 phase가 이미 Web이라 붙들어 둔 마지막 값이 쓰인다.
                 val shown = overlayPhase ?: return@AnimatedVisibility
