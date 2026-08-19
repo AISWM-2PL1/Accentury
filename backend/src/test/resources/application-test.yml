@@ -24,6 +24,11 @@ spring:
     # 풀 설정은 이 프로퍼티를 그대로 쓴다).
     hikari:
       maximum-pool-size: 5
+  # 테스트 전용 발행본을 얹는다 (KAN-26) - db/testdata의 V900이 구버전 픽스처 gn-2026.07.0을
+  # 넣는다. 발행 입력이 DB로 바뀌었으므로(2026-08-09 확정) 픽스처도 운영과 같은 경로인
+  # 마이그레이션을 타야 한다. 기본 경로를 다시 적는 것은 이 설정이 추가가 아니라 대체라서다.
+  flyway:
+    locations: classpath:db/migration,classpath:db/testdata
 
 accentury:
   # 요청 제한 다섯 축을 전부 넉넉히 열어 둔다 - 제한 자체의 동작은 한도를 낮춘 전용 테스트가

@@ -189,7 +189,7 @@ class AnalyticsCountersIntegrationTest extends IntegrationTest {
                 pool.execute(() -> {
                     try {
                         start.await();
-                        counters.recordSessionStarted(at, testVersion, properties.scoreVersion());
+                        counters.recordSessionStarted(at, testVersion, activeScoreVersion());
                     } catch (Exception e) {
                         failures.incrementAndGet();
                     } finally {
@@ -205,7 +205,7 @@ class AnalyticsCountersIntegrationTest extends IntegrationTest {
 
         assertEquals(0, failures.get());
         String id = DailyCounter.idOf(LocalDate.now(properties.analytics().zone()),
-                testVersion, properties.scoreVersion());
+                testVersion, activeScoreVersion());
         assertEquals(threads, countersRepository.findById(id).orElseThrow().sessionsStarted(),
                 "조회 후 저장이면 증가가 서로를 덮어써 이 수가 모자란다");
     }
@@ -264,7 +264,7 @@ class AnalyticsCountersIntegrationTest extends IntegrationTest {
 
         DailyCounter row = countersRepository.findById(todayId()).orElseThrow();
         assertEquals(todayId(), row.id());
-        assertTrue(row.id().contains(properties.testVersion()));
+        assertTrue(row.id().contains(activeTestVersion()));
         assertFalse(row.id().contains(session.id()), "세션 ID가 식별자에 새면 안 된다");
     }
 
@@ -305,7 +305,7 @@ class AnalyticsCountersIntegrationTest extends IntegrationTest {
 
     private String todayId() {
         return DailyCounter.idOf(LocalDate.now(properties.analytics().zone()),
-                properties.testVersion(), properties.scoreVersion());
+                activeTestVersion(), activeScoreVersion());
     }
 
     /** 오늘 행의 값 - 아직 없으면 전부 0이다. */

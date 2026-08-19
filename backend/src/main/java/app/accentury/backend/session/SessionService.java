@@ -7,6 +7,8 @@ import app.accentury.backend.common.ApiException;
 import app.accentury.backend.common.ErrorCode;
 import app.accentury.backend.common.RateLimits;
 import app.accentury.backend.result.TestResultRepository;
+import app.accentury.backend.testdefinition.TestDefinition;
+import app.accentury.backend.testdefinition.TestDefinitionRegistry;
 import app.accentury.backend.vocab.VocabAnswerRepository;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
@@ -37,6 +39,7 @@ public class SessionService {
     private final VocabAnswerRepository vocabAnswerRepository;
     private final AnalysisJobRepository analysisJobRepository;
     private final TestResultRepository testResultRepository;
+    private final TestDefinitionRegistry testDefinitions;
     private final AccenturyProperties properties;
     private final RateLimits rateLimits;
     private final AnalyticsCounters counters;
@@ -46,6 +49,7 @@ public class SessionService {
                           VocabAnswerRepository vocabAnswerRepository,
                           AnalysisJobRepository analysisJobRepository,
                           TestResultRepository testResultRepository,
+                          TestDefinitionRegistry testDefinitions,
                           AccenturyProperties properties,
                           RateLimits rateLimits, AnalyticsCounters counters,
                           TransactionTemplate transactionTemplate) {
@@ -53,6 +57,7 @@ public class SessionService {
         this.vocabAnswerRepository = vocabAnswerRepository;
         this.analysisJobRepository = analysisJobRepository;
         this.testResultRepository = testResultRepository;
+        this.testDefinitions = testDefinitions;
         this.properties = properties;
         this.rateLimits = rateLimits;
         this.counters = counters;
@@ -80,6 +85,10 @@ public class SessionService {
      * 성공한 호출은 익명 집계의 응시 시도 1건이 된다 (KAN-106, FR-AN-10) - 세션과 무관한
      * 숫자만 늘어나고, 그 증가가 실패해도 세션 생성은 성공한다. 재응시 폐기가 있어도
      * 카운터는 되돌리지 않는다 - 이전 시도와 완주는 실제로 발생한 사실이다 (KAN-107 AC).
+     * <p>
+     * 고정할 두 버전은 활성 정의 스냅샷 <b>한 번</b>에서 함께 꺼낸다 (KAN-26) - 나눠 읽으면
+     * 그사이 활성 전환이 끼어들어 한 세션이 A의 문항과 B의 채점식에 걸릴 수 있다. 활성 전환은
+     * 이 지점 뒤로는 이 세션에 영향을 주지 않는다 (§5.4, KAN-26 AC).
      *
      * @param clientIp            요청 제한의 기준 IP - {@link app.accentury.backend.common.ClientIps}가
      *                            신뢰 프록시 규칙으로 정한 값
@@ -91,6 +100,9 @@ public class SessionService {
         rateLimits.check(RateLimits.Scope.SESSION_CREATE, clientIp);
 
         String previousTokenHash = retakeTokenHash(authorizationHeader);
+        TestDefinition active = testDefinitions.active().definition();
+        String testVersion = active.testVersion();
+        String scoreVersion = active.scoreVersion();
         Instant now = Instant.now();
         Instant expiresAt = now.plus(properties.session().ttl());
         String sessionId = SessionTokens.newSessionId();
@@ -114,8 +126,8 @@ public class SessionService {
             repository.save(new TestSession(
                     sessionId,
                     SessionTokens.hash(token),
-                    properties.testVersion(),
-                    properties.scoreVersion(),
+                    testVersion,
+                    scoreVersion,
                     client != null && client.platform() != null ? client.platform().name() : null,
                     client != null ? client.appVersion() : null,
                     request != null ? request.campaignToken() : null,
@@ -133,13 +145,13 @@ public class SessionService {
 
         // 토큰은 로그에 남기지 않는다 (§2.6, NFR-SC-07).
         log.info("세션 생성 sessionId={} platform={} testVersion={}",
-                sessionId, client != null ? client.platform() : null, properties.testVersion());
+                sessionId, client != null ? client.platform() : null, testVersion);
 
         // 응시 시도 1건 (KAN-106) - 폐기+생성 트랜잭션이 커밋된 뒤다.
         // 실패는 카운터 쪽에서 삼킨다 - 통계가 세션 생성을 막으면 안 된다 (FR-AN-10).
-        counters.recordSessionStarted(now, properties.testVersion(), properties.scoreVersion());
+        counters.recordSessionStarted(now, testVersion, scoreVersion);
 
-        return new SessionResponse(sessionId, token, properties.testVersion(), properties.scoreVersion(), expiresAt);
+        return new SessionResponse(sessionId, token, testVersion, scoreVersion, expiresAt);
     }
 
     /**

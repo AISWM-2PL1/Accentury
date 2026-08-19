@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.lang.reflect.Field;
 import java.time.Instant;
@@ -63,12 +64,54 @@ class SchemaBaselineTest extends IntegrationTest {
     @Autowired
     private TestResultRepository testResultRepository;
 
+
     @Test
     void baseline_마이그레이션이_적용되어_있다() {
         Integer applied = jdbc.queryForObject(
                 "select count(*) from flyway_schema_history where version = '1' and success",
                 Integer.class);
         assertEquals(1, applied, "V1 baseline이 성공 상태로 기록되어야 한다");
+    }
+
+    /** 발행 입력 DB 이관 (KAN-26) - 정의와 활성 포인터, 감사 이력이 마이그레이션으로 들어온다. */
+    @Test
+    void 테스트_정의_발행_마이그레이션이_적용되어_있다() {
+        Integer applied = jdbc.queryForObject(
+                "select count(*) from flyway_schema_history where version = '2' and success",
+                Integer.class);
+        assertEquals(1, applied, "V2 발행 마이그레이션이 성공 상태로 기록되어야 한다");
+    }
+
+    /**
+     * 활성 포인터는 한 행뿐이다 (KAN-26). 권역이 하나뿐인 MVP에서 두 번째 행이 생기면 어느
+     * 쪽이 활성인지 알 수 없어지므로, 애플리케이션이 아니라 DB가 막게 해 뒀다.
+     * <p>
+     * {@code @Transactional}은 제약이 언젠가 사라졌을 때를 위한 안전벨트다 - 그러면 이 문장이
+     * 실제로 커밋되는데, {@code active_test_version}은 클래스 사이 초기화 대상이 아니라서
+     * ({@code DatabaseWipeExtension.KEEP}) 오염된 포인터가 그대로 남아 이후 모든 컨텍스트가
+     * 기동에 실패한다. 제약 하나가 무너진 것이 원인과 멀리 떨어진 전체 실패로 번지지 않게 한다.
+     */
+    @Test
+    @Transactional
+    void 활성_버전_포인터는_CURRENT_한_행만_허용한다() {
+        assertThrows(DataIntegrityViolationException.class,
+                () -> jdbc.update("insert into active_test_version"
+                        + " (id, test_version, previous_test_version, activated_at)"
+                        + " values ('OTHER', ?, null, now())", activeTestVersion()),
+                "check 제약이 두 번째 행을 거부해야 한다");
+    }
+
+    /**
+     * 발행되지 않은 버전을 활성으로 지정할 수 없다 - 애플리케이션 검사(404) 아래의 DB 방어선이다.
+     * {@code @Transactional}의 이유는 위 테스트와 같다.
+     */
+    @Test
+    @Transactional
+    void 발행되지_않은_버전은_활성으로_지정할_수_없다() {
+        assertThrows(DataIntegrityViolationException.class,
+                () -> jdbc.update("update active_test_version set test_version = 'gn-9999.99.9'"
+                        + " where id = 'CURRENT'"),
+                "FK 위반이 거부되어야 한다");
     }
 
     /** AC: 세션 행 삭제 시 하위 행이 CASCADE로 함께 삭제된다 (KAN-107 소비). */
@@ -187,7 +230,12 @@ class SchemaBaselineTest extends IntegrationTest {
                         "ix_analysis_job_session_item"),
                 "vocab_answer", Set.of("pk_vocab_answer", "ux_vocab_answer_session_item"),
                 "test_result", Set.of("pk_test_result", "ux_test_result_session"),
-                "daily_counter", Set.of("pk_daily_counter", "ux_daily_counter_key"));
+                "daily_counter", Set.of("pk_daily_counter", "ux_daily_counter_key"),
+                // KAN-26 발행 이관
+                "test_definition", Set.of("pk_test_definition"),
+                "active_test_version", Set.of("pk_active_test_version"),
+                "active_version_audit", Set.of("pk_active_version_audit",
+                        "ix_active_version_audit_recorded_at"));
 
         Map<String, Set<String>> actual = new TreeMap<>();
         jdbc.query("select tablename, indexname from pg_indexes"

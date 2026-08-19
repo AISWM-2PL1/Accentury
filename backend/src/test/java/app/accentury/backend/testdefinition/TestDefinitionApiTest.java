@@ -1,7 +1,6 @@
 package app.accentury.backend.testdefinition;
 
 import app.accentury.backend.IntegrationTest;
-import app.accentury.backend.common.AccenturyProperties;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -18,6 +17,7 @@ import static org.hamcrest.Matchers.aMapWithSize;
 import static org.hamcrest.Matchers.containsString;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -30,7 +30,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * {@code GET /v0/tests/{testVersion}}의 실행 가능한 명세 (KAN-10, API 명세서 §3.2).
  * <p>
  * 인증 없이 호출한다 (§2.1 - 인증 불필요 엔드포인트).
- * 구버전 픽스처 {@code gn-2026.07.0}은 테스트 classpath에만 있는 seed다.
+ * 구버전 픽스처 {@code gn-2026.07.0}은 테스트 프로파일에서만 도는 마이그레이션
+ * ({@code db/testdata/V900__second_test_definition.sql})이 넣은 발행본이다 (KAN-26).
  */
 @AutoConfigureMockMvc
 class TestDefinitionApiTest extends IntegrationTest {
@@ -41,26 +42,18 @@ class TestDefinitionApiTest extends IntegrationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
-    /**
-     * 활성 버전은 설정({@code accentury.test-version})이 정본이다.
-     * <p>
-     * 경로를 리터럴로 박으면, 구 seed가 계속 발행 상태로 남는 설계(KAN-26 버전 불변) 때문에
-     * 버전을 로테이션해도 테스트가 조용히 통과하면서 은퇴한 seed만 검사하게 된다 (Claude 리뷰 P3).
-     */
-    @Autowired
-    private AccenturyProperties properties;
-
+    /** 활성 버전의 정본은 DB의 {@code active_test_version} 한 행이다 (KAN-26). */
     private String activePath() {
-        return "/v0/tests/" + properties.testVersion();
+        return "/v0/tests/" + activeTestVersion();
     }
 
     @Test
     void 활성_버전_조회는_200과_명세의_5개_최상위_필드를_반환한다() throws Exception {
         mockMvc.perform(get(activePath()))
                 .andExpect(status().isOk())
-                // 응답의 두 버전은 seed에서 오고 설정에서 오지 않는다 - 일치는 기동 검사가 강제한다.
-                .andExpect(jsonPath("$.testVersion").value(properties.testVersion()))
-                .andExpect(jsonPath("$.scoreVersion").value(properties.scoreVersion()))
+                // 두 버전 모두 발행본이 정본이다 - 설정에는 이제 어느 쪽도 없다 (KAN-26).
+                .andExpect(jsonPath("$.testVersion").value(activeTestVersion()))
+                .andExpect(jsonPath("$.scoreVersion").value(activeScoreVersion()))
                 .andExpect(jsonPath("$.dialect").value("GYEONGNAM"))
                 .andExpect(jsonPath("$.estimatedDurationSec").value(240))
                 .andExpect(jsonPath("$.items.length()").value(10))
@@ -188,6 +181,7 @@ class TestDefinitionApiTest extends IntegrationTest {
     void 신규_발행_후에도_이전_버전_정의는_계속_제공된다() throws Exception {
         // 활성 버전이 아니지만, 먼저 발행된 gn-2026.07.0에 고정된 세션도
         // 자기 정의를 계속 받는다 - 활성 전환이 진행 중 세션에 영향을 주지 않는다 (KAN-26 AC).
+        assertNotEquals("gn-2026.07.0", activeTestVersion(), "전제: 이 버전은 활성이 아니다");
         mockMvc.perform(get("/v0/tests/gn-2026.07.0"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.testVersion").value("gn-2026.07.0"))

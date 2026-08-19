@@ -48,10 +48,16 @@ public enum ErrorCode {
     // 시간이 지나도 풀리지 않는 상한이므로 retryable=false - RATE_LIMITED와 다르다.
     RATE_RETAKE_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, false, "이 문항의 업로드 횟수 상한을 넘었습니다. (최대 5회)"),
 
-    // === ADMIN_* : 운영자 전용 API (§6, KAN-106) ===
+    // === ADMIN_* : 운영자 전용 API (§6, KAN-106, KAN-26) ===
     // 클라이언트가 닿지 않는 경로라 §2.4의 클라이언트 네임스페이스와 섞지 않는다.
     // 토큰 누락과 불일치를 구분하지 않는다 - 세션 토큰(SESSION_EXPIRED)과 같은 이유다.
     ADMIN_UNAUTHORIZED(HttpStatus.UNAUTHORIZED, false, "관리자 API 인증에 실패했습니다."),
+    // 최초 발행 직후처럼 직전 활성 버전이 없는 상태의 롤백 요청 (KAN-26). 시간이 지난다고
+    // 풀리지 않으므로 retryable=false다 - 되돌리려면 버전을 명시한 활성 전환을 써야 한다.
+    ADMIN_ROLLBACK_UNAVAILABLE(HttpStatus.CONFLICT, false, "되돌아갈 이전 활성 버전이 없습니다."),
+    // MVP에서 활성화할 수 없는 방언의 정의 (§6 - 경북 정의는 활성화 불가, KAN-26).
+    // 발행 검증이 경북 정의를 애초에 싣지 않으므로 지금은 도달하지 않는 방어선이다.
+    ADMIN_DIALECT_NOT_ALLOWED(HttpStatus.CONFLICT, false, "MVP에서 활성화할 수 없는 방언의 정의입니다."),
 
     // === 공통 ===
     VALIDATION_FAILED(HttpStatus.BAD_REQUEST, false, "요청 값이 올바르지 않습니다."),

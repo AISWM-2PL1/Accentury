@@ -13,6 +13,13 @@ spring:
     url: jdbc:postgresql://localhost:5432/accentury
     username: postgres
     password: local
+  flyway:
+    # 플레이스홀더 치환을 끈다 (KAN-26). Flyway는 기본적으로 ${...}를 치환 대상으로 읽는데,
+    # 정의 발행본을 달러 인용으로 감싸면 여는 태그 바로 뒤에 JSON의 여는 중괄호가 붙어
+    # ($definition$ + { = ...${) 값 없는 플레이스홀더로 오인되어 기동이 죽는다. 문항 문구에
+    # ${...}가 들어가도 같은 일이 난다. 치환 기능을 쓰는 마이그레이션이 하나도 없으므로
+    # 끄는 편이 안전하다 - 나중에 필요해지면 그 마이그레이션에서만 켤 방법을 찾는다.
+    placeholder-replacement: false
   jpa:
     hibernate:
       # 스키마는 Flyway 마이그레이션(db/migration)만 만든다 (KAN-123) - update는 운영 DB를
@@ -42,11 +49,10 @@ logging:
   pattern:
     console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSS} %5p [%X{correlationId:-}] --- [%15.15t] %-40.40logger{39} : %mask(%m){}%n%maskEx"
 
-# 활성 테스트와 점수 버전 - 세션은 생성 시점 버전에 고정 (명세서 §5.4)
-# 프로토타입은 설정 파일로 관리, 버전 발행과 활성 전환은 KAN-26에서 DB로 이동
+# 활성 테스트 버전과 점수 버전은 여기 없다 (KAN-26). 발행 입력이 DB로 확정되면서(2026-08-09,
+# 명세서 §6) 활성 버전은 active_test_version 한 행이 정본이 됐고, 점수 버전은 그 정의가
+# 선언한 값을 따른다. 전환은 PUT /admin/v0/active-version이고, 발행은 마이그레이션이다.
 accentury:
-  test-version: gn-2026.08.1
-  score-version: sv-0.3
   session:
     ttl: 30m                    # 토큰 수명 - 테스트 소요 5분의 여유 배수 (명세서 §2.1, §7)
     rate-limit-per-minute: 30   # IP당 분당 세션 생성 상한 (명세서 §2.5, KAN-28) - 인증 없는
@@ -96,11 +102,19 @@ accentury:
     zone: Asia/Seoul     # 집계 행의 일자 경계 (2026-08-17 확정) - 리포트를 읽는 사람의 하루와
                          # 행의 하루가 같아야 한다. UTC면 KST 09:00에 날짜가 바뀐다.
     max-query-days: 366  # 운영자 조회 한 번의 최대 기간 - 실수로 전 기간을 훑는 질의를 400으로 끊는다.
-    # admin-token: ...     # 운영자 조회 엔드포인트(GET /admin/v0/analytics, 명세서 §6)의 공유 시크릿.
-                           # 미설정이 기본값이고, 그러면 엔드포인트가 아예 등록되지 않는다(404) -
-                           # 설정을 빼먹어도 열려 있는 경로가 생기지 않게 하는 안전한 기본값이다.
-                           # 운영에서 확인이 필요하면 환경 변수로 주입한다 (ACCENTURY_ANALYTICS_ADMINTOKEN).
-                           # 값을 문자열 "false"로 두면 조건부 등록이 비활성으로 읽어 조용히 404다.
+  # 운영자 전용 API(명세서 §6)의 공유 시크릿 - 관리자 엔드포인트 셋이 함께 쓴다
+  # (GET /admin/v0/analytics, PUT /admin/v0/active-version, GET /admin/v0/test-definitions).
+  # 미설정이 기본값이고, 그러면 엔드포인트가 아예 등록되지 않는다(404) - 설정을 빼먹어도
+  # 열려 있는 경로가 생기지 않게 하는 안전한 기본값이다. 32자 이상이어야 기동한다.
+  # 운영에서는 환경 변수로 주입한다 (ACCENTURY_ADMIN_TOKEN). KAN-106 시절 이름은
+  # accentury.analytics.admin-token이었고 KAN-26에서 여기로 옮겼다.
+  # 값을 문자열 "false"로 두면 조건부 등록이 비활성으로 읽어 조용히 404다.
+  #
+  # 블록째 주석인 것은 의도다 - "admin:"만 남기고 아래를 다 주석 처리하면 YAML이 빈 매핑을
+  # 만들어 accentury.admin이 스칼라 null로 잡히고, 그러면 Binder가 그 값을 바로 쓰면서
+  # 다른 곳(환경 변수, @TestPropertySource)에서 준 accentury.admin.token으로 내려가지 않는다.
+  # admin:
+  #   token: ...
   # /result 등급별 자산 (명세서 §3.7, KAN-25) - 서버가 내려주므로 앱 배포 없이 여기서 교체 (KAN-29/30)
   # 기동 시 5개 등급 전부 존재해야 한다 (TierAssets 검증). 코멘트, 문구, 이미지는 더미다 -
   # KAN-29/30 확정 자산이 나오면 교체한다. 키는 등급 code의 소문자다 (relaxed binding이

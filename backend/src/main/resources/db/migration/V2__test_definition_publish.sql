@@ -1,5 +1,93 @@
-{
-  "testVersion": "gn-2026.07.0",
+-- KAN-26: 테스트 정의의 발행과 활성 버전 전환을 DB로 옮긴다.
+--
+-- 이전까지 "발행"은 classpath JSON seed(test-definitions/*.json)를 기동 시 읽는 것이었고,
+-- 활성 버전은 설정 파일(accentury.test-version)이었다. 둘 다 여기서 폐기된다
+-- (2026-08-09 확정, 명세서 §6). 발행 = 이 파일 같은 마이그레이션의 INSERT이고,
+-- 활성 전환 = active_test_version 한 행의 UPDATE다.
+--
+-- 왜 DB인가: 활성 전환은 재배포 없이 되돌릴 수 있어야 하고(AC - 이전 활성 버전으로 롤백),
+-- 그 이력이 남아야 한다(AC - 감사 로그). 설정 파일은 둘 다 못 한다.
+--
+-- 2단계 롤아웃 (티켓 요구): 새 정의를 먼저 배포하고(이 마이그레이션), 활성 전환은 그 다음
+-- 별도 호출이다(PUT /admin/v0/active-version). 순서가 뒤집히면 배포 중 신규 버전 세션이
+-- 구 인스턴스에 닿아 404를 받는다 (KAN-101 연계).
+
+-- 발행된 테스트 정의. 발행 후 불변이다 (§5.4) - 내용이 바뀌면 UPDATE가 아니라 새 testVersion이다.
+--
+-- 본문을 JSON 한 컬럼에 통째로 둔다 (2026-08-19 확정). 문항과 선택지를 정규화해도 guideF0의
+-- 실수 배열(문항당 90~120개)은 결국 한 컬럼에 뭉치므로, 쪼개서 얻는 것은 SQL로 문항을 훑는
+-- 편의뿐이다. 잃는 것은 발행본이 통짜 한 덩어리로 남는다는 점이다 - 쪼개 두면 어느 행 하나만
+-- 고쳐도 발행본이 조용히 달라지는데, 한 컬럼이면 발행 후 불변(§5.4)을 컬럼 하나 안 건드리는
+-- 것으로 지킬 수 있다. 조회 경로가 버전 전체를 한 번에 읽는 형태(§3.2)라 부분 조회의 이득도 없다.
+-- (본문이 곧 응답은 아니다 - 서버가 파싱해서 seq 정렬하고 정답을 뺀 뒤 다시 직렬화한다.)
+--
+-- dialect와 score_version은 본문에도 있는 값을 꺼내 둔 사본이다 - 관리자 목록 조회(§6)가
+-- 13KB 본문 열 개를 파싱하지 않고 답하기 위한 것이다. 본문과의 일치는 기동 시
+-- TestDefinitionRegistry가 강제한다(어긋나면 기동 실패) - DB 제약으로는 표현할 수 없다.
+create table test_definition (
+    test_version  varchar(40) not null,
+    dialect       varchar(20) not null,
+    score_version varchar(20) not null,
+    body          text        not null,
+    published_at  timestamp(6) with time zone not null,
+    constraint pk_test_definition primary key (test_version)
+);
+
+-- 활성 버전 포인터. 권역별로 하나만 활성이고 MVP의 권역은 경남 하나뿐이므로(KAN-8 범위 제외)
+-- 행도 하나다 - id를 'CURRENT'로 고정하는 check 제약이 두 번째 행을 막는다. 권역이 늘면
+-- id를 권역 코드로 바꾸고 이 제약을 푸는 것이 확장 경로다.
+--
+-- previous_test_version은 롤백 목적지다. 아래 감사 테이블에도 같은 값이 남지만 롤백은 이
+-- 컬럼을 본다 - 로그에서 다음 동작을 유도하면 이력을 보관 정책으로 잘라내는 순간 기능이
+-- 바뀌고, 같은 시각에 기록된 두 행 사이에서 "가장 최근"이 흔들린다. 감사 테이블은 읽기 전용
+-- 기록으로 두고, 다음 동작에 필요한 상태는 현재 상태를 담은 이 행이 들고 있게 한다.
+--
+-- FK는 "발행되지 않은 버전을 활성으로 지정할 수 없다"를 DB가 지키게 한다. 애플리케이션도
+-- 같은 검사를 하지만(404), 마이그레이션이 순서를 어기는 경우는 DB만 잡을 수 있다.
+create table active_test_version (
+    id                    varchar(20) not null,
+    test_version          varchar(40) not null,
+    previous_test_version varchar(40),
+    activated_at          timestamp(6) with time zone not null,
+    constraint pk_active_test_version primary key (id),
+    constraint ck_active_test_version_singleton check (id = 'CURRENT'),
+    constraint fk_active_test_version_definition foreign key (test_version)
+        references test_definition (test_version),
+    constraint fk_active_test_version_previous foreign key (previous_test_version)
+        references test_definition (test_version)
+);
+
+-- 발행과 활성 전환의 감사 로그 (AC - 발행·롤백 이력이 남는다).
+--
+-- 애플리케이션 로그가 아니라 테이블인 이유는 로그가 로테이션으로 사라지기 때문이다 -
+-- "언제 무엇에서 무엇으로 바꿨는가"는 사고 조사에서 몇 주 뒤에 필요하다. 다만 롤백 목적지는
+-- 여기가 아니라 active_test_version.previous_test_version이 정본이다 (위 주석 참고).
+--
+-- 개인 식별 정보가 없다 - 운영자 행위만 남고 세션·응시자와 연결되지 않으므로 무보관
+-- 원칙(NFR-PR-03)과 충돌하지 않는다. 어떤 보존 정리 잡도 이 테이블을 건드리지 않는다.
+create table active_version_audit (
+    id               varchar(40) not null,
+    action           varchar(20) not null,
+    previous_version varchar(40),
+    new_version      varchar(40) not null,
+    reason           varchar(200),
+    recorded_at      timestamp(6) with time zone not null,
+    constraint pk_active_version_audit primary key (id)
+);
+
+-- 관리자 목록 조회(§6)가 이력을 최신순으로 훑는다 - 정렬 컬럼에 인덱스를 둔다.
+create index ix_active_version_audit_recorded_at on active_version_audit (recorded_at);
+
+-- 프로토타입 발행본. 이전 classpath seed(test-definitions/gn-2026.08.1.json)를 그대로 옮긴 것이다.
+-- guideF0의 곡선과 허용 밴드는 KAN-17 미착수 상태의 임시 더미이고, 정본 산출물이 나오면
+-- UPDATE가 아니라 새 testVersion으로 발행한다 (버전 불변 원칙).
+--
+-- 달러 인용($definition$)을 쓰는 것은 본문에 작은따옴표가 들어 있어서다 - 어휘 문항의
+-- "'정구지'는 표준어로 무엇일까요?" 같은 문구다. 따옴표 이중화로 적으면 본문이 원본과
+-- 달라져 발행본 불변성을 눈으로 확인할 수 없다.
+insert into test_definition (test_version, dialect, score_version, body, published_at)
+values ('gn-2026.08.1', 'GYEONGNAM', 'sv-0.3', $definition${
+  "testVersion": "gn-2026.08.1",
   "scoreVersion": "sv-0.3",
   "dialect": "GYEONGNAM",
   "estimatedDurationSec": 240,
@@ -195,4 +283,14 @@
       "correctChoiceId": "w5a"
     }
   ]
-}
+}$definition$, timestamp with time zone '2026-08-09T00:00:00Z');
+
+-- 최초 활성 지정. 지금까지 accentury.test-version 설정이 하던 역할을 이 한 행이 대신한다.
+-- previous_test_version이 null이라 이 상태에서의 롤백은 되돌아갈 자리가 없다 (409).
+insert into active_test_version (id, test_version, previous_test_version, activated_at)
+values ('CURRENT', 'gn-2026.08.1', null, timestamp with time zone '2026-08-09T00:00:00Z');
+
+-- 감사 이력의 첫 행. 발행과 최초 활성화가 같은 순간이라 previous_version이 null이다.
+insert into active_version_audit (id, action, previous_version, new_version, reason, recorded_at)
+values ('av_00000000-0000-0000-0000-000000000001', 'ACTIVATE', null, 'gn-2026.08.1',
+        'KAN-26 발행 입력 DB 이관 baseline', timestamp with time zone '2026-08-09T00:00:00Z');

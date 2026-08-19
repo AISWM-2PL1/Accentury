@@ -10,14 +10,14 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 서비스 전역 설정 - 활성 테스트와 점수 버전, 세션 정책.
+ * 서비스 전역 설정 - 세션과 업로드, 분석, 결과 정책.
  * <p>
- * 세션은 생성 시점의 {@code testVersion}과 {@code scoreVersion}에 고정된다 (API 명세서 §5.4).
- * 프로토타입에서는 활성 버전을 이 설정 파일로 관리하고,
- * 버전 발행과 활성 전환(KAN-26)이 들어오면 DB 관리로 옮긴다.
+ * <b>활성 테스트 버전과 점수 버전은 여기 없다</b> (KAN-26). 발행 입력이 DB로 확정되면서
+ * (2026-08-09, §6) 활성 버전은 {@code active_test_version} 한 행이 정본이 됐고, 점수 버전은
+ * 그 정의가 선언한 값을 따른다 - 세션은 생성 시점의 두 버전에 고정된다 (§5.4). 설정 파일과
+ * DB에 같은 값이 둘 있으면 어긋날 수 있는데, 어긋난 배포를 기동 검사로 막느니 정본을 하나로
+ * 줄이는 편이 낫다는 판단이다.
  *
- * @param testVersion    활성 테스트 정의 버전 (예: gn-2026.08.1)
- * @param scoreVersion   활성 점수 버전 - 집계식과 등급 경계의 기준 (sv-0.3, KAN-21)
  * @param session        익명 세션 정책 (KAN-9)과 세션 생성 요청 제한 (KAN-28)
  * @param analysis       분석 상태 폴링 정책 (KAN-23, KAN-24)과 AI 회로 차단 정책 (KAN-28)
  * @param upload         음성 업로드 요청 제한 (KAN-23, KAN-28)과 임시파일 정책 (KAN-27)
@@ -25,7 +25,8 @@ import java.util.Map;
  * @param completion     완료 API 요청 제한 (KAN-16)
  * @param cors           웹 테스트 CORS allowlist (KAN-23, KAN-31)
  * @param result         결과 응답의 등급별 자산과 공유 URL (KAN-25)
- * @param analytics      익명 집계 카운터의 일자 경계와 운영자 조회 토큰 (KAN-106)
+ * @param analytics      익명 집계 카운터의 일자 경계와 조회 상한 (KAN-106)
+ * @param admin          운영자 전용 API(§6)의 공유 시크릿 (KAN-106, KAN-26)
  * @param trustedProxies 요청 제한의 기준 IP를 정할 때 신뢰하는 프록시 대역 (KAN-28, §2.5).
  *                       CIDR 또는 단일 IP 목록이고, 직접 접속한 상대가 이 목록에 들어야만
  *                       {@code X-Forwarded-For}를 읽는다. 비어 있으면 헤더를 무시하고 접속 IP만
@@ -34,11 +35,12 @@ import java.util.Map;
  *                       지정하지 않으면 모든 사용자가 ALB IP 하나를 공유해 서로의 한도를 깎는다.
  */
 @ConfigurationProperties(prefix = "accentury")
-public record AccenturyProperties(String testVersion, String scoreVersion, Session session,
+public record AccenturyProperties(Session session,
                                   @DefaultValue Analysis analysis, @DefaultValue Upload upload,
                                   @DefaultValue Vocab vocab,
                                   @DefaultValue Completion completion, @DefaultValue Cors cors,
                                   @DefaultValue Result result, @DefaultValue Analytics analytics,
+                                  @DefaultValue Admin admin,
                                   @DefaultValue List<String> trustedProxies) {
 
     /**
@@ -177,18 +179,29 @@ public record AccenturyProperties(String testVersion, String scoreVersion, Sessi
      *                      리포트를 읽는 사람의 하루(KAN-20 등급 분포)와 행의 하루가 같아야
      *                      한다 - UTC로 자르면 KST 09:00에 날짜가 바뀌어 "8월 17일 응시 수"가
      *                      한국의 8월 17일과 어긋난다. 저장 시각 체계(Instant)와는 별개다.
-     * @param adminToken    운영자 조회 엔드포인트({@code GET /admin/v0/analytics}, §6)의 공유
-     *                      시크릿 - 세션 토큰이 아니라 §6이 규정한 별도 관리자 인증이다.
-     *                      <b>미설정이 기본값이고, 그러면 엔드포인트 자체가 등록되지 않는다</b>
-     *                      (404) - 설정을 빼먹어도 열려 있는 경로가 생기지 않게 하는 안전한
-     *                      기본값이다 (trustedProxies와 같은 계열). 조회 API와 대시보드는
-     *                      티켓 범위 밖이라 이 최소 경로만 둔다.
      * @param maxQueryDays  조회 한 번의 최대 기간(일). 실수로 전 기간을 훑는 질의가 운영 DB를
      *                      붙잡지 않게 막는 상한이다 - 넘으면 400이다.
      */
     public record Analytics(@DefaultValue("Asia/Seoul") ZoneId zone,
-                            @Nullable String adminToken,
                             @DefaultValue("366") int maxQueryDays) {
+    }
+
+    /**
+     * 운영자 전용 API(§6)의 인증 (KAN-106, KAN-26).
+     *
+     * @param token 관리자 엔드포인트 셋({@code GET /admin/v0/analytics},
+     *              {@code PUT /admin/v0/active-version}, {@code GET /admin/v0/test-definitions})이
+     *              공유하는 시크릿 - 세션 토큰이 아니라 §6이 규정한 별도 관리자 인증이다.
+     *              <b>미설정이 기본값이고, 그러면 엔드포인트 자체가 등록되지 않는다</b> (404) -
+     *              설정을 빼먹어도 열려 있는 경로가 생기지 않게 하는 안전한 기본값이다
+     *              (trustedProxies와 같은 계열). 검사는 {@code AdminAuth}가 한 곳에서 한다.
+     *              <p>
+     *              KAN-106 시절 이름은 {@code accentury.analytics.admin-token}이었다. 관리자
+     *              API가 셋으로 늘면서 집계 네임스페이스 아래 두는 것이 맞지 않게 되어 옮겼다
+     *              (2026-08-19, KAN-26). 환경 변수 이름도 {@code ACCENTURY_ADMIN_TOKEN}으로
+     *              바뀐다 - 아직 배포 전이라 옮길 설정이 없다.
+     */
+    public record Admin(@Nullable String token) {
     }
 
     /**
