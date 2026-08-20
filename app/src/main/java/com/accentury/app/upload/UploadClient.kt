@@ -13,6 +13,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
+import java.util.concurrent.TimeUnit
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
@@ -53,13 +54,31 @@ sealed interface UploadResult {
     data class TransportError(val reason: String) : UploadResult
 }
 
+/**
+ * 업로드 한 건의 절대 상한 (KAN-146).
+ *
+ * OkHttp 기본값은 connect·read·write 각 10초인데 그건 **소켓이 멈춘** 경우에만 걸린다. 느리지만
+ * 조금씩 진행하는 링크에서는 어느 것도 발화하지 않고, callTimeout 기본값이 0(무제한)이라 호출 전체에
+ * 천장이 없다. 그동안 녹음 화면은 "제출 중…"으로 붙들려 있고(KAN-146) 그 화면에는 누를 수 있는 것이
+ * 없다 — 320KB WAV를 저속망에서 올리면 수 분을 그 상태로 보낸다.
+ *
+ * 60초를 넘기면 IOException으로 끊어 기존 실패 경로(TransportError → Failed)를 타게 한다. 그러면
+ * 화면이 곧바로 웹으로 돌아가고 업로드 상태 바의 [재시도]가 복구를 받는다. 값은 백엔드의 분석
+ * 실행 상한(accentury.analysis.processing-timeout=60s)과 같은 자리수로 맞췄다.
+ */
+private const val UPLOAD_CALL_TIMEOUT_SEC = 60L
+
+private fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
+    .callTimeout(UPLOAD_CALL_TIMEOUT_SEC, TimeUnit.SECONDS)
+    .build()
+
 interface UploadClient {
     suspend fun upload(sessionId: String, sessionToken: String, request: UploadRequest): UploadResult
 }
 
 class OkHttpUploadClient(
     baseUrl: String,
-    private val client: OkHttpClient = OkHttpClient(),
+    private val client: OkHttpClient = defaultClient(),
 ) : UploadClient {
 
     private val baseUrl: HttpUrl = baseUrl.toHttpUrl()

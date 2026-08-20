@@ -192,7 +192,7 @@ class TestFlowControllerTest {
         controller.onUploadsChanged(emptyMap())
         assertEquals(TestFlowPhase.Submitting(start, "at_1"), controller.phase)
 
-        controller.onSubmitTimeout("at_1")
+        controller.onSubmitTimeout("at_1", emptyMap())
 
         assertEquals(TestFlowPhase.Web, controller.phase)
     }
@@ -208,7 +208,7 @@ class TestFlowControllerTest {
         controller.onStartVoiceItem(start, micGranted = true)
         controller.onRecordingFinished("at_2", durationMs = 3_200, quality = QualityStatus.NORMAL)
 
-        controller.onSubmitTimeout("at_1")
+        controller.onSubmitTimeout("at_1", emptyMap())
 
         assertEquals(TestFlowPhase.Submitting(start, "at_2"), controller.phase)
     }
@@ -258,6 +258,23 @@ class TestFlowControllerTest {
         assertEquals(listOf("item_1"), results.map { it.itemId })
         // 앞 시도의 결과가 나가면서 새 문항의 녹음 화면을 실수로 걷어버리면 안 된다
         assertEquals(TestFlowPhase.Recording(voiceItem(itemId = "item_3", number = 3)), controller.phase)
+    }
+
+    /*
+     * 타이머는 업로드가 목록에 오르기 전 한 프레임에도 걸릴 수 있다. 발화 시점에 다시 확인하지 않으면
+     * 그새 시작된(또는 백그라운드에서 계속되던) 업로드를 시간이 끊어, 없애려던 대기 화면이 그 자리에
+     * 생긴다.
+     */
+    @Test
+    fun `상한이 와도 업로드가 진행 중이면 화면을 계속 붙든다`() {
+        val controller = TestFlowController()
+        val start = voiceItem()
+        controller.onStartVoiceItem(start, micGranted = true)
+        controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
+
+        controller.onSubmitTimeout("at_1", mapOf("at_1" to UploadState.InFlight))
+
+        assertEquals(TestFlowPhase.Submitting(start, "at_1"), controller.phase)
     }
 
     @Test
