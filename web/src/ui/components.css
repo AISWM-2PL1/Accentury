@@ -1,0 +1,143 @@
+/*
+ * 공통 컴포넌트 스타일 (KAN-148). 값은 전부 tokens.css의 토큰을 참조한다 —
+ * 여기에 색이나 크기를 직접 적으면 정본 밖에 네 번째 출처가 생긴다.
+ *
+ * 인라인 style이 아니라 CSS 파일인 이유: :active·:disabled·:focus-visible 같은 상태는
+ * 인라인으로 표현할 수 없다. 눌림 효과가 이 버튼의 정체성이라 상태 표현이 필수다.
+ */
+
+/*
+ * Chunky 3D 버튼 — 시안(prototype/src/app/App.tsx ChunkyBtn)의 시각 정체성이다.
+ * 밑변에 그림자를 깔아 두께를 만들고, 누르면 그림자가 줄면서 본체가 내려간다.
+ */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+
+  /* ux-ui.md §5 최소선: 터치 타겟 48dp 이상 */
+  min-height: var(--touch-target-min);
+  padding: 0 var(--space-6);
+  border: none;
+  border-radius: var(--radius-md);
+
+  font-family: var(--font-body);
+  font-size: var(--text-body);
+  font-weight: var(--weight-bold);
+  line-height: 1;
+
+  cursor: pointer;
+  transition:
+    box-shadow var(--duration-press) var(--ease-out),
+    transform var(--duration-press) var(--ease-out);
+}
+
+.btn--primary {
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  box-shadow: 0 var(--button-rest-depth) 0 var(--color-primary-dim);
+}
+
+/* 보조 동작. 면을 채우지 않고 테두리만 둬서 주버튼과 무게를 가른다 */
+.btn--secondary {
+  background: var(--color-card);
+  color: var(--color-secondary-foreground);
+  box-shadow:
+    0 0 0 1px var(--color-control-border) inset,
+    0 var(--button-rest-depth) 0 var(--color-control-border);
+}
+
+/* 이탈·종료처럼 눌리면 안 되는 쪽으로 무게를 더 뺀다 — 그림자도 두지 않는다 */
+.btn--text {
+  background: none;
+  color: var(--color-muted-foreground);
+  font-weight: var(--weight-medium);
+  padding: 0 var(--space-3);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(calc(var(--button-rest-depth) - var(--button-pressed-depth)));
+}
+
+.btn--primary:active:not(:disabled) {
+  box-shadow: 0 var(--button-pressed-depth) 0 var(--color-primary-dim);
+}
+
+.btn--secondary:active:not(:disabled) {
+  box-shadow:
+    0 0 0 1px var(--color-control-border) inset,
+    0 var(--button-pressed-depth) 0 var(--color-control-border);
+}
+
+.btn--text:active:not(:disabled) {
+  transform: none;
+}
+
+/*
+ * 비활성은 불투명도만 낮춘다. 회색으로 칠하면 색이 하나 더 늘고, 그 회색이 배경에 따라
+ * 대비를 잃는다 — 원래 색을 흐리게 하면 대비 비율이 함께 줄어 예측 가능하다.
+ */
+.btn:disabled {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+}
+
+/* ── 진척도 ── */
+
+.progress-indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  width: 100%;
+  max-width: var(--content-max-width);
+}
+
+/*
+ * `<progress>`의 내장 의미론(role=progressbar + value/max)을 그대로 쓴다. 브라우저 기본
+ * 모양은 플랫폼마다 다르므로 트랙·바 색만 토큰으로 덮는다.
+ */
+.progress-indicator__bar {
+  width: 100%;
+  height: var(--space-2);
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--color-muted);
+  /* Firefox */
+  accent-color: var(--color-primary);
+}
+
+.progress-indicator__bar::-webkit-progress-bar {
+  background: var(--color-muted);
+  border-radius: var(--radius-full);
+}
+
+.progress-indicator__bar::-webkit-progress-value {
+  background: var(--color-primary);
+  border-radius: var(--radius-full);
+  transition: width var(--duration-base) var(--ease-out);
+}
+
+.progress-indicator__bar::-moz-progress-bar {
+  background: var(--color-primary);
+  border-radius: var(--radius-full);
+}
+
+/* ── 대기·오류 블록 ── */
+
+.status-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  text-align: center;
+}
+
+.status-block__detail {
+  color: var(--color-muted-foreground);
+}
+
+.status-block--error .status-block__detail {
+  color: var(--color-destructive-on-surface);
+}

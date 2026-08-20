@@ -5,14 +5,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import com.accentury.app.ui.components.AccenturyButton
+import com.accentury.app.ui.components.ButtonVariant
+import com.accentury.app.ui.theme.Spacing
 
 /**
  * 성공(Done)은 조용히 넘어가고, 진행 중 개수와 실패 건의 복구 경로만 보여준다.
@@ -30,31 +30,38 @@ fun UploadStatusBar(
     if (summary.inFlight == 0 && summary.failed.isEmpty()) return
 
     Column(
-        modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = modifier.fillMaxWidth().padding(horizontal = Spacing.x4, vertical = Spacing.x2),
+        verticalArrangement = Arrangement.spacedBy(Spacing.x1),
     ) {
-        if (summary.inFlight > 0) Text("업로드 중 ${summary.inFlight}건", fontSize = 14.sp)
+        if (summary.inFlight > 0) {
+            Text("업로드 중 ${summary.inFlight}건", style = MaterialTheme.typography.labelLarge)
+        }
 
         summary.failed.forEach { (attemptId, failed) ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.x2),
             ) {
                 Text(
                     "${labelOf(attemptId)} 업로드 실패 — ${failed.message ?: "알 수 없는 오류"}",
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
                     modifier = Modifier.weight(1f),
                 )
                 // 재시도 불가 실패는 같은 바이트를 다시 보내도 결과가 같으므로 버튼을 주지 않는다.
                 if (failed.retryable) {
-                    OutlinedButton(onClick = { onRetry(attemptId) }) { Text("재시도") }
+                    AccenturyButton(
+                        text = "재시도",
+                        variant = ButtonVariant.Secondary,
+                        onClick = { onRetry(attemptId) },
+                    )
                 }
             }
         }
 
         if (summary.failed.isNotEmpty()) {
-            TextButton(onClick = onEndTest) { Text("테스트 종료") }
+            AccenturyButton(text = "테스트 종료", variant = ButtonVariant.Text, onClick = onEndTest)
         }
     }
 }

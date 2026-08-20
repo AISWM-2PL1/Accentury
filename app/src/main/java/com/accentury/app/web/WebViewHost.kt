@@ -13,7 +13,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.Button
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -24,10 +25,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.accentury.app.BuildConfig
+import com.accentury.app.ui.components.AccenturyButton
+import com.accentury.app.ui.components.StatusBlock
+import com.accentury.app.ui.components.StatusTone
+import com.accentury.app.ui.theme.Spacing
 import com.accentury.app.bridge.VoiceItemStart
 import kotlinx.coroutines.delay
 import java.util.concurrent.atomic.AtomicBoolean
@@ -197,14 +200,14 @@ fun WebViewHost(
  */
 @Composable
 private fun LoadingScreen(modifier: Modifier = Modifier) {
-    Surface(modifier = modifier.fillMaxSize()) {
+    Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
             modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+            verticalArrangement = Arrangement.spacedBy(Spacing.x3, Alignment.CenterVertically),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text("사투리 억양 테스트", fontSize = 20.sp)
-            CircularProgressIndicator()
+            Text("사투리 억양 테스트", style = MaterialTheme.typography.titleMedium)
+            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
         }
     }
 }
@@ -213,12 +216,15 @@ private fun LoadingScreen(modifier: Modifier = Modifier) {
 @Composable
 private fun LoadFailureScreen(onRetry: () -> Unit, modifier: Modifier = Modifier) {
     Column(
-        modifier = modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+        modifier = modifier.fillMaxSize().padding(Spacing.x4),
+        verticalArrangement = Arrangement.spacedBy(Spacing.x3, Alignment.CenterVertically),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text("연결이 불안정해요", fontSize = 20.sp)
-        Text("네트워크를 확인하고 다시 시도해 주세요", fontSize = 14.sp)
-        Button(onClick = onRetry) { Text("다시 시도") }
+        StatusBlock(
+            tone = StatusTone.Error,
+            message = "연결이 불안정해요",
+            detail = "네트워크를 확인하고 다시 시도해 주세요",
+            action = { AccenturyButton(text = "다시 시도", onClick = onRetry) },
+        )
     }
 }

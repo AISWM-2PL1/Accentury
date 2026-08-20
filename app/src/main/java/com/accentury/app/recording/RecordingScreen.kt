@@ -12,12 +12,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.material3.Button
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -31,6 +28,13 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.accentury.app.ui.components.AccenturyButton
+import com.accentury.app.ui.components.ButtonVariant
+import com.accentury.app.ui.components.ProgressIndicator
+import com.accentury.app.ui.components.StatusBlock
+import com.accentury.app.ui.components.StatusTone
+import com.accentury.app.ui.theme.Dimens
+import com.accentury.app.ui.theme.Spacing
 import com.accentury.app.ui.theme.accenturyColors
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -81,7 +85,7 @@ fun RecordingScreen(
     // 프레임이 청크마다 늘어나므로 remember로 묶지 않는다 - 어차피 매 방출마다 다시 계산해야 한다.
     val myPoints = userCurveDisplayPoints(pitchFrames, windowMs)
 
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+    Column(modifier = Modifier.fillMaxSize().padding(Spacing.x4)) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             /*
              * 제출한 뒤에는 이탈 통로를 닫는다 - 이 시도는 이미 업로드에 올라가 결과를 기다리는
@@ -89,27 +93,39 @@ fun RecordingScreen(
              *
              * 숨기지 않고 비활성으로 두는 이유: 버튼이 빠지면 이 Row의 높이가 줄어 아래 내용이
              * 통째로 당겨 올라간다. [다음]을 누른 순간 문항 문구와 곡선이 한 번 튀어 오르는데,
-             * 화면을 붙들어 전환을 없애려는 이 티켓에서 그 흔들림이 제일 눈에 띈다 (실측 63px).
+             * 화면을 붙들어 전환을 없애려는 KAN-146에서 그 흔들림이 제일 눈에 띈다 (실측 63px).
              */
-            TextButton(
+            AccenturyButton(
+                text = "나가기",
+                variant = ButtonVariant.Text,
                 enabled = !submitting,
                 onClick = {
                     viewModel.reset() // 이탈 즉시 녹음 중단·마이크 해제·PCM 폐기 (FR-DP-02)
                     onExit()
                 },
-            ) { Text("나가기") }
+            )
             Spacer(modifier = Modifier.weight(1f))
-            Text("$questionIndex / $totalQuestions")
+            // 웹 진행바와 같은 컴포넌트·같은 값이다 - 문항이 두 런타임을 오가므로 표기가
+            // 달라지면 사용자에게는 진행이 튄 것처럼 보인다
+            ProgressIndicator(
+                current = questionIndex,
+                total = totalQuestions,
+                modifier = Modifier.weight(2f),
+            )
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
-        Text(questionText, fontSize = 24.sp)
-        Spacer(modifier = Modifier.height(8.dp))
-        Text("평소 말하듯 자연스럽게 읽어주세요", fontSize = 14.sp)
+        Spacer(modifier = Modifier.height(Spacing.x6))
+        /*
+         * 따라 말할 대사다. headlineMedium(26sp)은 ux-ui.md §5의 "대사 카드 24sp 이상"을
+         * 지키는 크기이고, 웹 음성 문항 화면(.type-headline 26px)과 같은 값이다.
+         */
+        Text(questionText, style = MaterialTheme.typography.headlineMedium)
+        Spacer(modifier = Modifier.height(Spacing.x2))
+        Text("평소 말하듯 자연스럽게 읽어주세요", style = MaterialTheme.typography.labelLarge)
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(Spacing.x6))
         CurveLane(label = "가이드", points = guidePoints, lineColor = MaterialTheme.accenturyColors.guideCurve)
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(Spacing.x2))
         CurveLane(label = "내 억양", points = myPoints, lineColor = MaterialTheme.accenturyColors.userCurve)
 
         Spacer(modifier = Modifier.weight(1f))
@@ -131,11 +147,12 @@ fun RecordingScreen(
             is RecordingUiState.Recording -> {
                 Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(formatElapsed(s.elapsedMs) + " / 최대 10초")
-                    Text("입력 레벨(RMS): ${s.rms.toInt()}", fontSize = 12.sp) // 개발용 — 오디오 경로 진단
+                    // 개발용 — 오디오 경로 진단
+                    Text("입력 레벨(RMS): ${s.rms.toInt()}", style = MaterialTheme.typography.labelSmall)
                     if (s.countdownActive) {
                         Text("곧 자동 종료됩니다 (${(RecordingEngine.MAX_DURATION_MS - s.elapsedMs) / 1000 + 1}초)")
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(Spacing.x2))
                     RecordButton(text = "■ 정지", onClick = viewModel::stopRecording)
                 }
             }
@@ -145,10 +162,15 @@ fun RecordingScreen(
                     if (s.autoStopped) Text("10초가 지나 자동으로 종료됐어요")
                     Text(qualityMessage(s.quality))
                     Text("녹음 길이 ${"%.1f".format(s.durationMs / 1000.0)}초")
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        OutlinedButton(onClick = viewModel::retryRecording) { Text("재녹음") }
-                        Button(
+                    Spacer(modifier = Modifier.height(Spacing.x2))
+                    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.x3)) {
+                        AccenturyButton(
+                            text = "재녹음",
+                            variant = ButtonVariant.Secondary,
+                            onClick = viewModel::retryRecording,
+                        )
+                        AccenturyButton(
+                            text = "다음",
                             enabled = s.canProceed,
                             /*
                              * 되감기(reset)를 여기서 부르지 않는다 (KAN-146). [다음] 뒤에도 이 화면은
@@ -158,21 +180,24 @@ fun RecordingScreen(
                              * 가져가므로(FR-DP-02) 되감기가 늦어져도 음성 바이트가 남지는 않는다.
                              */
                             onClick = { onNext(s.attemptId, s.durationMs, s.quality) },
-                        ) { Text("다음") }
+                        )
                     }
                 }
             }
 
             is RecordingUiState.Failed -> {
-                Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("녹음에 실패했어요 — ${s.reason}")
-                    Spacer(modifier = Modifier.height(8.dp))
-                    RecordButton(text = "다시 시도", onClick = viewModel::retryRecording)
-                }
+                StatusBlock(
+                    tone = StatusTone.Error,
+                    message = "녹음에 실패했어요",
+                    detail = s.reason,
+                    action = {
+                        AccenturyButton(text = "다시 시도", onClick = viewModel::retryRecording)
+                    },
+                )
             }
         }
 
-        Spacer(modifier = Modifier.height(80.dp))
+        Spacer(modifier = Modifier.height(Spacing.x8))
     }
 }
 
@@ -192,7 +217,7 @@ private fun CurveLane(label: String, points: List<CurvePoint> = emptyList(), lin
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .height(120.dp)
+            .height(CURVE_LANE_HEIGHT)
             .border(1.dp, MaterialTheme.accenturyColors.curveLaneBorder),
     ) {
         // 라벨을 캔버스와 겹치지 않는 자기 행에 둔다 - 곡선 최고점은 캔버스 상단 근처까지
@@ -201,7 +226,7 @@ private fun CurveLane(label: String, points: List<CurvePoint> = emptyList(), lin
             label,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 8.dp, top = 4.dp),
+            modifier = Modifier.padding(start = Spacing.x2, top = Spacing.x1),
         )
         Canvas(modifier = Modifier.fillMaxWidth().weight(1f)) {
             val stroke = 2.dp.toPx()
@@ -225,11 +250,15 @@ private fun CurveLane(label: String, points: List<CurvePoint> = emptyList(), lin
 @Composable
 private fun RecordButton(text: String, onClick: () -> Unit) {
     Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-        Button(onClick = onClick, modifier = Modifier.size(width = 160.dp, height = 72.dp)) {
-            Text(text, fontSize = 18.sp)
-        }
+        // 녹음 버튼만 폭을 넓게 잡는다 - 이 화면의 주동작이고 손가락이 바로 닿아야 한다
+        AccenturyButton(text = text, onClick = onClick, modifier = Modifier.width(RECORD_BUTTON_WIDTH))
     }
 }
+
+private val RECORD_BUTTON_WIDTH = 200.dp
+
+/** 곡선 레인 하나의 높이. 레인 둘에 대사·버튼까지 한 화면에 서야 한다 (ux-ui.md §D) */
+private val CURVE_LANE_HEIGHT = 120.dp
 
 private fun formatElapsed(elapsedMs: Long): String {
     val seconds = elapsedMs / 1000
