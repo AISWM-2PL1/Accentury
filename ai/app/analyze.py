@@ -1,9 +1,13 @@
-"""``POST /internal/v0/analyze`` (API 명세서 §4.1) - KAN-27 스켈레톤.
+"""``POST /internal/v0/analyze`` (API 명세서 §4.1).
 
-이 엔드포인트에서 **완성된 것은 오디오의 수명 관리뿐**이다. 점수는 고정값 스텁이고,
-실제 추론(F0 추출, guideF0 정렬, 점수 산출)은 KAN-22가 이 자리에 들어온다. 스텁이라도
-경로는 실제와 같게 둔다 - 받은 오디오를 파일로 한 번 내려놓고, 응답을 만들고, 그 파일을
-지운다. 그래야 KAN-22가 모델 호출만 갈아끼우면 되고, 지금 검증하는 "무잔존"이 그대로 남는다.
+이 엔드포인트에서 완성된 것은 **오디오의 수명 관리와 응답 봉투**다. 점수를 만드는 일은
+:mod:`app.engine`의 어댑터 뒤에 있고, 지금 꽂혀 있는 것은 고정 점수 스텁이다. 실제
+추론(F0 추출, guideF0 정렬, 점수 산출)은 KAN-22가 엔진 구현 하나로 들어오며, 그때
+이 파일은 고치지 않는다 (KAN-135).
+
+경로는 엔진 종류와 무관하게 같다 - 받은 오디오를 파일로 한 번 내려놓고, 엔진에 상한을
+걸어 넘기고, 응답을 만들고, 그 파일을 지운다. "무잔존", 추론 상한, 오디오 상한(413)이
+이 자리에 남아 있어야 어떤 엔진이 와도 같은 보장이 걸린다 (KAN-27, KAN-135).
 """
 
 from __future__ import annotations
@@ -17,6 +21,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse
+
+from app.engine import AnalysisOutcome, AnalysisRequest
 
 log = logging.getLogger(__name__)
 
@@ -38,11 +44,11 @@ async def analyze(
     meta: Annotated[str, Form()],
 ) -> JSONResponse:
     """음성 1건을 분석한다 (BE 전용, 사설망).
-
     응답을 돌려준 뒤 이 서버에는 오디오가 남지 않는다 (§4.1, NFR-PR-03).
     """
     settings = request.app.state.settings
     store = request.app.state.temp_store
+    engine = request.app.state.engine
 
     try:
         parsed = json.loads(meta)
@@ -72,12 +78,30 @@ async def analyze(
             return JSONResponse(
                 status_code=413, content={"status": "FAILED", "detail": "오디오 상한 초과"}
             )
+        # 엔진 호출 구간만 따로 잰다 - 상한이 감싸는 것도 이 구간이다. 요청 전체(started)와
+        # 견주면 멀티파트를 임시파일로 옮기는 시간까지 섞여, 예산 안에 끝난 엔진이 위반으로
+        # 보인다 (KAN-135 리뷰 P2-B)
+        engine_started = time.monotonic()
         try:
             # 추론에 상한을 건다 (Codex sol 리뷰 P1) - 호출자가 연결을 끊어도 서버 코루틴은
             # 자동으로 취소되지 않으므로, 멈춘 추론을 그대로 두면 임시파일 수명이 무한해진다.
-            # 여기서 끊으면 with 블록이 파일을 지우고 GPU 슬롯도 돌아온다
+            # 여기서 끊으면 with 블록이 파일을 지운다. 다만 **엔진 쪽 작업까지 멈춘다는
+            # 보장은 없다** - asyncio.to_thread로 넘긴 추론은 취소되지 않아 워커가 계속
+            # 돌고, 그 워커가 보는 오디오 파일은 이미 지워진 뒤다. GPU 슬롯도 그만큼
+            # 붙들린다. 그래서 "취소가 실제로 닿을 것"이 엔진 쪽 계약이다
+            # (app.engine.AnalysisEngine.analyze)
             async with asyncio.timeout(settings.analysis_timeout_seconds):
-                outcome = await _analyze_stub(path, item_id, settings)
+                outcome = await engine.analyze(AnalysisRequest(audio_path=path, meta=parsed))
+            # 프로토콜은 구조만 보므로 반환 타입은 런타임에 강제되지 않고, CI에도 타입
+            # 체커가 없다. 속성 이름만 같은 객체를 돌려주면 AnalysisOutcome의 검사가
+            # 통째로 우회돼 점수 999짜리 200이 그대로 나간다 - BE는 그것을 계약 위반으로
+            # 끊고 재전송 없이 종결하므로(INTERNAL_ERROR) 사용자가 문항을 잃는다.
+            # 500으로 끊으면 BE가 일시 장애로 보고 다시 시도한다
+            if not isinstance(outcome, AnalysisOutcome):
+                raise TypeError(
+                    f"엔진이 AnalysisOutcome이 아닌 것을 돌려줬다: {type(outcome).__name__}"
+                )
+            engine_ms = round((time.monotonic() - engine_started) * 1000)
         except TimeoutError:
             processing_ms = round((time.monotonic() - started) * 1000)
             log.warning(
@@ -95,24 +119,40 @@ async def analyze(
             )
 
     processing_ms = round((time.monotonic() - started) * 1000)
+    # 예산을 넘겼는데 상한이 발화하지 않았다면, 엔진이 await 없이 돌아 asyncio.timeout이
+    # 끼어들 틈을 주지 않은 것이다 (계약 위반, app.engine.AnalysisEngine.analyze). 원인까지
+    # 단정하지는 않는다 - 여기서 확실한 것은 "예산을 넘겼는데 끊기지 않았다"까지다.
+    # 끊지는 못해도 신호는 남긴다. 루프 차단 자체의 계측과 계약 강제는 KAN-137이다
+    limit_ms = settings.analysis_timeout_seconds * 1000
+    if engine_ms > limit_ms:
+        log.error(
+            "엔진이 예산을 넘겼는데 상한이 발화하지 않았다 "
+            "correlationId=%s itemId=%s engineMs=%d limitMs=%d",
+            correlation_id,
+            item_id,
+            engine_ms,
+            round(limit_ms),
+        )
     # 오디오 바이트도, 점수도 로그에 남기지 않는다 (§2.6, NFR-SC-07) - 크기와 추적 ID만이다
     log.info(
         "분석 종료 correlationId=%s itemId=%s bytes=%d status=%s ms=%d",
         correlation_id,
         item_id,
         size,
-        outcome["status"],
+        outcome.status,
         processing_ms,
     )
 
-    if outcome["status"] == "FAILED":
+    # 봉투 조립은 엔진 밖이다 (KAN-135) - scoreVersion과 processingMs는 엔진이 알 바가
+    # 아니고, modelVersion은 설정이 아니라 엔진이 자기 정체로 보고한 값을 그대로 싣는다
+    if outcome.failed:
         return JSONResponse(
             status_code=422,
             content={
                 "status": "FAILED",
-                "quality": {"code": outcome["qualityCode"]},
-                "retryable": outcome["retryable"],
-                "modelVersion": settings.stub_model_version,
+                "quality": {"code": outcome.quality_code},
+                "retryable": outcome.retryable,
+                "modelVersion": engine.model_version,
                 "scoreVersion": score_version,
                 "processingMs": processing_ms,
             },
@@ -120,15 +160,15 @@ async def analyze(
     return JSONResponse(
         status_code=200,
         content={
-            "status": "OK",
-            "intonationScore": settings.stub_intonation_score,
-            "confidence": 1.0,
-            "quality": {"code": "OK"},
-            "segments": [],
+            "status": outcome.status,
+            "intonationScore": outcome.intonation_score,
+            "confidence": outcome.confidence,
+            "quality": {"code": outcome.quality_code},
+            "segments": list(outcome.segments),
             # 세션이 고정한 점수 버전을 그대로 되돌려준다 - BE가 불일치를 계약 위반으로
             # 끊으므로(§5.4), 스텁이 제 버전을 지어내면 전 요청이 INTERNAL_ERROR가 된다
             "scoreVersion": score_version,
-            "modelVersion": settings.stub_model_version,
+            "modelVersion": engine.model_version,
             "processingMs": processing_ms,
         },
     )
@@ -153,16 +193,3 @@ async def _spool(upload: UploadFile, path: Path, max_bytes: int) -> int | None:
                 return None
             file.write(chunk)
     return total
-
-
-async def _analyze_stub(path: Path, item_id: str, settings) -> dict:
-    """KAN-22가 실제 추론으로 대체할 자리.
-
-    지금은 파일을 실제로 한 번 읽어(모델이 그러듯) 고정 점수를 돌려준다.
-    """
-    if settings.stub_delay_ms:
-        await asyncio.sleep(settings.stub_delay_ms / 1000)
-    path.stat()
-    if settings.stub_fail_item and item_id == settings.stub_fail_item:
-        return {"status": "FAILED", "qualityCode": "AUDIO_TOO_QUIET", "retryable": True}
-    return {"status": "OK"}

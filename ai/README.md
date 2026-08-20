@@ -23,11 +23,64 @@ BE(Spring Boot)만 호출하는 **사설망 전용** 분석 서버입니다 (API
 - `GET /internal/v0/metrics`가 잔존 파일 수와 최장 잔존 시간을 돌려줍니다 (KAN-38이 소비).
 - `GET /internal/v0/health` (§4.2) - 프로세스 생존만 알립니다.
 
+## 분석 엔진 어댑터 (KAN-135)
+
+점수를 만드는 일은 `app/engine.py`의 `AnalysisEngine` 뒤에 있습니다. 라우트는 엔진이
+무엇인지 모르고, 엔진은 오디오 파일 하나를 보고 결과를 말하는 일만 합니다.
+
+| 자리 | 책임 |
+| --- | --- |
+| 라우트 (`app/analyze.py`) | 임시파일 수명, 추론 상한, 오디오 파트 상한(413), §4.1 봉투 조립 |
+| 엔진 (`app/engine.py`) | 오디오 1건 -> 상태, 억양 점수, 신뢰도, 품질 코드, `segments` |
+
+- 엔진은 기동 시 `ACCENTURY_AI_ANALYSIS_ENGINE`으로 한 번만 고릅니다. 모르는 이름이면
+  기동이 실패합니다 - 스텁으로 조용히 흘러가면 실모델을 띄웠다고 믿는 환경이 고정 점수를
+  내보내면서 아무 신호도 남기지 않기 때문입니다.
+- `modelVersion`은 설정이 아니라 엔진이 스스로 보고합니다. 스텁은 `stub-0.1`을 냅니다.
+  비어 있으면 기동이 실패합니다 - BE가 성공 응답을 계약 위반으로 끊고 회로 차단기를
+  세우기 때문입니다.
+- 실모델(KAN-22)을 붙여도 **라우트(`app/analyze.py`)는 고치지 않습니다.** 엔진 구현
+  하나를 더하면 됩니다. 프로토콜만 맞추면 상속은 필요 없습니다 (`tests/conftest.py`의
+  `FakeEngine`이 그 예입니다). 다만 `GET /internal/v0/models`와 워밍업 상태는 이 경계
+  바깥이라 `app/main.py`에 자리를 만들어야 합니다.
+- `AnalysisOutcome`은 만들어지는 시점에 스스로를 검사합니다. 아래를 어기면 값 자체가
+  존재하지 못합니다 - 그런 응답을 BE가 받으면 계약 위반으로 끊으면서 회로 차단기를
+  세우기 때문입니다.
+  - 성공이면 억양 점수가 **반올림한 정수**이고 0~100 안입니다. 실수는 거절됩니다.
+  - 성공이면 신뢰도가 비어 있지 않습니다.
+  - 품질 코드는 비어 있지 않고 40자 이하입니다 (BE의 `analysis_job.quality_code` 컬럼 폭).
+    성공 경로의 코드는 BE가 검사 없이 저장하고 사용자에게도 내보냅니다.
+  - 실패면 품질 코드가 §2.4 판정 코드여야 합니다. 허용 목록은 `AUDIO_TOO_QUIET`,
+    `AUDIO_TOO_LONG`, `AUDIO_FORMAT_UNSUPPORTED`, `ANALYSIS_MISREAD` 넷입니다
+    (`engine.py`의 `JUDGED_QUALITY_CODES`). 기본값 `OK`도, 오타도, 지어낸 서술적 코드도
+    거절됩니다 - BE의 `ErrorCode`에 없는 이름은 계약 위반이 되고 그 문항은 재시도 없이
+    죽습니다. BE가 §2.4에 판정 코드를 더하면 이 집합에도 더합니다.
+  - 실패면 `retryable`이 불리언이어야 합니다. 문자열 `"yes"`는 JSON으로 멀쩡히 나가고
+    BE의 역직렬화에서 터집니다.
+  - 봉투 재료 전체가 JSON으로 직렬화됩니다. 실모델이 채우는 `confidence`와 `segments`가
+    `numpy.float32`, `numpy.int64`면 거절됩니다 - 파이썬 `float`/`int`의 하위 타입이
+    아니라서, 막지 않으면 응답 조립 시점에 500이 되고 BE가 재전송 예산을 태웁니다.
+    엔진은 파이썬 기본 타입으로 변환해서 냅니다.
+- `StubEngine`은 실모델 전환 시 통째로 제거됩니다. 스텁 전용 동작은 전부 이 클래스 안에만
+  둡니다 (점수 분포 확장은 KAN-136).
+
+### 엔진 쪽 계약
+
+라우트가 거는 보장(추론 상한, 임시파일 삭제)은 엔진이 다음 둘을 지킬 때만 성립합니다.
+편의가 아니라 계약이고, 적합성 검사는 KAN-137이 맡습니다.
+
+1. **이벤트 루프를 막지 않습니다.** `asyncio.timeout`은 `await` 지점에서만 발화하므로,
+   동기 추론을 `async def` 안에서 그대로 돌리면 상한이 걸리지 않습니다. 블로킹 추론은
+   `asyncio.to_thread`나 전용 executor로 넘깁니다. 엔진 호출 구간이 예산을 넘겼는데도
+   상한이 발화하지 않은 요청은 ERROR 로그로 남습니다 (끊지는 못합니다).
+2. **취소가 실제로 닿아야 합니다.** `asyncio.to_thread`에 넘긴 작업은 취소되지 않아서,
+   라우트가 503을 내고 임시파일을 지운 뒤에도 워커가 계속 돌며 이미 사라진 파일을 봅니다.
+
 ## 아직 없는 것
 
 | 항목 | 담당 |
 | --- | --- |
-| 실제 추론 (F0 추출, guideF0 정렬, 점수 산출) | KAN-22 |
+| 실제 추론 (F0 추출, guideF0 정렬, 점수 산출) - `AnalysisEngine` 구현 하나로 들어옵니다 | KAN-22 |
 | `GET /internal/v0/models` (모델 버전, 워밍업 상태) | KAN-22 |
 | `correlationId` 기반 멱등 캐시 (§4.1) | KAN-22 - 지금은 스텁이 무상태이고 결정적이라 재요청 결과가 같습니다 |
 | GPU 배포, 컨테이너 이미지 | KAN-36 |
@@ -52,7 +105,7 @@ pytest
 | `ACCENTURY_AI_ANALYSIS_TIMEOUT_SECONDS` | `30` | 분석 1건의 상한 - BE 읽기 타임아웃(10초) 뒤의 방어선 |
 | `ACCENTURY_AI_MAX_AUDIO_BYTES` | `1048576` | 오디오 파트 상한 (§3.3과 동일) |
 | `ACCENTURY_AI_MAX_REQUEST_BYTES` | `2097152` | 요청 본문 전체 상한 - multipart 파싱 전에 끊습니다 |
+| `ACCENTURY_AI_ANALYSIS_ENGINE` | `stub` | 붙일 분석 엔진 - 모르는 이름이면 기동이 실패합니다 |
 | `ACCENTURY_AI_STUB_SCORE` | `75` | 스텁 억양 점수 (0~100, 문항 20점 환산은 BE) |
-| `ACCENTURY_AI_STUB_MODEL_VERSION` | `stub-0.1` | 스텁 모델 버전 |
 | `ACCENTURY_AI_STUB_DELAY_MS` | `1500` | 추론 지연 흉내 |
 | `ACCENTURY_AI_STUB_FAIL_ITEM` | (없음) | 이 itemId면 422 판정 실패를 돌려줍니다 |
