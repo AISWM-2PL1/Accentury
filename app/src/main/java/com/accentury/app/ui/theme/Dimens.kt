@@ -25,6 +25,9 @@ object Radius {
     val md = 16.dp
     val lg = 18.dp
     val xl = 24.dp
+
+    /** 완전한 원. 배지·원형 버튼처럼 모서리를 끝까지 굴리는 자리 */
+    val full = 9999.dp
 }
 
 object Dimens {
@@ -36,6 +39,21 @@ object Dimens {
 
     /** 대사 카드 최소 높이. 문항 길이가 달라도 카드가 들썩이지 않게 고정한다 */
     val promptCardMinHeight = 152.dp
+
+    /** 대사·질문 카드 안쪽 여백 */
+    val promptCardPadding = 22.dp
+
+    /** 곡선 레인 하나의 높이 (시안: h-[72px]) */
+    val curveLaneHeight = 72.dp
+
+    /** 원형 녹음 버튼 지름 (시안: w-20 h-20) */
+    val recordButtonSize = 80.dp
+
+    /** 화면을 여는 원형 히어로 아이콘 지름 (시안: w-28 h-28) */
+    val heroIconSize = 112.dp
+
+    /** 진행바 두께 (시안: h-3) */
+    val progressBarHeight = 12.dp
 
     /** Chunky 3D 버튼의 기본 그림자 깊이. 눌리면 [buttonPressedDepth]로 줄어든다 */
     val buttonRestDepth = 4.dp

@@ -2,7 +2,9 @@ package com.accentury.app.recording
 
 import android.annotation.SuppressLint
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,9 +22,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -31,9 +35,12 @@ import androidx.compose.ui.unit.sp
 import com.accentury.app.ui.components.AccenturyButton
 import com.accentury.app.ui.components.ButtonVariant
 import com.accentury.app.ui.components.ProgressIndicator
+import com.accentury.app.ui.components.PromptCard
+import com.accentury.app.ui.components.RecordButton
 import com.accentury.app.ui.components.StatusBlock
 import com.accentury.app.ui.components.StatusTone
 import com.accentury.app.ui.theme.Dimens
+import com.accentury.app.ui.theme.Radius
 import com.accentury.app.ui.theme.Spacing
 import com.accentury.app.ui.theme.accenturyColors
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -114,19 +121,19 @@ fun RecordingScreen(
             )
         }
 
-        Spacer(modifier = Modifier.height(Spacing.x6))
+        Spacer(modifier = Modifier.height(Spacing.x4))
         /*
-         * 따라 말할 대사다. headlineMedium(26sp)은 ux-ui.md §5의 "대사 카드 24sp 이상"을
-         * 지키는 크기이고, 웹 음성 문항 화면(.type-headline 26px)과 같은 값이다.
+         * 대사 카드. 웹 음성 문항 화면의 카드와 같은 규격이라 전환에서 카드가 튀지 않는다.
+         * headlineMedium(26sp)이 ux-ui.md §5의 "대사 카드 24sp 이상"을 지킨다.
          */
-        Text(questionText, style = MaterialTheme.typography.headlineMedium)
-        Spacer(modifier = Modifier.height(Spacing.x2))
-        Text("평소 말하듯 자연스럽게 읽어주세요", style = MaterialTheme.typography.labelLarge)
+        PromptCard(
+            badge = "🎤 음성 문항",
+            prompt = questionText,
+            supporting = "평소 말하듯 자연스럽게 읽어주세요",
+        )
 
-        Spacer(modifier = Modifier.height(Spacing.x6))
-        CurveLane(label = "가이드", points = guidePoints, lineColor = MaterialTheme.accenturyColors.guideCurve)
-        Spacer(modifier = Modifier.height(Spacing.x2))
-        CurveLane(label = "내 억양", points = myPoints, lineColor = MaterialTheme.accenturyColors.userCurve)
+        Spacer(modifier = Modifier.height(Spacing.x4))
+        CurveCard(guidePoints = guidePoints, userPoints = myPoints)
 
         Spacer(modifier = Modifier.weight(1f))
 
@@ -141,27 +148,52 @@ fun RecordingScreen(
             }
         } else when (val s = state) {
             is RecordingUiState.Idle -> {
-                RecordButton(text = "● 녹음", onClick = viewModel::startRecording)
+                Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                    RecordButton(label = "🎤", onClick = viewModel::startRecording)
+                    Spacer(modifier = Modifier.height(Spacing.x2))
+                    Text(
+                        "버튼을 눌러 녹음",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
 
             is RecordingUiState.Recording -> {
                 Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(formatElapsed(s.elapsedMs) + " / 최대 10초")
+                    Text(
+                        formatElapsed(s.elapsedMs) + " / 최대 10초",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
                     // 개발용 — 오디오 경로 진단
                     Text("입력 레벨(RMS): ${s.rms.toInt()}", style = MaterialTheme.typography.labelSmall)
                     if (s.countdownActive) {
-                        Text("곧 자동 종료됩니다 (${(RecordingEngine.MAX_DURATION_MS - s.elapsedMs) / 1000 + 1}초)")
+                        Text(
+                            "곧 자동 종료됩니다 (${(RecordingEngine.MAX_DURATION_MS - s.elapsedMs) / 1000 + 1}초)",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                     Spacer(modifier = Modifier.height(Spacing.x2))
-                    RecordButton(text = "■ 정지", onClick = viewModel::stopRecording)
+                    RecordButton(label = "⏹", onClick = viewModel::stopRecording, recording = true)
                 }
             }
 
             is RecordingUiState.Review -> {
                 Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                    if (s.autoStopped) Text("10초가 지나 자동으로 종료됐어요")
-                    Text(qualityMessage(s.quality))
-                    Text("녹음 길이 ${"%.1f".format(s.durationMs / 1000.0)}초")
+                    if (s.autoStopped) {
+                        Text(
+                            "10초가 지나 자동으로 종료됐어요",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Text(qualityMessage(s.quality), style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "녹음 길이 ${"%.1f".format(s.durationMs / 1000.0)}초",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     Spacer(modifier = Modifier.height(Spacing.x2))
                     Row(horizontalArrangement = Arrangement.spacedBy(Spacing.x3)) {
                         AccenturyButton(
@@ -212,24 +244,30 @@ fun RecordingScreen(
  * 곡선은 없어도 녹음은 성립하므로 오류 표시 없이 조용히 비워 둔다.
  */
 @Composable
-private fun CurveLane(label: String, points: List<CurvePoint> = emptyList(), lineColor: Color) {
-    // 240dp 자리표시자에서 축소 - 레인 둘에 대사·버튼까지 한 화면에 서야 한다 (ux-ui.md §D)
-    Column(
+private fun CurveLane(
+    label: String,
+    points: List<CurvePoint>,
+    lineColor: Color,
+    dashed: Boolean,
+) {
+    val colors = MaterialTheme.accenturyColors
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(CURVE_LANE_HEIGHT)
-            .border(1.dp, MaterialTheme.accenturyColors.curveLaneBorder),
+            .height(Dimens.curveLaneHeight)
+            .clip(RoundedCornerShape(Radius.md))
+            .background(colors.curveLaneSurface)
+            .border(1.dp, colors.curveLaneBorder, RoundedCornerShape(Radius.md)),
     ) {
-        // 라벨을 캔버스와 겹치지 않는 자기 행에 둔다 - 곡선 최고점은 캔버스 상단 근처까지
-        // 올라오므로(여백 10%), 같은 영역에 겹쳐 그리면 좌상단에서 서로 가린다.
-        Text(
-            label,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = Spacing.x2, top = Spacing.x1),
-        )
-        Canvas(modifier = Modifier.fillMaxWidth().weight(1f)) {
-            val stroke = 2.dp.toPx()
+        Canvas(modifier = Modifier.fillMaxSize().padding(top = Spacing.x4, bottom = Spacing.x1)) {
+            val stroke = CURVE_STROKE.toPx()
+            // 점선은 가이드에만 쓴다 - 색이 아니라 선 모양으로 두 곡선을 가르므로
+            // 색각 이상에서도 어느 쪽이 내 곡선인지 알 수 있다 (WCAG 1.4.1)
+            val effect = if (dashed) {
+                PathEffect.dashPathEffect(floatArrayOf(DASH_ON.toPx(), DASH_OFF.toPx()))
+            } else {
+                null
+            }
             if (points.size >= 2) {
                 val path = Path()
                 points.forEachIndexed { i, p ->
@@ -237,25 +275,58 @@ private fun CurveLane(label: String, points: List<CurvePoint> = emptyList(), lin
                     val y = p.y * size.height
                     if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
                 }
-                drawPath(path, lineColor, style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                drawPath(
+                    path,
+                    lineColor,
+                    style = Stroke(
+                        width = stroke,
+                        cap = StrokeCap.Round,
+                        join = StrokeJoin.Round,
+                        pathEffect = effect,
+                    ),
+                )
             } else if (points.size == 1) {
                 // 유성 프레임이 하나뿐인 극단 - 선은 못 그리니 그 시각에 점 하나로 남긴다
                 val p = points.single()
                 drawCircle(lineColor, radius = stroke, center = Offset(p.x * size.width, p.y * size.height))
             }
         }
+        // 라벨은 레인 좌상단에 얹는다(시안). 곡선 상단 여백 10% 안쪽이라 겹치지 않는다
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = Spacing.x3, top = Spacing.x1),
+        )
     }
 }
 
+private val CURVE_STROKE = 2.dp
+private val DASH_ON = 5.dp
+private val DASH_OFF = 3.dp
+
+/**
+ * 곡선 두 레인을 감싸는 카드 (시안). 레인을 카드에 넣는 이유는 곡선이 "화면에 그려진 선"이
+ * 아니라 "지금 보고 있는 자료"로 읽히게 하기 위해서다 - 대사 카드와 나란히 놓이면 두 덩어리가
+ * 화면의 위아래를 나눈다.
+ */
 @Composable
-private fun RecordButton(text: String, onClick: () -> Unit) {
-    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-        // 녹음 버튼만 폭을 넓게 잡는다 - 이 화면의 주동작이고 손가락이 바로 닿아야 한다
-        AccenturyButton(text = text, onClick = onClick, modifier = Modifier.width(RECORD_BUTTON_WIDTH))
+private fun CurveCard(guidePoints: List<CurvePoint>, userPoints: List<CurvePoint>) {
+    val colors = MaterialTheme.accenturyColors
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(Radius.xl))
+            .background(MaterialTheme.colorScheme.surface)
+            .border(1.dp, colors.curveLaneBorder, RoundedCornerShape(Radius.xl))
+            .padding(Spacing.x4),
+        verticalArrangement = Arrangement.spacedBy(Spacing.x2),
+    ) {
+        Text("억양 곡선", style = MaterialTheme.typography.labelLarge)
+        CurveLane(label = "가이드", points = guidePoints, lineColor = colors.guideCurve, dashed = true)
+        CurveLane(label = "내 억양", points = userPoints, lineColor = colors.userCurve, dashed = false)
     }
 }
-
-private val RECORD_BUTTON_WIDTH = 200.dp
 
 /** 곡선 레인 하나의 높이. 레인 둘에 대사·버튼까지 한 화면에 서야 한다 (ux-ui.md §D) */
 private val CURVE_LANE_HEIGHT = 120.dp

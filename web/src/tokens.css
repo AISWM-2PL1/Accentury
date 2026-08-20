@@ -48,6 +48,7 @@
   --color-prompt-card-end: #1d4ed8;
   --color-prompt-card-foreground: #ffffff;
   --color-prompt-card-muted: #eff6ff;
+  --color-prompt-card-badge: rgba(255, 255, 255, 0.15);
   --color-guide-curve: #5b7fa8;
   --color-user-curve: #ea580c;
   --color-curve-lane-surface: #ecf4ff;
@@ -153,6 +154,7 @@
     --color-prompt-card-end: #1e3a8a;
     --color-prompt-card-foreground: #ffffff;
     --color-prompt-card-muted: #eff6ff;
+    --color-prompt-card-badge: rgba(255, 255, 255, 0.15);
     --color-guide-curve: #7ea8d0;
     --color-user-curve: #fb923c;
     --color-curve-lane-surface: #182338;

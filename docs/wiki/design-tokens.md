@@ -64,6 +64,7 @@ Accentury 네이티브(Compose)와 웹(WebView)이 공유하는 색·타이포·
 | `prompt-card-end` | `#1d4ed8` | 대사 카드 그라디언트 끝 |
 | `prompt-card-foreground` | `#ffffff` | 대사 본문 |
 | `prompt-card-muted` | `#eff6ff` | 대사 카드 보조 텍스트(뜻·안내) |
+| `prompt-card-badge` | `rgba(255, 255, 255, 0.15)` | 대사 카드 위 배지 면 |
 | `guide-curve` | `#5b7fa8` | 가이드 F0 곡선 (점선, 힌트 — 주인공 아님) |
 | `user-curve` | `#ea580c` | 사용자 F0 곡선 (실선, 주인공) |
 | `curve-lane-surface` | `#ecf4ff` | 곡선 레인 안쪽 면 |
@@ -103,6 +104,7 @@ Accentury 네이티브(Compose)와 웹(WebView)이 공유하는 색·타이포·
 | `prompt-card-end` | `#1e3a8a` |
 | `prompt-card-foreground` | `#ffffff` |
 | `prompt-card-muted` | `#eff6ff` |
+| `prompt-card-badge` | `rgba(255, 255, 255, 0.15)` |
 | `guide-curve` | `#7ea8d0` |
 | `user-curve` | `#fb923c` |
 | `curve-lane-surface` | `#182338` |
