@@ -350,6 +350,7 @@
 .choice {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: var(--space-3);
   min-height: var(--touch-target-min);
   padding: var(--space-4) 18px;
@@ -392,13 +393,37 @@
   opacity: var(--opacity-disabled);
 }
 
-/* 라디오 표식. 브라우저 기본 모양은 플랫폼마다 달라 크기와 색만 토큰으로 맞춘다 */
-.choice__radio {
-  width: 20px;
-  height: 20px;
-  margin: 0;
-  accent-color: var(--color-primary);
+/* 고른 것의 표시. 색과 함께 움직여 두 신호가 겹치게 한다 */
+.choice__check {
   flex-shrink: 0;
+  color: var(--color-primary);
+  font-weight: var(--weight-bold);
+}
+
+/* 표식을 숨겼으므로 포커스 링은 선택지 전체가 받는다 */
+.choice:has(.choice__radio:focus-visible) {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}
+
+/*
+ * 라디오 표식은 눈에서만 지운다 (시안: 선택지가 카드처럼 보이고 동그라미가 없다).
+ * 요소를 없애거나 display:none을 주면 라디오 그룹의 의미론과 화살표 키 이동이 함께
+ * 사라진다 - 스크린 리더·키보드 사용자에게는 그대로 두고 시각만 빼는 것이 요점이다.
+ *
+ * 포커스는 여전히 보여야 하므로(WCAG 2.4.7) 선택지 전체가 포커스 링을 받는다 —
+ * .choice:has(:focus-visible) 규칙이 아래에 있다.
+ */
+.choice__radio {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 /* 문항 화면의 주버튼 자리. 카드가 길어져도 항상 바닥에 붙는다 */

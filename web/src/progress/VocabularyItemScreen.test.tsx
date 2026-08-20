@@ -60,7 +60,7 @@ describe('표시', () => {
      * 그게 정오 유추 경로인지 판단하게 된다.
      * 배지("📝 단어 문항")는 KAN-148에서 카드 안으로 들어왔다 - 유형 표시라 정답과 무관하다.
      */
-    expect(document.body.textContent).toBe("📝 단어 문항'정구지'는 표준어로?부추미나리쑥갓시금치다음")
+    expect(document.body.textContent).toBe("📝 단어 문항'정구지'는 표준어로?부추✓미나리쑥갓시금치다음")
   })
 })
 
