@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -30,6 +31,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.accentury.app.ui.theme.accenturyColors
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.accentury.app.audio.QualityStatus
@@ -106,9 +108,9 @@ fun RecordingScreen(
         Text("평소 말하듯 자연스럽게 읽어주세요", fontSize = 14.sp)
 
         Spacer(modifier = Modifier.height(24.dp))
-        CurveLane(label = "가이드", points = guidePoints, lineColor = GuideCurveColor)
+        CurveLane(label = "가이드", points = guidePoints, lineColor = MaterialTheme.accenturyColors.guideCurve)
         Spacer(modifier = Modifier.height(8.dp))
-        CurveLane(label = "내 억양", points = myPoints, lineColor = MyCurveColor)
+        CurveLane(label = "내 억양", points = myPoints, lineColor = MaterialTheme.accenturyColors.userCurve)
 
         Spacer(modifier = Modifier.weight(1f))
 
@@ -175,19 +177,6 @@ fun RecordingScreen(
 }
 
 /**
- * 가이드 곡선의 연한 색 (ux-ui.md §D). 시그니처 색은 사용자 곡선 몫이라, 가이드는 힌트일 뿐
- * 주인공이 아니라는 위계를 색 무게로 표현한다. 확정 팔레트 전이라 무디자인 톤의 임시값이다.
- */
-private val GuideCurveColor = Color(0xFFB0C4DE)
-
-/**
- * 사용자 곡선 자리 - 시그니처 색이 들어올 슬롯이다. 가이드의 연한 B0C4DE보다 눈에 무겁게 잡아,
- * 두 레인을 같이 봤을 때 주인공이 아래쪽이라는 위계가 색만으로 읽히게 한다.
- * 가이드와 마찬가지로 확정 팔레트 전의 임시값이다.
- */
-private val MyCurveColor = Color(0xFF3F6FBF)
-
-/**
  * 곡선 캔버스의 레인 하나 (ux-ui.md §D — 위/아래 2단, 같은 가로폭·같은 시간축).
  * 위 레인은 정적 가이드 곡선(KAN-102), 아래 레인은 녹음 중 자라는 사용자 곡선(KAN-104)이다.
  *
@@ -198,20 +187,20 @@ private val MyCurveColor = Color(0xFF3F6FBF)
  * 곡선은 없어도 녹음은 성립하므로 오류 표시 없이 조용히 비워 둔다.
  */
 @Composable
-private fun CurveLane(label: String, points: List<CurvePoint> = emptyList(), lineColor: Color = Color.Gray) {
+private fun CurveLane(label: String, points: List<CurvePoint> = emptyList(), lineColor: Color) {
     // 240dp 자리표시자에서 축소 - 레인 둘에 대사·버튼까지 한 화면에 서야 한다 (ux-ui.md §D)
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .height(120.dp)
-            .border(1.dp, Color.Gray),
+            .border(1.dp, MaterialTheme.accenturyColors.curveLaneBorder),
     ) {
         // 라벨을 캔버스와 겹치지 않는 자기 행에 둔다 - 곡선 최고점은 캔버스 상단 근처까지
         // 올라오므로(여백 10%), 같은 영역에 겹쳐 그리면 좌상단에서 서로 가린다.
         Text(
             label,
-            fontSize = 12.sp,
-            color = Color.Gray,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 8.dp, top = 4.dp),
         )
         Canvas(modifier = Modifier.fillMaxWidth().weight(1f)) {

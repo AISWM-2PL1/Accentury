@@ -60,6 +60,9 @@ Accentury 네이티브(Compose)와 웹(WebView)이 공유하는 색·타이포·
 | `prompt-card-end` | `#1d4ed8` | 대사 카드 그라디언트 끝 |
 | `prompt-card-foreground` | `#ffffff` | 대사 본문 |
 | `prompt-card-muted` | `#eff6ff` | 대사 카드 보조 텍스트(뜻·안내) |
+| `guide-curve` | `#5b7fa8` | 가이드 F0 곡선 (힌트 — 주인공 아님) |
+| `user-curve` | `#2563eb` | 사용자 F0 곡선 (시그니처 색, 주인공) |
+| `curve-lane-border` | `rgba(37, 99, 235, 0.13)` | 곡선 레인 테두리 |
 
 ### 다크
 
@@ -92,6 +95,9 @@ Accentury 네이티브(Compose)와 웹(WebView)이 공유하는 색·타이포·
 | `prompt-card-end` | `#1e3a8a` |
 | `prompt-card-foreground` | `#ffffff` |
 | `prompt-card-muted` | `#eff6ff` |
+| `guide-curve` | `#7ea8d0` |
+| `user-curve` | `#3b82f6` |
+| `curve-lane-border` | `rgba(147, 197, 253, 0.12)` |
 
 ## 3. 타이포
 
@@ -173,6 +179,25 @@ WCAG 2.1 AA 일반 텍스트 기준 4.5:1. `python3 tools/check_contrast.py`가 
 | `prompt-card-muted` / `prompt-card-start` (다크) | 4.75 |
 | `prompt-card-muted` / `prompt-card-end` (다크) | 9.52 |
 
+### 그래픽 오브젝트 (3:1)
+
+F0 곡선과 레인 테두리는 텍스트가 아니라 WCAG 2.1 **1.4.11 비텍스트 대비 3:1**이 기준이다.
+
+| 조합 | 비율 |
+|---|---|
+| `guide-curve` / `background` (라이트) | 3.82 |
+| `guide-curve` / `card` (라이트) | 4.16 |
+| `user-curve` / `background` (라이트) | 4.75 |
+| `user-curve` / `card` (라이트) | 5.17 |
+| `guide-curve` / `background` (다크) | 7.14 |
+| `guide-curve` / `card` (다크) | 5.85 |
+| `user-curve` / `background` (다크) | 4.85 |
+| `user-curve` / `card` (다크) | 3.98 |
+
+두 곡선은 위아래 별개 레인에 그려져 겹치지 않으므로 서로 간 대비는 기준 대상이 아니다.
+대신 `guide-curve`를 채도가 낮은 회청으로 두어 "가이드는 힌트, 사용자 곡선이 주인공"이라는
+위계가 색 무게만으로 읽히게 했다 (`ux-ui.md` §D).
+
 ## 7. 시안과 다른 값
 
 시안(`prototype/`)을 그대로 옮기면 `ux-ui.md` §5 최소선을 못 넘기는 지점이 있어 아래만 조정했다. 나머지는 시안 값 그대로다.
@@ -187,6 +212,8 @@ WCAG 2.1 AA 일반 텍스트 기준 4.5:1. `python3 tools/check_contrast.py`가 
 | 대사 카드 보조 텍스트 | `#bfdbfe` (blue-200) | `#eff6ff` | 그라디언트 시작색 위 2.59:1 → 4.75:1 |
 | 다크 `primary-foreground` | `#ffffff` | `#0f172a` | 흰 텍스트 대비 3.68:1 → 4.85:1 (파랑은 밝게 유지) |
 | 다크 `accent-foreground` | `#fffbeb` | `#451a03` | 대비 2.07:1 → 6.97:1 |
+| 가이드 곡선 | `#b0c4de` (RecordingScreen.kt:153 임시값) | `#5b7fa8` | 배경 위 1.64:1 → 3.82:1 (비텍스트 3:1 미달) |
+| 사용자 곡선 | `#3f6fbf` (RecordingScreen.kt:160 임시값) | `#2563eb` | 시그니처 색으로 확정 |
 
 시안은 semantic 토큰(`bg-primary`)과 Tailwind 원시색(`bg-blue-500`, `emerald-400`, `red-400`)을 섞어 쓴다. 정본은 semantic 이름 한 벌로만 정의한다 — 그래야 "같은 의미의 색이 네이티브와 웹에서 같은 값"이 성립한다.
 

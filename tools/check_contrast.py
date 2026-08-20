@@ -6,12 +6,13 @@ docs/wiki/design-tokens.md §6 표를 재생성한다. 색을 바꿨으면 이 �
 
     python3 tools/check_contrast.py
 
-기준: WCAG 2.1 AA 일반 텍스트 4.5:1. 하나라도 미달이면 종료 코드 1.
+기준: 텍스트 4.5:1(1.4.3), 그래픽 오브젝트 3:1(1.4.11). 하나라도 미달이면 종료 코드 1.
 """
 import sys
 
-# WCAG 2.1 일반 텍스트 최소 대비
-MIN_RATIO = 4.5
+# WCAG 2.1 AA — 일반 텍스트 1.4.3, 그래픽 오브젝트 1.4.11
+MIN_TEXT_RATIO = 4.5
+MIN_GRAPHIC_RATIO = 3.0
 
 
 def _luminance(hex_color: str) -> float:
@@ -58,24 +59,45 @@ PAIRS = [
     ("`prompt-card-muted` / `prompt-card-end` (다크)", "#eff6ff", "#1e3a8a"),
 ]
 
+# F0 곡선과 레인 테두리는 텍스트가 아니라 3:1이 기준이다 (WCAG 1.4.11)
+GRAPHIC_PAIRS = [
+    ("`guide-curve` / `background` (라이트)", "#5b7fa8", "#eff6ff"),
+    ("`guide-curve` / `card` (라이트)", "#5b7fa8", "#ffffff"),
+    ("`user-curve` / `background` (라이트)", "#2563eb", "#eff6ff"),
+    ("`user-curve` / `card` (라이트)", "#2563eb", "#ffffff"),
+    ("`guide-curve` / `background` (다크)", "#7ea8d0", "#0f172a"),
+    ("`guide-curve` / `card` (다크)", "#7ea8d0", "#1e293b"),
+    ("`user-curve` / `background` (다크)", "#3b82f6", "#0f172a"),
+    ("`user-curve` / `card` (다크)", "#3b82f6", "#1e293b"),
+]
 
-def main() -> int:
+
+def _table(pairs, minimum):
+    """표를 찍고 미달 항목을 돌려준다."""
     failures = []
     print("| 조합 | 비율 |")
     print("|---|---|")
-    for name, fg, bg in PAIRS:
+    for name, fg, bg in pairs:
         r = ratio(fg, bg)
         print(f"| {name} | {r:.2f} |")
-        if r < MIN_RATIO:
-            failures.append((name, fg, bg, r))
+        if r < minimum:
+            failures.append((name, fg, bg, r, minimum))
+    return failures
+
+
+def main() -> int:
+    failures = _table(PAIRS, MIN_TEXT_RATIO)
+    print("\n### 그래픽 오브젝트 (3:1)\n")
+    failures += _table(GRAPHIC_PAIRS, MIN_GRAPHIC_RATIO)
 
     if failures:
-        print(f"\n{len(failures)}건이 {MIN_RATIO}:1 미달:", file=sys.stderr)
-        for name, fg, bg, r in failures:
-            print(f"  {r:.2f}  {name}  ({fg} on {bg})", file=sys.stderr)
+        print(f"\n{len(failures)}건 미달:", file=sys.stderr)
+        for name, fg, bg, r, minimum in failures:
+            print(f"  {r:.2f} < {minimum}  {name}  ({fg} on {bg})", file=sys.stderr)
         return 1
 
-    print(f"\n{len(PAIRS)}건 전부 {MIN_RATIO}:1 이상.")
+    total = len(PAIRS) + len(GRAPHIC_PAIRS)
+    print(f"\n{total}건 전부 통과 (텍스트 {MIN_TEXT_RATIO}:1, 그래픽 {MIN_GRAPHIC_RATIO}:1).")
     return 0
 
 
