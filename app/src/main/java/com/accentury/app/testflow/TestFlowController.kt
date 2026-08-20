@@ -44,8 +44,9 @@ sealed interface TestFlowPhase {
      * 웹의 대기 화면이 잠깐 드러났다가 다음 문항으로 교체됐다 — 음성 문항마다 반복되는 깜빡임의
      * 마지막 조각이다. 결과가 나갈 때까지 화면을 붙들면 그 순간 자체가 없어진다.
      *
-     * 무한정 기다리지는 않는다: 업로드가 실패하면 결과는 영영 나가지 않으므로 호출자가
-     * [onSubmitTimeout]으로 걷는다.
+     * 놓는 자리는 셋이다: 결과 주입이 끝나면 [onResultDelivered], 업로드가 실패로 확정되면
+     * [onUploadsChanged], 그 둘 어느 쪽도 오지 않으면(업로드 자취가 사라진 복원 경로 등)
+     * [onSubmitTimeout]이 받는다.
      */
     data class Submitting(val start: VoiceItemStart, val attemptId: String) : TestFlowPhase
 }
@@ -150,7 +151,8 @@ class TestFlowController private constructor(
      * (KAN-146) — 여기서 곧장 웹으로 돌아가면 결과가 도착하기 전의 대기 화면이 한 번 드러난다.
      *
      * 진행 자체는 여전히 업로드를 기다리지 않는다: 대기 시도는 지금 등록되고, 결과는 준비되는 대로
-     * [onUploadsChanged]가 실어 보낸다. 붙드는 것은 화면뿐이고 그것도 [onSubmitTimeout]이 상한을 건다.
+     * [onUploadsChanged]가 실어 보낸다. 붙드는 것은 화면뿐이고, 그 화면은 주입이 끝나는 대로
+     * [onResultDelivered]가 놓는다.
      *
      * 녹음 화면 밖에서 오는 종료 통지는 무시한다. 이탈·회전으로 이미 화면이 내려간 뒤의 뒤늦은
      * 콜백이라 어느 문항의 시도인지 말할 수 없다.
@@ -167,16 +169,20 @@ class TestFlowController private constructor(
     }
 
     /**
-     * 붙들어 둔 화면의 상한 (KAN-146). 기다리던 시도의 결과가 그때까지도 나가지 않았으면 웹으로
-     * 되돌린다 — 업로드가 실패하면 [onUploadsChanged]는 그 시도를 영영 조립하지 않으므로, 이게
-     * 없으면 오버레이가 걷히지 않아 사용자가 스스로 빠져나올 수 없다.
+     * 붙들어 둔 화면의 상한 (KAN-146). 업로드가 뒷받침하지 않는 붙들기를 걷는 최후 안전망이다.
+     *
+     * 업로드가 아직 진행 중이면 걷지 않는다 — 끝날 때까지 현재 문항 화면을 유지하는 것이 이 티켓의
+     * 요구고, 여기서 시간으로 끊으면 없애려던 대기 화면이 정확히 그 자리에 생긴다. 발화 시점에 다시
+     * 확인하는 이유가 이것이다: 타이머를 걸 때는 업로드가 아직 목록에 안 올라와 있을 수 있고
+     * (등록과 화면 반영 사이 한 프레임), 그 사이 앱이 백그라운드로 가면 그 상태가 굳는다.
      *
      * attemptId를 받아 대조하는 이유: 이미 결과가 나가 다음 문항으로 넘어간 뒤 뒤늦게 도착한
      * 타이머가 새로 뜬 화면을 걷어버리면 안 된다.
      */
-    fun onSubmitTimeout(attemptId: String) {
+    fun onSubmitTimeout(attemptId: String, uploads: Map<String, UploadState>) {
         val awaiting = phase as? TestFlowPhase.Submitting ?: return
         if (awaiting.attemptId != attemptId) return
+        if (uploads[attemptId] is UploadState.InFlight) return
         phase = TestFlowPhase.Web
     }
 

@@ -26,12 +26,17 @@ private const val JS_PARAGRAPH_SEPARATOR = 0x2029
  * 위 두 글자를 건드리지 않는다(JSON에선 escape할 이유가 없다). JS 소스로 나갈 때만 문제가 되는
  * 차이라, 그만큼만 여기서 덧붙여 처리한다.
  *
- * 수신자가 아직 없을 수 있어 옵셔널 체이닝으로 부른다. 웹의 수신 지점 설치와 네이티브의 결과
- * 도착은 순서가 보장되지 않으므로, 없으면 아무 일도 일어나지 않아야 한다.
+ * 수신자가 아직 없을 수 있다. 웹의 수신 지점 설치와 네이티브의 결과 도착은 순서가 보장되지 않으므로,
+ * 없으면 아무 일도 일어나지 않아야 한다.
+ *
+ * 넘겼는지 여부를 boolean으로 돌려준다 (KAN-146). 호출자는 이 값으로 녹음 화면을 놓을 때를 정하는데,
+ * 옵셔널 체이닝만 쓰면 수신자가 없어도 평가가 정상 완료해 "웹이 받았다"와 "아무 일도 없었다"가
+ * 구분되지 않는다. 못 넘긴 것을 넘긴 것으로 읽으면 화면이 앞 문항의 대기 화면 위로 걷힌다.
  */
 fun itemResultDeliveryJs(result: ItemResult): String {
     val payloadLiteral = json.encodeToString(String.serializer(), result.toJson())
         .replace(Char(JS_LINE_SEPARATOR).toString(), "\\u2028")
         .replace(Char(JS_PARAGRAPH_SEPARATOR).toString(), "\\u2029")
-    return "window.AccenturyWeb?.onItemResult?.($payloadLiteral)"
+    return "(function(){var f=window.AccenturyWeb&&window.AccenturyWeb.onItemResult;" +
+        "if(!f)return false;f($payloadLiteral);return true;})()"
 }

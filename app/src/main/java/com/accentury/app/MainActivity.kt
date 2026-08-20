@@ -161,8 +161,11 @@ private fun TestFlow(modifier: Modifier = Modifier) {
             // 완료 콜백에서 화면을 놓는다 (KAN-146) — 주입이 끝났다는 것은 웹이 결과를 받아 다음
             // 문항을 그리기 시작했다는 뜻이다. 조립 자리에서 놓으면 그 사이 한 프레임 동안 걷힌
             // 아래에 아직 앞 문항의 대기 화면이 남아 드러난다. 콜백은 메인 스레드로 온다.
-            view.evaluateJavascript(itemResultDeliveryJs(result)) {
-                flow.onResultDelivered(result.attemptId)
+            view.evaluateJavascript(itemResultDeliveryJs(result)) { handed ->
+                // "true"는 수신 지점이 실제로 있어 결과를 넘겼다는 뜻이다. 없으면 웹은 아직 앞 문항을
+                // 그리고 있으므로 여기서 화면을 놓으면 그 대기 화면 위로 걷히게 된다 — 안전망 타이머가
+                // 받게 두고 그동안 웹이 수신 지점을 설치할 시간을 준다.
+                if (handed == "true") flow.onResultDelivered(result.attemptId)
             }
         }
     }
@@ -233,7 +236,8 @@ private fun TestFlow(modifier: Modifier = Modifier) {
                 if (!holdUnbacked) return@LaunchedEffect
                 val attemptId = submittingAttemptId ?: return@LaunchedEffect
                 delay(ORPHANED_SUBMIT_TIMEOUT_MS)
-                flow.onSubmitTimeout(attemptId)
+                // 발화 시점의 업로드 상태를 다시 넘긴다 — 걸 때는 비어 있던 자리가 그새 채워졌을 수 있다.
+                flow.onSubmitTimeout(attemptId, uploadViewModel.uploads.value)
             }
 
             when {
