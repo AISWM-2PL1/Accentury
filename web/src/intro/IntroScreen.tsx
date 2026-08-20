@@ -1,4 +1,5 @@
 import { requestMicPermission } from '../bridge/bridge'
+import { Button } from '../ui'
 import {
   compositionText,
   estimatedDurationText,
@@ -29,23 +30,15 @@ export function IntroScreen() {
       <h1 className="type-title">사투리 억양 테스트</h1>
       <p className="type-body">{compositionText(VOICE_ITEM_COUNT, VOCABULARY_ITEM_COUNT)}</p>
       <p className="type-label">{estimatedDurationText(ESTIMATED_MINUTES)}</p>
-      <button
-        type="button"
-        className="type-body"
+      <Button
         onClick={() => {
           // 브리지가 없으면(브라우저 단독 실행) 조용히 무시한다 — 웹 단독 테스트는 KAN-31 범위.
           requestMicPermission()
         }}
-        style={{
-          // ux-ui.md 최소선: 터치 타겟 48dp 이상 (--touch-target-min)
-          minHeight: 'var(--touch-target-min)',
-          minWidth: '120px',
-          marginTop: 'var(--space-2)',
-          cursor: 'pointer',
-        }}
+        style={{ marginTop: 'var(--space-2)' }}
       >
         시작하기
-      </button>
+      </Button>
     </main>
   )
 }

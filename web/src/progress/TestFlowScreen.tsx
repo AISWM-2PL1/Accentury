@@ -19,6 +19,7 @@ import type { TestDefinition, TestItem } from './testDefinition'
 import { useTestProgress } from './useTestProgress'
 import { VocabularyItemScreen } from './VocabularyItemScreen'
 import { VoiceItemScreen } from './VoiceItemScreen'
+import { Button, ProgressIndicator, StatusBlock } from '../ui'
 
 /** 유형 뱃지 문구. 인트로의 "🎤 음성 / 📝 단어" 표기와 같은 어휘를 쓴다 */
 const TYPE_BADGE: Record<TestItem['type'], string> = {
@@ -88,7 +89,7 @@ export function TestFlowScreen({
   if (load.status === 'loading') {
     return (
       <main style={SCREEN_STYLE}>
-        <p className="type-body">문항을 불러오는 중…</p>
+        <StatusBlock tone="waiting" message="문항을 불러오는 중…" />
       </main>
     )
   }
@@ -97,18 +98,12 @@ export function TestFlowScreen({
     return (
       <main style={SCREEN_STYLE}>
         {/* 비난 없는 카피 톤(ux-ui.md). 원인 문구는 개발 중 진단용으로 함께 보인다 */}
-        <p className="type-body">문항을 불러오지 못했어요</p>
-        <p className="type-caption" style={{ color: 'var(--color-muted-foreground)' }}>
-          {load.message}
-        </p>
-        <button
-          type="button"
-          className="type-body"
-          onClick={retry}
-          style={{ minHeight: 'var(--touch-target-min)', minWidth: '120px', cursor: 'pointer' }}
-        >
-          다시 시도
-        </button>
+        <StatusBlock
+          tone="error"
+          message="문항을 불러오지 못했어요"
+          detail={load.message}
+          action={<Button onClick={retry}>다시 시도</Button>}
+        />
       </main>
     )
   }
@@ -170,20 +165,10 @@ function TestRunner({
   return (
     <main style={SCREEN_STYLE}>
       {/*
-        진행바. `<progress>`의 내장 의미론(role=progressbar + value/max)을 그대로 쓴다 —
-        직접 div로 그리면 aria를 손으로 채워야 하고 무디자인 단계에서 얻는 게 없다.
-        값이 1부터 시작하는 건 의도다: 첫 문항을 0/10으로 보이면 아직 시작도 안 한 느낌이라
-        이탈이 는다 (ux-ui.md §3 Goal-Gradient — endowed progress).
+        진행바와 "3/10" 표기. 값이 1부터 시작하는 건 의도다 — 첫 문항을 0/10으로 보이면
+        아직 시작도 안 한 느낌이라 이탈이 는다 (ux-ui.md §3 Goal-Gradient, endowed progress).
       */}
-      <progress
-        aria-label="문항 진행률"
-        value={progress.current}
-        max={progress.total}
-        style={{ width: '100%', maxWidth: 'var(--content-max-width)' }}
-      />
-      <p className="type-label">
-        {progress.current}/{progress.total}
-      </p>
+      <ProgressIndicator current={progress.current} total={progress.total} />
       <p className="type-caption">{TYPE_BADGE[current.type]}</p>
       {/*
         본문은 유형이 정한다. 두 화면 모두 문항이 바뀔 때 새로 마운트되도록 itemId를 key로 준다 —

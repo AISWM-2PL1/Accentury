@@ -22,6 +22,7 @@
 import { useRef, useState } from 'react'
 import type { VocabularyItem } from './testDefinition'
 import { newIdempotencyKey, type VocabSubmitResult } from './submitVocabAnswer'
+import { Button } from '../ui'
 
 export interface VocabularyItemScreenProps {
   item: VocabularyItem
@@ -131,15 +132,9 @@ export function VocabularyItemScreen({ item, submitAnswer, onSubmitted }: Vocabu
         선택 전 비활성이 AC 1항이다. disabled면 onClick이 아예 안 불리므로 selected가 null인
         채로 submit에 닿는 경로가 없다 — 그래도 submit 안의 가드를 남기는 이유는 위 주석 참조.
       */}
-      <button
-        type="button"
-        disabled={selected === null || submitting}
-        onClick={() => void submit()}
-        className="type-body"
-        style={{ minHeight: 'var(--touch-target-min)', minWidth: '200px', cursor: 'pointer' }}
-      >
+      <Button disabled={selected === null || submitting} onClick={() => void submit()}>
         {submitting ? '제출 중…' : errorMessage !== null ? '다시 시도' : '다음'}
-      </button>
+      </Button>
     </>
   )
 }

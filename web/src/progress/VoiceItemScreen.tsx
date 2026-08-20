@@ -9,6 +9,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { startVoiceItem } from '../bridge/bridge'
+import { Button, StatusBlock } from '../ui'
 import type { VoiceItem } from './testDefinition'
 
 /*
@@ -77,17 +78,11 @@ export function VoiceItemScreen({ item, itemNumber, totalItems, onDevSubmitted }
             브리지가 없는 = 브라우저 단독 실행. 에뮬레이터 Chrome으로 진행 화면을 확인하는
             검증 경로를 살려 두려고 개발용 제출 버튼을 남긴다. 앱에서는 이 분기에 오지 않는다.
           */}
-          <p className="type-caption" style={{ color: 'var(--color-muted-foreground)' }}>
-            녹음 화면을 열 수 없어요 (앱 밖에서 실행 중)
-          </p>
-          <button
-            type="button"
-            onClick={onDevSubmitted}
-            className="type-body"
-            style={{ minHeight: 'var(--touch-target-min)', minWidth: '160px', cursor: 'pointer' }}
-          >
-            제출 (개발용)
-          </button>
+          <StatusBlock
+            tone="waiting"
+            message="녹음 화면을 열 수 없어요 (앱 밖에서 실행 중)"
+            action={<Button onClick={onDevSubmitted}>제출 (개발용)</Button>}
+          />
         </>
       ) : (
         <>
@@ -98,7 +93,7 @@ export function VoiceItemScreen({ item, itemNumber, totalItems, onDevSubmitted }
             네이티브 녹음 화면이 이 WebView 위를 덮으므로, 이 뷰가 실제로 보이는 건 전환 순간·
             결과를 기다리는 복귀 직후·그리고 사용자가 녹음 화면에서 [나가기]로 이탈한 뒤다.
           */}
-          <p className="type-label">{WAITING_MESSAGE}</p>
+          <StatusBlock tone="waiting" message={WAITING_MESSAGE} />
           {bridgeAccepted === true && (
             /*
               [나가기] 이탈 뒤의 유일한 재진입 통로. 네이티브는 이탈을 웹에 알리지 않으므로(계약
@@ -106,14 +101,7 @@ export function VoiceItemScreen({ item, itemNumber, totalItems, onDevSubmitted }
               네이티브 화면에 가려 누를 수 없고, 눌리더라도 네이티브 중복 방어(Stage 3)가 무시하므로
               항상 노출해도 안전하다. 이 버튼이 없으면 이탈한 사용자는 이 문항에서 빠져나올 수 없다.
             */
-            <button
-              type="button"
-              onClick={requestRecording}
-              className="type-body"
-              style={{ minHeight: 'var(--touch-target-min)', minWidth: '160px', cursor: 'pointer' }}
-            >
-              녹음 화면 다시 열기
-            </button>
+            <Button onClick={requestRecording}>녹음 화면 다시 열기</Button>
           )}
         </>
       )}

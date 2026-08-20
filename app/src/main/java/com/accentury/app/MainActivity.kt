@@ -18,7 +18,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -33,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -53,7 +54,9 @@ import com.accentury.app.recording.RecordingViewModel
 import com.accentury.app.testflow.TestFlowController
 import com.accentury.app.testflow.continuesFrom
 import com.accentury.app.testflow.TestFlowPhase
+import com.accentury.app.ui.components.AccenturyButton
 import com.accentury.app.ui.theme.AccenturyTheme
+import com.accentury.app.ui.theme.Spacing
 import com.accentury.app.upload.UploadRequest
 import com.accentury.app.upload.UploadState
 import com.accentury.app.upload.UploadStatusBar
@@ -335,7 +338,9 @@ private fun RecordingOverlay(
     onSubmit: (attemptId: String, durationMs: Long, quality: QualityStatus) -> Unit,
     onExit: () -> Unit,
 ) {
-    Surface(modifier = Modifier.fillMaxSize()) {
+    // 색을 명시한다 - Surface 기본값은 surface(카드 흰색)라, 그대로 두면 이 오버레이만
+    // 흰 배경이 되어 바로 앞뒤 WebView 화면(background #eff6ff)과 어긋난다.
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         RecordingScreen(
             questionText = start.prompt,
             questionIndex = start.itemNumber,
@@ -445,17 +450,15 @@ private fun GateScreen(
     onButtonClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Surface(modifier = modifier.fillMaxSize()) {
+    Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+            modifier = Modifier.fillMaxSize().padding(Spacing.x4),
+            verticalArrangement = Arrangement.spacedBy(Spacing.x3, Alignment.CenterVertically),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text(headline)
-            Text(supporting)
-            Button(onClick = onButtonClick) {
-                Text(buttonLabel)
-            }
+            Text(headline, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
+            Text(supporting, style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center)
+            AccenturyButton(text = buttonLabel, onClick = onButtonClick)
         }
     }
 }
