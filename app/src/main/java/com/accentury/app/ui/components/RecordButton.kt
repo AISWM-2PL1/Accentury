@@ -13,8 +13,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -24,8 +25,11 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import com.accentury.app.R
 import com.accentury.app.ui.theme.Dimens
 import com.accentury.app.ui.theme.Motion
 import com.accentury.app.ui.theme.isReducedMotionEnabled
@@ -42,7 +46,7 @@ import com.accentury.app.ui.theme.isReducedMotionEnabled
  */
 @Composable
 fun RecordButton(
-    label: String,
+    contentDescription: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     recording: Boolean = false,
@@ -55,7 +59,11 @@ fun RecordButton(
     val sink = if (pressed) Dimens.buttonRestDepth - Dimens.buttonPressedDepth else 0.dp
 
     Box(
-        modifier = modifier.size(Dimens.recordButtonSize + Dimens.buttonRestDepth * 2),
+        modifier = modifier
+            .size(Dimens.recordButtonSize + Dimens.buttonRestDepth * 2)
+            // 아이콘에는 설명을 달지 않고 버튼이 통째로 하나로 읽히게 한다 - 그러지 않으면
+            // 스크린 리더가 아이콘과 버튼을 따로 짚는다
+            .semantics(mergeDescendants = true) { this.contentDescription = contentDescription },
         contentAlignment = Alignment.Center,
     ) {
         if (recording && !reduceMotion) {
@@ -75,7 +83,26 @@ fun RecordButton(
             contentAlignment = Alignment.Center,
         ) {
             // 이모지는 글꼴 크기로만 커진다 - 타이포 스케일이 아니라 아이콘 치수를 쓴다
-            Text(label, fontSize = RECORD_ICON_SIZE)
+            if (recording) {
+                /*
+                 * 정지는 아이콘 자산 없이 사각형 하나로 그린다 - 재생/정지의 관용 기호라
+                 * 따로 설명하지 않아도 읽히고, 마이크에 사선을 그은 그림보다 "지금 누르면
+                 * 멈춘다"가 분명하다.
+                 */
+                Box(
+                    modifier = Modifier
+                        .size(STOP_ICON_SIZE)
+                        .clip(RoundedCornerShape(STOP_ICON_RADIUS))
+                        .background(MaterialTheme.colorScheme.onPrimary),
+                )
+            } else {
+                Icon(
+                    painter = painterResource(R.drawable.outline_mic_24),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(RECORD_ICON_SIZE),
+                )
+            }
         }
     }
 }
@@ -104,7 +131,9 @@ private fun RecordingRipple(color: Color) {
     )
 }
 
-private val RECORD_ICON_SIZE = 30.sp
+private val RECORD_ICON_SIZE = 34.dp
+private val STOP_ICON_SIZE = 26.dp
+private val STOP_ICON_RADIUS = 4.dp
 
 private const val RIPPLE_MS = 1_400
 private const val RIPPLE_GROWTH = 0.6f
