@@ -69,6 +69,10 @@ GRAPHIC_PAIRS = [
     ("`guide-curve` / `card` (다크)", "#7ea8d0", "#1e293b"),
     ("`user-curve` / `background` (다크)", "#3b82f6", "#0f172a"),
     ("`user-curve` / `card` (다크)", "#3b82f6", "#1e293b"),
+    ("`control-border` / `background` (라이트)", "#5b7fa8", "#eff6ff"),
+    ("`control-border` / `card` (라이트)", "#5b7fa8", "#ffffff"),
+    ("`control-border` / `background` (다크)", "#7ea8d0", "#0f172a"),
+    ("`control-border` / `card` (다크)", "#7ea8d0", "#1e293b"),
 ]
 
 

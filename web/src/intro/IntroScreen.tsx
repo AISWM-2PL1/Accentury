@@ -21,28 +21,26 @@ export function IntroScreen() {
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: '12px',
-        padding: '16px',
+        gap: 'var(--space-3)',
+        padding: 'var(--space-4)',
         textAlign: 'center',
       }}
     >
-      <h1 style={{ fontSize: '24px', fontWeight: 600, margin: 0 }}>사투리 억양 테스트</h1>
-      <p style={{ fontSize: '16px', margin: 0 }}>
-        {compositionText(VOICE_ITEM_COUNT, VOCABULARY_ITEM_COUNT)}
-      </p>
-      <p style={{ fontSize: '14px', margin: 0 }}>{estimatedDurationText(ESTIMATED_MINUTES)}</p>
+      <h1 className="type-title">사투리 억양 테스트</h1>
+      <p className="type-body">{compositionText(VOICE_ITEM_COUNT, VOCABULARY_ITEM_COUNT)}</p>
+      <p className="type-label">{estimatedDurationText(ESTIMATED_MINUTES)}</p>
       <button
         type="button"
+        className="type-body"
         onClick={() => {
           // 브리지가 없으면(브라우저 단독 실행) 조용히 무시한다 — 웹 단독 테스트는 KAN-31 범위.
           requestMicPermission()
         }}
         style={{
-          // ux-ui.md 최소선: 터치 타겟 48dp 이상
-          minHeight: '48px',
+          // ux-ui.md 최소선: 터치 타겟 48dp 이상 (--touch-target-min)
+          minHeight: 'var(--touch-target-min)',
           minWidth: '120px',
-          fontSize: '16px',
-          marginTop: '8px',
+          marginTop: 'var(--space-2)',
           cursor: 'pointer',
         }}
       >

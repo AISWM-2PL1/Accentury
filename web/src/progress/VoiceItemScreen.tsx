@@ -65,20 +65,26 @@ export function VoiceItemScreen({ item, itemNumber, totalItems, onDevSubmitted }
 
   return (
     <>
-      <h1 style={{ fontSize: '20px', fontWeight: 600, margin: 0 }}>{item.prompt}</h1>
+      {/*
+        따라 말할 대사다. type-headline(26px)은 ux-ui.md §5의 "대사 카드 24sp 이상"을 지키는
+        크기이고, 네이티브 녹음 화면의 대사 카드(headlineMedium 26sp)와 같은 값이다 —
+        전환 순간에 글자 크기가 튀지 않는다.
+      */}
+      <h1 className="type-headline">{item.prompt}</h1>
       {bridgeAccepted === false ? (
         <>
           {/*
             브리지가 없는 = 브라우저 단독 실행. 에뮬레이터 Chrome으로 진행 화면을 확인하는
             검증 경로를 살려 두려고 개발용 제출 버튼을 남긴다. 앱에서는 이 분기에 오지 않는다.
           */}
-          <p style={{ fontSize: '13px', margin: 0, color: '#666' }}>
+          <p className="type-caption" style={{ color: 'var(--color-muted-foreground)' }}>
             녹음 화면을 열 수 없어요 (앱 밖에서 실행 중)
           </p>
           <button
             type="button"
             onClick={onDevSubmitted}
-            style={{ minHeight: '48px', minWidth: '160px', fontSize: '16px', cursor: 'pointer' }}
+            className="type-body"
+            style={{ minHeight: 'var(--touch-target-min)', minWidth: '160px', cursor: 'pointer' }}
           >
             제출 (개발용)
           </button>
@@ -92,7 +98,7 @@ export function VoiceItemScreen({ item, itemNumber, totalItems, onDevSubmitted }
             네이티브 녹음 화면이 이 WebView 위를 덮으므로, 이 뷰가 실제로 보이는 건 전환 순간·
             결과를 기다리는 복귀 직후·그리고 사용자가 녹음 화면에서 [나가기]로 이탈한 뒤다.
           */}
-          <p style={{ fontSize: '14px', margin: 0 }}>{WAITING_MESSAGE}</p>
+          <p className="type-label">{WAITING_MESSAGE}</p>
           {bridgeAccepted === true && (
             /*
               [나가기] 이탈 뒤의 유일한 재진입 통로. 네이티브는 이탈을 웹에 알리지 않으므로(계약
@@ -103,7 +109,8 @@ export function VoiceItemScreen({ item, itemNumber, totalItems, onDevSubmitted }
             <button
               type="button"
               onClick={requestRecording}
-              style={{ minHeight: '48px', minWidth: '160px', fontSize: '16px', cursor: 'pointer' }}
+              className="type-body"
+              style={{ minHeight: 'var(--touch-target-min)', minWidth: '160px', cursor: 'pointer' }}
             >
               녹음 화면 다시 열기
             </button>

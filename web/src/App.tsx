@@ -54,15 +54,13 @@ function UpdateRequiredScreen() {
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: '12px',
-        padding: '16px',
+        gap: 'var(--space-3)',
+        padding: 'var(--space-4)',
         textAlign: 'center',
       }}
     >
-      <h1 style={{ fontSize: '20px', fontWeight: 600, margin: 0 }}>앱 업데이트가 필요해요</h1>
-      <p style={{ fontSize: '14px', margin: 0 }}>
-        새로운 테스트를 이용하려면 스토어에서 최신 버전으로 업데이트해 주세요.
-      </p>
+      <h1 className="type-title-sm">앱 업데이트가 필요해요</h1>
+      <p className="type-label">새로운 테스트를 이용하려면 스토어에서 최신 버전으로 업데이트해 주세요.</p>
     </main>
   )
 }

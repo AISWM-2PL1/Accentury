@@ -32,8 +32,8 @@ const SCREEN_STYLE = {
   flexDirection: 'column',
   alignItems: 'center',
   justifyContent: 'center',
-  gap: '12px',
-  padding: '16px',
+  gap: 'var(--space-3)',
+  padding: 'var(--space-4)',
   textAlign: 'center',
 } as const
 
@@ -88,7 +88,7 @@ export function TestFlowScreen({
   if (load.status === 'loading') {
     return (
       <main style={SCREEN_STYLE}>
-        <p style={{ fontSize: '16px', margin: 0 }}>문항을 불러오는 중…</p>
+        <p className="type-body">문항을 불러오는 중…</p>
       </main>
     )
   }
@@ -97,12 +97,15 @@ export function TestFlowScreen({
     return (
       <main style={SCREEN_STYLE}>
         {/* 비난 없는 카피 톤(ux-ui.md). 원인 문구는 개발 중 진단용으로 함께 보인다 */}
-        <p style={{ fontSize: '16px', margin: 0 }}>문항을 불러오지 못했어요</p>
-        <p style={{ fontSize: '13px', margin: 0, color: '#666' }}>{load.message}</p>
+        <p className="type-body">문항을 불러오지 못했어요</p>
+        <p className="type-caption" style={{ color: 'var(--color-muted-foreground)' }}>
+          {load.message}
+        </p>
         <button
           type="button"
+          className="type-body"
           onClick={retry}
-          style={{ minHeight: '48px', minWidth: '120px', fontSize: '16px', cursor: 'pointer' }}
+          style={{ minHeight: 'var(--touch-target-min)', minWidth: '120px', cursor: 'pointer' }}
         >
           다시 시도
         </button>
@@ -156,8 +159,8 @@ function TestRunner({
   if (state.phase === 'AWAITING_ANALYSIS' || current === null) {
     return (
       <main style={SCREEN_STYLE}>
-        <h1 style={{ fontSize: '20px', fontWeight: 600, margin: 0 }}>분석 대기 화면 (KAN-14 예정)</h1>
-        <p style={{ fontSize: '14px', margin: 0 }}>
+        <h1 className="type-title-sm">분석 대기 화면 (KAN-14 예정)</h1>
+        <p className="type-label">
           {progress.total}문항을 모두 제출했어요. 여기서 분석 상태 폴링이 시작됩니다.
         </p>
       </main>
@@ -176,12 +179,12 @@ function TestRunner({
         aria-label="문항 진행률"
         value={progress.current}
         max={progress.total}
-        style={{ width: '100%', maxWidth: '320px' }}
+        style={{ width: '100%', maxWidth: 'var(--content-max-width)' }}
       />
-      <p style={{ fontSize: '14px', margin: 0 }}>
+      <p className="type-label">
         {progress.current}/{progress.total}
       </p>
-      <p style={{ fontSize: '13px', margin: 0 }}>{TYPE_BADGE[current.type]}</p>
+      <p className="type-caption">{TYPE_BADGE[current.type]}</p>
       {/*
         본문은 유형이 정한다. 두 화면 모두 문항이 바뀔 때 새로 마운트되도록 itemId를 key로 준다 —
         음성 화면은 그 마운트가 곧 "네이티브에 전환을 알리는" 시점이다.
