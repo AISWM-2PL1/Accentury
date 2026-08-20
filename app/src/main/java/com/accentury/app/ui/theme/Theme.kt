@@ -83,6 +83,9 @@ data class AccenturyColors(
     val onPromptCardMuted: Color,
     val guideCurve: Color,
     val userCurve: Color,
+    val curveLaneSurface: Color,
+    val heroStart: Color,
+    val heroEnd: Color,
     val curveLaneBorder: Color,
 )
 
@@ -101,6 +104,9 @@ private val LightAccenturyColors = AccenturyColors(
     onPromptCardMuted = LightPromptCardMuted,
     guideCurve = LightGuideCurve,
     userCurve = LightUserCurve,
+    curveLaneSurface = LightCurveLaneSurface,
+    heroStart = LightHeroStart,
+    heroEnd = LightHeroEnd,
     curveLaneBorder = LightCurveLaneBorder,
 )
 
@@ -119,6 +125,9 @@ private val DarkAccenturyColors = AccenturyColors(
     onPromptCardMuted = DarkPromptCardMuted,
     guideCurve = DarkGuideCurve,
     userCurve = DarkUserCurve,
+    curveLaneSurface = DarkCurveLaneSurface,
+    heroStart = DarkHeroStart,
+    heroEnd = DarkHeroEnd,
     curveLaneBorder = DarkCurveLaneBorder,
 )
 

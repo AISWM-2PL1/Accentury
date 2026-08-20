@@ -61,14 +61,11 @@ PAIRS = [
 
 # F0 곡선과 레인 테두리는 텍스트가 아니라 3:1이 기준이다 (WCAG 1.4.11)
 GRAPHIC_PAIRS = [
-    ("`guide-curve` / `background` (라이트)", "#5b7fa8", "#eff6ff"),
-    ("`guide-curve` / `card` (라이트)", "#5b7fa8", "#ffffff"),
-    ("`user-curve` / `background` (라이트)", "#2563eb", "#eff6ff"),
-    ("`user-curve` / `card` (라이트)", "#2563eb", "#ffffff"),
-    ("`guide-curve` / `background` (다크)", "#7ea8d0", "#0f172a"),
-    ("`guide-curve` / `card` (다크)", "#7ea8d0", "#1e293b"),
-    ("`user-curve` / `background` (다크)", "#3b82f6", "#0f172a"),
-    ("`user-curve` / `card` (다크)", "#3b82f6", "#1e293b"),
+    # 곡선은 레인 안쪽 면(curve-lane-surface) 위에 그려진다 - 카드가 아니다
+    ("`guide-curve` / `curve-lane-surface` (라이트)", "#5b7fa8", "#ecf4ff"),
+    ("`user-curve` / `curve-lane-surface` (라이트)", "#ea580c", "#ecf4ff"),
+    ("`guide-curve` / `curve-lane-surface` (다크)", "#7ea8d0", "#182338"),
+    ("`user-curve` / `curve-lane-surface` (다크)", "#fb923c", "#182338"),
     ("`control-border` / `background` (라이트)", "#5b7fa8", "#eff6ff"),
     ("`control-border` / `card` (라이트)", "#5b7fa8", "#ffffff"),
     ("`control-border` / `background` (다크)", "#7ea8d0", "#0f172a"),

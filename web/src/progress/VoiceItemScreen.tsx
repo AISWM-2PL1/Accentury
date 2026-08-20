@@ -10,6 +10,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { startVoiceItem } from '../bridge/bridge'
 import { Button, StatusBlock } from '../ui'
+import { TYPE_BADGE } from './itemBadge'
 import type { VoiceItem } from './testDefinition'
 
 /*
@@ -67,44 +68,51 @@ export function VoiceItemScreen({ item, itemNumber, totalItems, onDevSubmitted }
   return (
     <>
       {/*
-        따라 말할 대사다. type-headline(26px)은 ux-ui.md §5의 "대사 카드 24sp 이상"을 지키는
-        크기이고, 네이티브 녹음 화면의 대사 카드(headlineMedium 26sp)와 같은 값이다 —
-        전환 순간에 글자 크기가 튀지 않는다.
+        대사 카드. 웹 어휘 문항·네이티브 녹음 화면의 카드와 같은 규격이라 전환에서 튀지 않는다.
+        type-headline(26px)은 ux-ui.md §5의 "대사 카드 24sp 이상"을 지키는 크기다.
       */}
-      <h1 className="type-headline">{item.prompt}</h1>
-      {bridgeAccepted === false ? (
-        <>
-          {/*
-            브리지가 없는 = 브라우저 단독 실행. 에뮬레이터 Chrome으로 진행 화면을 확인하는
-            검증 경로를 살려 두려고 개발용 제출 버튼을 남긴다. 앱에서는 이 분기에 오지 않는다.
-          */}
-          <StatusBlock
-            tone="waiting"
-            message="녹음 화면을 열 수 없어요 (앱 밖에서 실행 중)"
-            action={<Button onClick={onDevSubmitted}>제출 (개발용)</Button>}
-          />
-        </>
-      ) : (
-        <>
-          {/*
-            호출 직전(`null`)과 호출이 받아들여진 뒤(`true`)가 같은 문구를 공유한다. 분기를 이렇게
-            뒤집어 둔 이유는 이 <p>가 두 상태에서 같은 위치의 같은 노드로 남아야 React가 교체하지 않고,
-            그래야 전환 도중 문구가 흔들리지 않기 때문이다.
-            네이티브 녹음 화면이 이 WebView 위를 덮으므로, 이 뷰가 실제로 보이는 건 전환 순간·
-            결과를 기다리는 복귀 직후·그리고 사용자가 녹음 화면에서 [나가기]로 이탈한 뒤다.
-          */}
-          <StatusBlock tone="waiting" message={WAITING_MESSAGE} />
-          {bridgeAccepted === true && (
-            /*
-              [나가기] 이탈 뒤의 유일한 재진입 통로. 네이티브는 이탈을 웹에 알리지 않으므로(계약
-              최소 표면) 웹은 이탈과 "결과 대기 중"을 구분할 수 없다 — 대신 이 버튼은 녹음 중엔
-              네이티브 화면에 가려 누를 수 없고, 눌리더라도 네이티브 중복 방어(Stage 3)가 무시하므로
-              항상 노출해도 안전하다. 이 버튼이 없으면 이탈한 사용자는 이 문항에서 빠져나올 수 없다.
-            */
-            <Button onClick={requestRecording}>녹음 화면 다시 열기</Button>
-          )}
-        </>
-      )}
+      <div className="prompt-card">
+        <span className="type-caption prompt-card__badge">{TYPE_BADGE.VOICE}</span>
+        <h1 className="type-headline">{item.prompt}</h1>
+        <p className="type-label prompt-card__sub">이 문장을 따라 읽어주세요</p>
+      </div>
+      <div className="item-screen__footer">
+        {bridgeAccepted === false ? (
+          <>
+            {/*
+              브리지가 없는 = 브라우저 단독 실행. 에뮬레이터 Chrome으로 진행 화면을 확인하는
+              검증 경로를 살려 두려고 개발용 제출 버튼을 남긴다. 앱에서는 이 분기에 오지 않는다.
+            */}
+            <StatusBlock
+              tone="waiting"
+              message="녹음 화면을 열 수 없어요 (앱 밖에서 실행 중)"
+              action={<Button onClick={onDevSubmitted}>제출 (개발용)</Button>}
+            />
+          </>
+        ) : (
+          <>
+            {/*
+              호출 직전(`null`)과 호출이 받아들여진 뒤(`true`)가 같은 문구를 공유한다. 분기를 이렇게
+              뒤집어 둔 이유는 이 <p>가 두 상태에서 같은 위치의 같은 노드로 남아야 React가 교체하지 않고,
+              그래야 전환 도중 문구가 흔들리지 않기 때문이다.
+              네이티브 녹음 화면이 이 WebView 위를 덮으므로, 이 뷰가 실제로 보이는 건 전환 순간·
+              결과를 기다리는 복귀 직후·그리고 사용자가 녹음 화면에서 [나가기]로 이탈한 뒤다.
+            */}
+            <StatusBlock tone="waiting" message={WAITING_MESSAGE} />
+            {bridgeAccepted === true && (
+              /*
+                [나가기] 이탈 뒤의 유일한 재진입 통로. 네이티브는 이탈을 웹에 알리지 않으므로(계약
+                최소 표면) 웹은 이탈과 "결과 대기 중"을 구분할 수 없다 — 대신 이 버튼은 녹음 중엔
+                네이티브 화면에 가려 누를 수 없고, 눌리더라도 네이티브 중복 방어(Stage 3)가 무시하므로
+                항상 노출해도 안전하다. 이 버튼이 없으면 이탈한 사용자는 이 문항에서 빠져나올 수 없다.
+              */
+              <Button onClick={requestRecording} style={{ width: '100%' }}>
+                녹음 화면 다시 열기
+              </Button>
+            )}
+          </>
+        )}
+      </div>
     </>
   )
 }

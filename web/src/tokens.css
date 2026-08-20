@@ -49,7 +49,10 @@
   --color-prompt-card-foreground: #ffffff;
   --color-prompt-card-muted: #eff6ff;
   --color-guide-curve: #5b7fa8;
-  --color-user-curve: #2563eb;
+  --color-user-curve: #ea580c;
+  --color-curve-lane-surface: #ecf4ff;
+  --color-hero-start: #60a5fa;
+  --color-hero-end: #2563eb;
   --color-curve-lane-border: rgba(37, 99, 235, 0.13);
 
   /* ── 타이포 (정본 §3) ──
@@ -96,6 +99,17 @@
   --opacity-disabled: 0.6;
   --button-rest-depth: 4px;
   --button-pressed-depth: 1px;
+  --choice-depth: 3px;
+  --prompt-card-padding: 22px;
+  --progress-bar-height: 12px;
+  --hero-icon-size: 112px;
+
+  /* ── 그림자 (정본 §5) ──
+     전부 시그니처 파랑에 알파를 준 값이다. 회색 그림자와 달리 화면 전체가 한 색조로 묶인다. */
+  --shadow-card: 0 4px 20px rgba(37, 99, 235, 0.1);
+  --shadow-prompt: 0 8px 28px rgba(37, 99, 235, 0.28);
+  --shadow-hero: 0 12px 32px rgba(37, 99, 235, 0.35);
+  --shadow-choice: 0 3px 0 rgba(37, 99, 235, 0.15);
 
   /* ── 모션 (정본 §5) ── */
   --ease-out: cubic-bezier(0, 0, 0.2, 1);
@@ -140,7 +154,10 @@
     --color-prompt-card-foreground: #ffffff;
     --color-prompt-card-muted: #eff6ff;
     --color-guide-curve: #7ea8d0;
-    --color-user-curve: #3b82f6;
+    --color-user-curve: #fb923c;
+    --color-curve-lane-surface: #182338;
+    --color-hero-start: #3b82f6;
+    --color-hero-end: #1d4ed8;
     --color-curve-lane-border: rgba(147, 197, 253, 0.12);
   }
 }

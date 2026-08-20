@@ -85,13 +85,15 @@
 
 /* ── 진척도 ── */
 
+/*
+ * 시안은 진행바를 화면 맨 위 한 줄에 둔다 — 막대가 가로를 채우고 "1 / 10"이 오른쪽에 붙는다.
+ * 숫자를 막대 아래가 아니라 옆에 두는 이유는 세로 공간을 문항 카드에 주기 위해서다.
+ */
 .progress-indicator {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-3);
   width: 100%;
-  max-width: var(--content-max-width);
 }
 
 /*
@@ -99,8 +101,8 @@
  * 모양은 플랫폼마다 다르므로 트랙·바 색만 토큰으로 덮는다.
  */
 .progress-indicator__bar {
-  width: 100%;
-  height: var(--space-2);
+  flex: 1;
+  height: var(--progress-bar-height);
   border: none;
   border-radius: var(--radius-full);
   background: var(--color-muted);
@@ -126,6 +128,11 @@
 
 /* ── 대기·오류 블록 ── */
 
+.progress-indicator__count {
+  flex-shrink: 0;
+  color: var(--color-muted-foreground);
+}
+
 .status-block {
   display: flex;
   flex-direction: column;
@@ -140,4 +147,258 @@
 
 .status-block--error .status-block__detail {
   color: var(--color-destructive-on-surface);
+}
+
+/* ── 화면 셸 ── */
+
+/*
+ * 세 화면(인트로·업데이트 안내·문항 진행)이 같은 뼈대를 쓴다. 본문은 세로 가운데,
+ * 주버튼은 아래에 붙는 구성이다 — 시안이 모든 화면에서 지키는 배치다.
+ */
+.screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 100dvh;
+  padding: var(--space-6) var(--space-6) var(--space-8);
+  box-sizing: border-box;
+}
+
+.screen__body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-6);
+  width: 100%;
+  max-width: var(--content-max-width);
+  text-align: center;
+}
+
+.screen__footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  max-width: var(--content-max-width);
+  padding-top: var(--space-6);
+}
+
+/* ── 히어로 아이콘 ── */
+
+/*
+ * 화면을 여는 원형 아이콘. 시안이 인트로·권한 화면에서 같은 규격으로 쓴다 —
+ * 이모지 하나를 파랑 원에 얹고 테두리와 그림자로 띄운다.
+ */
+.hero-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--hero-icon-size);
+  height: var(--hero-icon-size);
+  border-radius: var(--radius-full);
+  background: linear-gradient(135deg, var(--color-hero-start), var(--color-hero-end));
+  border: 4px solid var(--color-secondary);
+  box-shadow: var(--shadow-hero);
+  font-size: 56px;
+  line-height: 1;
+  user-select: none;
+}
+
+/* 아이콘 둘레의 작은 장식. 위치가 제각각이라 개별 지정한다 */
+.hero-icon__spark {
+  position: absolute;
+  font-size: var(--text-title);
+  line-height: 1;
+  user-select: none;
+}
+
+.hero-icon__spark--tr {
+  top: -8px;
+  right: -8px;
+  font-size: var(--text-title-sm);
+  animation: hero-bounce 1s var(--ease-out) infinite;
+}
+
+.hero-icon__spark--bl {
+  bottom: -4px;
+  left: -12px;
+}
+
+@keyframes hero-bounce {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+/* ── 카드 ── */
+
+.card {
+  width: 100%;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+/* 숫자 두 칸을 가로로 나눠 보여주는 요약. 가운데 실선이 칸을 가른다 */
+.card__stats {
+  display: flex;
+}
+
+.card__stat {
+  flex: 1;
+  padding: var(--space-4) var(--space-2);
+}
+
+.card__stat + .card__stat {
+  border-left: 1px solid var(--color-border);
+}
+
+.card__stat-value {
+  color: var(--color-primary);
+}
+
+.card__stat-label {
+  color: var(--color-muted-foreground);
+  margin-top: 2px;
+}
+
+.card__footnote {
+  display: flex;
+  justify-content: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--color-border);
+  color: var(--color-muted-foreground);
+}
+
+.card__footnote-divider {
+  color: var(--color-border);
+}
+
+/* ── 문항 화면 ── */
+
+/*
+ * 문항 진행 화면의 뼈대. 인트로와 달리 본문이 위에서부터 쌓이고 주버튼만 바닥에 붙는다 —
+ * 카드·선택지가 세로로 길어 가운데 정렬하면 문항마다 위치가 들썩인다.
+ */
+.item-screen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-height: 100dvh;
+  padding: var(--space-4) var(--space-4) var(--space-8);
+  box-sizing: border-box;
+}
+
+/*
+ * 대사·질문 카드. 시안에서 화면의 주인공이라 그림자가 가장 깊고 모서리가 가장 크다.
+ * 높이를 고정하는 이유: 문항마다 글자 수가 달라도 카드가 들썩이지 않아야 아래 요소가
+ * 제자리에 있는 것처럼 읽힌다.
+ */
+.prompt-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-3);
+  min-height: var(--prompt-card-min-height);
+  padding: var(--prompt-card-padding);
+  border-radius: var(--radius-xl);
+  background: linear-gradient(135deg, var(--color-prompt-card-start), var(--color-prompt-card-end));
+  color: var(--color-prompt-card-foreground);
+  box-shadow: var(--shadow-prompt);
+  text-align: left;
+}
+
+.prompt-card__badge {
+  align-self: flex-start;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.15);
+  color: var(--color-prompt-card-muted);
+}
+
+.prompt-card__sub {
+  color: var(--color-prompt-card-muted);
+}
+
+/* ── 선택지 ── */
+
+.choice-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/*
+ * 버튼과 같은 입체 언어를 얕게 쓴다(3dp). 선택지는 여러 개가 세로로 쌓이므로 버튼만큼
+ * 두꺼우면 화면이 계단처럼 보인다.
+ */
+.choice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--touch-target-min);
+  padding: var(--space-4) 18px;
+  border: 2px solid var(--color-control-border);
+  border-radius: var(--radius-md);
+  background: var(--color-card);
+  box-shadow: var(--shadow-choice);
+  color: var(--color-foreground);
+  font-family: var(--font-body);
+  font-size: var(--text-body);
+  font-weight: var(--weight-bold);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    box-shadow var(--duration-press) var(--ease-out),
+    transform var(--duration-press) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out);
+}
+
+/*
+ * 선택 상태는 테두리 색과 그림자 색을 같이 바꾼다. 색만으로 구분하면 색각 이상에서
+ * 어느 것을 골랐는지 알 수 없어서, 라디오 표식(input)이 함께 켜지는 것이 본래 신호다
+ * (WCAG 1.4.1).
+ */
+.choice--selected {
+  border-color: var(--color-primary);
+  background: var(--color-secondary);
+  color: var(--color-secondary-foreground);
+  box-shadow: 0 var(--choice-depth) 0 var(--color-primary);
+}
+
+.choice:active:not(.choice--locked) {
+  transform: translateY(2px);
+  box-shadow: none;
+}
+
+.choice--locked {
+  cursor: default;
+  opacity: var(--opacity-disabled);
+}
+
+/* 라디오 표식. 브라우저 기본 모양은 플랫폼마다 달라 크기와 색만 토큰으로 맞춘다 */
+.choice__radio {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--color-primary);
+  flex-shrink: 0;
+}
+
+/* 문항 화면의 주버튼 자리. 카드가 길어져도 항상 바닥에 붙는다 */
+.item-screen__footer {
+  margin-top: auto;
+  padding-top: var(--space-4);
 }

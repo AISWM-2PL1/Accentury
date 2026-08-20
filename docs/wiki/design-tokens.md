@@ -64,8 +64,11 @@ Accentury 네이티브(Compose)와 웹(WebView)이 공유하는 색·타이포·
 | `prompt-card-end` | `#1d4ed8` | 대사 카드 그라디언트 끝 |
 | `prompt-card-foreground` | `#ffffff` | 대사 본문 |
 | `prompt-card-muted` | `#eff6ff` | 대사 카드 보조 텍스트(뜻·안내) |
-| `guide-curve` | `#5b7fa8` | 가이드 F0 곡선 (힌트 — 주인공 아님) |
-| `user-curve` | `#2563eb` | 사용자 F0 곡선 (시그니처 색, 주인공) |
+| `guide-curve` | `#5b7fa8` | 가이드 F0 곡선 (점선, 힌트 — 주인공 아님) |
+| `user-curve` | `#ea580c` | 사용자 F0 곡선 (실선, 주인공) |
+| `curve-lane-surface` | `#ecf4ff` | 곡선 레인 안쪽 면 |
+| `hero-start` | `#60a5fa` | 히어로 아이콘 그라디언트 시작 |
+| `hero-end` | `#2563eb` | 히어로 아이콘 그라디언트 끝 |
 | `curve-lane-border` | `rgba(37, 99, 235, 0.13)` | 곡선 레인 테두리 |
 
 ### 다크
@@ -101,7 +104,10 @@ Accentury 네이티브(Compose)와 웹(WebView)이 공유하는 색·타이포·
 | `prompt-card-foreground` | `#ffffff` |
 | `prompt-card-muted` | `#eff6ff` |
 | `guide-curve` | `#7ea8d0` |
-| `user-curve` | `#3b82f6` |
+| `user-curve` | `#fb923c` |
+| `curve-lane-surface` | `#182338` |
+| `hero-start` | `#3b82f6` |
+| `hero-end` | `#1d4ed8` |
 | `curve-lane-border` | `rgba(147, 197, 253, 0.12)` |
 
 ## 3. 타이포
@@ -139,6 +145,10 @@ Accentury 네이티브(Compose)와 웹(WebView)이 공유하는 색·타이포·
 | `prompt-card-min-height` | 152dp | 대사 카드 (문항 길이가 달라도 카드 크기 고정) |
 | `content-max-width` | 320dp | 본문 최대 폭. 넓은 화면에서 한 줄이 길어져 읽기 힘들어지는 것을 막는다 |
 | `opacity-disabled` | 0.6 | 비활성·제출 중 요소 |
+| `prompt-card-padding` | 22dp | 대사·질문 카드 안쪽 여백 |
+| `choice-depth` | 3dp | 선택지 밑변 그림자 깊이 |
+| `progress-bar-height` | 12dp | 진행바 두께 |
+| `hero-icon-size` | 112dp | 인트로·권한 화면의 원형 아이콘 (w-28) |
 
 ## 5. 모션
 
@@ -155,9 +165,21 @@ Accentury 네이티브(Compose)와 웹(WebView)이 공유하는 색·타이포·
 
 **모션 축소 대응**: 웹은 `@media (prefers-reduced-motion: reduce)`에서 모든 duration을 `0.01ms`로 덮는다. 네이티브는 `Settings.Global.ANIMATOR_DURATION_SCALE`이 0이면 애니메이션을 건너뛴다. 축소 상태에서도 **최종 상태는 동일** — 사라지는 정보가 없어야 한다.
 
+### 그림자
+
+시안의 입체감을 만드는 값이다. 전부 시그니처 파랑에 알파를 준 것이라 회색 그림자와 달리
+화면 전체가 한 색조로 묶인다.
+
+| 토큰 | 값 | 쓰는 곳 |
+|---|---|---|
+| `shadow-card` | `0 4px 20px rgba(37, 99, 235, 0.10)` | 일반 카드 |
+| `shadow-prompt` | `0 8px 28px rgba(37, 99, 235, 0.28)` | 대사·질문 카드 (화면의 주인공) |
+| `shadow-hero` | `0 12px 32px rgba(37, 99, 235, 0.35)` | 원형 히어로 아이콘 |
+| `shadow-choice` | `0 3px 0 rgba(37, 99, 235, 0.15)` | 선택지 밑변 (버튼과 같은 언어, 더 얕게) |
+
 ## 6. 대비 검증 결과
 
-WCAG 2.1 AA 일반 텍스트 기준 4.5:1. `python3 tools/check_contrast.py`가 생성한 표이고, 24건 전부 통과한다.
+WCAG 2.1 AA 일반 텍스트 기준 4.5:1. `python3 tools/check_contrast.py`가 생성한 표이고, 32건 전부 통과한다.
 
 | 조합 | 비율 |
 |---|---|
@@ -188,26 +210,21 @@ WCAG 2.1 AA 일반 텍스트 기준 4.5:1. `python3 tools/check_contrast.py`가 
 
 ### 그래픽 오브젝트 (3:1)
 
-F0 곡선과 레인 테두리는 텍스트가 아니라 WCAG 2.1 **1.4.11 비텍스트 대비 3:1**이 기준이다.
+F0 곡선·컨트롤 경계는 텍스트가 아니라 WCAG 2.1 **1.4.11 비텍스트 대비 3:1**이 기준이다.
 
 | 조합 | 비율 |
 |---|---|
-| `guide-curve` / `background` (라이트) | 3.82 |
-| `guide-curve` / `card` (라이트) | 4.16 |
-| `user-curve` / `background` (라이트) | 4.75 |
-| `user-curve` / `card` (라이트) | 5.17 |
-| `guide-curve` / `background` (다크) | 7.14 |
-| `guide-curve` / `card` (다크) | 5.85 |
-| `user-curve` / `background` (다크) | 4.85 |
-| `user-curve` / `card` (다크) | 3.98 |
+| `guide-curve` / `curve-lane-surface` (라이트) | 3.76 |
+| `user-curve` / `curve-lane-surface` (라이트) | 3.21 |
+| `guide-curve` / `curve-lane-surface` (다크) | 6.28 |
+| `user-curve` / `curve-lane-surface` (다크) | 6.94 |
 | `control-border` / `background` (라이트) | 3.82 |
 | `control-border` / `card` (라이트) | 4.16 |
 | `control-border` / `background` (다크) | 7.14 |
 | `control-border` / `card` (다크) | 5.85 |
 
 두 곡선은 위아래 별개 레인에 그려져 겹치지 않으므로 서로 간 대비는 기준 대상이 아니다.
-대신 `guide-curve`를 채도가 낮은 회청으로 두어 "가이드는 힌트, 사용자 곡선이 주인공"이라는
-위계가 색 무게만으로 읽히게 했다 (`ux-ui.md` §D).
+색만으로 구분하지도 않는다 — 가이드는 점선, 사용자 곡선은 실선이다 (WCAG 1.4.1).
 
 ## 7. 시안과 다른 값
 
@@ -223,8 +240,8 @@ F0 곡선과 레인 테두리는 텍스트가 아니라 WCAG 2.1 **1.4.11 비텍
 | 대사 카드 보조 텍스트 | `#bfdbfe` (blue-200) | `#eff6ff` | 그라디언트 시작색 위 2.59:1 → 4.75:1 |
 | 다크 `primary-foreground` | `#ffffff` | `#0f172a` | 흰 텍스트 대비 3.68:1 → 4.85:1 (파랑은 밝게 유지) |
 | 다크 `accent-foreground` | `#fffbeb` | `#451a03` | 대비 2.07:1 → 6.97:1 |
-| 가이드 곡선 | `#b0c4de` (RecordingScreen.kt:153 임시값) | `#5b7fa8` | 배경 위 1.64:1 → 3.82:1 (비텍스트 3:1 미달) |
-| 사용자 곡선 | `#3f6fbf` (RecordingScreen.kt:160 임시값) | `#2563eb` | 시그니처 색으로 확정 |
+| 가이드 곡선 색 | `#93c5fd` (proto, 점선) | `#5b7fa8` (점선 유지) | 레인 위 1.63:1 → 3.76:1 |
+| 사용자 곡선 색 | `#fb923c` (proto 주황) | `#ea580c` | 레인 위 2.04:1 → 3.21:1. 주황이라는 시안의 색 전략은 유지하고 톤만 낮췄다 |
 | 웹 선택지 테두리 | `#ccc` (VocabularyItemScreen.tsx) | `#5b7fa8` | 카드 위 1.61:1 → 4.16:1 (컨트롤 경계 3:1 미달) |
 | 웹 보조 텍스트 | `#666` (TestFlowScreen·VoiceItemScreen) | `#4d6f96` | 대비는 통과했으나 회색이 팔레트 밖이라 토큰으로 흡수 |
 | 웹 오류 텍스트 | `#b3261e` (VocabularyItemScreen) | `#b91c1c` | 팔레트 밖 빨강을 `destructive-on-surface`로 흡수 |

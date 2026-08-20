@@ -177,7 +177,7 @@ describe('문항 진행', () => {
     const bar = screen.getByRole('progressbar', { name: '문항 진행률' })
     expect(bar).toHaveAttribute('value', '1')
     expect(bar).toHaveAttribute('max', '10')
-    expect(screen.getByText('1/10')).toBeInTheDocument()
+    expect(screen.getByText('1 / 10')).toBeInTheDocument()
   })
 
   it('유형 뱃지가 문항 유형을 따라간다', async () => {
@@ -198,7 +198,7 @@ describe('문항 진행', () => {
     advance()
 
     expect(screen.getByText('어휘 문항 2')).toBeInTheDocument()
-    expect(screen.getByText('2/10')).toBeInTheDocument()
+    expect(screen.getByText('2 / 10')).toBeInTheDocument()
     expect(screen.getByRole('progressbar', { name: '문항 진행률' })).toHaveAttribute('value', '2')
   })
 
@@ -233,7 +233,7 @@ describe('문항 진행', () => {
     renderScreen(okFetch(), { storage })
 
     expect(await screen.findByText('음성 문항 3')).toBeInTheDocument()
-    expect(screen.getByText('3/10')).toBeInTheDocument()
+    expect(screen.getByText('3 / 10')).toBeInTheDocument()
   })
 })
 
@@ -263,7 +263,7 @@ describe('VOICE 문항 — 네이티브 녹음 화면 전환 (KAN-100)', () => {
     deliverResult('item-1')
 
     expect(screen.getByText('어휘 문항 2')).toBeInTheDocument()
-    expect(screen.getByText('2/10')).toBeInTheDocument()
+    expect(screen.getByText('2 / 10')).toBeInTheDocument()
   })
 
   it('다음 음성 문항에서는 그 문항의 순번으로 다시 호출한다', async () => {
@@ -310,7 +310,7 @@ describe('VOICE 문항 — 네이티브 녹음 화면 전환 (KAN-100)', () => {
     deliverResult('item-1') // 중복
 
     expect(screen.getByText('어휘 문항 2')).toBeInTheDocument()
-    expect(screen.getByText('2/10')).toBeInTheDocument()
+    expect(screen.getByText('2 / 10')).toBeInTheDocument()
   })
 
   it('브리지가 없으면(브라우저 단독) 안내와 개발용 제출 버튼을 남긴다', async () => {
@@ -351,7 +351,7 @@ describe('VOCABULARY 문항 — 보기 선택 (KAN-13)', () => {
     answerVocabulary()
 
     expect(await screen.findByText('음성 문항 3')).toBeInTheDocument()
-    expect(screen.getByText('3/10')).toBeInTheDocument()
+    expect(screen.getByText('3 / 10')).toBeInTheDocument()
   })
 
   it('어휘 문항에서는 네이티브 전환을 부르지 않는다', async () => {
@@ -422,7 +422,7 @@ describe('세션 격리 — 다른 세션의 진행을 이어받지 않는다', 
     renderScreen(okFetch(), { storage, sessionId: 'sess-2' })
 
     expect(await screen.findByText('음성 문항 1')).toBeInTheDocument()
-    expect(screen.getByText('1/10')).toBeInTheDocument()
+    expect(screen.getByText('1 / 10')).toBeInTheDocument()
     // 세션 1의 기록은 지워지지 않는다 — 남의 진행을 폐기할 권리가 없다는 것이 키 분리의 이유다
     expect(storage.getItem(snapshotKey('sess-1'))).not.toBeNull()
   })

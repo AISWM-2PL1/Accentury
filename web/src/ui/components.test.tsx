@@ -48,7 +48,7 @@ describe('ProgressIndicator', () => {
 
   it('숫자 표기가 막대와 같은 값을 쓴다 — 둘이 갈라지지 않는다', () => {
     render(<ProgressIndicator current={7} total={10} />)
-    expect(screen.getByText('7/10')).toBeInTheDocument()
+    expect(screen.getByText('7 / 10')).toBeInTheDocument()
   })
 })
 
