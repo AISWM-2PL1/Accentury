@@ -151,6 +151,7 @@ Accentury 네이티브(Compose)와 웹(WebView)이 공유하는 색·타이포·
 | `choice-depth` | 3dp | 선택지 밑변 그림자 깊이 |
 | `progress-bar-height` | 12dp | 진행바 두께 |
 | `hero-icon-size` | 112dp | 인트로·권한 화면의 원형 아이콘 (w-28) |
+| `curve-lane-height` | 120dp | F0 곡선 레인 하나. 시안(72px)보다 키웠다 — 실제 기기에서는 아래가 비어 곡선이 납작했다 |
 
 ## 5. 모션
 

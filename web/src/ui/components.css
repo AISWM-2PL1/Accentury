@@ -165,7 +165,6 @@
   gap: var(--space-4);
   min-height: 100dvh;
   padding: var(--space-6) var(--space-6) var(--space-8);
-  box-sizing: border-box;
 }
 
 .screen__body {
@@ -301,7 +300,6 @@
   gap: var(--space-4);
   min-height: 100dvh;
   padding: var(--space-4) var(--space-4) var(--space-8);
-  box-sizing: border-box;
 }
 
 /*
