@@ -34,12 +34,17 @@ DEFAULT_MAX_AUDIO_BYTES = 1_048_576
 #: 오디오 파트 상한만으로는 파싱이 끝난 뒤에야 걸러진다 (Codex sol 리뷰 P2).
 DEFAULT_MAX_REQUEST_BYTES = 2 * 1_048_576
 
+#: 붙일 분석 엔진 (KAN-135). 실모델(KAN-22)이 들어오면 고를 이름이 하나 더 생긴다.
+DEFAULT_ANALYSIS_ENGINE = "stub"
+
 
 @dataclass(frozen=True)
 class Settings:
     """서버 1개의 설정.
 
-    스텁 값(``stub_*``)은 KAN-22가 실제 모델 호출로 갈아끼울 자리다.
+    스텁 값(``stub_*``)은 :class:`app.engine.StubEngine`만 읽는다 - 실모델로 갈아끼우면
+    (KAN-22) 스텁 클래스와 함께 사라지는 값들이다. ``modelVersion``은 여기 없다.
+    설정이 아니라 엔진이 스스로 보고하는 값이기 때문이다 (KAN-135).
     """
 
     temp_dir: Path = DEFAULT_TEMP_DIR
@@ -51,9 +56,10 @@ class Settings:
     max_audio_bytes: int = DEFAULT_MAX_AUDIO_BYTES
     #: 요청 본문 전체의 상한 - multipart 파싱 전에 끊는다 (audio + meta + 오버헤드)
     max_request_bytes: int = DEFAULT_MAX_REQUEST_BYTES
+    #: 붙일 엔진의 이름 - :func:`app.engine.create_engine`이 읽는다 (KAN-135)
+    analysis_engine: str = DEFAULT_ANALYSIS_ENGINE
     #: 스텁 억양 점수 - 0~100 스케일 유지, 문항 20점 환산은 BE가 한다 (§4.3)
     stub_intonation_score: int = 75
-    stub_model_version: str = "stub-0.1"
     #: 추론 지연 흉내 - 앱과 BE의 대기 화면, 폴링 간격(§5.3)을 실제에 가깝게 시험하기 위한 값
     stub_delay_ms: int = 1500
     #: 이 itemId면 판정 실패(422)를 돌려준다 - 실패 종료 경로 시험용
@@ -81,8 +87,8 @@ class Settings:
             max_request_bytes=int(
                 source.get("ACCENTURY_AI_MAX_REQUEST_BYTES", DEFAULT_MAX_REQUEST_BYTES)
             ),
+            analysis_engine=source.get("ACCENTURY_AI_ANALYSIS_ENGINE", DEFAULT_ANALYSIS_ENGINE),
             stub_intonation_score=int(source.get("ACCENTURY_AI_STUB_SCORE", 75)),
-            stub_model_version=source.get("ACCENTURY_AI_STUB_MODEL_VERSION", "stub-0.1"),
             stub_delay_ms=int(source.get("ACCENTURY_AI_STUB_DELAY_MS", 1500)),
             stub_fail_item=source.get("ACCENTURY_AI_STUB_FAIL_ITEM") or None,
         )

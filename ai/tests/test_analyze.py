@@ -6,41 +6,13 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings
+from app.engine import StubEngine
 from app.main import create_app
-from tests.conftest import FAIL_ITEM
-
-AUDIO = b"RIFF....WAVEfmt " + bytes(64)
-
-
-def meta(item_id: str = "v1") -> str:
-    return json.dumps(
-        {
-            "correlationId": "c_test",
-            "itemId": item_id,
-            "testVersion": "gn-2026.08.1",
-            "scoreVersion": "sv-0.3",
-            "durationMs": 3420,
-        }
-    )
-
-
-def post(client, item_id: str = "v1", meta_json: str | None = None):
-    return client.post(
-        "/internal/v0/analyze",
-        files={"audio": ("recording.wav", AUDIO, "audio/wav")},
-        data={"meta": meta(item_id) if meta_json is None else meta_json},
-        headers={"X-Correlation-Id": "c_test"},
-    )
-
-
-def residue(settings) -> list[str]:
-    return [entry.name for entry in settings.temp_dir.iterdir()]
+from tests.conftest import FAIL_ITEM, FakeEngine, meta, post, residue
 
 
 #: 본문을 직접 조립할 때 쓰는 경계 문자열 - httpx가 붙여 주는 것을 쓸 수 없는 경우가 있다
@@ -70,7 +42,8 @@ def test_성공_응답_뒤에_오디오가_남지_않는다(client, settings):
     body = response.json()
     assert body["status"] == "OK"
     assert body["intonationScore"] == settings.stub_intonation_score
-    assert body["modelVersion"] == settings.stub_model_version
+    # 설정이 아니라 엔진이 보고한 값이다 (KAN-135)
+    assert body["modelVersion"] == StubEngine.MODEL_VERSION
     # 세션이 고정한 점수 버전을 되돌려준다 - 다르면 BE가 계약 위반으로 끊는다 (§5.4)
     assert body["scoreVersion"] == "sv-0.3"
     assert residue(settings) == []
@@ -94,15 +67,14 @@ def test_meta_형식_오류는_400이고_오디오를_저장하지_않는다(cli
     assert residue(settings) == []
 
 
-def test_추론_중_예외가_나도_오디오가_남지_않는다(client, settings, monkeypatch):
-    # 예외 경로 - 종료 처리가 정상 반환에만 달려 있으면 여기서 파일이 남는다
-    async def 폭발(*_args, **_kwargs):
-        raise RuntimeError("추론 실패 시뮬레이션")
+def test_추론_중_예외가_나도_오디오가_남지_않는다(settings):
+    # 예외 경로 - 종료 처리가 정상 반환에만 달려 있으면 여기서 파일이 남는다.
+    # 터지는 쪽을 가짜 엔진으로 두는 것은 이 보장이 엔진 종류와 무관해야 하기 때문이다 (KAN-135)
+    engine = FakeEngine(error=RuntimeError("추론 실패 시뮬레이션"))
 
-    monkeypatch.setattr("app.analyze._analyze_stub", 폭발)
-
-    with pytest.raises(RuntimeError):
-        post(client)
+    with TestClient(create_app(settings, engine=engine)) as client:
+        with pytest.raises(RuntimeError):
+            post(client)
 
     assert residue(settings) == []
 

@@ -1,8 +1,9 @@
-"""FastAPI AI 분석 서버 (KAN-27 스켈레톤).
+"""FastAPI AI 분석 서버.
 
 이 서버는 BE만 호출할 수 있는 사설망 서비스다 (§1.1, §4, NFR-SC-04) - 퍼블릭 인터넷에
 노출하지 않는다. KAN-27 범위는 **원본 음성이 이 서버에 남지 않는 것**이고, 실제 추론과
-``/internal/v0/models``는 KAN-22가 채운다.
+``/internal/v0/models``는 KAN-22가 채운다. 추론은 :mod:`app.engine`의 어댑터 뒤에 있어
+기동 시 한 번 고르면 라우트는 그것이 무엇인지 모른다 (KAN-135).
 """
 
 from __future__ import annotations
@@ -16,14 +17,25 @@ from fastapi import FastAPI, Request
 
 from app import analyze
 from app.config import Settings
+from app.engine import AnalysisEngine, create_engine, require_reportable_version
 from app.limits import MaxBodySizeMiddleware
 from app.tempstore import VoiceTempStore
 
 log = logging.getLogger(__name__)
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, engine: AnalysisEngine | None = None) -> FastAPI:
+    """앱 1개를 만든다.
+
+    ``engine``을 주면 설정이 지정한 엔진 대신 그것을 꽂는다 - 테스트가 가짜 엔진을
+    밀어 넣는 자리다 (KAN-135 AC). 운영 경로는 언제나 설정에서 고른다.
+    """
     resolved = settings or Settings.from_env()
+    # 엔진은 기동 시 한 번만 만든다 - 실모델은 가중치 적재가 붙으므로 요청마다 만들 수 없다.
+    # 주입된 엔진도 같은 검사를 지난다 - 기동 시 걸러야 첫 요청에서 BE 회로가 열리지 않는다
+    resolved_engine = require_reportable_version(
+        engine if engine is not None else create_engine(resolved)
+    )
     store = VoiceTempStore(resolved.temp_dir, resolved.temp_retention_seconds)
 
     @asynccontextmanager
@@ -43,7 +55,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # 루프가 그동안 멈춰 진행 중인 분석 요청이 전부 밀린다 (Codex 리뷰)
         await asyncio.to_thread(store.purge_leftovers)
         sweeper = asyncio.create_task(_sweep_forever(store, resolved.sweep_interval_seconds))
-        log.info("AI 분석 서버 기동 tempDir=%s", store.directory)
+        log.info(
+            "AI 분석 서버 기동 tempDir=%s engine=%s modelVersion=%s",
+            store.directory,
+            type(resolved_engine).__name__,
+            resolved_engine.model_version,
+        )
         try:
             yield
         finally:
@@ -57,6 +74,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(MaxBodySizeMiddleware, max_bytes=resolved.max_request_bytes)
     app.state.settings = resolved
     app.state.temp_store = store
+    app.state.engine = resolved_engine
     app.include_router(analyze.router)
 
     @app.get("/internal/v0/health")
