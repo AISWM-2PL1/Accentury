@@ -54,6 +54,7 @@ val LightPromptCardStart = Color(0xFF2563EB)
 val LightPromptCardEnd = Color(0xFF1D4ED8)
 val LightPromptCardForeground = Color(0xFFFFFFFF)
 val LightPromptCardMuted = Color(0xFFEFF6FF)
+val LightPromptCardBadge = Color(0x26FFFFFF)
 
 val LightGuideCurve = Color(0xFF5B7FA8)
 
@@ -109,6 +110,7 @@ val DarkPromptCardStart = Color(0xFF2563EB)
 val DarkPromptCardEnd = Color(0xFF1E3A8A)
 val DarkPromptCardForeground = Color(0xFFFFFFFF)
 val DarkPromptCardMuted = Color(0xFFEFF6FF)
+val DarkPromptCardBadge = Color(0x26FFFFFF)
 
 val DarkGuideCurve = Color(0xFF7EA8D0)
 val DarkUserCurve = Color(0xFFFB923C)

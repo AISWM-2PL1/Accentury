@@ -14,10 +14,15 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.border
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -33,6 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
@@ -55,7 +61,9 @@ import com.accentury.app.testflow.TestFlowController
 import com.accentury.app.testflow.continuesFrom
 import com.accentury.app.testflow.TestFlowPhase
 import com.accentury.app.ui.components.AccenturyButton
+import com.accentury.app.ui.components.HeroIcon
 import com.accentury.app.ui.theme.AccenturyTheme
+import com.accentury.app.ui.theme.Radius
 import com.accentury.app.ui.theme.Spacing
 import com.accentury.app.upload.UploadRequest
 import com.accentury.app.upload.UploadState
@@ -441,7 +449,13 @@ private fun PermissionGate(onGranted: () -> Unit, modifier: Modifier = Modifier)
     }
 }
 
-/** 게이트 화면. 녹음 오버레이와 같은 이유로 [Surface]가 아래 WebView를 가린다. */
+/**
+ * 게이트 화면. 녹음 오버레이와 같은 이유로 [Surface]가 아래 WebView를 가린다.
+ *
+ * 배치는 시안(`prototype/src/app/App.tsx` MicScreen)을 따른다 — 히어로 아이콘, 카피,
+ * 안심 문구 카드, 바닥의 주버튼. 권한을 묻는 화면이라 "무엇을 왜 가져가는지"가 카드에
+ * 먼저 보이고 버튼이 마지막에 오는 순서가 중요하다.
+ */
 @Composable
 private fun GateScreen(
     headline: String,
@@ -452,13 +466,74 @@ private fun GateScreen(
 ) {
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
-            modifier = Modifier.fillMaxSize().padding(Spacing.x4),
-            verticalArrangement = Arrangement.spacedBy(Spacing.x3, Alignment.CenterVertically),
+            modifier = Modifier.fillMaxSize().padding(Spacing.x6),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text(headline, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
-            Text(supporting, style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center)
-            AccenturyButton(text = buttonLabel, onClick = onButtonClick)
+            Column(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(Spacing.x6, Alignment.CenterVertically),
+            ) {
+                HeroIcon(emoji = "🎤")
+
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(Spacing.x2),
+                ) {
+                    Text(
+                        headline,
+                        style = MaterialTheme.typography.headlineMedium,
+                        textAlign = TextAlign.Center,
+                    )
+                    Text(
+                        supporting,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+
+                AssuranceCard()
+            }
+
+            AccenturyButton(
+                text = buttonLabel,
+                onClick = onButtonClick,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
     }
 }
+
+/**
+ * 마이크를 왜 달라는지 세 줄로 답하는 카드 (시안). 권한 요청 앞에서 사용자가 실제로 궁금해하는
+ * 것은 "무엇에 쓰는가"와 "안전한가" 둘이라, 그 답을 버튼보다 먼저 보이는 자리에 둔다.
+ */
+@Composable
+private fun AssuranceCard() {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(Radius.xl))
+            .background(MaterialTheme.colorScheme.surface)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(Radius.xl))
+            .padding(Spacing.x4),
+        verticalArrangement = Arrangement.spacedBy(Spacing.x3),
+    ) {
+        ASSURANCES.forEach { (emoji, text) ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Spacing.x3),
+            ) {
+                Text(emoji, style = MaterialTheme.typography.titleMedium)
+                Text(text, style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+    }
+}
+
+private val ASSURANCES = listOf(
+    "📊" to "실시간 억양 곡선 분석",
+    "🏆" to "발음 정확도 점수 측정",
+    "🔒" to "음성은 분석 즉시 삭제",
+)
