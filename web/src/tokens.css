@@ -44,13 +44,13 @@
   --color-border: rgba(37, 99, 235, 0.13);
   --color-control-border: #5b7fa8;
   --color-ring: #3b82f6;
-  --color-prompt-card-start: #2563eb;
+  --color-prompt-card-start: #3b82f6;
   --color-prompt-card-end: #1d4ed8;
   --color-prompt-card-foreground: #ffffff;
   --color-prompt-card-muted: #eff6ff;
   --color-prompt-card-badge: rgba(255, 255, 255, 0.15);
-  --color-guide-curve: #5b7fa8;
-  --color-user-curve: #ea580c;
+  --color-guide-curve: #93c5fd;
+  --color-user-curve: #fb923c;
   --color-curve-lane-surface: #ecf4ff;
   --color-hero-start: #60a5fa;
   --color-hero-end: #2563eb;
@@ -155,7 +155,7 @@
     --color-prompt-card-foreground: #ffffff;
     --color-prompt-card-muted: #eff6ff;
     --color-prompt-card-badge: rgba(255, 255, 255, 0.15);
-    --color-guide-curve: #7ea8d0;
+    --color-guide-curve: #93c5fd;
     --color-user-curve: #fb923c;
     --color-curve-lane-surface: #182338;
     --color-hero-start: #3b82f6;

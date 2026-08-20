@@ -50,20 +50,20 @@ val LightBorder = Color(0x212563EB)
 val LightControlBorder = Color(0xFF5B7FA8)
 val LightRing = Color(0xFF3B82F6)
 
-val LightPromptCardStart = Color(0xFF2563EB)
+val LightPromptCardStart = Color(0xFF3B82F6)
 val LightPromptCardEnd = Color(0xFF1D4ED8)
 val LightPromptCardForeground = Color(0xFFFFFFFF)
 val LightPromptCardMuted = Color(0xFFEFF6FF)
 val LightPromptCardBadge = Color(0x26FFFFFF)
 
-val LightGuideCurve = Color(0xFF5B7FA8)
+val LightGuideCurve = Color(0xFF93C5FD)
 
 /**
  * 사용자 곡선은 주황이다 - 파랑 일색인 UI에서 곡선만 다른 색조를 갖게 해 "곡선이 주인공"을
- * 색으로 만든다 (ux-ui.md §5). 시안의 #fb923c는 레인 위 2.04:1로 비텍스트 3:1에 못 미쳐
- * 한 단 낮췄다 (3.21:1).
+ * 색으로 만든다 (ux-ui.md §5). 시안 값 그대로이고, 레인 위 2.04:1로 비텍스트 3:1에는
+ * 못 미친다 - 감수한 자리다 (정본 §7, tools/check_contrast.py의 WAIVED).
  */
-val LightUserCurve = Color(0xFFEA580C)
+val LightUserCurve = Color(0xFFFB923C)
 val LightCurveLaneSurface = Color(0xFFECF4FF)
 val LightHeroStart = Color(0xFF60A5FA)
 val LightHeroEnd = Color(0xFF2563EB)
@@ -112,7 +112,7 @@ val DarkPromptCardForeground = Color(0xFFFFFFFF)
 val DarkPromptCardMuted = Color(0xFFEFF6FF)
 val DarkPromptCardBadge = Color(0x26FFFFFF)
 
-val DarkGuideCurve = Color(0xFF7EA8D0)
+val DarkGuideCurve = Color(0xFF93C5FD)
 val DarkUserCurve = Color(0xFFFB923C)
 val DarkCurveLaneSurface = Color(0xFF182338)
 val DarkHeroStart = Color(0xFF3B82F6)

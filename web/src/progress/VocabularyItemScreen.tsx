@@ -102,7 +102,18 @@ export function VocabularyItemScreen({ item, submitAnswer, onSubmitted }: Vocabu
                 disabled={submitting}
                 onChange={() => setSelected(choice.choiceId)}
               />
-              {choice.text}
+              <span>{choice.text}</span>
+              {/*
+                고른 것을 색 말고도 알린다. 표식(라디오)을 눈에서 지우고 나면 선택/미선택의
+                차이가 색상뿐인데, 두 상태의 명도 차이는 1.2 정도라 색각 이상에서는 구분이
+                어렵다 (WCAG 1.4.1). 시안이 오른쪽에 아이콘을 두던 자리를 그대로 쓴다.
+                정답이 아니라 "내가 고른 것" 표시라 정오 미노출(KAN-13)과는 무관하다.
+              */}
+              {checked && (
+                <span className="choice__check" aria-hidden="true">
+                  ✓
+                </span>
+              )}
             </label>
           )
         })}
