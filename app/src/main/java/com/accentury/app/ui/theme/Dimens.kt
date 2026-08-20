@@ -43,8 +43,12 @@ object Dimens {
     /** 대사·질문 카드 안쪽 여백 */
     val promptCardPadding = 22.dp
 
-    /** 곡선 레인 하나의 높이 (시안: h-[72px]) */
-    val curveLaneHeight = 72.dp
+    /**
+     * 곡선 레인 하나의 높이. 시안은 폰 목업(390x844) 기준 72px인데, 실제 기기에서는
+     * 대사 카드 아래로 220dp 가까이 비어 있어 곡선이 필요 이상으로 납작했다.
+     * 곡선의 오르내림이 이 화면의 정보 자체라(ux-ui.md §D) 읽히는 크기를 우선한다.
+     */
+    val curveLaneHeight = 120.dp
 
     /** 원형 녹음 버튼 지름 (시안: w-20 h-20) */
     val recordButtonSize = 80.dp
