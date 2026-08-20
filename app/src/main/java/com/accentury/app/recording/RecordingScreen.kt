@@ -149,7 +149,7 @@ fun RecordingScreen(
         } else when (val s = state) {
             is RecordingUiState.Idle -> {
                 Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                    RecordButton(label = "🎤", onClick = viewModel::startRecording)
+                    RecordButton(contentDescription = "녹음 시작", onClick = viewModel::startRecording)
                     Spacer(modifier = Modifier.height(Spacing.x2))
                     Text(
                         "버튼을 눌러 녹음",
@@ -175,7 +175,11 @@ fun RecordingScreen(
                         )
                     }
                     Spacer(modifier = Modifier.height(Spacing.x2))
-                    RecordButton(label = "⏹", onClick = viewModel::stopRecording, recording = true)
+                    RecordButton(
+                        contentDescription = "녹음 정지",
+                        onClick = viewModel::stopRecording,
+                        recording = true,
+                    )
                 }
             }
 
