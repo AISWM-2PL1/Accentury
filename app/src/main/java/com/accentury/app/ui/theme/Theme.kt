@@ -70,6 +70,7 @@ private val DarkColorScheme = darkColorScheme(
 @Immutable
 data class AccenturyColors(
     val primaryDim: Color,
+    val controlBorder: Color,
     val success: Color,
     val onSuccess: Color,
     val successSurface: Color,
@@ -87,6 +88,7 @@ data class AccenturyColors(
 
 private val LightAccenturyColors = AccenturyColors(
     primaryDim = LightPrimaryDim,
+    controlBorder = LightControlBorder,
     success = LightSuccess,
     onSuccess = LightSuccessForeground,
     successSurface = LightSuccessSurface,
@@ -104,6 +106,7 @@ private val LightAccenturyColors = AccenturyColors(
 
 private val DarkAccenturyColors = AccenturyColors(
     primaryDim = DarkPrimaryDim,
+    controlBorder = DarkControlBorder,
     success = DarkSuccess,
     onSuccess = DarkSuccessForeground,
     successSurface = DarkSuccessSurface,

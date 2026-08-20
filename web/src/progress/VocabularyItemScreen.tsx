@@ -65,14 +65,20 @@ export function VocabularyItemScreen({ item, submitAnswer, onSubmitted }: Vocabu
 
   return (
     <>
-      <h1 id="vocab-prompt" style={{ fontSize: '20px', fontWeight: 600, margin: 0 }}>
+      <h1 id="vocab-prompt" className="type-title">
         {item.prompt}
       </h1>
       {/* 문제 문구가 곧 이 라디오 그룹의 이름이다 — 스크린 리더가 "그룹 진입"에서 문제를 읽는다 */}
       <div
         role="radiogroup"
         aria-labelledby="vocab-prompt"
-        style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%', maxWidth: '320px' }}
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 'var(--space-2)',
+          width: '100%',
+          maxWidth: 'var(--content-max-width)',
+        }}
       >
         {/* 정의의 choices 배열 순서 = 화면 순서. 정렬·섞기를 하지 않는 것이 요구사항이다 */}
         {item.choices.map((choice) => {
@@ -80,19 +86,25 @@ export function VocabularyItemScreen({ item, submitAnswer, onSubmitted }: Vocabu
           return (
             <label
               key={choice.choiceId}
+              className="type-body"
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                gap: '8px',
+                gap: 'var(--space-2)',
                 // ux-ui.md 최소선: 터치 타겟 48dp 이상 — 글자가 아니라 label 전체가 탭 영역이다
-                minHeight: '48px',
-                padding: '0 12px',
-                fontSize: '16px',
+                minHeight: 'var(--touch-target-min)',
+                padding: '0 var(--space-3)',
                 cursor: submitting ? 'default' : 'pointer',
-                border: checked ? '2px solid #333' : '1px solid #ccc',
-                borderRadius: '8px',
+                /*
+                 * 선택 상태는 색과 두께를 같이 바꾼다 — 색만으로 구분하면 색각 이상에서
+                 * 어느 것을 골랐는지 알 수 없다 (WCAG 1.4.1 색에 의존하지 않기).
+                 */
+                border: checked
+                  ? '2px solid var(--color-primary)'
+                  : '1px solid var(--color-control-border)',
+                borderRadius: 'var(--radius-md)',
                 textAlign: 'left',
-                opacity: submitting ? 0.6 : 1,
+                opacity: submitting ? 'var(--opacity-disabled)' : 1,
               }}
             >
               <input
@@ -111,7 +123,7 @@ export function VocabularyItemScreen({ item, submitAnswer, onSubmitted }: Vocabu
       </div>
       {errorMessage !== null && (
         // 서버 봉투의 한국어 message 그대로. 비난 없는 카피 톤은 봉투(ErrorCode) 쪽 책임이다
-        <p role="alert" style={{ fontSize: '13px', margin: 0, color: '#b3261e' }}>
+        <p role="alert" className="type-caption" style={{ color: 'var(--color-destructive-on-surface)' }}>
           {errorMessage}
         </p>
       )}
@@ -123,7 +135,8 @@ export function VocabularyItemScreen({ item, submitAnswer, onSubmitted }: Vocabu
         type="button"
         disabled={selected === null || submitting}
         onClick={() => void submit()}
-        style={{ minHeight: '48px', minWidth: '200px', fontSize: '16px', cursor: 'pointer' }}
+        className="type-body"
+        style={{ minHeight: 'var(--touch-target-min)', minWidth: '200px', cursor: 'pointer' }}
       >
         {submitting ? '제출 중…' : errorMessage !== null ? '다시 시도' : '다음'}
       </button>

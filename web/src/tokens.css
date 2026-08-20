@@ -1,0 +1,252 @@
+/*
+ * 디자인 토큰 (KAN-148). 정본은 `docs/wiki/design-tokens.md`이고 이 파일은 사본이다 —
+ * 값을 바꾸려면 정본부터 고치고 같은 커밋에서 여기와 네이티브 쪽 Color.kt·Type.kt·Dimens.kt를
+ * 함께 고친다. 한쪽만 고치면 네이티브와 WebView가 번갈아 나오는 화면 경계에서 색이 튄다.
+ *
+ * 이름은 정본의 semantic 토큰 이름을 그대로 옮겼다 (`primary` → `--color-primary`).
+ * 대비는 `tools/check_contrast.py`가 검증한다.
+ */
+
+/* Jua — 제목·대사·등급용. 네이티브가 res/font/jua_regular.ttf로 쓰는 것과 같은 폰트다.
+   CDN이 아니라 자산으로 실어 오프라인·느린 망에서도 글꼴이 바뀌지 않게 한다. */
+@font-face {
+  font-family: 'Jua';
+  src: url('/fonts/Jua-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  /* swap — 폰트를 기다리며 글자를 감추지 않는다. 대사가 안 보이면 문항을 못 읽는다 */
+  font-display: swap;
+}
+
+:root {
+  /* ── 색: 라이트 (정본 §2) ── */
+  --color-primary: #2563eb;
+  --color-primary-foreground: #ffffff;
+  --color-primary-dim: #1d4ed8;
+  --color-background: #eff6ff;
+  --color-foreground: #1e3a5f;
+  --color-card: #ffffff;
+  --color-card-foreground: #1e3a5f;
+  --color-secondary: #dbeafe;
+  --color-secondary-foreground: #1d4ed8;
+  --color-muted: #bfdbfe;
+  --color-muted-foreground: #4d6f96;
+  --color-accent: #fcd34d;
+  --color-accent-foreground: #78350f;
+  --color-success: #047857;
+  --color-success-foreground: #ffffff;
+  --color-success-surface: #ecfdf5;
+  --color-success-on-surface: #047857;
+  --color-destructive: #dc2626;
+  --color-destructive-foreground: #ffffff;
+  --color-destructive-surface: #fef2f2;
+  --color-destructive-on-surface: #b91c1c;
+  --color-border: rgba(37, 99, 235, 0.13);
+  --color-control-border: #5b7fa8;
+  --color-ring: #3b82f6;
+  --color-prompt-card-start: #2563eb;
+  --color-prompt-card-end: #1d4ed8;
+  --color-prompt-card-foreground: #ffffff;
+  --color-prompt-card-muted: #eff6ff;
+  --color-guide-curve: #5b7fa8;
+  --color-user-curve: #2563eb;
+  --color-curve-lane-border: rgba(37, 99, 235, 0.13);
+
+  /* ── 타이포 (정본 §3) ──
+     본문은 시스템 산세리프다. Android 시스템 폰트가 Noto Sans CJK KR이라 네이티브의
+     FontFamily.Default와 같은 글꼴로 풀린다 — 양쪽이 저절로 수렴한다. */
+  --font-display: 'Jua', system-ui, sans-serif;
+  --font-body: system-ui, -apple-system, 'Noto Sans KR', sans-serif;
+
+  --text-display: 44px;
+  --text-headline: 26px;
+  --text-title: 22px;
+  --text-title-sm: 20px;
+  --text-body: 16px;
+  --text-body-sm: 15px;
+  --text-label: 14px;
+  --text-caption: 12px;
+
+  --weight-black: 900;
+  --weight-bold: 700;
+  --weight-semibold: 600;
+  --weight-medium: 500;
+  --weight-normal: 400;
+
+  --leading-tight: 1.15;
+  --leading-normal: 1.5;
+
+  /* ── 간격·반경·크기 (정본 §4) ── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  --radius-sm: 12px;
+  --radius-md: 16px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
+  --radius-full: 9999px;
+
+  --touch-target-min: 48px;
+  --prompt-card-min-height: 152px;
+  --content-max-width: 320px;
+  --opacity-disabled: 0.6;
+  --button-rest-depth: 4px;
+  --button-pressed-depth: 1px;
+
+  /* ── 모션 (정본 §5) ── */
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --duration-press: 75ms;
+  --duration-fast: 150ms;
+  --duration-base: 300ms;
+  --duration-reveal: 600ms;
+}
+
+/* 다크는 색만 갈아 끼운다 — 크기·간격·모션은 테마와 무관하다.
+   `prefers-color-scheme`을 쓰는 이유: 네이티브가 isSystemInDarkTheme()로 같은 시스템
+   설정을 보므로, 두 런타임이 별도 신호 없이 같은 순간에 같은 테마로 넘어간다. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-primary: #3b82f6;
+    /* 다크에서만 전경이 뒤집힌다 — 밝은 파랑 위 흰 글씨는 3.68:1로 미달이다 (정본 §7) */
+    --color-primary-foreground: #0f172a;
+    --color-primary-dim: #1d4ed8;
+    --color-background: #0f172a;
+    --color-foreground: #e2f0ff;
+    --color-card: #1e293b;
+    --color-card-foreground: #e2f0ff;
+    --color-secondary: #1e3a5f;
+    --color-secondary-foreground: #93c5fd;
+    --color-muted: #1e293b;
+    --color-muted-foreground: #7ea8d0;
+    --color-accent: #f59e0b;
+    --color-accent-foreground: #451a03;
+    --color-success: #047857;
+    --color-success-foreground: #ffffff;
+    --color-success-surface: #052e23;
+    --color-success-on-surface: #6ee7b7;
+    --color-destructive: #dc2626;
+    --color-destructive-foreground: #ffffff;
+    --color-destructive-surface: #3f1414;
+    --color-destructive-on-surface: #fca5a5;
+    --color-border: rgba(147, 197, 253, 0.12);
+    --color-control-border: #7ea8d0;
+    --color-ring: #60a5fa;
+    --color-prompt-card-start: #2563eb;
+    --color-prompt-card-end: #1e3a8a;
+    --color-prompt-card-foreground: #ffffff;
+    --color-prompt-card-muted: #eff6ff;
+    --color-guide-curve: #7ea8d0;
+    --color-user-curve: #3b82f6;
+    --color-curve-lane-border: rgba(147, 197, 253, 0.12);
+  }
+}
+
+/*
+ * 모션 축소 (정본 §5). 시간만 0에 가깝게 줄이고 전환 자체는 남긴다 — `transition: none`으로
+ * 지우면 transitionend를 기다리는 코드가 영영 안 깨어난다. 0이 아니라 0.01ms인 이유다.
+ *
+ * 축소 상태에서도 최종 상태는 같다. 전환을 없애는 것이지 정보를 없애는 게 아니다.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-press: 0.01ms;
+    --duration-fast: 0.01ms;
+    --duration-base: 0.01ms;
+    --duration-reveal: 0.01ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── 바탕 ── */
+
+body {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: var(--text-body);
+  line-height: var(--leading-normal);
+  color: var(--color-foreground);
+  background: var(--color-background);
+}
+
+/*
+ * 타이포 세트. 네이티브가 `MaterialTheme.typography.headlineMedium`을 쓰듯 웹은
+ * `class="type-headline"`을 쓴다 — 크기·굵기·행간·글꼴이 한 덩어리로 움직여야
+ * 두 런타임이 같은 값으로 남는다. 화면 코드가 fontSize를 직접 적으면 그 순간 갈라진다.
+ */
+.type-display,
+.type-headline,
+.type-title,
+.type-title-sm {
+  font-family: var(--font-display);
+  line-height: var(--leading-tight);
+  margin: 0;
+}
+
+.type-body,
+.type-body-sm,
+.type-label,
+.type-caption {
+  font-family: var(--font-body);
+  line-height: var(--leading-normal);
+  margin: 0;
+}
+
+.type-display {
+  font-size: var(--text-display);
+  font-weight: var(--weight-black);
+}
+
+/* 대사 카드 — `ux-ui.md` §5의 "24sp 이상"이 여기 걸린다.
+   발화용 텍스트는 가독성이 곧 기능이라 이 값 아래로 내리면 안 된다 */
+.type-headline {
+  font-size: var(--text-headline);
+  font-weight: var(--weight-black);
+}
+
+.type-title {
+  font-size: var(--text-title);
+  font-weight: var(--weight-bold);
+}
+
+.type-title-sm {
+  font-size: var(--text-title-sm);
+  font-weight: var(--weight-bold);
+}
+
+.type-body {
+  font-size: var(--text-body);
+  font-weight: var(--weight-normal);
+}
+
+.type-body-sm {
+  font-size: var(--text-body-sm);
+  font-weight: var(--weight-normal);
+}
+
+.type-label {
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+}
+
+.type-caption {
+  font-size: var(--text-caption);
+  font-weight: var(--weight-semibold);
+}
+
+/* 키보드 포커스만 링을 띄운다 — 마우스·터치 클릭까지 테두리가 남으면 시각적으로 거슬린다 */
+:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}

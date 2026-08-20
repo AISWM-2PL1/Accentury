@@ -41,6 +41,13 @@ val LightDestructiveSurface = Color(0xFFFEF2F2)
 val LightDestructiveOnSurface = Color(0xFFB91C1C)
 
 val LightBorder = Color(0x212563EB)
+
+/**
+ * 선택 가능한 컨트롤의 경계 (선택지·입력). [LightBorder]와 갈라 둔 이유: 장식용 구분선은
+ * 안 보여도 그만이지만 컨트롤 경계는 "고를 수 있는 것"의 범위를 알리는 정보라
+ * 비텍스트 3:1(WCAG 1.4.11)을 넘겨야 한다. 반투명 파랑은 카드 위 1.20:1로 한참 모자라다.
+ */
+val LightControlBorder = Color(0xFF5B7FA8)
 val LightRing = Color(0xFF3B82F6)
 
 val LightPromptCardStart = Color(0xFF2563EB)
@@ -86,6 +93,7 @@ val DarkDestructiveSurface = Color(0xFF3F1414)
 val DarkDestructiveOnSurface = Color(0xFFFCA5A5)
 
 val DarkBorder = Color(0x1F93C5FD)
+val DarkControlBorder = Color(0xFF7EA8D0)
 val DarkRing = Color(0xFF60A5FA)
 
 val DarkPromptCardStart = Color(0xFF2563EB)

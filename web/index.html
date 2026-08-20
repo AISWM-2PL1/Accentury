@@ -4,13 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>사투리 억양 테스트</title>
+    <!--
+      바탕 스타일은 src/tokens.css의 body 규칙이 갖는다 (KAN-148). 여기에 색을 적어 두면
+      토큰과 별개로 움직이는 두 번째 출처가 생긴다.
+
+      배경색만 먼저 칠해 두는 이유: 번들이 로드되기 전 한 프레임 동안 흰 바탕이 비치는데,
+      다크 모드에서는 그 한 프레임이 눈에 띄게 번쩍인다. 값은 --color-background와 같다.
+    -->
     <style>
-      /* 무디자인 티켓 — 스타일은 가독성 최소선만 (ux-ui.md §5) */
-      body {
-        margin: 0;
-        font-family: system-ui, -apple-system, sans-serif;
-        color: #1a1a1a;
-        background: #ffffff;
+      html {
+        background: #eff6ff;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        html {
+          background: #0f172a;
+        }
       }
     </style>
   </head>

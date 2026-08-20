@@ -16,13 +16,16 @@ Accentury 네이티브(Compose)와 웹(WebView)이 공유하는 색·타이포·
 | `app/src/main/java/com/accentury/app/ui/theme/Type.kt` | 사본 — 타이포 |
 | `app/src/main/java/com/accentury/app/ui/theme/Dimens.kt` | 사본 — 간격·반경·터치 타겟·모션 |
 | `web/src/tokens.css` | 사본 — 전체 (CSS 커스텀 프로퍼티) |
+| `tools/check_tokens.py` | 정본과 두 사본의 색 값이 일치하는지 검사 |
+| `tools/check_contrast.py` | §6 대비 표를 생성·검증 |
 
 ### 갱신 절차
 
 1. 이 문서의 표를 고친다.
 2. 같은 커밋에서 `Color.kt`·`Type.kt`·`Dimens.kt`·`tokens.css`를 함께 고친다. **한쪽만 고친 커밋은 리뷰에서 반려한다** — 네이티브와 웹이 한 테스트 안에서 번갈아 나오므로 값이 갈라지면 화면 경계에서 색이 튄다.
-3. 색을 새로 추가하거나 바꿨으면 `tools/check_contrast.py`의 `PAIRS`를 같이 고치고 `python3 tools/check_contrast.py`를 돌린다. 출력이 곧 §6 표다 — 미달이 하나라도 있으면 종료 코드 1로 떨어진다.
-4. 시안(`prototype/`)과 값이 달라졌으면 §7 "시안과 다른 값" 표에 이유를 남긴다.
+3. `python3 tools/check_tokens.py`로 정본과 두 사본의 색 값이 일치하는지 확인한다. 한쪽만 고쳤으면 여기서 걸린다.
+4. 색을 새로 추가하거나 바꿨으면 `tools/check_contrast.py`의 `PAIRS`를 같이 고치고 `python3 tools/check_contrast.py`를 돌린다. 출력이 곧 §6 표다 — 미달이 하나라도 있으면 종료 코드 1로 떨어진다.
+5. 시안(`prototype/`)과 값이 달라졌으면 §7 "시안과 다른 값" 표에 이유를 남긴다.
 
 ## 2. 색
 
@@ -54,7 +57,8 @@ Accentury 네이티브(Compose)와 웹(WebView)이 공유하는 색·타이포·
 | `destructive-foreground` | `#ffffff` | destructive 위 텍스트 |
 | `destructive-surface` | `#fef2f2` | 오답 선택지 배경 |
 | `destructive-on-surface` | `#b91c1c` | 오답 선택지 텍스트 |
-| `border` | `rgba(37, 99, 235, 0.13)` | 테두리 |
+| `border` | `rgba(37, 99, 235, 0.13)` | 장식용 구분선 (대비 기준 대상 아님) |
+| `control-border` | `#5b7fa8` | 선택 가능한 컨트롤 경계 (선택지·입력) |
 | `ring` | `#3b82f6` | 포커스 링 |
 | `prompt-card-start` | `#2563eb` | 대사 카드 그라디언트 시작 |
 | `prompt-card-end` | `#1d4ed8` | 대사 카드 그라디언트 끝 |
@@ -90,6 +94,7 @@ Accentury 네이티브(Compose)와 웹(WebView)이 공유하는 색·타이포·
 | `destructive-surface` | `#3f1414` |
 | `destructive-on-surface` | `#fca5a5` |
 | `border` | `rgba(147, 197, 253, 0.12)` |
+| `control-border` | `#7ea8d0` |
 | `ring` | `#60a5fa` |
 | `prompt-card-start` | `#2563eb` |
 | `prompt-card-end` | `#1e3a8a` |
@@ -132,6 +137,8 @@ Accentury 네이티브(Compose)와 웹(WebView)이 공유하는 색·타이포·
 | `radius-full` | 9999 | 원형 |
 | `touch-target-min` | **48dp** | 모든 탭 가능 요소의 최소 높이·너비 |
 | `prompt-card-min-height` | 152dp | 대사 카드 (문항 길이가 달라도 카드 크기 고정) |
+| `content-max-width` | 320dp | 본문 최대 폭. 넓은 화면에서 한 줄이 길어져 읽기 힘들어지는 것을 막는다 |
+| `opacity-disabled` | 0.6 | 비활성·제출 중 요소 |
 
 ## 5. 모션
 
@@ -193,6 +200,10 @@ F0 곡선과 레인 테두리는 텍스트가 아니라 WCAG 2.1 **1.4.11 비텍
 | `guide-curve` / `card` (다크) | 5.85 |
 | `user-curve` / `background` (다크) | 4.85 |
 | `user-curve` / `card` (다크) | 3.98 |
+| `control-border` / `background` (라이트) | 3.82 |
+| `control-border` / `card` (라이트) | 4.16 |
+| `control-border` / `background` (다크) | 7.14 |
+| `control-border` / `card` (다크) | 5.85 |
 
 두 곡선은 위아래 별개 레인에 그려져 겹치지 않으므로 서로 간 대비는 기준 대상이 아니다.
 대신 `guide-curve`를 채도가 낮은 회청으로 두어 "가이드는 힌트, 사용자 곡선이 주인공"이라는
@@ -214,6 +225,10 @@ F0 곡선과 레인 테두리는 텍스트가 아니라 WCAG 2.1 **1.4.11 비텍
 | 다크 `accent-foreground` | `#fffbeb` | `#451a03` | 대비 2.07:1 → 6.97:1 |
 | 가이드 곡선 | `#b0c4de` (RecordingScreen.kt:153 임시값) | `#5b7fa8` | 배경 위 1.64:1 → 3.82:1 (비텍스트 3:1 미달) |
 | 사용자 곡선 | `#3f6fbf` (RecordingScreen.kt:160 임시값) | `#2563eb` | 시그니처 색으로 확정 |
+| 웹 선택지 테두리 | `#ccc` (VocabularyItemScreen.tsx) | `#5b7fa8` | 카드 위 1.61:1 → 4.16:1 (컨트롤 경계 3:1 미달) |
+| 웹 보조 텍스트 | `#666` (TestFlowScreen·VoiceItemScreen) | `#4d6f96` | 대비는 통과했으나 회색이 팔레트 밖이라 토큰으로 흡수 |
+| 웹 오류 텍스트 | `#b3261e` (VocabularyItemScreen) | `#b91c1c` | 팔레트 밖 빨강을 `destructive-on-surface`로 흡수 |
+| 웹 음성 문항 대사 | 20px | 26px | §5 "대사 카드 24sp 이상" 미달. 네이티브 대사 카드와 같은 크기로 맞춘다 |
 
 시안은 semantic 토큰(`bg-primary`)과 Tailwind 원시색(`bg-blue-500`, `emerald-400`, `red-400`)을 섞어 쓴다. 정본은 semantic 이름 한 벌로만 정의한다 — 그래야 "같은 의미의 색이 네이티브와 웹에서 같은 값"이 성립한다.
 
