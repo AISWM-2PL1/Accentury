@@ -19,8 +19,8 @@ export function ProgressIndicator({ current, total, label = '문항 진행률' }
   return (
     <div className="progress-indicator">
       <progress className="progress-indicator__bar" aria-label={label} value={current} max={total} />
-      <p className="type-label">
-        {current}/{total}
+      <p className="type-caption progress-indicator__count">
+        {current} / {total}
       </p>
     </div>
   )

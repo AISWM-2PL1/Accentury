@@ -1,31 +1,20 @@
-// IntroScreenTest.kt(네이티브 폐기분)의 테스트 4건을 웹으로 이관한 것이다.
+/**
+ * 인트로가 보여주는 숫자의 상수 (KAN-97).
+ *
+ * 문구 조립 함수(compositionText·estimatedDurationText)는 화면이 숫자를 문장에 섞어
+ * 쓰던 시절의 것이라 KAN-148에서 함께 지웠다 — 지금은 숫자 칸이 값을 직접 그린다.
+ * 남은 건 그 값들이고, 여기서 확인하는 건 "화면과 정의가 같은 수를 말하는가"뿐이다.
+ */
+
 import { describe, expect, it } from 'vitest'
-import {
-  compositionText,
-  estimatedDurationText,
-  ESTIMATED_MINUTES,
-  VOCABULARY_ITEM_COUNT,
-  VOICE_ITEM_COUNT,
-} from './introText'
+import { ESTIMATED_MINUTES, VOCABULARY_ITEM_COUNT, VOICE_ITEM_COUNT } from './introText'
 
-describe('introText', () => {
-  it('문항 구성은 음성과 단어를 나눠 보여주고 합계까지 붙인다', () => {
-    expect(compositionText(5, 5)).toBe('🎤 음성 5문항 + 📝 단어 5문항 (총 10문항)')
-  })
-
-  it('문항 수가 바뀌면 합계도 따라간다', () => {
-    expect(compositionText(3, 7)).toContain('총 10문항')
-    expect(compositionText(4, 4)).toContain('총 8문항')
-  })
-
-  it('예상 소요 시간은 어림값이라 약을 붙여 보여준다', () => {
-    expect(estimatedDurationText(3)).toBe('예상 소요 시간 약 3분')
-  })
-
-  it('KAN-10 확정값인 음성 5 어휘 5 총 10문항을 상수로 들고 있다', () => {
-    expect(VOICE_ITEM_COUNT).toBe(5)
-    expect(VOCABULARY_ITEM_COUNT).toBe(5)
+describe('인트로 상수', () => {
+  it('음성과 어휘를 합치면 KAN-10 확정값 10문항이다', () => {
     expect(VOICE_ITEM_COUNT + VOCABULARY_ITEM_COUNT).toBe(10)
+  })
+
+  it('예상 시간은 ux-ui.md의 "진입→결과 3분" 목표와 같다', () => {
     expect(ESTIMATED_MINUTES).toBe(3)
   })
 })

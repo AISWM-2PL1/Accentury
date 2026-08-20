@@ -64,8 +64,11 @@ describe('App — 스큐 판정 분기', () => {
     setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0`)
     render(<App />)
     expect(screen.getByText('사투리 억양 테스트')).toBeInTheDocument()
-    expect(screen.getByText('🎤 음성 5문항 + 📝 단어 5문항 (총 10문항)')).toBeInTheDocument()
-    expect(screen.getByText('예상 소요 시간 약 3분')).toBeInTheDocument()
+    // KAN-148에서 한 문장이던 표기가 숫자 칸으로 갈렸다 - 확인하는 값은 그대로다
+    expect(screen.getByText('10문항')).toBeInTheDocument()
+    expect(screen.getByText('~3분')).toBeInTheDocument()
+    expect(screen.getByText('🎤 음성 5문항')).toBeInTheDocument()
+    expect(screen.getByText('📝 단어 5문항')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '시작하기' })).toBeInTheDocument()
   })
 
@@ -85,7 +88,7 @@ describe('App — 문항 진행 화면 진입 쿼리 (KAN-100: 네이티브가 �
     render(<App />)
 
     expect(await screen.findByText('어서 오이소')).toBeInTheDocument()
-    expect(screen.getByText('1/1')).toBeInTheDocument()
+    expect(screen.getByText('1 / 1')).toBeInTheDocument()
   })
 
   it('sessionId 쿼리가 진행 화면까지 전달돼 그 세션 키에 저장된다', async () => {

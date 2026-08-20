@@ -15,28 +15,11 @@ import { getSessionToken, installItemResultReceiver } from '../bridge/bridge'
 import { fetchTestDefinition, type FetchLike } from './fetchTestDefinition'
 import type { SnapshotStorage } from './progressSnapshot'
 import { submitVocabAnswer } from './submitVocabAnswer'
-import type { TestDefinition, TestItem } from './testDefinition'
+import type { TestDefinition } from './testDefinition'
 import { useTestProgress } from './useTestProgress'
 import { VocabularyItemScreen } from './VocabularyItemScreen'
 import { VoiceItemScreen } from './VoiceItemScreen'
 import { Button, ProgressIndicator, StatusBlock } from '../ui'
-
-/** 유형 뱃지 문구. 인트로의 "🎤 음성 / 📝 단어" 표기와 같은 어휘를 쓴다 */
-const TYPE_BADGE: Record<TestItem['type'], string> = {
-  VOICE: '🎤 음성 문항',
-  VOCABULARY: '📝 단어 문항',
-}
-
-const SCREEN_STYLE = {
-  minHeight: '100dvh',
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  justifyContent: 'center',
-  gap: 'var(--space-3)',
-  padding: 'var(--space-4)',
-  textAlign: 'center',
-} as const
 
 export interface TestFlowScreenProps {
   /** 백엔드 오리진. 출처 결정은 호출자 몫이다 (fetchTestDefinition 헤더 주석의 열린 질문) */
@@ -88,7 +71,7 @@ export function TestFlowScreen({
 
   if (load.status === 'loading') {
     return (
-      <main style={SCREEN_STYLE}>
+      <main className="screen">
         <StatusBlock tone="waiting" message="문항을 불러오는 중…" />
       </main>
     )
@@ -96,7 +79,7 @@ export function TestFlowScreen({
 
   if (load.status === 'error') {
     return (
-      <main style={SCREEN_STYLE}>
+      <main className="screen">
         {/* 비난 없는 카피 톤(ux-ui.md). 원인 문구는 개발 중 진단용으로 함께 보인다 */}
         <StatusBlock
           tone="error"
@@ -153,7 +136,7 @@ function TestRunner({
   // 폴링·복구 UX는 그 티켓에서 이 자리에 붙는다.
   if (state.phase === 'AWAITING_ANALYSIS' || current === null) {
     return (
-      <main style={SCREEN_STYLE}>
+      <main className="screen">
         <h1 className="type-title-sm">분석 대기 화면 (KAN-14 예정)</h1>
         <p className="type-label">
           {progress.total}문항을 모두 제출했어요. 여기서 분석 상태 폴링이 시작됩니다.
@@ -163,13 +146,12 @@ function TestRunner({
   }
 
   return (
-    <main style={SCREEN_STYLE}>
+    <main className="item-screen">
       {/*
-        진행바와 "3/10" 표기. 값이 1부터 시작하는 건 의도다 — 첫 문항을 0/10으로 보이면
+        진행바와 "3 / 10" 표기. 값이 1부터 시작하는 건 의도다 — 첫 문항을 0/10으로 보이면
         아직 시작도 안 한 느낌이라 이탈이 는다 (ux-ui.md §3 Goal-Gradient, endowed progress).
       */}
       <ProgressIndicator current={progress.current} total={progress.total} />
-      <p className="type-caption">{TYPE_BADGE[current.type]}</p>
       {/*
         본문은 유형이 정한다. 두 화면 모두 문항이 바뀔 때 새로 마운트되도록 itemId를 key로 준다 —
         음성 화면은 그 마운트가 곧 "네이티브에 전환을 알리는" 시점이다.

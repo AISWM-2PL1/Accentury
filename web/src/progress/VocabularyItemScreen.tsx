@@ -23,6 +23,7 @@ import { useRef, useState } from 'react'
 import type { VocabularyItem } from './testDefinition'
 import { newIdempotencyKey, type VocabSubmitResult } from './submitVocabAnswer'
 import { Button } from '../ui'
+import { TYPE_BADGE } from './itemBadge'
 
 export interface VocabularyItemScreenProps {
   item: VocabularyItem
@@ -66,49 +67,33 @@ export function VocabularyItemScreen({ item, submitAnswer, onSubmitted }: Vocabu
 
   return (
     <>
-      <h1 id="vocab-prompt" className="type-title">
-        {item.prompt}
-      </h1>
+      {/*
+        질문 카드. 음성 문항의 대사 카드와 같은 규격이다(시안) - 두 문항 유형이 번갈아
+        나오는데 카드 크기가 다르면 전환마다 화면이 들썩인다.
+      */}
+      <div className="prompt-card">
+        <span className="type-caption prompt-card__badge">{TYPE_BADGE.VOCABULARY}</span>
+        <h1 id="vocab-prompt" className="type-title">
+          {item.prompt}
+        </h1>
+      </div>
+
       {/* 문제 문구가 곧 이 라디오 그룹의 이름이다 — 스크린 리더가 "그룹 진입"에서 문제를 읽는다 */}
-      <div
-        role="radiogroup"
-        aria-labelledby="vocab-prompt"
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 'var(--space-2)',
-          width: '100%',
-          maxWidth: 'var(--content-max-width)',
-        }}
-      >
+      <div className="choice-list" role="radiogroup" aria-labelledby="vocab-prompt">
         {/* 정의의 choices 배열 순서 = 화면 순서. 정렬·섞기를 하지 않는 것이 요구사항이다 */}
         {item.choices.map((choice) => {
           const checked = selected === choice.choiceId
+          const classes = [
+            'choice',
+            checked ? 'choice--selected' : '',
+            submitting ? 'choice--locked' : '',
+          ]
+            .filter(Boolean)
+            .join(' ')
           return (
-            <label
-              key={choice.choiceId}
-              className="type-body"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 'var(--space-2)',
-                // ux-ui.md 최소선: 터치 타겟 48dp 이상 — 글자가 아니라 label 전체가 탭 영역이다
-                minHeight: 'var(--touch-target-min)',
-                padding: '0 var(--space-3)',
-                cursor: submitting ? 'default' : 'pointer',
-                /*
-                 * 선택 상태는 색과 두께를 같이 바꾼다 — 색만으로 구분하면 색각 이상에서
-                 * 어느 것을 골랐는지 알 수 없다 (WCAG 1.4.1 색에 의존하지 않기).
-                 */
-                border: checked
-                  ? '2px solid var(--color-primary)'
-                  : '1px solid var(--color-control-border)',
-                borderRadius: 'var(--radius-md)',
-                textAlign: 'left',
-                opacity: submitting ? 'var(--opacity-disabled)' : 1,
-              }}
-            >
+            <label key={choice.choiceId} className={classes}>
               <input
+                className="choice__radio"
                 type="radio"
                 name="vocab-choice"
                 value={choice.choiceId}
@@ -122,19 +107,34 @@ export function VocabularyItemScreen({ item, submitAnswer, onSubmitted }: Vocabu
           )
         })}
       </div>
-      {errorMessage !== null && (
-        // 서버 봉투의 한국어 message 그대로. 비난 없는 카피 톤은 봉투(ErrorCode) 쪽 책임이다
-        <p role="alert" className="type-caption" style={{ color: 'var(--color-destructive-on-surface)' }}>
-          {errorMessage}
-        </p>
-      )}
-      {/*
-        선택 전 비활성이 AC 1항이다. disabled면 onClick이 아예 안 불리므로 selected가 null인
-        채로 submit에 닿는 경로가 없다 — 그래도 submit 안의 가드를 남기는 이유는 위 주석 참조.
-      */}
-      <Button disabled={selected === null || submitting} onClick={() => void submit()}>
-        {submitting ? '제출 중…' : errorMessage !== null ? '다시 시도' : '다음'}
-      </Button>
+
+      <div className="item-screen__footer">
+        {errorMessage !== null && (
+          // 서버 봉투의 한국어 message 그대로. 비난 없는 카피 톤은 봉투(ErrorCode) 쪽 책임이다
+          <p
+            role="alert"
+            className="type-caption"
+            style={{
+              color: 'var(--color-destructive-on-surface)',
+              textAlign: 'center',
+              marginBottom: 'var(--space-3)',
+            }}
+          >
+            {errorMessage}
+          </p>
+        )}
+        {/*
+          선택 전 비활성이 AC 1항이다. disabled면 onClick이 아예 안 불리므로 selected가 null인
+          채로 submit에 닿는 경로가 없다 — 그래도 submit 안의 가드를 남기는 이유는 위 주석 참조.
+        */}
+        <Button
+          disabled={selected === null || submitting}
+          onClick={() => void submit()}
+          style={{ width: '100%' }}
+        >
+          {submitting ? '제출 중…' : errorMessage !== null ? '다시 시도' : '다음'}
+        </Button>
+      </div>
     </>
   )
 }
