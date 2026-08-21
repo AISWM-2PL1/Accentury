@@ -1,0 +1,64 @@
+# 로컬 풀스택 (BE + AI + DB) - KAN-120이 만든 두 이미지가 실제로 함께 뜨는지 확인하는 자리이고,
+# 전 구간 E2E 스모크(KAN-138)가 겨누는 대상이다.
+#
+#   docker compose up -d --build
+#   docker compose down -v
+#
+# 개발용 DB만 필요하면 이 파일이 아니라 backend/docker-compose.yml을 쓴다 - IDE에서 bootRun을
+# 띄우고 localhost:5432를 보는 일상 workflow는 그쪽이 정본이다. 두 스택은 포트도 볼륨도
+# 겹치지 않으므로 동시에 떠 있어도 된다.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: accentury
+      POSTGRES_PASSWORD: local
+    # 5433인 것은 오타가 아니다 - backend/docker-compose.yml의 개발 DB가 5432를 쓴다.
+    # 127.0.0.1 바인딩은 같은 네트워크의 다른 기기가 이 DB에 닿지 못하게 한다.
+    ports: ["127.0.0.1:5433:5432"]
+    volumes: ["db-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d accentury"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  ai:
+    build:
+      context: ./ai
+    # 이 브랜치(Dev 기준)의 스텁은 아직 고정 75점이다 - 점수 분산은 KAN-136(PR #38)이
+    # 머지되면 기본값으로 켜지고, 그때 5등급 전부가 관측 가능해진다(KAN-138의 등급 검산 전제).
+    # 포트를 공개하지 않는 것은 의도다 - 이 서버는 BE만 호출하는 사설망 서비스다(§1.1, NFR-SC-04).
+    # 디버깅으로 직접 찔러 봐야 하면 임시로 ports: ["127.0.0.1:8000:8000"]을 더한다.
+    healthcheck:
+      # slim 이미지에는 curl도 wget도 없다 - 이미 있는 파이썬으로 확인한다.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/internal/v0/health').read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  backend:
+    build:
+      context: ./backend
+    depends_on:
+      db: {condition: service_healthy}
+      ai: {condition: service_healthy}
+    environment:
+      # application.yml의 값은 로컬 개발(localhost) 기준이다 - 컨테이너 안에서는 서비스
+      # 이름으로 서로를 찾으므로 환경 변수로 덮는다.
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/accentury
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: local
+      # accentury.analysis.ai-base-url - 미설정이면 BE가 AI로 전달하지 않는 개발 모드로 뜬다.
+      ACCENTURY_ANALYSIS_AIBASEURL: http://ai:8000
+    ports: ["127.0.0.1:8080:8080"]
+    healthcheck:
+      # JRE 이미지에도 curl이 없다 - bash의 /dev/tcp로 포트가 열렸는지만 본다.
+      # actuator 헬스 노출은 KAN-131이 확정하며, 그때 이 검사를 /actuator/health로 바꾼다.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+
+volumes:
+  db-data:
