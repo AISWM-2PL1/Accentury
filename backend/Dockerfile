@@ -10,16 +10,20 @@
 FROM eclipse-temurin:25-jdk AS build
 WORKDIR /workspace
 
-# 래퍼와 빌드 스크립트를 먼저 복사한다 - 소스만 바뀐 재빌드에서 Gradle 배포본과 의존성
-# 내려받기 레이어를 그대로 재사용하기 위해서다.
+# 래퍼와 빌드 스크립트를 먼저 복사한다 - 소스만 바뀐 재빌드가 Gradle **배포본** 내려받기
+# 레이어를 재사용한다. 의존성은 여기서 받지 않는다(--version은 배포본만 받는다) - 의존성
+# 해석은 아래 bootJar에서 일어나고, 그 레이어는 COPY src 뒤라 소스가 바뀔 때마다 무효화된다.
+# 그래서 의존성 캐시는 레이어가 아니라 BuildKit 캐시 마운트로 재사용한다.
 COPY gradlew settings.gradle build.gradle ./
 COPY gradle gradle
-RUN chmod +x gradlew && ./gradlew --no-daemon --version > /dev/null
+RUN --mount=type=cache,target=/root/.gradle \
+    chmod +x gradlew && ./gradlew --no-daemon --version > /dev/null
 
 COPY src src
 # 테스트는 이미지 빌드에서 돌리지 않는다 - Testcontainers가 도커 데몬을 요구하는데(KAN-123)
 # 빌드 컨테이너 안에는 없다. 테스트는 CI(test.yml)가 담당한다.
-RUN ./gradlew --no-daemon bootJar -x test \
+RUN --mount=type=cache,target=/root/.gradle \
+    ./gradlew --no-daemon bootJar -x test \
  && rm -f build/libs/*-plain.jar \
  && mv build/libs/*.jar build/app.jar
 
