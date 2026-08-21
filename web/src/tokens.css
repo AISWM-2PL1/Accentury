@@ -42,7 +42,7 @@
   --color-destructive-surface: #fef2f2;
   --color-destructive-on-surface: #b91c1c;
   --color-border: rgba(37, 99, 235, 0.13);
-  --color-control-border: #5b7fa8;
+  --color-control-border: rgba(37, 99, 235, 0.13);
   --color-ring: #3b82f6;
   --color-prompt-card-start: #3b82f6;
   --color-prompt-card-end: #1d4ed8;
@@ -148,7 +148,7 @@
     --color-destructive-surface: #3f1414;
     --color-destructive-on-surface: #fca5a5;
     --color-border: rgba(147, 197, 253, 0.12);
-    --color-control-border: #7ea8d0;
+    --color-control-border: rgba(147, 197, 253, 0.12);
     --color-ring: #60a5fa;
     --color-prompt-card-start: #2563eb;
     --color-prompt-card-end: #1e3a8a;
