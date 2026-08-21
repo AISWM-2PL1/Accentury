@@ -1,0 +1,8 @@
+# 런타임 이미지에 들어갈 필요가 없는 것들.
+__pycache__/
+*.pyc
+.pytest_cache/
+tests/
+requirements-dev.txt
+pytest.ini
+README.md
