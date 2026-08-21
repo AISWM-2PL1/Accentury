@@ -23,6 +23,10 @@ WAIVED = {
     "`user-curve` / `curve-lane-surface` (라이트)",
     "`prompt-card-foreground` / `prompt-card-start`",
     "`prompt-card-muted` / `prompt-card-start`",
+    "`control-border` / `background` (라이트)",
+    "`control-border` / `card` (라이트)",
+    "`control-border` / `background` (다크)",
+    "`control-border` / `card` (다크)",
 }
 
 
@@ -79,10 +83,11 @@ GRAPHIC_PAIRS = [
     ("`user-curve` / `curve-lane-surface` (라이트)", "#fb923c", "#ecf4ff"),
     ("`guide-curve` / `curve-lane-surface` (다크)", "#7ea8d0", "#182338"),
     ("`user-curve` / `curve-lane-surface` (다크)", "#fb923c", "#182338"),
-    ("`control-border` / `background` (라이트)", "#5b7fa8", "#eff6ff"),
-    ("`control-border` / `card` (라이트)", "#5b7fa8", "#ffffff"),
-    ("`control-border` / `background` (다크)", "#7ea8d0", "#0f172a"),
-    ("`control-border` / `card` (다크)", "#7ea8d0", "#1e293b"),
+    # 반투명이라 배경에 합성한 뒤의 색으로 잰다
+    ("`control-border` / `background` (라이트)", "#d5e3fc", "#eff6ff"),
+    ("`control-border` / `card` (라이트)", "#e3ebfc", "#ffffff"),
+    ("`control-border` / `background` (다크)", "#1b2436", "#0f172a"),
+    ("`control-border` / `card` (다크)", "#293546", "#1e293b"),
 ]
 
 
