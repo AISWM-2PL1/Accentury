@@ -17,14 +17,14 @@ Accentury 네이티브(Compose)와 웹(WebView)이 공유하는 색·타이포·
 | `app/src/main/java/com/accentury/app/ui/theme/Dimens.kt` | 사본 — 간격·반경·터치 타겟·모션 |
 | `web/src/tokens.css` | 사본 — 전체 (CSS 커스텀 프로퍼티) |
 | `tools/check_tokens.py` | 정본과 두 사본의 색 값이 일치하는지 검사 |
-| `tools/check_contrast.py` | §6 대비 표를 생성·검증 |
+| `tools/check_contrast.py` | §6 대비 표를 생성(`--write`)하고, 문서가 낡았는지 검사 |
 
 ### 갱신 절차
 
-1. 이 문서의 표를 고친다.
+1. 이 문서의 값 표(§2 색, §3 타이포, §4 간격)를 고친다. §6 대비 표는 손대지 않는다 — 4번이 대신 쓴다.
 2. 같은 커밋에서 `Color.kt`·`Type.kt`·`Dimens.kt`·`tokens.css`를 함께 고친다. **한쪽만 고친 커밋은 리뷰에서 반려한다** — 네이티브와 웹이 한 테스트 안에서 번갈아 나오므로 값이 갈라지면 화면 경계에서 색이 튄다.
 3. `python3 tools/check_tokens.py`로 정본과 두 사본의 색 값이 일치하는지 확인한다. 한쪽만 고쳤으면 여기서 걸린다.
-4. 색을 새로 추가하거나 바꿨으면 `tools/check_contrast.py`의 `PAIRS`를 같이 고치고 `python3 tools/check_contrast.py`를 돌린다. 출력이 곧 §6 표다 — 미달이 하나라도 있으면 종료 코드 1로 떨어진다.
+4. 색을 새로 추가하거나 바꿨으면 `tools/check_contrast.py`의 `PAIRS`를 같이 고치고 `python3 tools/check_contrast.py --write`를 돌린다. **§6 표는 손으로 고치지 않는다** — 스크립트가 쓰고, 인자 없이 돌리면 문서가 낡았는지까지 검사해 종료 코드 1로 떨어진다.
 5. 시안(`prototype/`)과 값이 달라졌으면 §7 "시안과 다른 값" 표에 이유를 남긴다.
 
 ## 2. 색
@@ -182,52 +182,54 @@ Accentury 네이티브(Compose)와 웹(WebView)이 공유하는 색·타이포·
 
 ## 6. 대비 검증 결과
 
-WCAG 2.1 AA 일반 텍스트 기준 4.5:1. `python3 tools/check_contrast.py`가 생성한 표이고, 32건 전부 통과한다.
+<!-- check_contrast:begin -->
+WCAG 2.1 AA 일반 텍스트 기준 4.5:1. `python3 tools/check_contrast.py --write`가 쓴 표이고,
+26건이 기준을 넘고 8건은 시안 채택으로 감수한다 (§7).
 
-| 조합 | 비율 |
-|---|---|
-| `foreground` / `background` (라이트) | 10.57 |
-| `foreground` / `card` (라이트) | 11.50 |
-| `muted-foreground` / `background` (라이트) | 4.79 |
-| `muted-foreground` / `card` (라이트) | 5.21 |
-| `primary-foreground` / `primary` (라이트) | 5.17 |
-| `secondary-foreground` / `secondary` (라이트) | 5.49 |
-| `accent-foreground` / `accent` (라이트) | 6.29 |
-| `destructive-foreground` / `destructive` | 4.83 |
-| `destructive-on-surface` / `destructive-surface` (라이트) | 5.91 |
-| `success-foreground` / `success` | 5.48 |
-| `success-on-surface` / `success-surface` (라이트) | 5.21 |
-| `prompt-card-muted` / `prompt-card-start` | 4.75 |
-| `prompt-card-muted` / `prompt-card-end` | 6.16 |
-| `foreground` / `background` (다크) | 15.42 |
-| `foreground` / `card` (다크) | 12.64 |
-| `muted-foreground` / `background` (다크) | 7.14 |
-| `muted-foreground` / `card` (다크) | 5.85 |
-| `primary-foreground` / `primary` (다크) | 4.85 |
-| `secondary-foreground` / `secondary` (다크) | 6.38 |
-| `accent-foreground` / `accent` (다크) | 6.97 |
-| `success-on-surface` / `success-surface` (다크) | 9.69 |
-| `destructive-on-surface` / `destructive-surface` (다크) | 8.37 |
-| `prompt-card-muted` / `prompt-card-start` (다크) | 4.75 |
-| `prompt-card-muted` / `prompt-card-end` (다크) | 9.52 |
+| 조합 | 비율 | |
+|---|---|---|
+| `foreground` / `background` (라이트) | 10.57 |  |
+| `foreground` / `card` (라이트) | 11.50 |  |
+| `muted-foreground` / `background` (라이트) | 4.79 |  |
+| `muted-foreground` / `card` (라이트) | 5.21 |  |
+| `primary-foreground` / `primary` (라이트) | 5.17 |  |
+| `secondary-foreground` / `secondary` (라이트) | 5.49 |  |
+| `accent-foreground` / `accent` (라이트) | 6.29 |  |
+| `destructive-foreground` / `destructive` | 4.83 |  |
+| `destructive-on-surface` / `destructive-surface` (라이트) | 5.91 |  |
+| `success-foreground` / `success` | 5.48 |  |
+| `success-on-surface` / `success-surface` (라이트) | 5.21 |  |
+| `prompt-card-foreground` / `prompt-card-start` | 3.68 | 기준 4.5 미달 — 시안 채택으로 감수 |
+| `prompt-card-muted` / `prompt-card-start` | 3.38 | 기준 4.5 미달 — 시안 채택으로 감수 |
+| `prompt-card-foreground` / `prompt-card-end` | 6.70 |  |
+| `prompt-card-muted` / `prompt-card-end` | 6.16 |  |
+| `foreground` / `background` (다크) | 15.42 |  |
+| `foreground` / `card` (다크) | 12.64 |  |
+| `muted-foreground` / `background` (다크) | 7.14 |  |
+| `muted-foreground` / `card` (다크) | 5.85 |  |
+| `primary-foreground` / `primary` (다크) | 4.85 |  |
+| `secondary-foreground` / `secondary` (다크) | 6.38 |  |
+| `accent-foreground` / `accent` (다크) | 6.97 |  |
+| `success-on-surface` / `success-surface` (다크) | 9.69 |  |
+| `destructive-on-surface` / `destructive-surface` (다크) | 8.37 |  |
+| `prompt-card-muted` / `prompt-card-start` (다크) | 4.75 |  |
+| `prompt-card-muted` / `prompt-card-end` (다크) | 9.52 |  |
 
 ### 그래픽 오브젝트 (3:1)
 
 F0 곡선·컨트롤 경계는 텍스트가 아니라 WCAG 2.1 **1.4.11 비텍스트 대비 3:1**이 기준이다.
 
-| 조합 | 비율 |
-|---|---|
-| `guide-curve` / `curve-lane-surface` (라이트) | 3.76 |
-| `user-curve` / `curve-lane-surface` (라이트) | 3.21 |
-| `guide-curve` / `curve-lane-surface` (다크) | 6.28 |
-| `user-curve` / `curve-lane-surface` (다크) | 6.94 |
-| `control-border` / `background` (라이트) | 3.82 |
-| `control-border` / `card` (라이트) | 4.16 |
-| `control-border` / `background` (다크) | 7.14 |
-| `control-border` / `card` (다크) | 5.85 |
-
-두 곡선은 위아래 별개 레인에 그려져 겹치지 않으므로 서로 간 대비는 기준 대상이 아니다.
-색만으로 구분하지도 않는다 — 가이드는 점선, 사용자 곡선은 실선이다 (WCAG 1.4.1).
+| 조합 | 비율 | |
+|---|---|---|
+| `guide-curve` / `curve-lane-surface` (라이트) | 1.63 | 기준 3.0 미달 — 시안 채택으로 감수 |
+| `user-curve` / `curve-lane-surface` (라이트) | 2.04 | 기준 3.0 미달 — 시안 채택으로 감수 |
+| `guide-curve` / `curve-lane-surface` (다크) | 6.28 |  |
+| `user-curve` / `curve-lane-surface` (다크) | 6.94 |  |
+| `control-border` / `background` (라이트) | 1.19 | 기준 3.0 미달 — 시안 채택으로 감수 |
+| `control-border` / `card` (라이트) | 1.20 | 기준 3.0 미달 — 시안 채택으로 감수 |
+| `control-border` / `background` (다크) | 1.15 | 기준 3.0 미달 — 시안 채택으로 감수 |
+| `control-border` / `card` (다크) | 1.18 | 기준 3.0 미달 — 시안 채택으로 감수 |
+<!-- check_contrast:end -->
 
 ## 7. 시안과 다른 값
 
