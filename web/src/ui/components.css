@@ -429,3 +429,144 @@
   margin-top: auto;
   padding-top: var(--space-4);
 }
+
+/* ── 결과 화면 (KAN-29) ── */
+
+/*
+ * 종합 점수 도넛. 원호와 가운데 숫자를 겹쳐 놓는다 — 겹침을 position으로 잡는 이유는
+ * grid 한 칸에 둘을 넣으면 큰 글자 크기에서 숫자가 원을 밀어 키우기 때문이다.
+ * 원 크기는 히어로 아이콘과 같은 토큰을 쓴다: 화면을 여는 원형이라는 자리가 같다.
+ */
+.score-donut {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--hero-icon-size);
+  height: var(--hero-icon-size);
+  flex-shrink: 0;
+}
+
+.score-donut__ring {
+  width: 100%;
+  height: 100%;
+  /* 원호의 시작점을 12시로 돌린다. SVG 기본은 3시라 그대로 두면 점수가 옆에서 자란다 */
+  transform: rotate(-90deg);
+}
+
+.score-donut__track,
+.score-donut__value {
+  fill: none;
+  stroke-width: 10;
+  /* 끝을 둥글게 — 0점 근처에서 각진 조각이 튀어나오는 것보다 낫다 */
+  stroke-linecap: round;
+}
+
+.score-donut__track {
+  stroke: var(--color-muted);
+}
+
+.score-donut__value {
+  stroke: var(--color-primary);
+  transition: stroke-dashoffset var(--duration-reveal) var(--ease-out);
+}
+
+.score-donut__label {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: var(--leading-tight);
+}
+
+.score-donut__score {
+  color: var(--color-primary);
+}
+
+.score-donut__unit {
+  color: var(--color-muted-foreground);
+}
+
+/*
+ * 등급 이름 아래의 순위·코멘트. 코멘트는 등급마다 길이가 달라서(서버 설정) 높이를
+ * 고정하지 않는다 - 잘라 내면 진단 문장의 끝이 사라진다 (AC 6항).
+ */
+.result-tier__rank {
+  color: var(--color-muted-foreground);
+  margin-top: var(--space-1);
+}
+
+.result-tier__comment {
+  color: var(--color-foreground);
+  margin-top: var(--space-3);
+  overflow-wrap: break-word;
+}
+
+/*
+ * 억양·단어 두 줄. 가로로 나누지 않고 세로로 쌓는다 - 좁은 화면과 큰 글자 크기에서
+ * 두 칸이 서로를 찌그러뜨리지 않아야 하고(AC 6항), 두 점수가 같은 너비를 갖는 편이
+ * "동등하게 본다"는 뜻과도 맞는다.
+ */
+.result-scores {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-4);
+  gap: var(--space-4);
+  text-align: left;
+}
+
+.score-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.score-row__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.score-row__label {
+  color: var(--color-foreground);
+}
+
+.score-row__value {
+  color: var(--color-primary);
+}
+
+/*
+ * 점수 막대. 진행바(.progress-indicator__bar)와 같은 규격을 쓰지만 별도 클래스인 이유는
+ * 뜻이 다르기 때문이다 - 저쪽은 "몇 개 남았나", 이쪽은 "몇 점인가"라 언젠가 한쪽만
+ * 바뀐다. 브라우저마다 <progress> 의사 요소가 갈려 셋을 다 적는다.
+ */
+.score-row__bar {
+  width: 100%;
+  height: var(--progress-bar-height);
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--color-muted);
+  appearance: none;
+}
+
+.score-row__bar::-webkit-progress-bar {
+  background: var(--color-muted);
+  border-radius: var(--radius-full);
+}
+
+.score-row__bar::-webkit-progress-value {
+  background: var(--color-primary);
+  border-radius: var(--radius-full);
+  transition: width var(--duration-reveal) var(--ease-out);
+}
+
+.score-row__bar::-moz-progress-bar {
+  background: var(--color-primary);
+  border-radius: var(--radius-full);
+}
+
+/* 정의·점수 버전 꼬리표. 사용자가 읽을 값이 아니라 문의를 되짚는 값이라 가장 약하게 둔다 */
+.result-version {
+  color: var(--color-muted-foreground);
+}
