@@ -207,9 +207,14 @@ def test_모르는_엔진_이름은_기동을_세운다():
         create_engine(Settings(analysis_engine="real"))
 
 
-def test_스텁은_설정한_점수와_실패_문항을_따른다(tmp_path):
+def test_고정_모드의_스텁은_설정한_점수와_실패_문항을_따른다(tmp_path):
+    # 모드를 명시한다 - 기본값은 분산이라 점수가 correlationId를 따른다 (KAN-136)
     settings = Settings(
-        temp_dir=tmp_path / "ai-tmp", stub_delay_ms=0, stub_intonation_score=61, stub_fail_item="v2"
+        temp_dir=tmp_path / "ai-tmp",
+        stub_delay_ms=0,
+        stub_score_mode=StubEngine.SCORE_MODE_FIXED,
+        stub_intonation_score=61,
+        stub_fail_item="v2",
     )
 
     with TestClient(create_app(settings)) as client:

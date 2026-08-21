@@ -91,7 +91,13 @@ async def analyze(
             # 붙들린다. 그래서 "취소가 실제로 닿을 것"이 엔진 쪽 계약이다
             # (app.engine.AnalysisEngine.analyze)
             async with asyncio.timeout(settings.analysis_timeout_seconds):
-                outcome = await engine.analyze(AnalysisRequest(audio_path=path, meta=parsed))
+                # 추적 ID는 라우트가 정한 것 하나만 쓴다 - 엔진이 meta에서 따로 뽑으면
+                # 헤더만 보내는 호출자에게 로그의 ID와 스텁 점수의 씨앗이 갈린다 (KAN-136)
+                outcome = await engine.analyze(
+                    AnalysisRequest(
+                        audio_path=path, meta=parsed, correlation_id=correlation_id
+                    )
+                )
             # 프로토콜은 구조만 보므로 반환 타입은 런타임에 강제되지 않고, CI에도 타입
             # 체커가 없다. 속성 이름만 같은 객체를 돌려주면 AnalysisOutcome의 검사가
             # 통째로 우회돼 점수 999짜리 200이 그대로 나간다 - BE는 그것을 계약 위반으로

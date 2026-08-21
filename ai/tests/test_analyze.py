@@ -41,7 +41,10 @@ def test_성공_응답_뒤에_오디오가_남지_않는다(client, settings):
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "OK"
-    assert body["intonationScore"] == settings.stub_intonation_score
+    # 기본은 분산 모드라 값이 correlationId마다 다르다 (KAN-136) - 여기서 볼 것은
+    # 봉투가 §4.3 스케일을 지키는지까지다. 점수 계약 자체는 tests/test_stub_score.py다
+    assert isinstance(body["intonationScore"], int)
+    assert 0 <= body["intonationScore"] <= 100
     # 설정이 아니라 엔진이 보고한 값이다 (KAN-135)
     assert body["modelVersion"] == StubEngine.MODEL_VERSION
     # 세션이 고정한 점수 버전을 되돌려준다 - 다르면 BE가 계약 위반으로 끊는다 (§5.4)

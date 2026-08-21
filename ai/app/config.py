@@ -37,6 +37,12 @@ DEFAULT_MAX_REQUEST_BYTES = 2 * 1_048_576
 #: 붙일 분석 엔진 (KAN-135). 실모델(KAN-22)이 들어오면 고를 이름이 하나 더 생긴다.
 DEFAULT_ANALYSIS_ENGINE = "stub"
 
+#: 스텁이 점수를 내는 방식 (KAN-136). 기본이 분산인 이유는 고정 75점이 종합 점수를
+#: 50.0~83.3에 가두어, 5등급 중 셋만 나오기 때문이다 - 결과 화면(KAN-29)과 공유 카드
+#: (KAN-30)의 나머지 둘을 데모할 방법이 없다. 고를 수 있는 값은
+#: :attr:`app.engine.StubEngine.SCORE_MODES`가 정본이다.
+DEFAULT_STUB_SCORE_MODE = "hashed"
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -58,7 +64,11 @@ class Settings:
     max_request_bytes: int = DEFAULT_MAX_REQUEST_BYTES
     #: 붙일 엔진의 이름 - :func:`app.engine.create_engine`이 읽는다 (KAN-135)
     analysis_engine: str = DEFAULT_ANALYSIS_ENGINE
-    #: 스텁 억양 점수 - 0~100 스케일 유지, 문항 20점 환산은 BE가 한다 (§4.3)
+    #: 스텁 점수 산출 방식 - ``hashed``면 correlationId를 해시해 0~100을 고르게 덮고,
+    #: ``fixed``면 아래 :attr:`stub_intonation_score`를 그대로 낸다 (KAN-136)
+    stub_score_mode: str = DEFAULT_STUB_SCORE_MODE
+    #: 고정 모드의 억양 점수 - 0~100 스케일 유지, 문항 20점 환산은 BE가 한다 (§4.3).
+    #: ``hashed`` 모드에서는 읽지 않는다
     stub_intonation_score: int = 75
     #: 추론 지연 흉내 - 앱과 BE의 대기 화면, 폴링 간격(§5.3)을 실제에 가깝게 시험하기 위한 값
     stub_delay_ms: int = 1500
@@ -88,6 +98,7 @@ class Settings:
                 source.get("ACCENTURY_AI_MAX_REQUEST_BYTES", DEFAULT_MAX_REQUEST_BYTES)
             ),
             analysis_engine=source.get("ACCENTURY_AI_ANALYSIS_ENGINE", DEFAULT_ANALYSIS_ENGINE),
+            stub_score_mode=source.get("ACCENTURY_AI_STUB_SCORE_MODE", DEFAULT_STUB_SCORE_MODE),
             stub_intonation_score=int(source.get("ACCENTURY_AI_STUB_SCORE", 75)),
             stub_delay_ms=int(source.get("ACCENTURY_AI_STUB_DELAY_MS", 1500)),
             stub_fail_item=source.get("ACCENTURY_AI_STUB_FAIL_ITEM") or None,
