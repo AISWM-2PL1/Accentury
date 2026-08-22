@@ -39,7 +39,9 @@ build_and_push() {
   local ref="${REGISTRY}/${repo}:${SHA}"
 
   echo "==> ${repo}:${SHA} 빌드"
-  docker build "${PLATFORM_ARG[@]}" -t "$ref" "$context"
+  # 확장을 ${...+...}로 감싼 이유가 있다. macOS 기본 bash(3.2)는 set -u 아래에서 빈 배열의
+  # "${arr[@]}"를 unbound variable로 친다 - PLATFORM을 주지 않는 기본 사용법에서 첫 빌드부터 죽는다.
+  docker build ${PLATFORM_ARG[@]+"${PLATFORM_ARG[@]}"} -t "$ref" "$context"
 
   if [[ "${DRY_RUN:-0}" == "1" ]]; then
     echo "    DRY_RUN - 푸시하지 않고 넘어갑니다: ${ref}"
