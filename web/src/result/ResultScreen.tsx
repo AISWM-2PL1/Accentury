@@ -43,7 +43,13 @@ export interface ResultScreenProps {
   onShare: (result: TestResultView) => void
   /** [다시 테스트하기]. 새 세션 생성은 KAN-34 몫이라 여기서는 호출자에게 넘긴다 */
   onRetest: () => void
-  /** 주입용 fetch (테스트용) */
+  /**
+   * 주입용 fetch (테스트용).
+   *
+   * **참조가 안정적이어야 한다** — 이 값이 조회 이펙트의 의존성이라, 렌더마다 새로 만든
+   * 인라인 함수를 넘기면 부모가 다시 그려질 때마다 결과를 다시 조회한다. 넘기지 않는 것이
+   * 기본이고(App은 넘기지 않는다), 넘긴다면 렌더 밖에서 만든 값이어야 한다.
+   */
   fetchImpl?: FetchLike
 }
 
