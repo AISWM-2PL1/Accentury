@@ -435,15 +435,21 @@
 /*
  * 종합 점수 도넛. 원호와 가운데 숫자를 겹쳐 놓는다 — 겹침을 position으로 잡는 이유는
  * grid 한 칸에 둘을 넣으면 큰 글자 크기에서 숫자가 원을 밀어 키우기 때문이다.
- * 원 크기는 히어로 아이콘과 같은 토큰을 쓴다: 화면을 여는 원형이라는 자리가 같다.
+ *
+ * 크기의 기본값은 히어로 아이콘과 같은 112px이다 - 화면을 여는 원형이라는 자리가 같다.
+ * 다만 고정으로 두면 안 된다: 글자만 커지고 원이 그대로면 가운데 숫자가 링을 뚫고 나온다.
+ * overflow가 visible이라 잘리지는 않지만 링과 겹쳐 읽을 수 없게 된다 (2026-08-22 브라우저에서
+ * 글자 1.5배로 확인). 그래서 글자 크기에 비례해 같이 키운다. 계수 2.4는 세 자리 점수(100)와
+ * 그 아래 캡션까지 원 안에 들어가는 값이고, 기본 글자 크기(44px)에서는 105.6이라 112가 이겨
+ * 원래 크기가 그대로 남는다.
  */
 .score-donut {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: var(--hero-icon-size);
-  height: var(--hero-icon-size);
+  width: max(var(--hero-icon-size), calc(var(--text-display) * 2.4));
+  height: max(var(--hero-icon-size), calc(var(--text-display) * 2.4));
   flex-shrink: 0;
 }
 
