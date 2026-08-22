@@ -127,25 +127,45 @@ export async function fetchResult(
 }
 
 /**
- * 화면이 실제로 그리는 값만 본다 — 점수 셋과 등급.
+ * **소비하는 필드는 전부 본다.** 검증의 경계는 "화면이나 동작이 이 값을 읽는가"다.
  *
- * `share`·`comment`·`testVersion` 같은 나머지 필드를 여기서 검증하지 않는 이유는
- * [fetchTestDefinition]의 얕은 검증과 같다: 없어도 화면이 죽지 않는 값까지 막으면, 계약이
- * 늘어날 때 고칠 곳만 늘어난다. 여기서 거르는 건 점수 자리에 `undefined`가 들어가는 손상뿐이다.
+ * 처음에는 점수와 등급만 봤는데, 그건 "없어도 화면이 죽지 않는다"는 전제 위에 있었고 그
+ * 전제가 곧 깨졌다 — 공유 결선이 `result.share`를 구조 분해하면서, `share` 없는 200 응답이
+ * 오면 공유 버튼을 누르는 순간 TypeError가 나는 상태가 됐다 (Codex 교차 검증, 2026-08-22).
+ * 버전 꼬리표도 검증 없이 그려서 `undefined · undefined`가 화면에 나갈 수 있었다.
+ *
+ * 반대로 아무도 읽지 않는 필드는 계속 보지 않는다 — `status`(READY 하나뿐이라 분기가 없다),
+ * `expiresAt`(만료 판정은 서버의 410이지 클라이언트의 시계가 아니다), `share.imageUrl`
+ * (KAN-30이 공유 카드를 만들 때 처음 읽는다 — 그 티켓이 자기 소비 필드를 여기 더한다).
+ *
+ * 서버가 이 필드들을 항상 채운다는 것은 안다(TierAssets가 기동 시 강제한다). 여기서 막는
+ * 것은 서버 버그가 아니라 배포 스큐다 — 계약이 바뀐 서버에 옛 웹이 붙는 경우가 실제 경로다.
  */
 function isResultShape(value: unknown): value is TestResultView {
   if (typeof value !== 'object' || value === null) return false
-  const { scores, tier } = value as Record<string, unknown>
+  const { scores, tier, comment, share, testVersion, scoreVersion } = value as Record<string, unknown>
 
-  if (typeof scores !== 'object' || scores === null) return false
-  const { intonation, vocabulary, overall } = scores as Record<string, unknown>
-  if (![intonation, vocabulary, overall].every((n) => typeof n === 'number' && Number.isFinite(n))) {
-    return false
-  }
+  if (!isNumberRecord(scores, ['intonation', 'vocabulary', 'overall'])) return false
+  // rank·of는 "5개 등급 중 4번째" 표기가 읽는다. 빠지면 그 자리에 undefined가 나간다.
+  if (!isStringRecord(tier, ['code', 'name']) || !isNumberRecord(tier, ['rank', 'of'])) return false
+  // text·webTestUrl은 공유 결선(App.shareResult)이 구조 분해로 읽는다.
+  if (!isStringRecord(share, ['text', 'webTestUrl'])) return false
 
-  if (typeof tier !== 'object' || tier === null) return false
-  const { code, name } = tier as Record<string, unknown>
-  return typeof code === 'string' && typeof name === 'string'
+  return typeof comment === 'string' && typeof testVersion === 'string' && typeof scoreVersion === 'string'
+}
+
+/** 객체인지 + 지정한 키가 전부 유한한 숫자인지 */
+function isNumberRecord(value: unknown, keys: readonly string[]): boolean {
+  if (typeof value !== 'object' || value === null) return false
+  const record = value as Record<string, unknown>
+  return keys.every((key) => typeof record[key] === 'number' && Number.isFinite(record[key]))
+}
+
+/** 객체인지 + 지정한 키가 전부 문자열인지 */
+function isStringRecord(value: unknown, keys: readonly string[]): boolean {
+  if (typeof value !== 'object' || value === null) return false
+  const record = value as Record<string, unknown>
+  return keys.every((key) => typeof record[key] === 'string')
 }
 
 /** 오류 봉투(§2.3)의 클라이언트 관심 부분 */

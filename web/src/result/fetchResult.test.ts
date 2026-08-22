@@ -234,4 +234,47 @@ describe('200인데 본문이 계약과 다른 경우', () => {
       name: 'ResultFetchError',
     })
   })
+
+  /*
+   * 소비 필드 전수 방어. 하나씩 빼 보는 이유는 "점수만 보면 된다"는 초기 판단이 공유 결선에서
+   * 실제로 깨졌기 때문이다 — share가 없는 응답이 통과하면 공유 버튼에서 TypeError가 났다.
+   * 새 필드를 화면이 읽기 시작하면 이 표에 한 줄을 더하는 것이 검증을 붙이는 절차가 된다.
+   */
+  const CONSUMED: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
+    ['tier.rank 누락 — "5개 등급 중 ?번째"가 깨진다', { tier: { code: 'HONORARY', name: '명예주민', of: 5 } }],
+    ['tier.of 누락', { tier: { code: 'HONORARY', name: '명예주민', rank: 4 } }],
+    ['comment 누락 — 등급 진단 문단이 빈다', { comment: undefined }],
+    ['share 누락 — 공유 버튼이 구조 분해에서 터진다', { share: undefined }],
+    ['share.text 누락', { share: { imageUrl: 'https://img/x.png', webTestUrl: 'https://accentury.app/t' } }],
+    ['share.webTestUrl 누락', { share: { imageUrl: 'https://img/x.png', text: '나는 명예주민!' } }],
+    ['testVersion 누락 — 버전 꼬리표가 undefined가 된다', { testVersion: undefined }],
+    ['scoreVersion 누락', { scoreVersion: undefined }],
+  ]
+
+  for (const [label, patch] of CONSUMED) {
+    it(`소비 필드가 빠진 200을 성공으로 통과시키지 않는다: ${label}`, async () => {
+      const broken: Record<string, unknown> = { ...readyBody(), ...patch }
+      for (const [key, value] of Object.entries(patch)) {
+        if (value === undefined) delete broken[key]
+      }
+
+      await expect(fetchResult(query(), async () => jsonResponse(200, broken))).rejects.toMatchObject({
+        name: 'ResultFetchError',
+        retryable: false,
+      })
+    })
+  }
+
+  it('아무도 읽지 않는 필드는 없어도 통과한다 — 계약이 늘 때 고칠 곳을 늘리지 않는다', async () => {
+    // status는 READY 하나뿐이라 분기가 없고, expiresAt은 만료 판정이 서버의 410이라 안 읽는다.
+    // share.imageUrl은 KAN-30이 공유 카드를 만들 때 처음 읽는다.
+    const body: Record<string, unknown> = { ...readyBody() }
+    delete body.status
+    delete body.expiresAt
+    body.share = { text: '나는 명예주민! 너도 시도해볼래?', webTestUrl: 'https://accentury.app/t?c=kko_share' }
+
+    const result = await fetchResult(query(), async () => jsonResponse(200, body))
+
+    expect(result.tier.name).toBe('명예주민')
+  })
 })

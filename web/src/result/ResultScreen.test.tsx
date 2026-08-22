@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { FetchLike } from '../progress/fetchTestDefinition'
 import { ResultScreen, type ResultScreenProps } from './ResultScreen'
@@ -143,6 +143,44 @@ describe('조회', () => {
     expect(screen.getByText('결과를 불러오는 중…')).toBeInTheDocument()
     // 대기 화면에 점수가 새어 나가지 않는다
     expect(screen.queryByRole('progressbar', { name: '억양 점수' })).not.toBeInTheDocument()
+  })
+
+  it('겹친 요청이 역순으로 돌아와도 뒤늦은 응답이 화면을 덮지 않는다', async () => {
+    /*
+     * 조회를 다시 태우는 길은 [다시 시도]만이 아니다 — sessionId 같은 입력이 바뀌면 이펙트가
+     * 다시 돈다. 버튼은 로딩 상태에서 사라지므로 겹침이 안 생기지만, 이 경로는 앞 요청이 살아
+     * 있는 채로 새 요청이 뜬다. 먼저 뜬 요청이 뒤늦게 실패로 돌아왔을 때 새 결과를 덮으면
+     * 사용자는 멀쩡한 결과 대신 오류 화면을 본다.
+     */
+    const pending: Array<(r: Response) => void> = []
+    const fetchImpl: FetchLike = () => new Promise<Response>((resolve) => void pending.push(resolve))
+    const props: ResultScreenProps = {
+      apiBase: API_BASE,
+      sessionId: 'sess-1',
+      sessionToken: 'token-1',
+      onShare: vi.fn(),
+      onRetest: vi.fn(),
+      fetchImpl,
+    }
+
+    const { rerender } = render(<ResultScreen {...props} />)
+    rerender(<ResultScreen {...props} sessionId="sess-2" />)
+    expect(pending).toHaveLength(2)
+
+    // 나중 요청(sess-2)이 먼저 성공하고, 버려진 앞 요청(sess-1)이 뒤늦게 실패로 돌아온다.
+    await act(async () => {
+      pending[1]({ ok: true, status: 200, json: async () => readyBody() } as Response)
+    })
+    await act(async () => {
+      pending[0]({
+        ok: false,
+        status: 500,
+        json: async () => envelope('INTERNAL', '잠시 후 다시 시도해 주세요.', true),
+      } as Response)
+    })
+
+    expect(screen.getByRole('heading', { name: '명예주민' })).toBeInTheDocument()
+    expect(screen.queryByText('결과를 불러오지 못했어요')).not.toBeInTheDocument()
   })
 })
 
