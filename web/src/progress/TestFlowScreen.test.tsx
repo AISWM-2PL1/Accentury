@@ -39,13 +39,42 @@ function tenItemDefinition(): TestDefinition {
   }
 }
 
-/** 정의를 돌려주는 fetch 대역 (Response 대역은 fetchTestDefinition.test.ts와 같은 방식) */
+/**
+ * 정의를 돌려주는 fetch 대역 (Response 대역은 fetchTestDefinition.test.ts와 같은 방식).
+ *
+ * 분석 대기 화면(KAN-14)이 붙은 뒤로는 마지막 문항 제출 후 `/analyses`·`/complete`도
+ * 이 대역을 탄다. 정의 본문을 그대로 돌려주면 대기 화면이 계약 위반으로 넘어가 화면 내용이
+ * 바뀌므로, 두 URL은 각자 계약에 맞는 최소 응답을 준다. 분석은 끝나지 않은 상태로 둔다 —
+ * 이 파일이 검증하는 것은 진행 흐름이지 폴링이 아니다.
+ */
 function okFetch(): ReturnType<typeof vi.fn<FetchLike>> {
-  return vi.fn<FetchLike>(async () => ({
-    ok: true,
-    status: 200,
-    json: async () => tenItemDefinition(),
-  }) as Response)
+  return vi.fn<FetchLike>(async (input) => {
+    const url = String(input)
+    if (url.endsWith('/analyses')) {
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: (name: string) => (name === '' ? '' : null) },
+        json: async () => ({
+          pollAfterMs: 800,
+          items: [1, 3, 5, 7, 9].map((seq) => ({ itemId: `item-${seq}`, status: 'PROCESSING' })),
+        }),
+      } as Response
+    }
+    if (url.endsWith('/complete')) {
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: (name: string) => (name === '' ? '' : null) },
+        json: async () => ({ status: 'PROCESSING' }),
+      } as Response
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => tenItemDefinition(),
+    } as Response
+  })
 }
 
 function memoryStorage(): SnapshotStorage {
@@ -62,15 +91,21 @@ interface RenderOptions {
   sessionId?: string
   /** StrictMode로 감쌀지. 마운트 effect 이중 실행을 재현할 때만 켠다 */
   strict?: boolean
+  /** 분석 대기 화면이 결과 확정을 알릴 자리 (KAN-14) */
+  onAnalysisReady?: () => void
 }
 
-function renderScreen(fetchImpl: FetchLike, { storage, sessionId, strict }: RenderOptions = {}) {
+function renderScreen(
+  fetchImpl: FetchLike,
+  { storage, sessionId, strict, onAnalysisReady }: RenderOptions = {},
+) {
   return render(
     <TestFlowScreen
       apiBase={API_BASE}
       testVersion={TEST_VERSION}
       sessionId={sessionId}
       storage={storage ?? memoryStorage()}
+      onAnalysisReady={onAnalysisReady}
       fetchImpl={fetchImpl}
     />,
     strict === true ? { wrapper: StrictMode } : undefined,
@@ -131,6 +166,65 @@ function advance() {
   } else {
     answerVocabulary()
   }
+}
+
+/** 브리지 없는 환경에서 10문항을 끝까지 민다 */
+async function finishAllItems() {
+  for (let i = 0; i < 10; i += 1) {
+    advance()
+    // 어휘 제출은 비동기다(개발용 통로도 Promise) — 다음 문항이 뜨기 전에 다음 advance가
+    // 돌지 않도록 microtask를 비운다
+    await act(async () => {})
+  }
+
+  // 마지막 제출 뒤 대기 화면이 마운트되고 첫 회차(analyses → complete)가 순서대로 돈다.
+  // 두 요청이 직렬이라 microtask를 한 번 더 비워야 완료 판정까지 반영된다.
+  await act(async () => {})
+  await act(async () => {})
+}
+
+/** 브리지가 붙은 환경에서 10문항을 끝까지 민다 — 음성은 네이티브 결과 수신, 어휘는 선택 + [다음] */
+async function finishAllItemsWithBridge() {
+  for (let seq = 1; seq <= 10; seq += 1) {
+    if (seq % 2 === 1) deliverResult(`item-${seq}`)
+    else answerVocabulary()
+    await act(async () => {})
+  }
+
+  // 마지막 제출 뒤 대기 화면이 마운트되고 첫 회차(analyses → complete)가 순서대로 돈다.
+  // 두 요청이 직렬이라 microtask를 한 번 더 비워야 완료 판정까지 반영된다.
+  await act(async () => {})
+  await act(async () => {})
+}
+
+/** 정의 + 대기 화면 두 엔드포인트를 갈아 끼울 수 있는 fetch 대역 (KAN-14 결선 검증용) */
+function waitingFetch(handlers: {
+  analyses?: () => unknown
+  complete?: () => unknown
+}): ReturnType<typeof vi.fn<FetchLike>> {
+  const ok = (body: unknown) =>
+    ({
+      ok: true,
+      status: 200,
+      headers: { get: (name: string) => (name === '' ? '' : null) },
+      json: async () => body,
+    }) as Response
+
+  return vi.fn<FetchLike>(async (input) => {
+    const url = String(input)
+    if (url.endsWith('/analyses')) {
+      return ok(
+        handlers.analyses?.() ?? {
+          pollAfterMs: 800,
+          items: [1, 3, 5, 7, 9].map((seq) => ({ itemId: `item-${seq}`, status: 'PROCESSING' })),
+        },
+      )
+    }
+    if (url.endsWith('/complete')) return ok(handlers.complete?.() ?? { status: 'PROCESSING' })
+    // 브리지가 붙은 경로에서는 어휘 답안이 실제로 서버로 나간다 (KAN-13)
+    if (url.endsWith('/answer')) return ok({ accepted: true })
+    return ok(tenItemDefinition())
+  })
 }
 
 afterEach(() => {
@@ -202,18 +296,16 @@ describe('문항 진행', () => {
     expect(screen.getByRole('progressbar', { name: '문항 진행률' })).toHaveAttribute('value', '2')
   })
 
-  it('마지막 문항을 제출하면 분석 대기 자리 표시로 넘어간다', async () => {
+  it('마지막 문항을 제출하면 분석 대기 화면으로 넘어간다 (KAN-14)', async () => {
     renderScreen(okFetch())
     await findDevSubmit()
 
-    for (let i = 0; i < 10; i += 1) {
-      advance()
-      // 어휘 제출은 비동기다(개발용 통로도 Promise) — 다음 문항이 뜨기 전에 다음 advance가
-      // 돌지 않도록 microtask를 비운다
-      await act(async () => {})
-    }
+    await finishAllItems()
 
-    expect(screen.getByText('분석 대기 화면 (KAN-14 예정)')).toBeInTheDocument()
+    // 진행률이 분석 기준으로 바뀌고 음성 5문항이 목록으로 선다
+    expect(screen.getByRole('progressbar', { name: '분석 진행률' })).toBeInTheDocument()
+    expect(screen.getByText('음성 1번')).toBeInTheDocument()
+    expect(screen.getByText('음성 5번')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '제출 (개발용)' })).not.toBeInTheDocument()
     expect(screen.queryByRole('radio', { name: '보기1' })).not.toBeInTheDocument()
   })
@@ -447,5 +539,114 @@ describe('폴링 부재 — 문항 진행 중에는 요청이 없다 (KAN-14 규
     } finally {
       vi.unstubAllGlobals()
     }
+  })
+})
+
+describe('분석 대기 결선 (KAN-14)', () => {
+  it('결과가 확정되면 onAnalysisReady로 알린다 — 화면 이동은 App이 한다', async () => {
+    stubBridge()
+    const onAnalysisReady = vi.fn()
+    renderScreen(waitingFetch({ complete: () => ({ status: 'READY' }) }), {
+      onAnalysisReady,
+      sessionId: 'sess-1',
+    })
+    await findRecordingWait()
+
+    await finishAllItemsWithBridge()
+
+    expect(onAnalysisReady).toHaveBeenCalledTimes(1)
+  })
+
+  it('분석이 끝나지 않았으면 알리지 않는다', async () => {
+    stubBridge()
+    const onAnalysisReady = vi.fn()
+    renderScreen(waitingFetch({}), { onAnalysisReady, sessionId: 'sess-1' })
+    await findRecordingWait()
+
+    await finishAllItemsWithBridge()
+
+    expect(onAnalysisReady).not.toHaveBeenCalled()
+  })
+
+  it('브리지가 없으면 재녹음 버튼을 그리지 않는다 — 눌러도 녹음 화면이 열리지 않는다', async () => {
+    renderScreen(
+      waitingFetch({
+        analyses: () => ({
+          pollAfterMs: 800,
+          items: [1, 3, 5, 7, 9].map((seq) => ({
+            itemId: `item-${seq}`,
+            status: 'RETRYABLE_FAILED',
+            error: { code: 'AUDIO_TOO_QUIET', retryable: true },
+          })),
+        }),
+      }),
+      { sessionId: 'sess-1' },
+    )
+    await findDevSubmit()
+
+    await finishAllItems()
+
+    expect(screen.queryByRole('button', { name: '다시 녹음' })).not.toBeInTheDocument()
+  })
+
+  it('브리지 없는 실행은 폴링 전에 막힌다 — 세션 토큰이 없다 (결과 화면과 같은 규칙)', async () => {
+    renderScreen(waitingFetch({}), { sessionId: 'sess-1' })
+    await findDevSubmit()
+
+    await finishAllItems()
+
+    // 사용자가 할 수 있는 게 없는 실패라 비난 없는 문구만 남긴다. 진단은 콘솔로 간다
+    expect(screen.getByText('분석 상태를 확인할 수 없어요. 앱을 다시 시작해 주세요')).toBeInTheDocument()
+  })
+
+  it('재녹음을 누르면 그 문항으로 녹음 화면을 다시 연다 — 브리지 계약은 그대로다', async () => {
+    const startVoiceItem = stubBridge()
+    renderScreen(
+      waitingFetch({
+        analyses: () => ({
+          pollAfterMs: 800,
+          items: [
+            { itemId: 'item-1', status: 'COMPLETED', quality: 'OK' },
+            {
+              itemId: 'item-3',
+              status: 'RETRYABLE_FAILED',
+              error: { code: 'AUDIO_TOO_QUIET', retryable: true },
+            },
+            { itemId: 'item-5', status: 'COMPLETED', quality: 'OK' },
+            { itemId: 'item-7', status: 'COMPLETED', quality: 'OK' },
+            { itemId: 'item-9', status: 'COMPLETED', quality: 'OK' },
+          ],
+        }),
+      }),
+      { sessionId: 'sess-1' },
+    )
+    await findRecordingWait()
+    await finishAllItemsWithBridge()
+
+    startVoiceItem.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: '다시 녹음' }))
+
+    expect(startVoiceItem).toHaveBeenCalledTimes(1)
+    // 첫 녹음 때와 같은 순번을 준다 — 사용자가 "3번 문항"으로 기억한다
+    expect(JSON.parse(startVoiceItem.mock.calls[0][0])).toMatchObject({
+      itemId: 'item-3',
+      itemNumber: 3,
+      totalItems: 10,
+    })
+  })
+
+  it('재녹음 결과가 돌아오면 폴링을 다시 세운다', async () => {
+    stubBridge()
+    const fetchImpl = waitingFetch({})
+    renderScreen(fetchImpl, { sessionId: 'sess-1' })
+    await findRecordingWait()
+    await finishAllItemsWithBridge()
+
+    const before = fetchImpl.mock.calls.filter(([url]) => String(url).endsWith('/analyses')).length
+    deliverResult('item-3')
+    await act(async () => {})
+
+    const after = fetchImpl.mock.calls.filter(([url]) => String(url).endsWith('/analyses')).length
+    expect(after).toBe(before + 1)
   })
 })
