@@ -576,3 +576,43 @@
 .result-version {
   color: var(--color-muted-foreground);
 }
+
+/* ── 분석 대기 문항 목록 (KAN-14) ── */
+
+/*
+ * 음성 5문항의 상태를 한 줄씩 세운다. 카드가 아니라 목록인 이유: 이 화면에서 사용자가
+ * 하는 일은 "내 문항이 어디까지 갔나"를 훑는 것이고, 카드로 키우면 5개가 한 화면에
+ * 들어오지 않아 훑기가 스크롤이 된다.
+ */
+.analysis-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  max-width: var(--content-max-width);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.analysis-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-card);
+  color: var(--color-card-foreground);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+/* 문항 이름이 남는 폭을 먹고, 상태와 버튼은 자기 크기만 쓴다 */
+.analysis-row__name {
+  flex: 1;
+  text-align: left;
+}
+
+.analysis-row__status {
+  color: var(--color-muted-foreground);
+  white-space: nowrap;
+}
