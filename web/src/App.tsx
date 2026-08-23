@@ -39,6 +39,7 @@ export default function App() {
          * 문자열이 내려가고 진행 스냅샷이 세션별로 나뉘지 않는다 — 과도기의 알려진 한계다.
          */
         sessionId={params.get('sessionId') ?? ''}
+        onAnalysisReady={() => goToResult(params.get('sessionId') ?? '')}
       />
     )
   }
@@ -48,9 +49,9 @@ export default function App() {
    * 쓰는 이유는 같다: 앱과 브라우저가 같은 URL로 같은 화면에 들어가야 개발에서 통과한 것이
    * 앱에서도 통과한다.
    *
-   * 이 자리로 사용자를 보내는 것은 분석 대기 화면(KAN-14)의 일이다 — 마지막 문항 제출 뒤
-   * `/complete`가 READY를 줄 때까지 기다렸다가 넘긴다. 그 화면이 아직 없어서 지금은 이 URL을
-   * 직접 여는 경로뿐이고, KAN-14가 붙으면 그 앞단만 채워진다.
+   * 이 자리로 사용자를 보내는 것은 분석 대기 화면(KAN-14)이다 — 마지막 문항 제출 뒤
+   * `/complete`가 READY를 줄 때까지 기다렸다가 [goToResult]로 넘긴다. 이 URL을 직접 여는
+   * 경로도 그대로 살아 있다: 결과 화면만 따로 확인하는 개발 통로다.
    */
   if (params.get('screen') === 'result') {
     return (
@@ -105,6 +106,27 @@ function shareResult(result: TestResultView): void {
     text,
     webTestUrl,
   })
+}
+
+/**
+ * 분석이 끝났다 — 결과 화면으로 넘긴다 (KAN-14 → KAN-29).
+ *
+ * `screen`과 `sessionId`만 갈아끼우고 나머지 진입 파라미터는 남긴다. `bridge`·`app`이
+ * 빠지면 스큐 판정(§5)이 구버전 앱으로 보고 업데이트 안내를 띄운다 — 방금 테스트를 끝낸
+ * 사용자가 "앱을 업데이트하세요"를 만나는 셈이 된다 ([goToIntro]와 같은 이유).
+ *
+ * `testVersion`은 지운다. 결과 화면이 읽지 않는 값이고, 남겨 두면 이 URL을 그대로 다시 연
+ * 사람이 끝난 세션의 정의 버전을 물고 다니게 된다.
+ *
+ * 같은 문서를 다시 로드하는 이유도 [goToIntro]와 같다 — 진행 화면이 들고 있던 상태(폴링
+ * 타이머·스냅샷 참조)를 확실히 버리기 위해서다.
+ */
+function goToResult(sessionId: string): void {
+  const params = new URLSearchParams(window.location.search)
+  params.set('screen', 'result')
+  params.set('sessionId', sessionId)
+  params.delete('testVersion')
+  window.location.href = `${window.location.pathname}?${params.toString()}`
 }
 
 /**

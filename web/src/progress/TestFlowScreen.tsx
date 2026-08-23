@@ -1,21 +1,24 @@
 /**
  * 문항 진행 화면 (KAN-99 Stage 3). 무디자인 — 인트로·업데이트 안내와 같은 최소 인라인 스타일 톤이다.
  *
- * 화면은 네 상태를 가진다: 정의 로딩 중 / 로딩 실패(다시 시도) / 문항 진행 / 분석 대기 자리 표시.
+ * 화면은 네 상태를 가진다: 정의 로딩 중 / 로딩 실패(다시 시도) / 문항 진행 / 분석 대기(KAN-14).
  * 로딩과 진행을 컴포넌트 두 개로 나눈 이유: 진행 훅은 정의가 있어야 초기화되는데, 같은
  * 컴포넌트에 두면 정의가 오기 전 렌더에서 훅을 부를 수 없어 조건부 훅이 된다. 정의가 확정된
  * 뒤에 `TestRunner`를 마운트하면 훅이 항상 유효한 입력으로 시작한다.
  *
- * **이 화면에는 폴링이 없다** (KAN-14 폴링 규칙 2항). 네트워크 호출은 정의 조회 1회뿐이고,
- * 그 외에는 타이머도 주기 요청도 없다. 상태 확인 폴링은 분석 대기 화면(KAN-14)이 시작한다.
+ * **문항이 떠 있는 동안에는 폴링이 없다** (KAN-14 폴링 규칙 2항). 정의 조회 1회 말고는
+ * 타이머도 주기 요청도 없고, 폴링은 마지막 문항까지 제출된 뒤 이 화면이 내주는 분석 대기
+ * 화면에서 비로소 시작한다 — 그 화면이 마운트돼야 폴링 훅이 서기 때문에, 진행 중 폴링은
+ * 실수로도 생기지 않는다.
  */
 
-import { useCallback, useEffect, useState } from 'react'
-import { getSessionToken, installItemResultReceiver } from '../bridge/bridge'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { AnalysisWaitingScreen } from '../analysis/AnalysisWaitingScreen'
+import { getSessionToken, installItemResultReceiver, startVoiceItem } from '../bridge/bridge'
 import { fetchTestDefinition, type FetchLike } from './fetchTestDefinition'
 import type { SnapshotStorage } from './progressSnapshot'
 import { submitVocabAnswer } from './submitVocabAnswer'
-import type { TestDefinition } from './testDefinition'
+import type { TestDefinition, VoiceItem } from './testDefinition'
 import { useTestProgress } from './useTestProgress'
 import { VocabularyItemScreen } from './VocabularyItemScreen'
 import { VoiceItemScreen } from './VoiceItemScreen'
@@ -30,6 +33,11 @@ export interface TestFlowScreenProps {
   sessionId?: string
   /** 스냅샷 저장소. 기본값(localStorage)은 훅이 정한다 */
   storage?: SnapshotStorage
+  /**
+   * 분석이 끝나 결과가 확정됐다 (KAN-14). 결과 화면으로 보내는 것은 호출자 몫이다 —
+   * 진입 쿼리 계약은 App이 들고 있고, 이 화면이 URL을 알 필요가 없다.
+   */
+  onAnalysisReady?: () => void
   /** 주입용 fetch (테스트용) */
   fetchImpl?: FetchLike
 }
@@ -44,6 +52,7 @@ export function TestFlowScreen({
   testVersion,
   sessionId = '',
   storage,
+  onAnalysisReady,
   fetchImpl,
 }: TestFlowScreenProps) {
   const [load, setLoad] = useState<LoadState>({ status: 'loading' })
@@ -99,6 +108,7 @@ export function TestFlowScreen({
       apiBase={apiBase}
       sessionId={sessionId}
       storage={storage}
+      onAnalysisReady={onAnalysisReady}
       fetchImpl={fetchImpl}
     />
   )
@@ -109,15 +119,23 @@ function TestRunner({
   apiBase,
   sessionId,
   storage,
+  onAnalysisReady,
   fetchImpl,
 }: {
   definition: TestDefinition
   apiBase: string
   sessionId: string
   storage?: SnapshotStorage
+  onAnalysisReady?: () => void
   fetchImpl?: FetchLike
 }) {
   const { state, current, progress, submit } = useTestProgress(definition, storage, sessionId)
+  /*
+   * 네이티브가 문항 결과를 돌려줄 때마다 오른다. 대기 화면은 이 값의 변화를 재녹음 완료
+   * 신호로 읽어 폴링을 다시 세운다 — 진행 중에 오르는 것은 무해하다. 그때는 대기 화면이
+   * 마운트되어 있지 않아 아무도 보지 않는다.
+   */
+  const [resultNonce, setResultNonce] = useState(0)
 
   /*
    * 네이티브 → 웹 결과 수신 지점. 화면이 살아 있는 동안 한 번만 설치한다 — 문항마다 갈아끼우면
@@ -127,21 +145,80 @@ function TestRunner({
    * 않았는지는 submitItem의 가드가 이미 판정하므로, 같은 검증을 여기서 되풀이하지 않는다
    * (규칙이 두 곳에 생기면 언젠가 어긋난다).
    *
-   * attemptId·analysisJobId·durationMs·qualityStatus는 이 티켓에 쓸 곳이 없다 —
-   * 분석 폴링(KAN-14)이 쓸 값이라, 지금은 통지만 받고 버린다.
+   * attemptId·analysisJobId·durationMs·qualityStatus는 여전히 읽지 않는다. 대기 화면은
+   * 문항 상태를 서버(`/analyses`)에서 받으므로, 브리지가 실어 보낸 사본을 믿을 이유가 없다 —
+   * 채점 대상을 정하는 것은 서버이고, 두 출처가 어긋나면 화면이 서버와 다른 말을 하게 된다.
+   * 여기서 쓰는 것은 "무언가 돌아왔다"는 사실뿐이다.
    */
-  useEffect(() => installItemResultReceiver((result) => submit(result.itemId)), [submit])
+  useEffect(
+    () =>
+      installItemResultReceiver((result) => {
+        submit(result.itemId)
+        setResultNonce((n) => n + 1)
+      }),
+    [submit],
+  )
 
-  // 마지막 문항까지 제출됨. 분석 대기 화면(KAN-14)은 아직 없어 자리만 잡아 둔다 —
-  // 폴링·복구 UX는 그 티켓에서 이 자리에 붙는다.
+  /*
+   * 재녹음 — 대기 화면이 실패한 문항을 짚으면 그 문항으로 녹음 화면을 다시 연다.
+   *
+   * 브리지 계약을 늘리지 않는다. `startVoiceItem`은 문항 컨텍스트를 통째로 받는 호출이라
+   * 어느 문항으로든 다시 부를 수 있고, 네이티브 입장에서 이것은 "그 문항을 녹음하라"는 같은
+   * 지시다 — 재녹음 전용 메서드를 새로 만들면 계약 버전이 올라가고(§5), 구버전 앱에서
+   * 대기 화면 전체가 업데이트 안내로 막힌다.
+   *
+   * 서버 쪽에서도 이것은 새 시도(attempt)일 뿐이다. 채점 대상은 문항당 최신 성공 시도 1건이라
+   * (§5.1) 이전 시도를 지울 필요가 없고, 진행 상태 머신도 건드리지 않는다 — 그 문항은 이미
+   * 제출된 것으로 남아 있어야 진행률 분모가 흔들리지 않는다.
+   */
+  const retake = useCallback(
+    (itemId: string) => {
+      const index = state.items.findIndex((item) => item.itemId === itemId)
+      const item = state.items[index]
+      if (item === undefined || item.type !== 'VOICE') return
+      startVoiceItem({
+        itemId: item.itemId,
+        prompt: item.prompt,
+        // 첫 녹음 때 네이티브가 그린 번호와 같아야 한다 — 사용자가 "3번 문항"으로 기억한다
+        itemNumber: index + 1,
+        totalItems: state.items.length,
+        maxDurationMs: item.maxDurationMs,
+        guideF0: item.guideF0,
+      })
+    },
+    [state.items],
+  )
+
+  // 대기 화면이 순번을 매기고 재녹음 대상을 찾는 데 쓴다. 정의 순서(seq)가 정본이다.
+  const voiceItems = useMemo(
+    () => state.items.filter((item): item is VoiceItem => item.type === 'VOICE'),
+    [state.items],
+  )
+
+  // 마지막 문항까지 제출됨 — 여기서부터 분석 대기 화면이 폴링을 맡는다 (KAN-14).
   if (state.phase === 'AWAITING_ANALYSIS' || current === null) {
     return (
-      <main className="screen">
-        <h1 className="type-title-sm">분석 대기 화면 (KAN-14 예정)</h1>
-        <p className="type-label">
-          {progress.total}문항을 모두 제출했어요. 여기서 분석 상태 폴링이 시작됩니다.
-        </p>
-      </main>
+      <AnalysisWaitingScreen
+        apiBase={apiBase}
+        sessionId={sessionId}
+        /*
+         * 토큰은 렌더 시점에 읽는다 — 폴링이 도는 동안 화면이 여러 번 그려지지만, 훅은
+         * 토큰 값이 바뀔 때만 루프를 다시 세운다. 미리 잡아 두면 origin 허용이 바뀐 뒤에도
+         * 낡은 판정을 계속 쓴다 (어휘 제출이 같은 규칙을 쓴다).
+         */
+        sessionToken={getSessionToken() ?? ''}
+        voiceItems={voiceItems}
+        totalItems={progress.total}
+        onReady={onAnalysisReady ?? noop}
+        /*
+         * 브리지가 없는 브라우저 단독 실행에서는 재녹음 버튼을 그리지 않는다. 눌러도 네이티브
+         * 녹음 화면이 열리지 않아 아무 일도 일어나지 않는 버튼이 된다 (어휘 문항의 개발용
+         * 통로와 같은 판정).
+         */
+        onRetake={window.AccenturyBridge === undefined ? undefined : retake}
+        refreshNonce={resultNonce}
+        fetchImpl={fetchImpl}
+      />
     )
   }
 
@@ -199,6 +276,12 @@ function TestRunner({
     </main>
   )
 }
+
+/**
+ * `onAnalysisReady`를 주지 않은 호출자용. 결과가 확정돼도 화면을 옮기지 않는다 —
+ * 브라우저 단독 개발과 이 화면만 띄우는 테스트가 그 경로다.
+ */
+function noop(): void {}
 
 /** Error가 아닌 값이 던져질 수 있으므로(문자열 reject 등) 문구 추출을 한 곳에 모은다 */
 function errorMessage(error: unknown): string {

@@ -23,7 +23,7 @@
  * [다시 시도]만 준다. 이 화면의 이탈 경로는 KAN-39에서 다른 화면들과 함께 붙는다.
  */
 
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { Button, ProgressIndicator, StatusBlock } from '../ui'
 import type { VoiceItem } from '../progress/testDefinition'
 import type { FetchLike } from '../progress/fetchTestDefinition'
@@ -46,6 +46,15 @@ export interface AnalysisWaitingScreenProps {
    * 네이티브 결선이 없는 브라우저 단독 실행에서 눌러도 아무 일 없는 버튼을 두지 않기 위해서다.
    */
   onRetake?: (itemId: string) => void
+  /**
+   * 값이 바뀌면 폴링을 처음부터 다시 시작한다. 재녹음 결과가 네이티브에서 돌아왔다는 신호다.
+   *
+   * 콜백이 아니라 숫자인 이유: 네이티브 결과 수신 지점(`installItemResultReceiver`)은 화면
+   * 전체가 하나만 설치한다 — 이 화면이 자기 수신자를 따로 걸면, 마운트 순서상 부모 것이
+   * 나중에 설치돼 덮어쓴다. 그래서 수신은 부모가 하고, 이 화면은 "무언가 돌아왔다"는 값의
+   * 변화만 본다.
+   */
+  refreshNonce?: number
   fetchImpl?: FetchLike
 }
 
@@ -72,6 +81,7 @@ export function AnalysisWaitingScreen({
   totalItems,
   onReady,
   onRetake,
+  refreshNonce = 0,
   fetchImpl,
 }: AnalysisWaitingScreenProps) {
   const { status, items, lastError, restart } = useAnalysisPolling({
@@ -86,6 +96,21 @@ export function AnalysisWaitingScreen({
   useEffect(() => {
     if (status.kind === 'READY') onReady()
   }, [status.kind, onReady])
+
+  /*
+   * 재녹음 결과가 돌아왔다. 새 시도가 서버에서 돌기 시작했으므로 폴링을 처음부터 다시 세운다 —
+   * 예산도 함께 초기화된다. 사용자가 방금 행동했는데 이전 대기에서 쓴 시간을 계속 물리면,
+   * 재녹음하자마자 [다시 시도]를 만나는 일이 생긴다.
+   *
+   * 마운트 시점 값은 신호가 아니다. 문항 진행 중에도 결과 수신마다 이 값이 오르므로, 화면이
+   * 처음 서는 순간의 값으로 폴링을 한 번 더 돌리면 첫 회차가 두 번 나간다.
+   */
+  const seenNonce = useRef(refreshNonce)
+  useEffect(() => {
+    if (refreshNonce === seenNonce.current) return
+    seenNonce.current = refreshNonce
+    restart()
+  }, [refreshNonce, restart])
 
   // 음성 문항은 정의 순서(seq)가 정본이다. 서버도 같은 순서로 주지만, 순번 표기를 정의에서
   // 뽑아야 "3번째 문항"이 문항 진행 화면에서 본 번호와 같아진다.
