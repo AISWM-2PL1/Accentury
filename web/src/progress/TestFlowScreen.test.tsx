@@ -381,8 +381,9 @@ describe('VOICE 문항 — 네이티브 녹음 화면 전환 (KAN-100)', () => {
     expect(startVoiceItem).toHaveBeenCalledTimes(1)
   })
 
-  it('[녹음 화면 다시 열기]로 같은 문항 전환을 다시 요청할 수 있다 (나가기 이탈 복구)', async () => {
-    // 네이티브 [나가기] 이탈은 웹에 통지되지 않는다 — 대기 뷰의 재진입 버튼이 유일한 복구 통로다.
+  it('[녹음 화면 다시 열기]로 같은 문항 전환을 다시 요청할 수 있다 (결과 없이 돌려보내진 뒤의 복구)', async () => {
+    // 네이티브가 결과 없이 돌려보내는 것(PCM 없는 제출 등)은 웹에 통지되지 않는다 — 대기 뷰의
+    // 재진입 버튼이 유일한 복구 통로다. ([나가기] 이탈은 KAN-147에서 버튼째 사라졌다.)
     const startVoiceItem = stubBridge()
     renderScreen(okFetch())
     await findRecordingWait()
