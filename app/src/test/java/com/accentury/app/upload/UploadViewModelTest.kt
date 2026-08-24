@@ -77,6 +77,26 @@ class UploadViewModelTest {
         assertEquals("문항", vm.labelOf("at_unknown"))
     }
 
+    /*
+     * 한 건만 버리는 경로 (KAN-147). 재시도 상한을 넘겨 포기한 업로드와, 같은 문항의 새 녹음에
+     * 밀려난 앞 시도가 여기로 온다 - 둘 다 결과가 나올 일이 없어진 시도다.
+     */
+    @Test
+    fun `discard는 업로드와 라벨을 함께 지운다`() = withViewModel { vm, _ ->
+        vm.enqueue(requestOf("at_1"), label = "1번 문항")
+        vm.enqueue(requestOf("at_2", itemId = "item_2"), label = "2번 문항")
+        advanceUntilIdle()
+
+        vm.discard("at_1")
+        advanceUntilIdle()
+
+        assertEquals(null, vm.uploads.value["at_1"])
+        assertEquals("문항", vm.labelOf("at_1"))
+        // 남은 건은 그대로다 - 폐기는 지목한 시도 하나만 버린다.
+        assertEquals(UploadState.InFlight, vm.uploads.value["at_2"])
+        assertEquals("2번 문항", vm.labelOf("at_2"))
+    }
+
     @Test
     fun `전체 폐기는 업로드와 라벨을 함께 지운다 - onCleared가 부르는 경로`() = withViewModel { vm, _ ->
         vm.enqueue(requestOf("at_1"), label = "1번 문항")

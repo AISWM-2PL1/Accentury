@@ -171,6 +171,68 @@ class UploadManagerTest {
         assertEquals(UploadState.Done("aj_retry"), manager.uploads.value["at-1"])
     }
 
+    /*
+     * 재시도 상한 (KAN-147, 2026-08-25 결정). 같은 멱등 키로 같은 바이트를 다시 보내는 일이라
+     * 두 번을 넘겨 성공하는 경우가 거의 없는데, [재시도] 버튼을 계속 남겨두면 사용자는 눌러도
+     * 아무 일이 없는 버튼 앞에 갇힌다. 상한을 넘긴 뒤의 복구는 재녹음이고 그 신호가 retryable=false다.
+     */
+    @Test
+    fun `재시도는 2번까지다 - 세 번째 실패는 재시도 불가로 내려온다`() = withManager { fake, manager ->
+        manager.enqueue(requestOf("at-1"))
+        advanceUntilIdle()
+        fake.respond("at-1", UploadResult.TransportError("network down"))
+        advanceUntilIdle()
+        assertEquals(UploadState.Failed(true, "network down"), manager.uploads.value["at-1"])
+
+        // 1회차
+        manager.retry("at-1")
+        advanceUntilIdle()
+        fake.respond("at-1", UploadResult.TransportError("network down"))
+        advanceUntilIdle()
+        assertEquals(UploadState.Failed(true, "network down"), manager.uploads.value["at-1"])
+
+        // 2회차 - 상한을 다 쓴다. 이 실패부터는 서버가 뭐라 하든 재시도 불가다.
+        manager.retry("at-1")
+        advanceUntilIdle()
+        fake.respond("at-1", UploadResult.TransportError("network down"))
+        advanceUntilIdle()
+        assertEquals(UploadState.Failed(false, "network down"), manager.uploads.value["at-1"])
+
+        // 상한을 넘긴 재시도는 무시된다 - 전송 횟수도 상태도 그대로다.
+        manager.retry("at-1")
+        advanceUntilIdle()
+        assertEquals(3, fake.callsFor("at-1"))
+        assertEquals(UploadState.Failed(false, "network down"), manager.uploads.value["at-1"])
+    }
+
+    /*
+     * 폐기는 시도 자체를 버리는 것이라 소진한 횟수도 함께 푼다. 같은 키로 다시 걸리는 업로드는
+     * 다른 바이트를 보내는 새 시도이므로 앞 시도의 소진분을 물려받을 이유가 없다.
+     */
+    @Test
+    fun `폐기하면 재시도 횟수도 풀린다 - 같은 키의 새 시도가 상한을 물려받지 않는다`() =
+        withManager { fake, manager ->
+            manager.enqueue(requestOf("at-1"))
+            advanceUntilIdle()
+            repeat(2) {
+                fake.respond("at-1", UploadResult.TransportError("network down"))
+                advanceUntilIdle()
+                manager.retry("at-1")
+                advanceUntilIdle()
+            }
+            fake.respond("at-1", UploadResult.TransportError("network down"))
+            advanceUntilIdle()
+            assertEquals(UploadState.Failed(false, "network down"), manager.uploads.value["at-1"])
+
+            manager.discard("at-1")
+            manager.enqueue(requestOf("at-1"))
+            advanceUntilIdle()
+            fake.respond("at-1", UploadResult.TransportError("network down"))
+            advanceUntilIdle()
+
+            assertEquals(UploadState.Failed(true, "network down"), manager.uploads.value["at-1"])
+        }
+
     @Test
     fun `같은 attemptId로 다시 enqueue해도 이중 업로드하지 않는다`() = withManager { fake, manager ->
         manager.enqueue(requestOf("at-1"))

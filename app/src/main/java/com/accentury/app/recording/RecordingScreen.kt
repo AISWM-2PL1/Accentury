@@ -65,6 +65,12 @@ fun RecordingScreen(
      * [다음]을 누른 뒤 다음 문항이 뜰 때까지가 한 화면의 상태 변화로 읽힌다.
      */
     submitting: Boolean = false,
+    /*
+     * 업로드가 확정 실패해서 이 화면이 스스로 다시 열린 경우인가 (KAN-147).
+     * 사용자가 [다음]을 누르고 웹으로 돌아간 뒤에 벌어지는 일이라, 이유를 한 줄 적어두지 않으면
+     * 녹음 화면이 까닭 없이 되돌아온 것으로 보인다.
+     */
+    afterUploadFailure: Boolean = false,
     viewModel: RecordingViewModel = viewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -134,7 +140,7 @@ fun RecordingScreen(
                     RecordButton(contentDescription = "녹음 시작", onClick = viewModel::startRecording)
                     Spacer(modifier = Modifier.height(Spacing.x2))
                     Text(
-                        "버튼을 눌러 녹음",
+                        if (afterUploadFailure) "업로드에 실패해서 다시 녹음이 필요해요" else "버튼을 눌러 녹음",
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

@@ -210,6 +210,33 @@ private fun TestFlow(modifier: Modifier = Modifier) {
         }
     }
 
+    /*
+     * 확정 실패한 업로드를 걷고 그 문항의 녹음 화면을 다시 연다 (KAN-147).
+     *
+     * 재시도 상한을 다 썼거나 서버가 재시도 불가라고 답한 건이 여기로 온다 - 어느 쪽이든 결과가
+     * 나올 일이 없어 복구 경로는 재녹음 하나뿐이고, 웹은 네이티브 쪽 실패를 통지받지 않으므로
+     * (브리지 표면 최소 원칙) 그 문항의 대기 화면에 그대로 멈춰 있다.
+     *
+     * 위 결과 전달 이펙트와 같은 키(uploads)로 돌고, 그보다 뒤에 선언한다. 정확성은 순서에 기대지
+     * 않는다 - onUploadsChanged는 Submitting일 때만, onResultDelivered는 기다리던 attemptId일 때만
+     * phase를 내리므로 여기서 연 녹음 화면을 걷지 못한다. 뒤에 둔 것은 읽는 순서다: 나갈 결과를
+     * 먼저 내보내고, 결과가 나올 일이 없는 실패를 정리한다.
+     *
+     * webView를 키로 두지 않는 이유: 이 정리는 웹에 아무것도 넣지 않는다. 로드 실패 화면 등
+     * WebView가 없는 구간에서도 실패한 업로드의 바이트는 즉시 폐기되어야 한다 (FR-DP-02).
+     *
+     * 폐기는 컨트롤러가 그 시도를 실제로 거둬갔을 때만 한다 - false는 이미 밀려났거나 모르는
+     * 시도라는 뜻이라, 그때 폐기하면 같은 키를 쓰는 다른 흐름의 상태를 건드릴 수 있다.
+     */
+    LaunchedEffect(uploads) {
+        uploads.forEach { (attemptId, state) ->
+            if (state !is UploadState.Failed || state.retryable) return@forEach
+            if (flow.onUploadGivenUp(attemptId, micGranted = isMicGranted())) {
+                uploadViewModel?.discard(attemptId)
+            }
+        }
+    }
+
     // RecordingScreen이 기본값으로 잡는 것과 같은 인스턴스. onNext에서 PCM을 꺼내려면 여기서도 필요하다.
     val viewModel: RecordingViewModel = viewModel()
 
@@ -409,6 +436,9 @@ private fun TestFlow(modifier: Modifier = Modifier) {
                     RecordingOverlay(
                         start = overlayStart,
                         submitting = submitting,
+                        // 업로드 포기로 이 화면이 스스로 다시 열렸는가 (KAN-147). 제출을 기다리는
+                        // 중에는 뜻이 없는 값이라 Recording일 때만 본다.
+                        afterUploadFailure = (phase as? TestFlowPhase.Recording)?.afterUploadFailure == true,
                         viewModel = viewModel,
                         onSubmit = { attemptId, durationMs, quality ->
                             // consumeRecording은 PCM을 넘기면서 뷰모델에서 지운다 (FR-DP-02: 보관하지 않음).
@@ -431,7 +461,13 @@ private fun TestFlow(modifier: Modifier = Modifier) {
                                 )
                                 // 화면은 결과가 나갈 때까지 붙들되(Submitting) 진행은 업로드를
                                 // 기다리지 않는다 — 대기 시도는 여기서 바로 등록된다.
+                                //
+                                // 밀려난 앞 시도의 업로드는 여기서 폐기한다 (KAN-147). 남겨두면
+                                // 상태 바의 [재시도]가 그대로 서 있고, 그걸 누르면 같은 문항에
+                                // 분석 작업이 둘 생긴다. 새 업로드를 먼저 걸고 지우는 순서라
+                                // attemptId가 겹치는 경우에도 방금 건 업로드가 살아남는다.
                                 flow.onRecordingFinished(attemptId, durationMs, quality)
+                                    .forEach(uploadViewModel::discard)
                             }
                         },
                     )
@@ -459,6 +495,8 @@ private fun RecordingOverlay(
     start: VoiceItemStart,
     /** 제출한 시도의 결과를 기다리는 중 — 화면은 그대로 두고 하단만 바꾼다 (KAN-146). */
     submitting: Boolean,
+    /** 업로드 확정 실패로 이 화면이 스스로 다시 열렸는가 (KAN-147) - 안내 문구가 이유를 밝힌다. */
+    afterUploadFailure: Boolean,
     viewModel: RecordingViewModel,
     onSubmit: (attemptId: String, durationMs: Long, quality: QualityStatus) -> Unit,
 ) {
@@ -472,6 +510,7 @@ private fun RecordingOverlay(
             onNext = onSubmit,
             guideF0 = start.guideF0,
             submitting = submitting,
+            afterUploadFailure = afterUploadFailure,
             viewModel = viewModel,
         )
     }

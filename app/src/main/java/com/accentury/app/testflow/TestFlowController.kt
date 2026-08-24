@@ -34,8 +34,18 @@ sealed interface TestFlowPhase {
      */
     data class NeedsPermission(val pending: VoiceItemStart) : TestFlowPhase
 
-    /** 녹음 화면이 웹 위를 덮고 있다. */
-    data class Recording(val start: VoiceItemStart) : TestFlowPhase
+    /**
+     * 녹음 화면이 웹 위를 덮고 있다.
+     *
+     * [afterUploadFailure]는 이 화면이 업로드 포기([TestFlowController.onUploadGivenUp])로 스스로
+     * 다시 열린 것인지다 (KAN-147). 사용자가 [다음]을 누르고 웹으로 돌아간 뒤에 벌어지는 일이라,
+     * 이유를 적어두지 않으면 녹음 화면이 까닭 없이 되돌아온 것으로 보인다. 기본값 false는
+     * 웹 요청으로 정상 진입한 경우다.
+     */
+    data class Recording(
+        val start: VoiceItemStart,
+        val afterUploadFailure: Boolean = false,
+    ) : TestFlowPhase
 
     /**
      * 녹음은 끝났고 그 시도의 결과가 웹에 닿기를 기다리는 중이다 (KAN-146). 오버레이는 그대로 서 있다.
@@ -97,10 +107,20 @@ fun continuesFrom(shown: TestFlowPhase, current: TestFlowPhase): Boolean = when 
  */
 class TestFlowController private constructor(
     initialPhase: TestFlowPhase,
-    restoredAttempts: List<ItemAttempt>,
+    restoredAttempts: List<PendingAttempt>,
 ) {
 
     constructor() : this(TestFlowPhase.Web, emptyList())
+
+    /**
+     * 대기 시도 하나. [meta]는 결과 조립에 쓰는 브리지 계약 값이고, [start]는 그 시도가 어느 문항의
+     * 것이었는지를 화면 단위로 되살리기 위한 원본 요청이다 (KAN-147) - 업로드를 포기했을 때
+     * 녹음 화면을 다시 열려면 문항 문구, 번호, 가이드 곡선이 전부 필요한데, [meta]에는 itemId밖에 없다.
+     *
+     * [start]가 null인 것은 이 필드가 생기기 전 형식으로 저장됐다가 복원된 시도다. 그 시도는
+     * 자동 재개를 할 수 없어 웹의 [녹음 화면 다시 열기]로 되돌아간다.
+     */
+    private data class PendingAttempt(val meta: ItemAttempt, val start: VoiceItemStart?)
 
     var phase: TestFlowPhase by mutableStateOf(initialPhase)
         private set
@@ -109,8 +129,8 @@ class TestFlowController private constructor(
      * 업로드가 끝나기를 기다리는 시도들. 화면이 이 값을 읽지 않으므로(결과는 [onUploadsChanged]의
      * 반환값으로만 나간다) snapshot state로 둘 이유가 없다. 등록 순서대로 내보내려고 LinkedHashMap이다.
      */
-    private val pendingAttempts = LinkedHashMap<String, ItemAttempt>().apply {
-        restoredAttempts.forEach { put(it.attemptId, it) }
+    private val pendingAttempts = LinkedHashMap<String, PendingAttempt>().apply {
+        restoredAttempts.forEach { put(it.meta.attemptId, it) }
     }
 
     /**
@@ -156,16 +176,75 @@ class TestFlowController private constructor(
      *
      * 녹음 화면 밖에서 오는 종료 통지는 무시한다. 이탈·회전으로 이미 화면이 내려간 뒤의 뒤늦은
      * 콜백이라 어느 문항의 시도인지 말할 수 없다.
+     *
+     * 같은 문항의 앞 시도들은 여기서 대기 목록에서 빠지고, 그 attemptId가 반환값으로 나간다
+     * (KAN-147, 지라 코멘트 #2). 한 문항에 살아 있는 시도는 하나여야 한다 - 앞 시도가 남아 있으면
+     * 상태 바에 그것의 [재시도]가 그대로 서 있고, 그걸 누르면 같은 문항에 분석 작업이 둘 생겨
+     * 웹이 결과를 두 번 받는다. 밀려난 업로드의 바이트를 실제로 폐기하는 것은 호출자 몫이다 -
+     * 업로드를 이 클래스가 알면 JVM 단위 테스트가 불가능해진다.
      */
-    fun onRecordingFinished(attemptId: String, durationMs: Long, quality: QualityStatus) {
-        val start = (phase as? TestFlowPhase.Recording)?.start ?: return
-        pendingAttempts[attemptId] = ItemAttempt(
-            itemId = start.itemId,
-            attemptId = attemptId,
-            durationMs = durationMs,
-            quality = quality,
+    fun onRecordingFinished(
+        attemptId: String,
+        durationMs: Long,
+        quality: QualityStatus,
+    ): List<String> {
+        val start = (phase as? TestFlowPhase.Recording)?.start ?: return emptyList()
+        val superseded = pendingAttempts.values
+            .filter { it.meta.itemId == start.itemId && it.meta.attemptId != attemptId }
+            .map { it.meta.attemptId }
+        superseded.forEach { pendingAttempts.remove(it) }
+        pendingAttempts[attemptId] = PendingAttempt(
+            meta = ItemAttempt(
+                itemId = start.itemId,
+                attemptId = attemptId,
+                durationMs = durationMs,
+                quality = quality,
+            ),
+            start = start,
         )
         phase = TestFlowPhase.Submitting(start, attemptId)
+        return superseded
+    }
+
+    /**
+     * 이 시도의 업로드를 포기했다 - 재시도 상한을 다 썼거나 서버가 재시도 불가라고 답했다
+     * (KAN-147, 2026-08-25 결정: 재시도 2회, 그래도 실패하면 녹음 화면 자동 재개).
+     *
+     * 웹이 아니라 네이티브가 화면을 다시 여는 이유: 브리지 표면을 최소로 두기로 한 계약이라
+     * 웹은 네이티브 쪽 업로드 실패를 통지받지 않는다. 그래서 웹은 결과가 올 때까지 그 문항의 대기
+     * 화면에 그대로 머물러 있고 - 바로 그 점이 여기서 화면을 다시 열어도 되는 근거다. 웹이 아직
+     * 그 문항을 보여주는 중이므로 새 녹음이 진행을 앞지르지 않는다.
+     *
+     * 시도를 대기 목록에서 버리는 이유는 그 시도의 결과가 영영 조립되지 않기 때문이다. 남겨두면
+     * [onUploadsChanged]가 매번 훑고 지나가는 가짜 대기가 된다. 새 녹음은 새 attemptId를 받는다.
+     *
+     * 사용자가 이미 다른 무언가를 녹음하는 중([TestFlowPhase.Recording],
+     * [TestFlowPhase.NeedsPermission])이면 화면은 건드리지 않는다 - 앞 문항의 뒤늦은 포기가
+     * 손에 든 녹음을 갈아치우면 안 된다. [TestFlowPhase.Submitting]에서 같은 문항의 녹음으로
+     * 되돌아가는 것은 [continuesFrom]이 이미 다루는 "제출에서 녹음으로 되돌아온 것"이라,
+     * 호출자 쪽 되감기가 RecordingViewModel을 초기화해 새 녹음을 받을 상태로 만든다.
+     *
+     * @return 이 컨트롤러가 시도를 거둬갔는가. false면 이미 밀려났거나 모르는 시도라 할 일이 없다.
+     *   true면 호출자가 그 업로드의 바이트와 상태를 폐기한다.
+     */
+    fun onUploadGivenUp(attemptId: String, micGranted: Boolean): Boolean {
+        val dropped = pendingAttempts.remove(attemptId) ?: return false
+        when (phase) {
+            is TestFlowPhase.Recording, is TestFlowPhase.NeedsPermission -> Unit
+            else -> {
+                // start가 없는 것은 구버전 형식에서 복원된 시도뿐이다. 다시 열 화면을 만들 수 없어
+                // 웹의 [녹음 화면 다시 열기]에 맡긴다 - 업로드 폐기는 그대로 진행한다.
+                val start = dropped.start
+                if (start != null) {
+                    phase = if (micGranted) {
+                        TestFlowPhase.Recording(start, afterUploadFailure = true)
+                    } else {
+                        TestFlowPhase.NeedsPermission(start)
+                    }
+                }
+            }
+        }
+        return true
     }
 
     /**
@@ -232,7 +311,7 @@ class TestFlowController private constructor(
         val delivered = mutableListOf<ItemResult>()
         val iterator = pendingAttempts.values.iterator()
         while (iterator.hasNext()) {
-            val result = assembleItemResult(iterator.next(), uploads) ?: continue
+            val result = assembleItemResult(iterator.next().meta, uploads) ?: continue
             iterator.remove()
             delivered += result
         }
@@ -283,8 +362,9 @@ class TestFlowController private constructor(
             is TestFlowPhase.Submitting -> current.start
         },
         attemptId = (phase as? TestFlowPhase.Submitting)?.attemptId,
+        afterUploadFailure = (phase as? TestFlowPhase.Recording)?.afterUploadFailure == true,
         attempts = pendingAttempts.values.map {
-            SavedAttempt(it.itemId, it.attemptId, it.durationMs, it.quality)
+            SavedAttempt(it.meta.itemId, it.meta.attemptId, it.meta.durationMs, it.meta.quality, it.start)
         },
     )
 
@@ -325,7 +405,8 @@ class TestFlowController private constructor(
             val phase = when {
                 start == null -> TestFlowPhase.Web
                 flow.phase == SavedPhase.NEEDS_PERMISSION -> TestFlowPhase.NeedsPermission(start)
-                flow.phase == SavedPhase.RECORDING -> TestFlowPhase.Recording(start)
+                flow.phase == SavedPhase.RECORDING ->
+                    TestFlowPhase.Recording(start, flow.afterUploadFailure)
                 flow.phase == SavedPhase.SUBMITTING && attemptId != null ->
                     TestFlowPhase.Submitting(start, attemptId)
                 else -> TestFlowPhase.Web
@@ -333,7 +414,10 @@ class TestFlowController private constructor(
             return TestFlowController(
                 initialPhase = phase,
                 restoredAttempts = flow.attempts.map {
-                    ItemAttempt(it.itemId, it.attemptId, it.durationMs, it.quality)
+                    PendingAttempt(
+                        meta = ItemAttempt(it.itemId, it.attemptId, it.durationMs, it.quality),
+                        start = it.start,
+                    )
                 },
             )
         }
@@ -351,6 +435,8 @@ private data class SavedFlow(
     val start: VoiceItemStart? = null,
     /** SUBMITTING이 기다리는 시도. 다른 페이즈에서는 null이다. */
     val attemptId: String? = null,
+    /** RECORDING이 업로드 포기로 다시 열린 화면인가 (KAN-147). 다른 페이즈에서는 뜻이 없다. */
+    val afterUploadFailure: Boolean = false,
     val attempts: List<SavedAttempt> = emptyList(),
 )
 
@@ -363,4 +449,10 @@ private data class SavedAttempt(
     val attemptId: String,
     val durationMs: Long,
     val quality: QualityStatus,
+    /**
+     * 업로드를 포기했을 때 이 문항의 녹음 화면을 다시 세우려면 원본 요청이 필요하다 (KAN-147).
+     * 기본값 null은 이 필드가 생기기 전 형식으로 저장된 값도 그대로 복원되게 한다 - 그렇게 복원된
+     * 시도는 자동 재개만 못 할 뿐 결과 조립은 정상이다.
+     */
+    val start: VoiceItemStart? = null,
 )
