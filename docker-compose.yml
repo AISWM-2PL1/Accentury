@@ -77,9 +77,10 @@ services:
     # 운영 인스턴스 크기 산정(KAN-124)은 BE에 최소 1GB를 잡는 편이 안전하다.
     mem_limit: 768m
     healthcheck:
-      # JRE 이미지에도 curl이 없다 - bash의 /dev/tcp로 포트가 열렸는지만 본다.
-      # actuator 헬스 노출은 KAN-131이 확정하며, 그때 이 검사를 /actuator/health로 바꾼다.
-      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080"]
+      # JRE 이미지에도 curl이 없다 - bash의 /dev/tcp로 직접 HTTP를 말한다 (KAN-131).
+      # 상태줄의 200까지 확인해야 "포트만 열리고 컨텍스트는 못 뜬" 기동 실패를 healthy로
+      # 오인하지 않는다. ALB 대상 그룹 헬스체크(KAN-125)와 같은 경로다.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /actuator/health HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nConnection: close\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200 '"]
       interval: 5s
       timeout: 3s
       retries: 24
