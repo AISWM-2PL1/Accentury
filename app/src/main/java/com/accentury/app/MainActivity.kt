@@ -30,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -57,6 +58,9 @@ import com.accentury.app.permission.MicPermissionController
 import com.accentury.app.permission.MicPermissionState
 import com.accentury.app.recording.RecordingScreen
 import com.accentury.app.recording.RecordingViewModel
+import com.accentury.app.session.OkHttpSessionClient
+import com.accentury.app.session.SessionGateController
+import com.accentury.app.session.SessionGateScreen
 import com.accentury.app.testflow.TestFlowController
 import com.accentury.app.testflow.continuesFrom
 import com.accentury.app.testflow.TestFlowPhase
@@ -73,15 +77,11 @@ import com.accentury.app.web.TestEntry
 import com.accentury.app.web.WebViewHost
 import com.accentury.app.web.buildWebUrl
 import com.accentury.app.web.webOrigin
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.delay
 
 // 에뮬레이터에서 호스트 머신을 가리키는 주소. 실기기 테스트는 이 값만 바꾸면 된다.
 private const val DEV_BASE_URL = "http://10.0.2.2:8080"
-
-// KAN-9 세션 클라이언트가 붙으면 서버가 발급한 세션 값으로 교체된다. 업로드와 웹 진입 URL이
-// 같은 상수를 쓰는 건 의도다 — 음성이 올라가는 세션과 웹이 진행을 저장하는 세션이 갈리면 안 된다.
-private const val DEV_SESSION_ID = "dev-session"
-private const val DEV_SESSION_TOKEN = "dev-token"
 
 /*
  * 업로드가 뒷받침하지 않는 붙들기를 걷는 상한 (KAN-146).
@@ -92,11 +92,6 @@ private const val DEV_SESSION_TOKEN = "dev-token"
  * 앞엣것은 이 상한이 오기 전에 스스로 풀리고, 뒤엣것은 이 상한만이 풀 수 있다.
  */
 private const val ORPHANED_SUBMIT_TIMEOUT_MS = 2_000L
-
-// 세션에 고정될 정의 버전도 KAN-9 응답이 정본이다. 그전까지는 백엔드가 발행해 둔 정의를
-// 가리킨다 - 발행 입력이 DB로 옮겨지면서(KAN-26) classpath seed 파일은 폐기됐고, 지금 이
-// 버전을 넣는 것은 backend/src/main/resources/db/migration/V2__test_definition_publish.sql이다.
-private const val DEV_TEST_VERSION = "gn-2026.08.1"
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -113,11 +108,12 @@ class MainActivity : ComponentActivity() {
 }
 
 /**
- * 인트로(웹) → 시작 게이트 → 테스트 진입(웹) → VOICE 문항마다 녹음 오버레이 (KAN-100).
+ * 인트로(웹) → 시작 게이트(마이크 권한 → 세션 생성) → 테스트 진입(웹) → VOICE 문항마다 녹음
+ * 오버레이 (KAN-100, KAN-34).
  *
  * **WebView는 인트로부터 테스트 끝까지 한 인스턴스로 산다.** 진행의 정본이 웹 상태 머신이라
- * WebView를 내리면 어디까지 왔는지가 같이 사라진다 — 네이티브 화면(권한 게이트·녹음)은 화면을
- * 갈아끼우는 대신 그 위를 덮는다. 무엇을 덮을지는 [TestFlowController.phase]가 정하고,
+ * WebView를 내리면 어디까지 왔는지가 같이 사라진다 — 네이티브 화면(권한 게이트·세션 준비·녹음)은
+ * 화면을 갈아끼우는 대신 그 위를 덮는다. 무엇을 덮을지는 [TestFlowController.phase]가 정하고,
  * 여기는 Android·Compose 결선만 한다.
  */
 @Composable
@@ -128,27 +124,55 @@ private fun TestFlow(modifier: Modifier = Modifier) {
         ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
 
-    // 웹의 [시작하기]를 눌렀는가 / 시작 게이트를 통과해 테스트로 들어갔는가.
-    // 로드할 URL이 이 두 값에서 파생되므로, 회전·프로세스 복원에 증발하면 통과한 게이트가
-    // 다시 서고 인트로로 되돌아간다. 그래서 둘 다 저장한다.
+    /*
+     * 시작 게이트의 세 칸 (KAN-34).
+     *
+     * 웹의 [시작하기] → 마이크 권한(KAN-98) → 세션 생성(KAN-9) 순서로 지나야 테스트가 열린다.
+     * 앞의 둘은 "지났는가"라는 불리언이지만 세 번째는 **받아 온 값 자체**가 통과 표시다 —
+     * 진입 URL·업로드·브리지 토큰이 전부 그 값에서 나오므로, 진입 여부를 세션과 따로 들면
+     * "들어갔는데 세션이 없다"는 표현 가능한 어긋남이 생긴다. 그래서 예전의 `testEntered`
+     * 불리언을 없애고 [SessionGateController.session]이 그 자리를 대신한다.
+     *
+     * 셋 다 회전·프로세스 복원을 넘긴다. 증발하면 통과한 게이트가 다시 서고 인트로로 되돌아가는데,
+     * 세션이 증발하는 경우는 그보다 나빠서 — 응답에서 한 번만 노출되는 토큰이라(Session KDoc)
+     * 되찾을 길이 없고 진행 중이던 응시가 통째로 죽는다.
+     */
     var startRequested by rememberSaveable { mutableStateOf(false) }
-    var testEntered by rememberSaveable { mutableStateOf(false) }
+    var micPassed by rememberSaveable { mutableStateOf(false) }
+    val sessionGate = rememberSaveable(saver = SessionGateController.saver()) { SessionGateController() }
+    val sessionClient = remember { OkHttpSessionClient(DEV_BASE_URL) }
+    val session = sessionGate.session
 
     val flow = rememberSaveable(saver = TestFlowController.saver()) { TestFlowController() }
 
-    // 업로드는 테스트 phase 전체를 산다 — 녹음 화면이 내려가도 전송은 계속돼야 하고, 실패한 건은
-    // 웹으로 돌아간 뒤에도 상태 바에서 재시도할 수 있어야 한다. 회전(Activity 재생성)도 넘겨야
-    // 해서 소유자는 ViewModel이다 (UploadViewModel 주석).
-    val uploadViewModel: UploadViewModel = viewModel(
-        factory = UploadViewModel.factory(DEV_BASE_URL, DEV_SESSION_ID, DEV_SESSION_TOKEN),
-    )
-    val uploads by uploadViewModel.uploads.collectAsStateWithLifecycle()
+    /*
+     * 업로드는 테스트 phase 전체를 산다 — 녹음 화면이 내려가도 전송은 계속돼야 하고, 실패한 건은
+     * 웹으로 돌아간 뒤에도 상태 바에서 재시도할 수 있어야 한다. 회전(Activity 재생성)도 넘겨야
+     * 해서 소유자는 ViewModel이다 (UploadViewModel 주석).
+     *
+     * 세션이 생긴 뒤에야 만든다 (KAN-34). 업로드가 어느 세션으로 나가는지는 만드는 순간 정해지는데
+     * (UploadManager가 생성자에서 받는다) 인트로 시점에는 그 값이 아직 없다. sessionId를 키로 주어
+     * 회전에서는 같은 인스턴스를 되찾고(올라가던 음성과 재시도 통로가 그대로 살아남는다) 다른
+     * 세션에서는 다른 인스턴스가 되게 한다 — 종료한 응시의 업로드가 새 세션에 섞이지 않는다.
+     */
+    val uploadViewModel: UploadViewModel? = if (session == null) {
+        null
+    } else {
+        viewModel<UploadViewModel>(
+            key = session.sessionId,
+            factory = UploadViewModel.factory(DEV_BASE_URL, session.sessionId, session.sessionToken),
+        )
+    }
+    // 세션 전에는 올라간 것이 없으니 빈 목록이 정확한 답이다 — 아래 이펙트·상태 바가 전부
+    // 이 값만 읽으므로 널 검사가 화면 쪽으로 번지지 않는다.
+    val uploads: Map<String, UploadState> =
+        if (uploadViewModel == null) emptyMap() else uploadViewModel.uploads.collectAsStateWithLifecycle().value
 
     // 복원된 대기 시도 중 대응 업로드가 없는 건을 한 번만 걷어낸다. 회전은 ViewModel이 살아남아
     // 업로드 키가 그대로라 아무것도 지워지지 않고, 프로세스 사망 복원에서는 전부 정리된다.
     // 아래 결과 소비 이펙트보다 먼저 등록돼(둘 다 메인 스레드) 가짜 대기를 먼저 걷어낸다.
     LaunchedEffect(Unit) {
-        flow.pruneAttemptsWithoutUpload(uploadViewModel.uploads.value.keys)
+        flow.pruneAttemptsWithoutUpload(uploadViewModel?.uploads?.value?.keys.orEmpty())
     }
 
     // 결과를 웹에 넣으려면 evaluateJavascript를 부를 인스턴스가 필요하다.
@@ -184,20 +208,35 @@ private fun TestFlow(modifier: Modifier = Modifier) {
     // RecordingScreen이 기본값으로 잡는 것과 같은 인스턴스. onNext에서 PCM을 꺼내려면 여기서도 필요하다.
     val viewModel: RecordingViewModel = viewModel()
 
+    /*
+     * 브리지 getSessionToken(KAN-13)이 읽을 토큰 자리 (KAN-34).
+     *
+     * 그 메서드는 값을 동기로 돌려주므로 JS 스레드에서 그대로 실행된다 — WebViewHost의
+     * originAllowed가 AtomicBoolean인 것과 같은 이유로, 메인 스레드가 갱신해 두고 JS 스레드는
+     * 읽기만 하는 자리를 하나 둔다.
+     *
+     * 공급자 람다가 세션을 직접 붙잡지 않는 이유가 하나 더 있다: 이 람다는 WebView를 만들 때 한 번
+     * 브리지에 실려 들어가 그대로 산다. 그 시점의 세션(인트로에서는 null)을 캡처하면 이후 세션이
+     * 생겨도 브리지는 영영 빈 토큰을 돌려준다.
+     */
+    val bridgeToken = remember { AtomicReference("") }
+    SideEffect { bridgeToken.set(session?.sessionToken.orEmpty()) }
+
     Column(modifier = modifier.fillMaxSize()) {
         Box(modifier = Modifier.weight(1f)) {
             WebViewHost(
                 url = buildWebUrl(
                     base = BuildConfig.WEB_URL,
                     appVersionName = BuildConfig.VERSION_NAME,
-                    // 테스트 진입 여부가 곧 로드할 URL이다. 회전·프로세스 복원으로 WebView를
-                    // 새로 만들어도 저장된 testEntered가 같은 화면을 다시 세운다.
-                    testEntry = if (testEntered) TestEntry(DEV_TEST_VERSION, DEV_SESSION_ID) else null,
+                    // 세션이 곧 로드할 URL이다 (KAN-34). testVersion은 서버가 이 세션에 고정한
+                    // 값이고(§3.1) sessionId는 웹이 진행 스냅샷을 가르는 키다 — 음성이 올라가는
+                    // 세션과 웹이 진행을 저장하는 세션이 갈리면 안 되므로 둘 다 같은 응답에서 온다.
+                    // 회전·프로세스 복원으로 WebView를 새로 만들어도 저장된 세션이 같은 화면을 다시 세운다.
+                    testEntry = session?.let { TestEntry(it.testVersion, it.sessionId) },
                 ),
                 allowedOrigins = setOfNotNull(webOrigin(BuildConfig.WEB_URL)),
-                // 웹의 어휘 답안 제출(KAN-13)이 쓸 토큰. 업로드와 같은 상수를 쓰는 건 의도다 —
-                // KAN-9 결선 시 세 자리(업로드·웹 진입 URL·여기)가 같은 세션 값으로 함께 바뀐다.
-                sessionToken = { DEV_SESSION_TOKEN },
+                // 웹의 어휘 답안 제출(KAN-13)이 쓸 토큰. 업로드·웹 진입 URL과 같은 세션에서 온다.
+                sessionToken = { bridgeToken.get() },
                 onRequestMicPermission = { startRequested = true },
                 onStartVoiceItem = { start ->
                     // 브리지 콜백은 postToMain을 타고 오므로 여기는 메인 스레드다.
@@ -248,17 +287,35 @@ private fun TestFlow(modifier: Modifier = Modifier) {
                 val attemptId = submittingAttemptId ?: return@LaunchedEffect
                 delay(ORPHANED_SUBMIT_TIMEOUT_MS)
                 // 발화 시점의 업로드 상태를 다시 넘긴다 — 걸 때는 비어 있던 자리가 그새 채워졌을 수 있다.
-                flow.onSubmitTimeout(attemptId, uploadViewModel.uploads.value)
+                flow.onSubmitTimeout(attemptId, uploadViewModel?.uploads?.value.orEmpty())
             }
 
             when {
-                // 시작 게이트. 통과하면 테스트 URL이 로드되고 조건이 풀려 오버레이가 사라진다.
-                startRequested && !testEntered -> PermissionGate(onGranted = { testEntered = true })
+                // 시작 게이트 1칸 — 마이크 권한 (KAN-98). 통과 표시를 따로 두는 이유는 뒤에 세션
+                // 생성이 이어지기 때문이다: 세션을 기다리는 동안 권한 화면으로 되돌아가면 안 된다.
+                startRequested && session == null && !micPassed ->
+                    PermissionGate(onGranted = { micPassed = true })
+
+                // 시작 게이트 2칸 — 세션 생성 (KAN-34). 확보되면 테스트 URL이 로드되고 조건이
+                // 풀려 이 화면이 사라진다.
+                startRequested && session == null -> SessionGateScreen(
+                    gate = sessionGate,
+                    client = sessionClient,
+                    appVersion = BuildConfig.VERSION_NAME,
+                    onBackToIntro = {
+                        startRequested = false
+                        micPassed = false
+                        // 실패 상태를 그대로 두면 다음 [시작하기]가 같은 실패 화면으로 곧장 떨어진다.
+                        sessionGate.restart()
+                    },
+                )
 
                 // 문항 진입 시점의 게이트 — 통과하면 기다리던 문항의 녹음으로 곧장 들어간다.
                 phase is TestFlowPhase.NeedsPermission -> PermissionGate(onGranted = flow::onPermissionGranted)
 
-                overlayStart != null -> {
+                // 세션 없이 녹음 오버레이가 설 수는 없다(웹이 문항을 그리려면 진입 URL이 열려야 하고,
+                // 그 URL은 세션에서 나온다). 그 사실을 조건에 함께 적어 아래 결선의 널 검사를 없앤다.
+                overlayStart != null && uploadViewModel != null -> {
                     /*
                      * 녹음 상태 되감기를 [다음] 자리가 아니라 여기서 한다 (KAN-146).
                      * 그 자리에서 즉시 reset()을 부르면 제출을 기다리는 동안 화면이 대기 상태로 바뀌어,
@@ -316,20 +373,32 @@ private fun TestFlow(modifier: Modifier = Modifier) {
             }
         }
 
-        UploadStatusBar(
-            uploads = uploads,
-            labelOf = uploadViewModel::labelOf,
-            onRetry = uploadViewModel::retry,
-            onEndTest = {
-                // 남아 있는 음성 바이트를 전부 폐기하고 인트로로 되돌린다 (FR-DP-02).
-                // 컨트롤러의 대기 시도는 남지만 업로드가 사라져 결과로 조립되지 않는다 — 다시
-                // 시작하면 웹이 결과를 받지 못한 문항부터 다시 요청하므로 진행은 어긋나지 않는다.
-                viewModel.reset()
-                uploadViewModel.clearAll()
-                startRequested = false
-                testEntered = false
-            },
-        )
+        // 세션 전에는 올라간 것도, 실패한 것도 없다 — 상태 바가 설 이유 자체가 없는 구간이다.
+        if (uploadViewModel != null) {
+            UploadStatusBar(
+                uploads = uploads,
+                labelOf = uploadViewModel::labelOf,
+                onRetry = uploadViewModel::retry,
+                onEndTest = {
+                    // 남아 있는 음성 바이트를 전부 폐기하고 인트로로 되돌린다 (FR-DP-02).
+                    // 컨트롤러의 대기 시도는 남지만 업로드가 사라져 결과로 조립되지 않는다 — 다시
+                    // 시작하면 웹이 결과를 받지 못한 문항부터 다시 요청하므로 진행은 어긋나지 않는다.
+                    viewModel.reset()
+                    uploadViewModel.clearAll()
+                    startRequested = false
+                    micPassed = false
+                    /*
+                     * 세션도 함께 버린다 (KAN-34). 종료한 응시를 다음 시작이 이어받으면, 웹은
+                     * 처음부터 시작하는데 서버의 세션에는 앞선 문항의 결과가 남아 있는 상태가 된다.
+                     *
+                     * 서버 쪽 이전 세션은 여기서 지우지 못한다 — 폐기는 다음 세션 생성 요청에
+                     * 이전 토큰을 실어야 일어난다 (KAN-107). 그 결선은 2단계이고, 그때까지 버려진
+                     * 세션은 30분 뒤 만료된다.
+                     */
+                    sessionGate.restart()
+                },
+            )
+        }
     }
 }
 

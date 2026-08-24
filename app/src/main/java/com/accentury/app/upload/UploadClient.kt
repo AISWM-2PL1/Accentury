@@ -1,13 +1,11 @@
 package com.accentury.app.upload
 
 import com.accentury.app.audio.ClientQuality
+import com.accentury.app.net.await
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import okhttp3.Call
-import okhttp3.Callback
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
@@ -16,11 +14,8 @@ import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.Response
 import java.io.IOException
 import java.util.UUID
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 
 // 서버 계약(API 명세서 §3.3 / KAN-23)에 묶인 값들. 계약이 바뀌면 여기만 고친다.
 private const val PATH_SESSIONS = "v0/sessions"
@@ -180,21 +175,3 @@ private data class ErrorEnvelope(
     val retryAfterMs: Long? = null,
     val correlationId: String? = null,
 )
-
-// enqueue는 OkHttp 디스패처 스레드에서 돌기 때문에 호출자 스레드를 막지 않는다.
-private suspend fun OkHttpClient.await(request: Request): Response =
-    suspendCancellableCoroutine { continuation ->
-        val call = newCall(request)
-        continuation.invokeOnCancellation { call.cancel() } // 코루틴 취소 -> http 호출을 끊어버림
-        call.enqueue(
-            object : Callback {
-                override fun onFailure(call: Call, e: IOException) {
-                    if (!continuation.isCancelled) continuation.resumeWithException(e)
-                }
-
-                override fun onResponse(call: Call, response: Response) {
-                    continuation.resume(response) { _, _, _ -> response.close() }
-                }
-            },
-        )
-    }
