@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { FetchLike } from '../progress/fetchTestDefinition'
 import { ResultScreen, type ResultScreenProps } from './ResultScreen'
+import type { RetestControl } from './useRetest'
 
 const API_BASE = 'http://localhost:8080'
 
@@ -32,13 +33,28 @@ function jsonFetch(status: number, body: unknown): FetchLike {
   return async () => ({ ok: status >= 200 && status < 300, status, json: async () => body }) as Response
 }
 
+/**
+ * 재응시 상태 대역 (KAN-34). 기본값은 "누를 수 있고 아직 아무 일도 없었다" —
+ * 실제 왕복은 [useRetest]가 소유하므로 이 화면 테스트는 받은 값을 어떻게 그리는지만 본다.
+ */
+function retestControl(overrides: Partial<RetestControl> = {}): RetestControl {
+  return {
+    onRetest: vi.fn(),
+    disabled: false,
+    pending: false,
+    message: null,
+    retryAfterSec: 0,
+    ...overrides,
+  }
+}
+
 function renderScreen(overrides: Partial<ResultScreenProps> = {}) {
   const props: ResultScreenProps = {
     apiBase: API_BASE,
     sessionId: 'sess-1',
     sessionToken: 'token-1',
     onShare: vi.fn(),
-    onRetest: vi.fn(),
+    retest: retestControl(),
     fetchImpl: jsonFetch(200, readyBody()),
     ...overrides,
   }
@@ -159,7 +175,7 @@ describe('조회', () => {
       sessionId: 'sess-1',
       sessionToken: 'token-1',
       onShare: vi.fn(),
-      onRetest: vi.fn(),
+      retest: retestControl(),
       fetchImpl,
     }
 
@@ -193,7 +209,7 @@ describe('만료(410) 처리 — AC 4항', () => {
     expect(screen.queryByRole('button', { name: '다시 시도' })).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '다시 테스트하기' }))
-    expect(props.onRetest).toHaveBeenCalledTimes(1)
+    expect(props.retest.onRetest).toHaveBeenCalledTimes(1)
   })
 
   it('만료 문구는 서버 안내를 그대로 싣는다', async () => {
@@ -267,7 +283,7 @@ describe('내보내는 길 — AC 5항', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: '다시 테스트하기' }))
 
-    expect(props.onRetest).toHaveBeenCalledTimes(1)
+    expect(props.retest.onRetest).toHaveBeenCalledTimes(1)
   })
 
   it('공유 이미지를 화면에 띄우지 않는다 — 아직 없는 자산이라 로딩에 걸리면 안 된다', async () => {
@@ -289,5 +305,86 @@ describe('빈 값 방어', () => {
     // 내부 필드 이름이 화면에 나가지 않는다
     await waitFor(() => expect(screen.queryByText(/sessionToken/)).not.toBeInTheDocument())
     vi.restoreAllMocks()
+  })
+})
+
+describe('[다시 테스트하기] 잠금과 안내 — KAN-34', () => {
+  /** 만료 화면과 하단, 버튼이 있는 두 자리를 같은 검사로 돌린다 */
+  const SITES = [
+    {
+      name: '정상 결과 화면(하단 버튼)',
+      fetchImpl: jsonFetch(200, readyBody()),
+      settle: () => screen.findByRole('heading', { name: '명예주민' }),
+    },
+    {
+      name: '만료 화면(410, KAN-29 재응시 유도)',
+      fetchImpl: jsonFetch(410, envelope('RESULT_EXPIRED', '결과 보관 기간(24시간)이 지났습니다.', false)),
+      settle: () => screen.findByText('결과 보관 기간이 지났어요'),
+    },
+  ]
+
+  for (const site of SITES) {
+    describe(site.name, () => {
+      it('잠기면 버튼이 죽고 준비 중으로 바뀐다', async () => {
+        renderScreen({ fetchImpl: site.fetchImpl, retest: retestControl({ pending: true, disabled: true }) })
+        await site.settle()
+
+        const button = screen.getByRole('button', { name: '준비 중…' })
+        expect(button).toBeDisabled()
+        expect(screen.queryByRole('button', { name: '다시 테스트하기' })).not.toBeInTheDocument()
+      })
+
+      it('잠기지 않았으면 눌러서 재응시로 넘어간다', async () => {
+        const props = renderScreen({ fetchImpl: site.fetchImpl })
+        await site.settle()
+
+        fireEvent.click(screen.getByRole('button', { name: '다시 테스트하기' }))
+        expect(props.retest.onRetest).toHaveBeenCalledTimes(1)
+      })
+
+      it('실패 문구는 네이티브가 준 그대로 나오고 스크린 리더가 읽는다', async () => {
+        renderScreen({
+          fetchImpl: site.fetchImpl,
+          retest: retestControl({ message: '다시 시작하지 못했어요.', disabled: false }),
+        })
+        await site.settle()
+
+        // 갈래별 카피를 웹이 따로 들지 않는다 — 받은 문자열이 그대로 화면에 있다
+        const notice = screen.getByText('다시 시작하지 못했어요.')
+        expect(notice).toBeInTheDocument()
+        expect(notice).toHaveAttribute('role', 'alert')
+      })
+
+      it('429 대기 중에는 남은 초를 적고 버튼을 잠근다', async () => {
+        renderScreen({
+          fetchImpl: site.fetchImpl,
+          retest: retestControl({
+            message: '요청이 많아요. 잠시 후 다시 시도해 주세요.',
+            retryAfterSec: 7,
+            disabled: true,
+          }),
+        })
+        await site.settle()
+
+        expect(screen.getByText('7초 후 다시 시도할 수 있어요')).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: '다시 테스트하기' })).toBeDisabled()
+      })
+
+      it('대기가 없으면 카운트다운 줄 자체가 없다', async () => {
+        renderScreen({ fetchImpl: site.fetchImpl, retest: retestControl({ message: '다시 시작하지 못했어요.' }) })
+        await site.settle()
+
+        expect(screen.queryByText(/초 후 다시 시도할 수 있어요/)).not.toBeInTheDocument()
+      })
+    })
+  }
+
+  it('재시도 가능한 실패 화면에는 [다시 시도]가 그대로 남는다 — 재응시 잠금과 무관하다', async () => {
+    renderScreen({
+      fetchImpl: jsonFetch(409, envelope('RESULT_NOT_READY', '결과를 준비하고 있습니다.', true)),
+      retest: retestControl({ disabled: true, pending: true }),
+    })
+
+    expect(await screen.findByRole('button', { name: '다시 시도' })).toBeEnabled()
   })
 })

@@ -2,6 +2,7 @@ import { IntroScreen } from './intro/IntroScreen'
 import { getSessionToken, isBridgeCompatible } from './bridge/bridge'
 import { TestFlowScreen } from './progress/TestFlowScreen'
 import { ResultScreen } from './result/ResultScreen'
+import { useRetest } from './result/useRetest'
 import type { TestResultView } from './result/testResult'
 
 /**
@@ -54,26 +55,40 @@ export default function App() {
    * 경로도 그대로 살아 있다: 결과 화면만 따로 확인하는 개발 통로다.
    */
   if (params.get('screen') === 'result') {
-    return (
-      <ResultScreen
-        apiBase={API_BASE}
-        sessionId={params.get('sessionId') ?? ''}
-        /*
-         * 토큰은 쿼리가 아니라 브리지에서 읽는다 — URL에 실으면 WebView 히스토리와 로그에
-         * 세션 토큰이 남는다. 브리지가 없으면(브라우저 단독) 빈 문자열이라 조회 전에 막히고
-         * 사용자용 문구가 뜬다.
-         *
-         * 렌더 시점에 읽는 이유: 결과 조회는 이 화면에 들어올 때 한 번뿐이라, 진행 화면처럼
-         * 제출 때마다 다시 읽을 필요가 없다.
-         */
-        sessionToken={getSessionToken() ?? ''}
-        onShare={shareResult}
-        onRetest={goToIntro}
-      />
-    )
+    return <ResultRoute sessionId={params.get('sessionId') ?? ''} />
   }
 
   return <IntroScreen />
+}
+
+/**
+ * 결과 화면 결선 지점 (KAN-34 3단계). 재응시 브리지 왕복을 이 자리가 소유한다.
+ *
+ * [App]에 직접 두지 않고 컴포넌트를 하나 세운 이유가 둘이다. 하나는 훅 규칙 — 재응시는
+ * 수신자 설치와 카운트다운이라 훅인데, [App]은 스큐 판정에서 조기 반환하므로 그 뒤에 훅을
+ * 놓을 수 없다. 다른 하나는 §8 지침 — 수신은 부모가 하고 화면에는 값으로 내려보낸다.
+ */
+function ResultRoute({ sessionId }: { sessionId: string }) {
+  // 브리지로 갈 수 없는 환경에서는 예전 동작(인트로 복귀)으로 내려간다.
+  const retest = useRetest(goToIntro)
+
+  return (
+    <ResultScreen
+      apiBase={API_BASE}
+      sessionId={sessionId}
+      /*
+       * 토큰은 쿼리가 아니라 브리지에서 읽는다 — URL에 실으면 WebView 히스토리와 로그에
+       * 세션 토큰이 남는다. 브리지가 없으면(브라우저 단독) 빈 문자열이라 조회 전에 막히고
+       * 사용자용 문구가 뜬다.
+       *
+       * 렌더 시점에 읽는 이유: 결과 조회는 이 화면에 들어올 때 한 번뿐이라, 진행 화면처럼
+       * 제출 때마다 다시 읽을 필요가 없다.
+       */
+      sessionToken={getSessionToken() ?? ''}
+      onShare={shareResult}
+      retest={retest}
+    />
+  )
 }
 
 /**
@@ -130,14 +145,19 @@ function goToResult(sessionId: string): void {
 }
 
 /**
- * [다시 테스트하기] — 진입 쿼리에서 화면 지정만 걷어내고 인트로로 되돌린다.
+ * [다시 테스트하기]의 **폴백** — 진입 쿼리에서 화면 지정만 걷어내고 인트로로 되돌린다.
+ *
+ * KAN-34 결선 이후 정식 경로는 [useRetest]의 브리지 호출이다. 이 함수는 브리지로 갈 수 없을
+ * 때만 남는다: 브라우저 단독 실행, 그리고 `startRetest`가 없는 계약 버전 1 구버전 앱이다
+ * (메서드 추가는 버전을 올리지 않으므로 §5 스큐 게이트가 그 앱을 막지 않는다). 지우지 않는
+ * 이유가 그것이다 — 지우면 구버전 앱에서 버튼이 아무 일도 하지 않는 버튼이 된다.
  *
  * `bridge`·`app` 파라미터는 남긴다. 그 둘이 없으면 스큐 판정(§5)이 구버전 앱으로 보고
  * 업데이트 안내를 띄운다 — 재응시를 눌렀는데 "앱을 업데이트하세요"가 뜨는 셈이 된다.
  *
  * 새 익명 세션 생성은 여기서 하지 않는다. 세션은 네이티브가 만들고(KAN-9), 인트로의
  * [시작하기]가 권한 게이트를 거쳐 그 흐름을 다시 태운다 — 웹이 세션을 만들면 앱과 웹에
- * 세션 생성 경로가 둘 생긴다. 재응시 이벤트 기록과 429 안내는 KAN-34 몫이다.
+ * 세션 생성 경로가 둘 생긴다.
  */
 function goToIntro(): void {
   const params = new URLSearchParams(window.location.search)
