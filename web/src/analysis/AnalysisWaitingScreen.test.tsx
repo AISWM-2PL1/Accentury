@@ -15,7 +15,14 @@ function voiceItem(seq: number): VoiceItem {
   }
 }
 
-const VOICE_ITEMS = [1, 2, 3, 4, 5].map(voiceItem)
+/**
+ * 음성 5문항. 순번은 전체 10문항 기준이다 — 정의가 음성·어휘를 번갈아 두므로 홀수 자리가
+ * 음성이고, 대기 화면 목록도 그 번호로 부른다 (네이티브 녹음 화면의 "n / 10"과 같은 값).
+ */
+const VOICE_ITEMS = [1, 2, 3, 4, 5].map((seq) => ({
+  item: voiceItem(seq),
+  itemNumber: seq * 2 - 1,
+}))
 
 function jsonResponse(status: number, body: unknown): Response {
   return {
@@ -114,11 +121,12 @@ describe('진행률 — 분모는 10이다', () => {
 })
 
 describe('문항별 상태', () => {
-  it('음성 5문항을 순번과 함께 세운다', async () => {
+  it('음성 5문항을 전체 기준 순번과 함께 세운다 — 네이티브 녹음 화면의 번호와 같다', async () => {
     await renderScreen()
 
-    for (const number of [1, 2, 3, 4, 5]) {
-      expect(screen.getByText(`음성 ${number}번`)).toBeInTheDocument()
+    // 전체 문항 기준 번호로 부른다 — 음성 안에서의 1~5가 아니다
+    for (const number of [1, 3, 5, 7, 9]) {
+      expect(screen.getByText(`${number}번 문항`)).toBeInTheDocument()
     }
   })
 
@@ -209,8 +217,27 @@ describe('재녹음', () => {
       }),
     })
 
-    // RETRYABLE_FAILED와 NOT_SUBMITTED 둘뿐이다. FAILED는 다시 녹음해도 같은 결과다
-    expect(screen.getAllByRole('button', { name: '다시 녹음' })).toHaveLength(2)
+    /*
+     * COMPLETED·PROCESSING만 빠진다. FAILED에도 버튼을 주는 것은 서버 결정을 따른 것이다 —
+     * CompletionJudge가 FAILED를 retakeItems로 묶으므로(2026-08-13), 여기서 버튼을 빼면
+     * "다시 녹음해라"라는 409에 대상이 없는 막다른 길이 된다.
+     */
+    expect(screen.getAllByRole('button', { name: '다시 녹음' })).toHaveLength(3)
+  })
+
+  it('FAILED에도 버튼을 준다 — 새 시도가 세션 안의 유일한 복구 경로다 (CompletionJudge 2026-08-13)', async () => {
+    const onRetake = vi.fn()
+    await renderScreen({
+      onRetake,
+      fetchImpl: fetchFor({
+        analyses: () =>
+          jsonResponse(200, statusesBody(['COMPLETED', 'COMPLETED', 'FAILED', 'COMPLETED', 'COMPLETED'])),
+      }),
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '다시 녹음' }))
+
+    expect(onRetake).toHaveBeenCalledWith('v3')
   })
 
   it('누르면 그 문항의 itemId로 호출한다', async () => {
@@ -258,7 +285,10 @@ describe('멈춘 상태의 출구', () => {
 
   it('422 미제출이면 다른 문구를 준다', async () => {
     await renderScreen({
+      onRetake: vi.fn(),
       fetchImpl: fetchFor({
+        analyses: () =>
+          jsonResponse(200, statusesBody(['COMPLETED', 'COMPLETED', 'COMPLETED', 'COMPLETED', 'NOT_SUBMITTED'])),
         complete: () =>
           jsonResponse(
             422,
@@ -270,6 +300,75 @@ describe('멈춘 상태의 출구', () => {
     })
 
     expect(screen.getByText('아직 보내지 않은 문항이 있어요')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '다시 녹음' })).toBeInTheDocument()
+  })
+
+  it('409인데 FAILED 문항이면 버튼이 있다 — 막다른 길이 되지 않는다 (PR #41 리뷰)', async () => {
+    await renderScreen({
+      onRetake: vi.fn(),
+      fetchImpl: fetchFor({
+        analyses: () =>
+          jsonResponse(200, statusesBody(['COMPLETED', 'COMPLETED', 'FAILED', 'COMPLETED', 'COMPLETED'])),
+        complete: () =>
+          jsonResponse(
+            409,
+            envelope('RESULT_RETAKE_REQUIRED', '실패한 문항이 있습니다.', true, { retakeItems: ['v3'] }),
+          ),
+      }),
+    })
+
+    expect(screen.getByText('일부 문항을 다시 녹음해야 해요')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '다시 녹음' })).toBeInTheDocument()
+  })
+
+  it('손댈 문항이 목록에 없으면 앱 재시작으로 안내한다 — 어휘 미제출이 그 경로다', async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await renderScreen({
+      onRetake: vi.fn(),
+      // 음성은 전부 끝났는데 서버는 어휘(w5) 미제출로 422를 준다. 이 목록에 w5는 없다
+      fetchImpl: fetchFor({
+        analyses: () => jsonResponse(200, statusesBody(Array(5).fill('COMPLETED'))),
+        complete: () =>
+          jsonResponse(
+            422,
+            envelope('RESULT_INCOMPLETE', '아직 완료하지 않은 문항이 있습니다.', false, {
+              missingItems: ['w5'],
+            }),
+          ),
+      }),
+    })
+
+    expect(screen.getByText('여기서는 더 진행할 수 없어요')).toBeInTheDocument()
+    expect(screen.getByText('앱을 다시 시작해 테스트를 처음부터 진행해 주세요')).toBeInTheDocument()
+    // "다시 녹음해 주세요"라고 말해 놓고 대상이 없는 상태를 만들지 않는다
+    expect(screen.queryByText('아래 목록에서 해당 문항을 다시 녹음해 주세요')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '다시 녹음' })).not.toBeInTheDocument()
+    // 서버가 짚은 문항을 진단에 남긴다 — 이 목록과 어긋난 원인 추적의 시작점이다
+    expect(errorLog).toHaveBeenCalledWith(
+      '[analysis] 사용자가 손댈 수 있는 문항이 없습니다',
+      expect.objectContaining({ itemIds: ['w5'] }),
+    )
+    errorLog.mockRestore()
+  })
+
+  it('브리지가 없어 버튼을 못 그리는 경우도 같은 안내로 간다', async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await renderScreen({
+      // onRetake 없음 = 브라우저 단독 실행
+      fetchImpl: fetchFor({
+        analyses: () => jsonResponse(200, statusesBody(Array(5).fill('RETRYABLE_FAILED'))),
+        complete: () =>
+          jsonResponse(
+            409,
+            envelope('RESULT_RETAKE_REQUIRED', '실패한 문항이 있습니다.', true, {
+              retakeItems: ['v1', 'v2', 'v3', 'v4', 'v5'],
+            }),
+          ),
+      }),
+    })
+
+    expect(screen.getByText('여기서는 더 진행할 수 없어요')).toBeInTheDocument()
+    errorLog.mockRestore()
   })
 
   it('세션이 만료되면 봉투 문구를 그대로 보여 준다', async () => {

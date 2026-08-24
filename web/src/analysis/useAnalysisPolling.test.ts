@@ -226,6 +226,39 @@ describe('429 — Retry-After를 지킨다 (요구 6항)', () => {
     expect(callsTo(fetchImpl, '/analyses')).toBe(2)
   })
 
+  it('상태 조회가 429면 같은 회차의 완료 요청도 보내지 않는다', async () => {
+    const fetchImpl = fetchFor({
+      analyses: () =>
+        jsonResponse(429, envelope('RATE_LIMITED', '요청이 너무 많습니다.', true, { retryAfterMs: 9000 })),
+    })
+    renderHook(() => useAnalysisPolling(options(fetchImpl, noJitter)))
+    await act(async () => {})
+
+    // 제한을 건 쪽이 프록시면 오리진 단위로 세므로, 한 회차를 통째로 미룬다
+    expect(callsTo(fetchImpl, '/analyses')).toBe(1)
+    expect(callsTo(fetchImpl, '/complete')).toBe(0)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9000)
+    })
+    expect(callsTo(fetchImpl, '/analyses')).toBe(2)
+    expect(callsTo(fetchImpl, '/complete')).toBe(0)
+  })
+
+  it('429가 아닌 조회 실패는 완료 요청을 막지 않는다 — 완료는 독립적으로 끝날 수 있다', async () => {
+    const fetchImpl = fetchFor({
+      analyses: () => {
+        throw new TypeError('Failed to fetch')
+      },
+      complete: () => jsonResponse(200, { status: 'READY' }),
+    })
+    const { result } = renderHook(() => useAnalysisPolling(options(fetchImpl)))
+    await act(async () => {})
+
+    expect(callsTo(fetchImpl, '/complete')).toBe(1)
+    expect(result.current.status).toEqual({ kind: 'READY' })
+  })
+
   it('제한이 풀리면 지시를 소진하고 백오프로 돌아간다', async () => {
     let limited = true
     const fetchImpl = fetchFor({

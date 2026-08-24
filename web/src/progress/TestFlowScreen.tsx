@@ -189,9 +189,16 @@ function TestRunner({
     [state.items],
   )
 
-  // 대기 화면이 순번을 매기고 재녹음 대상을 찾는 데 쓴다. 정의 순서(seq)가 정본이다.
+  /*
+   * 대기 화면이 그릴 음성 문항. 순번은 **전체 문항 기준**으로 매겨서 넘긴다 — 음성 안에서
+   * 몇 번째인지(1~5)로 부르면, 그 줄의 [다시 녹음]을 눌렀을 때 네이티브 녹음 화면이 그리는
+   * 번호("7 / 10")와 어긋난다. 사용자에게는 다른 문항으로 간 것처럼 보인다.
+   */
   const voiceItems = useMemo(
-    () => state.items.filter((item): item is VoiceItem => item.type === 'VOICE'),
+    () =>
+      state.items
+        .map((item, index) => ({ item, itemNumber: index + 1 }))
+        .filter((entry): entry is { item: VoiceItem; itemNumber: number } => entry.item.type === 'VOICE'),
     [state.items],
   )
 
