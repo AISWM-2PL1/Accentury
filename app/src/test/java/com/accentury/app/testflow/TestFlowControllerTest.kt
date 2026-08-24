@@ -340,7 +340,7 @@ class TestFlowControllerTest {
     }
 
     @Test
-    fun `문항에서 나가면 시도 등록 없이 웹으로 돌아간다`() {
+    fun `PCM 없는 제출은 시도 등록 없이 웹으로 돌아간다`() {
         val controller = TestFlowController()
         controller.onStartVoiceItem(voiceItem(), micGranted = true)
 
@@ -351,7 +351,7 @@ class TestFlowControllerTest {
     }
 
     @Test
-    fun `나가기는 앞 문항의 대기 시도까지 버리지 않는다 - 진행 전체를 초기화하지 않는다`() {
+    fun `돌아가기는 앞 문항의 대기 시도까지 버리지 않는다 - 진행 전체를 초기화하지 않는다`() {
         val controller = TestFlowController()
         controller.onStartVoiceItem(voiceItem(itemId = "item_1"), micGranted = true)
         controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
@@ -364,7 +364,7 @@ class TestFlowControllerTest {
     }
 
     @Test
-    fun `나간 문항은 다시 요청할 수 있다`() {
+    fun `돌아간 문항은 다시 요청할 수 있다`() {
         val controller = TestFlowController()
         val start = voiceItem(itemId = "item_1")
         controller.onStartVoiceItem(start, micGranted = true)

@@ -78,7 +78,7 @@ class UploadViewModelTest {
     }
 
     @Test
-    fun `테스트 종료 폐기는 업로드와 라벨을 함께 지운다`() = withViewModel { vm, _ ->
+    fun `전체 폐기는 업로드와 라벨을 함께 지운다 - onCleared가 부르는 경로`() = withViewModel { vm, _ ->
         vm.enqueue(requestOf("at_1"), label = "1번 문항")
         advanceUntilIdle()
 
