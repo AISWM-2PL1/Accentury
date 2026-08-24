@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import { REQUIRED_BRIDGE_VERSION } from './bridge/bridge'
@@ -152,7 +152,12 @@ describe('App — 결과 화면 진입 쿼리 (KAN-29)', () => {
     )
   }
 
-  /** 토큰을 주는 브리지 대역. 결과 조회는 세션 토큰이 있어야 네트워크를 탄다 */
+  /**
+   * 토큰을 주는 브리지 대역. 결과 조회는 세션 토큰이 있어야 네트워크를 탄다.
+   *
+   * `startRetest`는 일부러 빼 둔다 — 메서드 추가는 계약 버전을 올리지 않으므로(§5) 이
+   * 조합(토큰은 주는데 재응시는 모르는 앱)이 실재한다. 재응시 결선 테스트는 따로 심는다.
+   */
   function stubBridgeWithToken(token = 'token-1') {
     window.AccenturyBridge = {
       requestMicPermission: vi.fn(),
@@ -160,6 +165,19 @@ describe('App — 결과 화면 진입 쿼리 (KAN-29)', () => {
       getContractVersion: () => 1,
       getSessionToken: () => token,
     }
+  }
+
+  /** 재응시까지 아는 브리지 대역 (KAN-34 결선 후의 정상 앱) */
+  function stubBridgeWithRetest(): ReturnType<typeof vi.fn> {
+    const startRetest = vi.fn()
+    window.AccenturyBridge = {
+      requestMicPermission: vi.fn(),
+      startVoiceItem: vi.fn(),
+      getContractVersion: () => 1,
+      getSessionToken: () => 'token-1',
+      startRetest,
+    }
+    return startRetest
   }
 
   /** `navigator.share`는 jsdom에 없다. 정의했다가 되돌리는 자리를 한 곳에 모은다 */
@@ -242,7 +260,7 @@ describe('App — 결과 화면 진입 쿼리 (KAN-29)', () => {
     warn.mockRestore()
   })
 
-  it('[다시 테스트하기]는 화면 지정만 걷고 bridge·app은 남긴다', async () => {
+  it('[다시 테스트하기]는 브리지가 없으면 폴백으로 화면 지정만 걷고 bridge·app은 남긴다', async () => {
     setSearch(RESULT_SEARCH)
     stubBridgeWithToken()
     stubResultFetch()
@@ -269,6 +287,138 @@ describe('App — 결과 화면 진입 쿼리 (KAN-29)', () => {
     expect(next.get('app')).toBe('1.0')
     expect(next.get('screen')).toBeNull()
     expect(next.get('sessionId')).toBeNull()
+  })
+
+  /**
+   * 재응시 결선 (KAN-34 3단계). 여기서 확인하는 것은 왕복 자체가 아니라 **결선**이다 —
+   * 결과 화면의 버튼이 브리지에 닿는가, 회신이 화면까지 내려오는가. 상태 전이의 갈래는
+   * `useRetest.test.ts`가 덮는다.
+   */
+  describe('[다시 테스트하기] 재응시 결선', () => {
+    /** 네이티브가 실패를 회신하는 자리. 실제 경로와 같게 JSON 문자열로 넣는다 */
+    function deliverFailure(payload: Record<string, unknown>) {
+      act(() => {
+        window.AccenturyWeb?.onRetestFailed?.(JSON.stringify(payload))
+      })
+    }
+
+    it('탭하면 네이티브 재응시가 호출되고 버튼이 준비 중으로 잠긴다', async () => {
+      setSearch(RESULT_SEARCH)
+      const startRetest = stubBridgeWithRetest()
+      stubResultFetch()
+
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: '다시 테스트하기' }))
+
+      expect(startRetest).toHaveBeenCalledTimes(1)
+      // 성공하면 네이티브가 페이지를 통째로 갈아치운다 — 웹이 스스로 이동하지 않는다
+      expect(screen.getByRole('button', { name: '준비 중…' })).toBeDisabled()
+    })
+
+    it('잠긴 버튼을 다시 눌러도 두 번째 요청이 나가지 않는다', async () => {
+      setSearch(RESULT_SEARCH)
+      const startRetest = stubBridgeWithRetest()
+      stubResultFetch()
+
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: '다시 테스트하기' }))
+      fireEvent.click(screen.getByRole('button', { name: '준비 중…' }))
+
+      expect(startRetest).toHaveBeenCalledTimes(1)
+    })
+
+    it('실패 회신이 오면 네이티브 문구가 뜨고 버튼이 다시 열린다', async () => {
+      setSearch(RESULT_SEARCH)
+      const startRetest = stubBridgeWithRetest()
+      stubResultFetch()
+
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: '다시 테스트하기' }))
+      deliverFailure({
+        code: 'INTERNAL_ERROR',
+        message: '다시 시작하지 못했어요. 잠시 후 다시 시도해 주세요.',
+        retryable: true,
+        retryAfterMs: null,
+      })
+
+      expect(screen.getByText('다시 시작하지 못했어요. 잠시 후 다시 시도해 주세요.')).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: '다시 테스트하기' }))
+      expect(startRetest).toHaveBeenCalledTimes(2)
+    })
+
+    it('429 회신이면 남은 대기 시간을 적고 버튼을 잠근 채 둔다', async () => {
+      setSearch(RESULT_SEARCH)
+      stubBridgeWithRetest()
+      stubResultFetch()
+
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: '다시 테스트하기' }))
+      deliverFailure({
+        code: 'RATE_LIMITED',
+        message: '요청이 많아요. 잠시 후 다시 시도해 주세요.',
+        retryable: true,
+        retryAfterMs: 30_000,
+      })
+
+      expect(screen.getByText('30초 후 다시 시도할 수 있어요')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: '다시 테스트하기' })).toBeDisabled()
+    })
+
+    it('다시 눌러도 소용없는 실패면 버튼이 잠긴 채로 남는다', async () => {
+      setSearch(RESULT_SEARCH)
+      stubBridgeWithRetest()
+      stubResultFetch()
+
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: '다시 테스트하기' }))
+      deliverFailure({
+        code: 'FORBIDDEN',
+        message: '지금은 테스트를 시작할 수 없어요.',
+        retryable: false,
+        retryAfterMs: null,
+      })
+
+      expect(screen.getByText('지금은 테스트를 시작할 수 없어요.')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: '다시 테스트하기' })).toBeDisabled()
+    })
+
+    it('만료(410) 화면의 버튼도 같은 재응시 경로를 탄다 (KAN-29 재응시 유도)', async () => {
+      setSearch(RESULT_SEARCH)
+      const startRetest = stubBridgeWithRetest()
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => ({
+          ok: false,
+          status: 410,
+          json: async () => ({
+            code: 'RESULT_EXPIRED',
+            message: '결과 보관 기간(24시간)이 지났습니다.',
+            retryable: false,
+            retryAfterMs: null,
+            correlationId: 'c_test',
+          }),
+        })),
+      )
+
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: '다시 테스트하기' }))
+
+      expect(startRetest).toHaveBeenCalledTimes(1)
+      expect(screen.getByRole('button', { name: '준비 중…' })).toBeDisabled()
+    })
+
+    it('결과 화면을 떠나면 수신 지점이 설치 전으로 되돌아간다', async () => {
+      setSearch(RESULT_SEARCH)
+      stubBridgeWithRetest()
+      stubResultFetch()
+
+      const { unmount } = render(<App />)
+      await screen.findByRole('heading', { name: '명예주민' })
+      expect(typeof window.AccenturyWeb?.onRetestFailed).toBe('function')
+
+      unmount()
+      expect(window.AccenturyWeb).toBeUndefined()
+    })
   })
 })
 
