@@ -62,6 +62,16 @@ class UploadViewModel(
         uploadManager.retry(attemptId)
     }
 
+    /**
+     * 결과가 나올 일이 없어진 시도 하나를 폐기한다 (KAN-147) - 재시도 상한을 넘겨 포기한 업로드와,
+     * 같은 문항의 새 녹음에 밀려난 앞 시도가 여기로 온다. 라벨도 함께 지운다: 상태 바에서 사라진
+     * 업로드의 라벨은 쓸 곳이 없고, 남겨두면 같은 키가 재사용될 때 옛 문항 번호가 따라붙는다.
+     */
+    fun discard(attemptId: String) {
+        uploadManager.discard(attemptId)
+        labels.remove(attemptId)
+    }
+
     /** 남아 있는 음성 바이트를 전부 폐기한다 (FR-DP-02). 라벨은 업로드가 사라지면 쓸 곳이 없다. */
     fun clearAll() {
         uploadManager.clearAll()

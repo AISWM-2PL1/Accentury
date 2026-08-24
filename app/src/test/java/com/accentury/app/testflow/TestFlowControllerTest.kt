@@ -375,15 +375,27 @@ class TestFlowControllerTest {
         assertEquals(TestFlowPhase.Recording(start), controller.phase)
     }
 
+    /*
+     * 같은 문항의 재녹음은 여전히 막지 않는다. 다만 앞 시도는 여기서 밀려난다 (KAN-147, 지라
+     * 코멘트 #2) - 한 문항에 살아 있는 시도가 둘이면 상태 바에 앞 시도의 [재시도]가 그대로 서 있고,
+     * 그걸 누르면 같은 문항에 분석 작업이 둘 생겨 웹이 결과를 두 번 받는다.
+     */
     @Test
-    fun `같은 문항을 다시 녹음해도 막지 않는다 - 중복 제출은 웹 상태 머신이 거른다`() {
+    fun `같은 문항을 다시 녹음하면 앞 시도가 밀려난다 - 한 문항에 분석 작업이 둘 생기지 않는다`() {
         val controller = TestFlowController()
         val start = voiceItem(itemId = "item_1")
         controller.onStartVoiceItem(start, micGranted = true)
-        controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
+        assertEquals(
+            emptyList<String>(),
+            controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL),
+        )
 
         controller.onStartVoiceItem(start, micGranted = true)
-        controller.onRecordingFinished("at_2", durationMs = 4_100, quality = QualityStatus.NORMAL)
+        val superseded =
+            controller.onRecordingFinished("at_2", durationMs = 4_100, quality = QualityStatus.NORMAL)
+
+        // 밀려난 시도의 업로드를 실제로 폐기하는 것은 호출자 몫이라 attemptId만 돌려준다.
+        assertEquals(listOf("at_1"), superseded)
 
         val results = controller.onUploadsChanged(
             mapOf(
@@ -391,8 +403,156 @@ class TestFlowControllerTest {
                 "at_2" to UploadState.Done("job_2"),
             ),
         )
+        assertEquals(listOf("at_2"), results.map { it.attemptId })
+        assertEquals(listOf("item_1"), results.map { it.itemId })
+    }
+
+    @Test
+    fun `다른 문항의 대기 시도는 밀려나지 않는다`() {
+        val controller = TestFlowController()
+        controller.onStartVoiceItem(voiceItem(itemId = "item_1"), micGranted = true)
+        controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
+
+        controller.onStartVoiceItem(voiceItem(itemId = "item_2", number = 2), micGranted = true)
+        val superseded =
+            controller.onRecordingFinished("at_2", durationMs = 3_200, quality = QualityStatus.NORMAL)
+
+        assertEquals(emptyList<String>(), superseded)
+        val results = controller.onUploadsChanged(
+            mapOf(
+                "at_1" to UploadState.Done("job_1"),
+                "at_2" to UploadState.Done("job_2"),
+            ),
+        )
         assertEquals(listOf("at_1", "at_2"), results.map { it.attemptId })
-        assertEquals(listOf("item_1", "item_1"), results.map { it.itemId })
+    }
+
+    /*
+     * 업로드 포기 - 재시도 상한을 다 썼거나 서버가 재시도 불가라고 답한 경우다 (KAN-147,
+     * 2026-08-25 결정). 웹은 네이티브 쪽 실패를 통지받지 않아 그 문항의 대기 화면에 멈춰 있으므로,
+     * 네이티브가 같은 문항의 녹음 화면을 다시 열어도 진행을 앞지르지 않는다.
+     */
+    @Test
+    fun `업로드를 포기하면 그 문항의 녹음 화면을 다시 연다`() {
+        val controller = TestFlowController()
+        val start = voiceItem(itemId = "item_1")
+        controller.onStartVoiceItem(start, micGranted = true)
+        controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
+        // 실패가 확정되면 화면은 웹으로 돌아가 있고 대기 시도만 남는다 (KAN-146).
+        controller.onUploadsChanged(mapOf("at_1" to UploadState.Failed(retryable = false, message = "timeout")))
+        assertEquals(TestFlowPhase.Web, controller.phase)
+
+        assertTrue(controller.onUploadGivenUp("at_1", micGranted = true))
+
+        assertEquals(TestFlowPhase.Recording(start, afterUploadFailure = true), controller.phase)
+        // 결과가 영영 조립되지 않을 시도라 대기 목록에서도 빠진다.
+        assertTrue(controller.onUploadsChanged(mapOf("at_1" to UploadState.Done("job_1"))).isEmpty())
+    }
+
+    /*
+     * 제출을 기다리는 중에 포기가 확정되는 경로. 같은 문항의 녹음으로 되돌아가는 것은
+     * continuesFrom이 이미 다루는 "제출에서 녹음으로 되돌아온 것"이라 호출자 쪽 되감기가 돈다.
+     */
+    @Test
+    fun `제출을 기다리는 중에 포기해도 같은 문항의 녹음으로 되돌아간다`() {
+        val controller = TestFlowController()
+        val start = voiceItem(itemId = "item_1")
+        controller.onStartVoiceItem(start, micGranted = true)
+        controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
+
+        assertTrue(controller.onUploadGivenUp("at_1", micGranted = true))
+
+        assertEquals(TestFlowPhase.Recording(start, afterUploadFailure = true), controller.phase)
+    }
+
+    @Test
+    fun `권한이 회수됐으면 게이트를 먼저 세운다 - 다시 열 문항은 그대로 들고 있는다`() {
+        val controller = TestFlowController()
+        val start = voiceItem(itemId = "item_1")
+        controller.onStartVoiceItem(start, micGranted = true)
+        controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
+
+        assertTrue(controller.onUploadGivenUp("at_1", micGranted = false))
+
+        assertEquals(TestFlowPhase.NeedsPermission(start), controller.phase)
+        controller.onPermissionGranted()
+        assertEquals(TestFlowPhase.Recording(start), controller.phase)
+    }
+
+    /*
+     * 앞 문항의 뒤늦은 포기가 손에 든 녹음을 갈아치우면 사용자는 방금 녹음하던 것을 잃는다.
+     * 시도는 거둬가되(업로드는 폐기해야 한다) 화면은 건드리지 않는다.
+     */
+    @Test
+    fun `다른 문항을 녹음하는 중에 온 포기는 화면을 건드리지 않는다`() {
+        val controller = TestFlowController()
+        controller.onStartVoiceItem(voiceItem(itemId = "item_1"), micGranted = true)
+        controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
+        val next = voiceItem(itemId = "item_2", number = 2)
+        controller.onStartVoiceItem(next, micGranted = true)
+
+        assertTrue(controller.onUploadGivenUp("at_1", micGranted = true))
+
+        assertEquals(TestFlowPhase.Recording(next), controller.phase)
+        assertTrue(controller.onUploadsChanged(mapOf("at_1" to UploadState.Done("job_1"))).isEmpty())
+    }
+
+    @Test
+    fun `같은 문항을 다시 녹음하는 중에 온 포기도 화면을 건드리지 않는다`() {
+        val controller = TestFlowController()
+        val start = voiceItem(itemId = "item_1")
+        controller.onStartVoiceItem(start, micGranted = true)
+        controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
+        controller.onUploadsChanged(mapOf("at_1" to UploadState.Failed(retryable = true, message = "timeout")))
+        controller.onStartVoiceItem(start, micGranted = true)
+
+        assertTrue(controller.onUploadGivenUp("at_1", micGranted = true))
+
+        // 이미 서 있던 녹음 화면이라 재개 표식이 붙지 않는다.
+        assertEquals(TestFlowPhase.Recording(start), controller.phase)
+    }
+
+    @Test
+    fun `모르는 시도의 포기는 아무 일도 하지 않는다 - 이미 밀려난 시도가 여기로 온다`() {
+        val controller = TestFlowController()
+
+        assertTrue(!controller.onUploadGivenUp("at_unknown", micGranted = true))
+
+        assertEquals(TestFlowPhase.Web, controller.phase)
+    }
+
+    /*
+     * 대기 시도가 어느 문항의 것이었는지까지 저장한다 (KAN-147) - 복원 뒤에 포기가 확정돼도
+     * 녹음 화면을 다시 세울 수 있어야 한다. 문항 문구, 번호, 가이드 곡선이 전부 필요한데
+     * 결과 조립용 메타에는 itemId밖에 없다.
+     */
+    @Test
+    fun `복원 뒤에 온 포기도 그 문항의 녹음 화면을 다시 연다`() {
+        val controller = TestFlowController()
+        val start = voiceItem(itemId = "item_1")
+        controller.onStartVoiceItem(start, micGranted = true)
+        controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
+        controller.onUploadsChanged(mapOf("at_1" to UploadState.Failed(retryable = true, message = "timeout")))
+
+        val restored = rotate(controller)
+        assertEquals(TestFlowPhase.Web, restored.phase)
+
+        assertTrue(restored.onUploadGivenUp("at_1", micGranted = true))
+
+        assertEquals(TestFlowPhase.Recording(start, afterUploadFailure = true), restored.phase)
+    }
+
+    @Test
+    fun `다시 열린 녹음 화면은 회전해도 그 이유를 잃지 않는다`() {
+        val controller = TestFlowController()
+        val start = voiceItem(itemId = "item_1")
+        controller.onStartVoiceItem(start, micGranted = true)
+        controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
+        controller.onUploadGivenUp("at_1", micGranted = true)
+
+        val restored = rotate(controller)
+
+        assertEquals(TestFlowPhase.Recording(start, afterUploadFailure = true), restored.phase)
     }
 
     @Test
