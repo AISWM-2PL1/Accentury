@@ -302,10 +302,11 @@ describe('문항 진행', () => {
 
     await finishAllItems()
 
-    // 진행률이 분석 기준으로 바뀌고 음성 5문항이 목록으로 선다
+    // 진행률이 분석 기준으로 바뀌고 음성 5문항이 목록으로 선다.
+    // 번호는 전체 10문항 기준이라 홀수 자리(정의가 음성·어휘를 번갈아 둔다)로 나온다
     expect(screen.getByRole('progressbar', { name: '분석 진행률' })).toBeInTheDocument()
-    expect(screen.getByText('음성 1번')).toBeInTheDocument()
-    expect(screen.getByText('음성 5번')).toBeInTheDocument()
+    expect(screen.getByText('1번 문항')).toBeInTheDocument()
+    expect(screen.getByText('9번 문항')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '제출 (개발용)' })).not.toBeInTheDocument()
     expect(screen.queryByRole('radio', { name: '보기1' })).not.toBeInTheDocument()
   })

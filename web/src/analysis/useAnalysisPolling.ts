@@ -215,6 +215,18 @@ export function useAnalysisPolling(options: UseAnalysisPollingOptions): UseAnaly
           if (cancelled) return
           if (!handleError(error)) return
           statusesFailed = true
+          /*
+           * 요청 제한을 받았으면 이 회차의 `/complete`도 보내지 않는다 (요구 6항).
+           *
+           * 실제로 두 엔드포인트의 한도는 따로 세어지지만(서버의 제한 축에 상태 조회가 없다),
+           * "Retry-After 전까지 요청하지 않는다"는 계약을 엔드포인트별로 해석하면 제한을 건
+           * 쪽이 프록시나 게이트웨이일 때 어긋난다 — 그쪽은 우리 축을 모르고 오리진 단위로 센다.
+           * 한 회차를 통째로 미루는 편이 계약을 문자 그대로 지킨다.
+           */
+          if (error instanceof AnalysisApiError && error.rateLimited) {
+            schedule()
+            return
+          }
         }
 
         try {
