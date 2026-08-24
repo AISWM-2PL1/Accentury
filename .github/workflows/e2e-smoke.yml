@@ -1,0 +1,121 @@
+# 전 구간 E2E 스모크 (KAN-138)
+#
+# 세션 생성부터 결과 조회까지를 실제 HTTP로 순서대로 통과시킨다. 시나리오의 정본은
+# scripts/e2e_smoke.py이고, 이 파일은 그것을 부르는 세 갈래를 만든다.
+#
+#   1. workflow_call     배포 파이프라인(KAN-128)이 staging 반영 직후 한 단계로 부른다.
+#   2. workflow_dispatch 사람이 staging이나 prod에 손으로 한 번 돌린다 (prod 승격 직후).
+#   3. pull_request      스모크 자신이나 compose가 바뀐 PR에서 로컬 풀스택으로 돌린다.
+#
+# 필수 게이트로 걸지는 KAN-128이 정한다 (티켓 - 선택).
+#
+# 경로 필터를 워크플로 레벨 paths가 아니라 job 레벨 if 스킵으로 처리하는 이유는 test.yml과
+# 같다 - 워크플로 레벨 paths는 미실행 시 required check가 Expected로 남아 병합을 영구히 잠근다.
+
+name: E2E Smoke
+
+on:
+  workflow_call:
+    inputs:
+      base-url:
+        description: 대상 BE 주소
+        required: true
+        type: string
+      environment:
+        description: 로그에 남길 환경 이름
+        required: false
+        type: string
+        default: staging
+      expect-stub-scores:
+        description: AI가 스텁일 때만 켠다 - 억양 점수를 해시로 예측해 대조한다 (KAN-136)
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      admin-token:
+        description: >-
+          대상 환경의 accentury.admin.token (KAN-138). 이 스모크의 세션을 합성 트래픽으로
+          표시해 익명 집계(KAN-106)에서 실사용자와 갈라 놓는다. 없으면 스크립트가 시작 전에
+          멈춘다 - 표시 없는 실행은 그 환경의 완주율과 등급 분포에 영구히 남는다.
+        required: true
+  workflow_dispatch:
+    inputs:
+      base-url:
+        description: '대상 BE 주소 (예: https://api.staging.accentury.app)'
+        required: true
+        type: string
+      environment:
+        description: 로그에 남길 환경 이름
+        required: false
+        type: string
+        default: staging
+      expect-stub-scores:
+        description: AI가 스텁일 때만 켠다 - 억양 점수를 해시로 예측해 대조한다
+        required: false
+        type: boolean
+        default: false
+  pull_request:
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    # 배포 파이프라인과 수동 실행에는 경로 필터가 뜻이 없다 - 대상은 이미 떠 있는 환경이다.
+    if: github.event_name == 'pull_request'
+    outputs:
+      smoke: ${{ steps.filter.outputs.smoke }}
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            smoke:
+              - 'scripts/e2e_smoke.py'
+              - 'scripts/e2e-smoke-local.sh'
+              - 'docker-compose.yml'
+              - '.github/workflows/e2e-smoke.yml'
+
+  # PR에서 로컬 풀스택(BE + AI + DB)을 띄워 전 시나리오를 돌린다 (티켓 AC 1).
+  # backend/**와 ai/**는 필터에 넣지 않았다 - 두 이미지를 매번 처음부터 빌드하는 값이
+  # 대부분의 PR에서는 과하고, 서버 변경의 상시 검증은 test.yml의 단위/통합 테스트가 맡는다.
+  # 배포 전 전 구간 확인은 staging 반영 직후의 workflow_call이 담당한다.
+  compose:
+    needs: changes
+    if: needs.changes.outputs.smoke == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      # 러너의 python3(3.12)로 충분하다 - 스크립트가 표준 라이브러리만 쓴다.
+      - name: 로컬 compose 스모크
+        run: bash scripts/e2e-smoke-local.sh
+
+  # 이미 떠 있는 환경(staging, prod)을 도메인 경유로 두드린다 (티켓 AC 2, 3).
+  remote:
+    # workflow_call로 불릴 때 github.event_name은 호출한 쪽의 이벤트(push 등)라 그것만으로는
+    # 갈래를 가를 수 없다 - 입력이 실제로 들어왔는지를 함께 본다.
+    if: github.event_name != 'pull_request' && inputs.base-url != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: ${{ inputs.environment }} 스모크
+        # 입력을 셸 명령에 직접 끼워 넣지 않고 환경 변수로 넘긴다 - 손으로 넣는 값이라
+        # 명령 치환이 섞이면 러너에서 그대로 실행된다.
+        env:
+          BASE_URL: ${{ inputs.base-url }}
+          EXPECT_STUB_SCORES: ${{ inputs.expect-stub-scores }}
+          # workflow_dispatch에는 secrets 선언이 없으므로 레포 시크릿을 그대로 읽는다.
+          # workflow_call로 불릴 때는 호출자가 넘긴 값이 같은 이름으로 들어온다.
+          SYNTHETIC_KEY: ${{ secrets.admin-token || secrets.ACCENTURY_ADMIN_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SYNTHETIC_KEY" ]; then
+            echo "관리자 시크릿이 없습니다. 표시 없는 스모크는 대상 환경의 익명 집계에" >&2
+            echo "영구히 남으므로 실행하지 않습니다 (KAN-138)." >&2
+            exit 1
+          fi
+          ARGS=(--base-url "$BASE_URL" --synthetic-key "$SYNTHETIC_KEY")
+          if [ "$EXPECT_STUB_SCORES" = "true" ]; then
+            ARGS+=(--expect-stub-scores)
+          fi
+          python3 scripts/e2e_smoke.py "${ARGS[@]}"

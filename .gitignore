@@ -20,3 +20,7 @@ local.properties
 .omc/
 .idea/
 .vscode/
+
+# scripts/의 파이썬 (KAN-138 E2E 스모크) - ai/.gitignore와 같은 규칙이지만
+# 여기는 레포 루트라 그쪽 파일이 닿지 않는다.
+scripts/__pycache__/
