@@ -434,15 +434,6 @@ private fun TestFlow(modifier: Modifier = Modifier) {
                                 flow.onRecordingFinished(attemptId, durationMs, quality)
                             }
                         },
-                        onExit = {
-                            // 이탈은 그 자리에서 되감는다 — 녹음 중단·마이크 해제·PCM 폐기는
-                            // FR-DP-02가 즉시를 요구한다.
-                            viewModel.reset()
-                            // 하네스와 달리 진행 전체를 초기화하지 않는다 — 나가기는 이 문항을 다시
-                            // 시도하겠다는 뜻이라, 앞 문항들의 대기 시도까지 버리면 이미 끝난 업로드의
-                            // 결과가 웹에 영영 도착하지 않는다 (TestFlowController.onRecordingExit 주석).
-                            flow.onRecordingExit()
-                        },
                     )
                 }
             }
@@ -454,25 +445,6 @@ private fun TestFlow(modifier: Modifier = Modifier) {
                 uploads = uploads,
                 labelOf = uploadViewModel::labelOf,
                 onRetry = uploadViewModel::retry,
-                onEndTest = {
-                    // 남아 있는 음성 바이트를 전부 폐기하고 인트로로 되돌린다 (FR-DP-02).
-                    // 컨트롤러의 대기 시도는 남지만 업로드가 사라져 결과로 조립되지 않는다 — 다시
-                    // 시작하면 웹이 결과를 받지 못한 문항부터 다시 요청하므로 진행은 어긋나지 않는다.
-                    viewModel.reset()
-                    uploadViewModel.clearAll()
-                    startRequested = false
-                    micPassed = false
-                    /*
-                     * 세션도 함께 버린다 (KAN-34). 종료한 응시를 다음 시작이 이어받으면, 웹은
-                     * 처음부터 시작하는데 서버의 세션에는 앞선 문항의 결과가 남아 있는 상태가 된다.
-                     *
-                     * 서버 쪽 폐기는 여기서 일어나지 않는다 — 폐기는 세션 생성 요청에 이전 토큰을
-                     * 실어야 일어나므로(KAN-107), restart()가 버린 토큰을 적어 두었다가 다음
-                     * [시작하기]가 함께 실어 보낸다 (SessionGateController.pendingPreviousToken).
-                     * 재응시와 같은 폐기 경로이고, 시점만 즉시가 아니라 다음 시작으로 미뤄질 뿐이다.
-                     */
-                    sessionGate.restart()
-                },
             )
         }
     }
@@ -489,7 +461,6 @@ private fun RecordingOverlay(
     submitting: Boolean,
     viewModel: RecordingViewModel,
     onSubmit: (attemptId: String, durationMs: Long, quality: QualityStatus) -> Unit,
-    onExit: () -> Unit,
 ) {
     // 색을 명시한다 - Surface 기본값은 surface(카드 흰색)라, 그대로 두면 이 오버레이만
     // 흰 배경이 되어 바로 앞뒤 WebView 화면(background #eff6ff)과 어긋난다.
@@ -499,7 +470,6 @@ private fun RecordingOverlay(
             questionIndex = start.itemNumber,
             totalQuestions = start.totalItems,
             onNext = onSubmit,
-            onExit = onExit,
             guideF0 = start.guideF0,
             submitting = submitting,
             viewModel = viewModel,

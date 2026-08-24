@@ -16,6 +16,7 @@ import com.accentury.app.ui.theme.Spacing
 
 /**
  * 성공(Done)은 조용히 넘어가고, 진행 중 개수와 실패 건의 복구 경로만 보여준다.
+ * 복구 경로는 [재시도] 하나다 - 이탈 UX는 KAN-39 디자인 때 정한다 (KAN-147).
  * 진짜 화면은 KAN-39에서 디자인이 붙는다 — 여기서는 상태가 보이는지만 확인한다.
  */
 @Composable
@@ -23,7 +24,6 @@ fun UploadStatusBar(
     uploads: Map<String, UploadState>,
     labelOf: (attemptId: String) -> String,
     onRetry: (attemptId: String) -> Unit,
-    onEndTest: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val summary = summarize(uploads)
@@ -58,10 +58,6 @@ fun UploadStatusBar(
                     )
                 }
             }
-        }
-
-        if (summary.failed.isNotEmpty()) {
-            AccenturyButton(text = "테스트 종료", variant = ButtonVariant.Text, onClick = onEndTest)
         }
     }
 }

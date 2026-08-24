@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -58,7 +57,6 @@ fun RecordingScreen(
     // quality는 Review 상태에만 있고 뷰모델은 넘어가는 즉시 reset되므로, 호출자가 나중에 되물을 수 없다.
     // 브리지 계약(KAN-89)이 qualityStatus를 요구해서 여기서 함께 넘긴다.
     onNext: (attemptId: String, durationMs: Long, quality: QualityStatus) -> Unit,
-    onExit: () -> Unit,
     // 상단 레인의 정적 가이드 곡선 (KAN-102). null은 안 실어 보낸 구버전 웹 - 레인만 비운다.
     guideF0: GuideF0? = null,
     /*
@@ -93,33 +91,17 @@ fun RecordingScreen(
     val myPoints = userCurveDisplayPoints(pitchFrames, windowMs)
 
     Column(modifier = Modifier.fillMaxSize().padding(Spacing.x4)) {
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            /*
-             * 제출한 뒤에는 이탈 통로를 닫는다 - 이 시도는 이미 업로드에 올라가 결과를 기다리는
-             * 중이라 여기서 빠져나가도 갈 곳이 없다(onRecordingExit이 Recording에서만 동작한다).
-             *
-             * 숨기지 않고 비활성으로 두는 이유: 버튼이 빠지면 이 Row의 높이가 줄어 아래 내용이
-             * 통째로 당겨 올라간다. [다음]을 누른 순간 문항 문구와 곡선이 한 번 튀어 오르는데,
-             * 화면을 붙들어 전환을 없애려는 KAN-146에서 그 흔들림이 제일 눈에 띈다 (실측 63px).
-             */
-            AccenturyButton(
-                text = "나가기",
-                variant = ButtonVariant.Text,
-                enabled = !submitting,
-                onClick = {
-                    viewModel.reset() // 이탈 즉시 녹음 중단·마이크 해제·PCM 폐기 (FR-DP-02)
-                    onExit()
-                },
-            )
-            Spacer(modifier = Modifier.weight(1f))
-            // 웹 진행바와 같은 컴포넌트·같은 값이다 - 문항이 두 런타임을 오가므로 표기가
-            // 달라지면 사용자에게는 진행이 튄 것처럼 보인다
-            ProgressIndicator(
-                current = questionIndex,
-                total = totalQuestions,
-                modifier = Modifier.weight(2f),
-            )
-        }
+        /*
+         * 웹 진행바와 같은 컴포넌트, 같은 값, 같은 폭이다 - 웹은 음성 문항 화면 맨 위에서 진행바를
+         * 폭 전체로 그린다(.progress-indicator { width: 100% }). 문항이 두 런타임을 오가므로
+         * 막대 길이나 표기가 달라지면 사용자에게는 진행이 튄 것처럼 보인다.
+         * ProgressIndicator가 이미 막대와 "3 / 10"을 한 줄에 눕히는 Row라 따로 감싸지 않는다.
+         */
+        ProgressIndicator(
+            current = questionIndex,
+            total = totalQuestions,
+            modifier = Modifier.fillMaxWidth(),
+        )
 
         Spacer(modifier = Modifier.height(Spacing.x4))
         /*

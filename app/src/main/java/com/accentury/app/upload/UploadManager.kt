@@ -87,7 +87,7 @@ class UploadManager(
         }
     }
 
-    /** 테스트 종료·문항 이탈에서 남아 있는 음성 바이트를 전부 폐기한다 (FR-DP-02). [discard]와 같은 정리를 전 키에 적용한다. */
+    /** 뷰모델 정리(onCleared)에서 남아 있는 음성 바이트를 전부 폐기한다 (FR-DP-02). [discard]와 같은 정리를 전 키에 적용한다. */
     fun clearAll() {
         synchronized(lock) {
             val running = jobs.values.toList()
