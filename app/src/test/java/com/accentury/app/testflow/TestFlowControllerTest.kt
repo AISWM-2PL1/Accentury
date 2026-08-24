@@ -5,6 +5,7 @@ import com.accentury.app.audio.QualityStatus
 import com.accentury.app.bridge.VoiceItemStart
 import com.accentury.app.upload.UploadState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -462,6 +463,45 @@ class TestFlowControllerTest {
 
         assertTrue(controller.onUploadGivenUp("at_1", micGranted = true))
 
+        assertEquals(TestFlowPhase.Recording(start, afterUploadFailure = true), controller.phase)
+    }
+
+    /*
+     * MainActivity에서 포기 결선과 결과 전달 결선은 같은 키(uploads)로 도는 별개의 이펙트다.
+     * 어느 쪽이 먼저 돌든 결과가 같아야 한다 - 이 두 테스트가 그 순서 독립성을 못 박는다.
+     * onUploadsChanged가 Web으로 내리는 조건은 "Submitting에서 그 시도가 실패"뿐이라, 포기가
+     * 먼저 열어 둔 Recording은 건드리지 않는다.
+     */
+    @Test
+    fun `포기가 먼저 돌아도 뒤따른 실패 통지가 다시 연 녹음 화면을 걷지 않는다`() {
+        val controller = TestFlowController()
+        val start = voiceItem(itemId = "item_1")
+        controller.onStartVoiceItem(start, micGranted = true)
+        controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
+        val failed = mapOf("at_1" to UploadState.Failed(retryable = false, message = "timeout"))
+
+        assertTrue(controller.onUploadGivenUp("at_1", micGranted = true))
+        assertTrue(controller.onUploadsChanged(failed).isEmpty())
+
+        assertEquals(TestFlowPhase.Recording(start, afterUploadFailure = true), controller.phase)
+    }
+
+    @Test
+    fun `실패 통지가 먼저 돌아도 뒤따른 포기가 같은 녹음 화면을 연다`() {
+        val controller = TestFlowController()
+        val start = voiceItem(itemId = "item_1")
+        controller.onStartVoiceItem(start, micGranted = true)
+        controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
+        val failed = mapOf("at_1" to UploadState.Failed(retryable = false, message = "timeout"))
+
+        assertTrue(controller.onUploadsChanged(failed).isEmpty())
+        assertEquals(TestFlowPhase.Web, controller.phase)
+        assertTrue(controller.onUploadGivenUp("at_1", micGranted = true))
+
+        assertEquals(TestFlowPhase.Recording(start, afterUploadFailure = true), controller.phase)
+        // 폐기 뒤 uploads가 비어 두 이펙트가 다시 돌아도 화면은 그대로다.
+        assertTrue(controller.onUploadsChanged(emptyMap()).isEmpty())
+        assertFalse(controller.onUploadGivenUp("at_1", micGranted = true))
         assertEquals(TestFlowPhase.Recording(start, afterUploadFailure = true), controller.phase)
     }
 
