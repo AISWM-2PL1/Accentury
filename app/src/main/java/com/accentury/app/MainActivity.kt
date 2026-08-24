@@ -34,6 +34,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -54,11 +55,14 @@ import com.accentury.app.audio.QualityStatus
 import com.accentury.app.audio.WavWriter
 import com.accentury.app.bridge.VoiceItemStart
 import com.accentury.app.bridge.itemResultDeliveryJs
+import com.accentury.app.bridge.retestFailedDeliveryJs
+import com.accentury.app.bridge.retestFailurePayload
 import com.accentury.app.permission.MicPermissionController
 import com.accentury.app.permission.MicPermissionState
 import com.accentury.app.recording.RecordingScreen
 import com.accentury.app.recording.RecordingViewModel
 import com.accentury.app.session.OkHttpSessionClient
+import com.accentury.app.session.RetestOutcome
 import com.accentury.app.session.SessionGateController
 import com.accentury.app.session.SessionGateScreen
 import com.accentury.app.testflow.TestFlowController
@@ -79,6 +83,7 @@ import com.accentury.app.web.buildWebUrl
 import com.accentury.app.web.webOrigin
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 // 에뮬레이터에서 호스트 머신을 가리키는 주소. 실기기 테스트는 이 값만 바꾸면 된다.
 private const val DEV_BASE_URL = "http://10.0.2.2:8080"
@@ -222,17 +227,86 @@ private fun TestFlow(modifier: Modifier = Modifier) {
     val bridgeToken = remember { AtomicReference("") }
     SideEffect { bridgeToken.set(session?.sessionToken.orEmpty()) }
 
+    val scope = rememberCoroutineScope()
+
+    /**
+     * 결과 화면의 [다시 테스트하기] (KAN-34 2단계, KAN-107).
+     *
+     * 세션 게이트 화면이 아니라 여기서 요청을 거는 이유: 재응시가 벌어지는 자리에는 그 화면이 없다.
+     * 사용자는 결과 화면(웹)을 보고 있고 그 화면은 요청이 도는 동안에도 그대로 있어야 한다 —
+     * 실패하면 돌아갈 곳이 거기다.
+     *
+     * 이 함수는 브리지 콜백(postToMain)을 타고 메인 스레드에서 불린다. 진행 중 판정과 상태 전이는
+     * 전부 [SessionGateController]가 하고 여기서는 요청을 걸어 결과를 넘겨줄 뿐이다.
+     */
+    fun startRetest() {
+        // null이면 이미 요청이 나가 있거나 버릴 세션이 없다 — 어느 쪽이든 할 일은 없다.
+        val previousToken = sessionGate.beginRetest() ?: return
+        scope.launch {
+            /*
+             * 이전 토큰을 실어 서버가 이전 세션과 결과를 **즉시** 폐기하게 한다 (KAN-107).
+             * 폐기와 발급이 한 요청이라, 실패하면 이전 세션이 그대로 살아 있는 것도 보장된다.
+             */
+            val result = sessionClient.create(
+                appVersion = BuildConfig.VERSION_NAME,
+                previousToken = previousToken,
+            )
+            when (val outcome = sessionGate.onRetestResult(result)) {
+                is RetestOutcome.Replaced -> {
+                    /*
+                     * 새 세션을 든 채 인트로로 돌린다. 진입 URL은 startRequested를 함께 보므로
+                     * (위 buildWebUrl) 이 한 줄이 곧 인트로 리로드다.
+                     *
+                     * micPassed는 되돌리지 않는다 — 권한이 이미 허용이면 다시 묻지 않는 것이
+                     * KAN-34 AC다. 그사이 설정에서 회수됐다면 문항 진입 시점의 게이트가 잡는다
+                     * (onStartVoiceItem의 micGranted 재확인).
+                     *
+                     * 업로드는 세션이 바뀌면서 자연히 갈린다 — uploadViewModel의 키가 sessionId라
+                     * 새 세션은 새 인스턴스를 받고, 끝난 응시의 업로드가 섞이지 않는다.
+                     */
+                    startRequested = false
+                }
+
+                is RetestOutcome.Failed -> {
+                    /*
+                     * 결과 화면은 그대로 살아 있다 — 왜 아무 일도 일어나지 않았는지 그 화면에
+                     * 회신한다. WebView가 없는 구간(로드 실패 화면)이면 회신할 상대가 없는데,
+                     * 그때는 재응시 버튼을 누를 화면도 없으므로 도달하지 않는 조합이다.
+                     *
+                     * evaluateJavascript는 메인 스레드에서만 부를 수 있다. 이 스코프는 컴포지션의
+                     * 것이라 기본 디스패처가 메인이므로(rememberCoroutineScope) 따로 옮기지 않는다.
+                     */
+                    webView?.evaluateJavascript(
+                        retestFailedDeliveryJs(retestFailurePayload(outcome)),
+                        null,
+                    )
+                }
+            }
+        }
+    }
+
     Column(modifier = modifier.fillMaxSize()) {
         Box(modifier = Modifier.weight(1f)) {
             WebViewHost(
                 url = buildWebUrl(
                     base = BuildConfig.WEB_URL,
                     appVersionName = BuildConfig.VERSION_NAME,
-                    // 세션이 곧 로드할 URL이다 (KAN-34). testVersion은 서버가 이 세션에 고정한
-                    // 값이고(§3.1) sessionId는 웹이 진행 스냅샷을 가르는 키다 — 음성이 올라가는
-                    // 세션과 웹이 진행을 저장하는 세션이 갈리면 안 되므로 둘 다 같은 응답에서 온다.
-                    // 회전·프로세스 복원으로 WebView를 새로 만들어도 저장된 세션이 같은 화면을 다시 세운다.
-                    testEntry = session?.let { TestEntry(it.testVersion, it.sessionId) },
+                    /*
+                     * 세션이 곧 로드할 URL이다 (KAN-34). testVersion은 서버가 이 세션에 고정한
+                     * 값이고(§3.1) sessionId는 웹이 진행 스냅샷을 가르는 키다 — 음성이 올라가는
+                     * 세션과 웹이 진행을 저장하는 세션이 갈리면 안 되므로 둘 다 같은 응답에서 온다.
+                     * 회전·프로세스 복원으로 WebView를 새로 만들어도 저장된 세션이 같은 화면을 다시 세운다.
+                     *
+                     * 세션만으로 진입을 정하지 않고 [startRequested]를 함께 보는 이유는 재응시다
+                     * (KAN-34 2단계). 재응시는 새 세션을 **손에 든 채** 인트로로 돌아가는 흐름이라,
+                     * 세션의 존재만으로 진입 URL을 만들면 인트로가 뜰 새도 없이 테스트가 다시 열린다.
+                     * "세션이 있다"는 응시할 준비가 됐다는 뜻이고, "시작을 눌렀다"가 들어가겠다는 뜻이다.
+                     */
+                    testEntry = if (startRequested) {
+                        session?.let { TestEntry(it.testVersion, it.sessionId) }
+                    } else {
+                        null
+                    },
                 ),
                 allowedOrigins = setOfNotNull(webOrigin(BuildConfig.WEB_URL)),
                 // 웹의 어휘 답안 제출(KAN-13)이 쓸 토큰. 업로드·웹 진입 URL과 같은 세션에서 온다.
@@ -243,6 +317,7 @@ private fun TestFlow(modifier: Modifier = Modifier) {
                     // 시작 게이트를 통과했어도 설정에서 회수됐을 수 있어 진입마다 다시 확인한다.
                     flow.onStartVoiceItem(start, micGranted = isMicGranted())
                 },
+                onStartRetest = { startRetest() },
                 onWebViewCreated = { webView = it },
                 // 내가 들고 있는 인스턴스일 때만 놓는다 — 재생성 순서에 따라 새 WebView가 먼저
                 // 등록된 뒤 옛 것이 해제될 수 있고, 그때 방금 받은 참조를 지우면 안 된다.
@@ -391,9 +466,10 @@ private fun TestFlow(modifier: Modifier = Modifier) {
                      * 세션도 함께 버린다 (KAN-34). 종료한 응시를 다음 시작이 이어받으면, 웹은
                      * 처음부터 시작하는데 서버의 세션에는 앞선 문항의 결과가 남아 있는 상태가 된다.
                      *
-                     * 서버 쪽 이전 세션은 여기서 지우지 못한다 — 폐기는 다음 세션 생성 요청에
-                     * 이전 토큰을 실어야 일어난다 (KAN-107). 그 결선은 2단계이고, 그때까지 버려진
-                     * 세션은 30분 뒤 만료된다.
+                     * 서버 쪽 폐기는 여기서 일어나지 않는다 — 폐기는 세션 생성 요청에 이전 토큰을
+                     * 실어야 일어나므로(KAN-107), restart()가 버린 토큰을 적어 두었다가 다음
+                     * [시작하기]가 함께 실어 보낸다 (SessionGateController.pendingPreviousToken).
+                     * 재응시와 같은 폐기 경로이고, 시점만 즉시가 아니라 다음 시작으로 미뤄질 뿐이다.
                      */
                     sessionGate.restart()
                 },

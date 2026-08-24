@@ -3,14 +3,17 @@ import {
   appBridgeVersion,
   getSessionToken,
   installItemResultReceiver,
+  installRetestFailedReceiver,
   isBridgeCompatible,
   REQUIRED_BRIDGE_VERSION,
   requestMicPermission,
+  startRetest,
   startVoiceItem,
   type AccenturyBridge,
   type VoiceItemStart,
 } from './bridge'
 import type { ItemResult } from './itemResult'
+import type { RetestFailure } from './retestFailure'
 
 afterEach(() => {
   delete window.AccenturyBridge
@@ -43,6 +46,13 @@ const itemResult: ItemResult = {
   analysisJobId: 'aj_1',
   durationMs: 4_200,
   qualityStatus: 'NORMAL',
+}
+
+const retestFailure: RetestFailure = {
+  code: 'RATE_LIMITED',
+  message: '접속이 몰리고 있어요 · 잠시 뒤에 다시 시도해 주세요',
+  retryable: true,
+  retryAfterMs: 5_000,
 }
 
 describe('appBridgeVersion — 앱이 URL로 실어 보낸 버전 파싱', () => {
@@ -118,7 +128,7 @@ describe('installItemResultReceiver — 네이티브 → 웹 수신 지점', () 
     const handler = vi.fn()
     installItemResultReceiver(handler)
 
-    window.AccenturyWeb?.onItemResult(JSON.stringify(itemResult))
+    window.AccenturyWeb?.onItemResult?.(JSON.stringify(itemResult))
 
     expect(handler).toHaveBeenCalledTimes(1)
     expect(handler).toHaveBeenCalledWith(itemResult)
@@ -128,8 +138,8 @@ describe('installItemResultReceiver — 네이티브 → 웹 수신 지점', () 
     const handler = vi.fn()
     installItemResultReceiver(handler)
 
-    expect(() => window.AccenturyWeb?.onItemResult('{oops')).not.toThrow()
-    expect(() => window.AccenturyWeb?.onItemResult('{"itemId":"item_1"}')).not.toThrow()
+    expect(() => window.AccenturyWeb?.onItemResult?.('{oops')).not.toThrow()
+    expect(() => window.AccenturyWeb?.onItemResult?.('{"itemId":"item_1"}')).not.toThrow()
     expect(handler).not.toHaveBeenCalled()
   })
 
@@ -148,13 +158,93 @@ describe('installItemResultReceiver — 네이티브 → 웹 수신 지점', () 
     installItemResultReceiver(first)
     const disposeSecond = installItemResultReceiver(second)
 
-    window.AccenturyWeb?.onItemResult(JSON.stringify(itemResult))
+    window.AccenturyWeb?.onItemResult?.(JSON.stringify(itemResult))
     expect(second).toHaveBeenCalledTimes(1)
     expect(first).not.toHaveBeenCalled()
 
     disposeSecond()
-    window.AccenturyWeb?.onItemResult(JSON.stringify(itemResult))
+    window.AccenturyWeb?.onItemResult?.(JSON.stringify(itemResult))
     expect(first).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('startRetest — 재응시 요청 (KAN-34)', () => {
+  it('브리지가 있으면 호출하고 true를 돌려준다', () => {
+    const fn = vi.fn()
+    window.AccenturyBridge = fakeBridge({ startRetest: fn })
+
+    expect(startRetest()).toBe(true)
+    expect(fn).toHaveBeenCalledTimes(1)
+    // 무엇을 버릴지는 네이티브가 안다 — 웹이 토큰을 실어 보내지 않는 것이 계약이다.
+    expect(fn).toHaveBeenCalledWith()
+  })
+
+  it('브리지가 없으면(브라우저 단독 실행) 크래시 없이 false를 돌려준다', () => {
+    expect(startRetest()).toBe(false)
+  })
+
+  it('메서드만 없는 구버전 앱에서도 false다 (메서드 추가는 버전을 올리지 않는다)', () => {
+    window.AccenturyBridge = fakeBridge() // startRetest 없음
+
+    expect(startRetest()).toBe(false)
+  })
+})
+
+describe('installRetestFailedReceiver — 재응시 실패 회신 (KAN-34)', () => {
+  it('설치하면 네이티브 호출이 검증을 거쳐 handler로 온다', () => {
+    const handler = vi.fn()
+    installRetestFailedReceiver(handler)
+
+    window.AccenturyWeb?.onRetestFailed?.(JSON.stringify(retestFailure))
+
+    expect(handler).toHaveBeenCalledTimes(1)
+    expect(handler).toHaveBeenCalledWith(retestFailure)
+  })
+
+  it('불량 payload는 조용히 버린다 — handler도, 예외도 없다', () => {
+    const handler = vi.fn()
+    installRetestFailedReceiver(handler)
+
+    expect(() => window.AccenturyWeb?.onRetestFailed?.('{oops')).not.toThrow()
+    expect(() => window.AccenturyWeb?.onRetestFailed?.('{"code":"RATE_LIMITED"}')).not.toThrow()
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  it('해제하면 설치 전 상태로 돌아간다', () => {
+    const dispose = installRetestFailedReceiver(vi.fn())
+    dispose()
+
+    expect(window.AccenturyWeb).toBeUndefined()
+  })
+
+  /*
+   * 진행 화면(onItemResult)과 결과 화면(onRetestFailed)은 실제로는 동시에 뜨지 않는다.
+   * 계약이 그 우연에 기대면 화면 하나가 늘어나는 순간 조용히 깨지므로 여기서 못박는다.
+   */
+  it('결과 수신자와 나란히 설치돼도 서로를 지우지 않는다', () => {
+    const onResult = vi.fn()
+    const onFailed = vi.fn()
+    installItemResultReceiver(onResult)
+    installRetestFailedReceiver(onFailed)
+
+    window.AccenturyWeb?.onItemResult?.(JSON.stringify(itemResult))
+    window.AccenturyWeb?.onRetestFailed?.(JSON.stringify(retestFailure))
+
+    expect(onResult).toHaveBeenCalledTimes(1)
+    expect(onFailed).toHaveBeenCalledTimes(1)
+  })
+
+  it('한쪽만 해제해도 남은 수신자는 계속 받는다', () => {
+    const onResult = vi.fn()
+    const onFailed = vi.fn()
+    installItemResultReceiver(onResult)
+    const disposeFailed = installRetestFailedReceiver(onFailed)
+
+    disposeFailed()
+
+    expect(window.AccenturyWeb?.onRetestFailed).toBeUndefined()
+    window.AccenturyWeb?.onItemResult?.(JSON.stringify(itemResult))
+    expect(onResult).toHaveBeenCalledTimes(1)
   })
 })
 
