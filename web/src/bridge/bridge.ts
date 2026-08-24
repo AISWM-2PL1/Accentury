@@ -7,6 +7,7 @@
  */
 
 import { parseItemResult, type ItemResult } from './itemResult'
+import { parseRetestFailure, type RetestFailure } from './retestFailure'
 
 export interface AccenturyBridge {
   /** [시작하기] → 네이티브 마이크 권한 게이트 호출 */
@@ -21,6 +22,12 @@ export interface AccenturyBridge {
    * 이 메서드가 없는 계약 버전 1 앱이 실재할 수 있다
    */
   getSessionToken?(): string
+  /**
+   * 결과 화면의 [다시 테스트하기] → 네이티브 재응시 (KAN-34, KAN-107). 인자가 없는 이유는
+   * 무엇을 버릴지를 네이티브가 알기 때문이다 — 폐기할 이전 세션의 토큰은 네이티브가 들고 있다.
+   * [getSessionToken]과 같은 이유로 optional이다
+   */
+  startRetest?(): void
 }
 
 /**
@@ -63,9 +70,18 @@ export interface GuideF0 {
   values: (number | null)[]
 }
 
-/** 네이티브 → 웹 수신 지점. 네이티브가 evaluateJavascript로 직접 부른다 */
+/**
+ * 네이티브 → 웹 수신 지점. 네이티브가 evaluateJavascript로 직접 부른다.
+ *
+ * 모든 슬롯이 optional이다. 수신자는 화면마다 필요한 것만 설치하고(진행 화면은 [onItemResult],
+ * 결과 화면은 [onRetestFailed]) 네이티브도 `if(!f)return false`로 없는 경우를 정상 경로로 다룬다
+ * (WebDelivery.kt) — "지금 이 화면이 듣고 있지 않다"는 오류가 아니라 흔한 상태다.
+ */
 export interface AccenturyWeb {
-  onItemResult(payloadJson: string): void
+  /** 문항 결과 (KAN-100). 인자는 [ItemResult]의 JSON */
+  onItemResult?(payloadJson: string): void
+  /** 재응시 실패 (KAN-34). 인자는 [RetestFailure]의 JSON. 성공은 오지 않는다 — 페이지가 리로드된다 */
+  onRetestFailed?(payloadJson: string): void
 }
 
 declare global {
@@ -141,27 +157,79 @@ export function getSessionToken(): string | null {
 }
 
 /**
- * 네이티브가 문항 결과를 돌려줄 수신 지점을 설치한다. 반환값은 해제 함수다.
+ * 재응시를 네이티브에 요청한다 (KAN-34, KAN-107). 성공 여부는 [requestMicPermission]과 같은
+ * 규칙이다 — 브리지가 없는 브라우저 단독 실행에서 false를 돌려줄 뿐 크래시하지 않는다.
+ *
+ * true는 "네이티브에 요청이 닿았다"는 뜻이지 "새 세션을 받았다"는 뜻이 아니다. 결과는 두 갈래로
+ * 갈린다: 성공하면 네이티브가 WebView를 인트로 URL로 다시 로드하므로 이 페이지가 사라지고,
+ * 실패하면 [installRetestFailedReceiver]로 이유가 온다. 즉 **호출 뒤 아무 일도 일어나지 않은
+ * 것처럼 보이는 구간이 정상적으로 존재한다** — 그동안 버튼을 잠가 두는 것이 화면 몫이다.
+ *
+ * 연타는 네이티브도 막는다(SessionGateController.retestInFlight). 두 번째 요청이 나가면 첫
+ * 요청이 만든 세션이 곧바로 고아가 되기 때문인데, 그 방어는 이 함수가 true를 돌려주는 것과
+ * 무관하게 동작한다 — 여기서 true는 브리지 호출이 성사됐다는 사실만 말한다.
+ */
+export function startRetest(): boolean {
+  const bridge = window.AccenturyBridge
+  if (typeof bridge?.startRetest !== 'function') return false
+  bridge.startRetest()
+  return true
+}
+
+/**
+ * 네이티브가 문항 결과를 돌려줄 수신 지점을 설치한다 (KAN-100). 반환값은 해제 함수다.
  *
  * 설치 전에 네이티브가 먼저 부를 수 있다(화면 전환 타이밍상 결과가 빨리 나오는 경우).
- * 그래도 무해하다 — 네이티브 쪽은 `window.AccenturyWeb?.onItemResult?.(...)`처럼
- * optional chaining으로 호출하므로 수신자가 없으면 아무 일도 일어나지 않는다.
+ * 그래도 무해하다 — 네이티브는 수신자가 없으면 호출 없이 false를 돌려준다 (WebDelivery.kt).
  *
  * 들어온 문자열은 신뢰 경계 밖이라 [parseItemResult]를 통과한 것만 handler로 넘긴다.
  * 불량 payload는 조용히 버린다 — 여기서 throw하면 예외가 네이티브의 evaluateJavascript
  * 콜백까지 거슬러 올라가는데, 그 자리엔 사용자에게 보여줄 화면이 없다.
  */
 export function installItemResultReceiver(handler: (result: ItemResult) => void): () => void {
-  const previous = window.AccenturyWeb
-  window.AccenturyWeb = {
-    onItemResult(payloadJson: string) {
-      const result = parseItemResult(payloadJson)
-      if (result !== null) handler(result)
-    },
-  }
-  // 해제는 설치 전 값으로 되돌린다. 단순히 지우면, 이미 다른 수신자가 있는데 덧씌운 뒤
-  // 해제한 경우 원래 수신자까지 같이 사라진다.
+  return installReceiver('onItemResult', (payloadJson) => {
+    const result = parseItemResult(payloadJson)
+    if (result !== null) handler(result)
+  })
+}
+
+/**
+ * 네이티브가 재응시 실패를 회신할 수신 지점을 설치한다 (KAN-34 2단계). 반환값은 해제 함수다.
+ *
+ * 검증·불량 payload 처리 규칙은 [installItemResultReceiver]와 같다. 성공은 오지 않는다 —
+ * 재응시가 성공하면 네이티브가 인트로 URL로 다시 로드해 이 페이지가 통째로 사라진다.
+ */
+export function installRetestFailedReceiver(
+  handler: (failure: RetestFailure) => void,
+): () => void {
+  return installReceiver('onRetestFailed', (payloadJson) => {
+    const failure = parseRetestFailure(payloadJson)
+    if (failure !== null) handler(failure)
+  })
+}
+
+/**
+ * 수신 지점 하나를 `window.AccenturyWeb`에 끼워 넣고, 해제 함수를 돌려준다.
+ *
+ * **슬롯 단위로 갈아끼우는 것이 요점이다.** 객체를 통째로 교체하면 나중에 설치한 수신자가 먼저
+ * 설치된 다른 수신자를 지운다 — 진행 화면(onItemResult)과 결과 화면(onRetestFailed)은 실제로는
+ * 동시에 뜨지 않지만, 계약이 그 우연에 기대면 화면 하나가 늘어나는 순간 조용히 깨진다.
+ *
+ * 해제는 설치 전 값으로 되돌린다. 단순히 지우면, 같은 슬롯에 이미 다른 수신자가 있는데 덧씌운 뒤
+ * 해제한 경우 원래 수신자까지 같이 사라진다. 남은 슬롯이 하나도 없으면 객체째 지워 설치 전
+ * 상태(`undefined`)로 정확히 되돌아간다.
+ */
+function installReceiver(
+  slot: keyof AccenturyWeb,
+  receive: (payloadJson: string) => void,
+): () => void {
+  const previous = window.AccenturyWeb?.[slot]
+  window.AccenturyWeb = { ...window.AccenturyWeb, [slot]: receive }
+
   return () => {
-    window.AccenturyWeb = previous
+    const remaining: AccenturyWeb = { ...window.AccenturyWeb }
+    if (previous === undefined) delete remaining[slot]
+    else remaining[slot] = previous
+    window.AccenturyWeb = Object.keys(remaining).length === 0 ? undefined : remaining
   }
 }

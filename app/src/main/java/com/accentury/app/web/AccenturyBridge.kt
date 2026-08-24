@@ -7,8 +7,8 @@ import com.accentury.app.bridge.parseVoiceItemStart
 /**
  * 웹 → 네이티브 브리지 (webview-layer.md §8). `window.AccenturyBridge`로 주입된다.
  *
- * 최소 표면 원칙 — 화면 전환(KAN-100)과 답안 제출 인증(KAN-13)까지 필요한 네 메서드만 둔다.
- * 늘리기 전에 웹에서 해결 가능한지 먼저 볼 것.
+ * 최소 표면 원칙 — 화면 전환(KAN-100)·답안 제출 인증(KAN-13)·재응시(KAN-34)까지 필요한 다섯
+ * 메서드만 둔다. 늘리기 전에 웹에서 해결 가능한지 먼저 볼 것.
  *
  * 메서드 추가는 하위호환이라 [BRIDGE_CONTRACT_VERSION]을 올리지 않는다 (§5).
  *
@@ -21,7 +21,9 @@ import com.accentury.app.bridge.parseVoiceItemStart
  * @param isOriginAllowedNow 임의 스레드에서 안전하게 읽는 origin 허용 여부 — 값을 **돌려주는**
  *   메서드는 postToMain으로 미룰 수 없어서(동기 반환), 메인 스레드가 페이지 전환마다 갱신해 둔
  *   플래그를 여기로 받는다 (WebViewHost의 AtomicBoolean)
- * @param sessionToken 세션 토큰 공급자 (KAN-13). KAN-9 네이티브 결선 전까지는 dev 상수가 온다
+ * @param sessionToken 세션 토큰 공급자 (KAN-13)
+ * @param onStartRetest 결과 화면의 [다시 테스트하기] (KAN-34). 중복 호출 무시는 이 콜백 너머의
+ *   상태 머신이 맡는다 — 진행 중이라는 사실의 주인이 둘이면 어긋난다 (SessionGateController.retestInFlight)
  */
 class AccenturyBridge(
     private val postToMain: (() -> Unit) -> Unit,
@@ -30,6 +32,7 @@ class AccenturyBridge(
     private val sessionToken: () -> String,
     private val onRequestMicPermission: () -> Unit,
     private val onStartVoiceItem: (VoiceItemStart) -> Unit,
+    private val onStartRetest: () -> Unit,
 ) {
     /** §5 스큐 협상 — 웹이 앱의 계약 버전을 런타임에 재확인할 때 쓴다. 상태 변경이 없어 스레드 무관. */
     @JavascriptInterface
@@ -53,6 +56,22 @@ class AccenturyBridge(
     fun requestMicPermission() {
         postToMain {
             if (isCurrentUrlAllowed()) onRequestMicPermission()
+        }
+    }
+
+    /**
+     * 결과 화면의 [다시 테스트하기] → 네이티브 재응시 (KAN-34, KAN-107).
+     *
+     * 인자가 없는 이유: 무엇을 버릴지는 웹이 아니라 네이티브가 안다. 폐기할 이전 세션의 토큰은
+     * 네이티브가 들고 있는 값이고, 웹이 실어 보내게 하면 토큰이 JS 경계를 한 번 더 건넌다 —
+     * 쿼리에 토큰을 싣지 않는 것과 같은 이유다 (getSessionToken KDoc).
+     *
+     * 메서드 추가는 하위호환이라 [BRIDGE_CONTRACT_VERSION] 1을 유지한다 (§5).
+     */
+    @JavascriptInterface
+    fun startRetest() {
+        postToMain {
+            if (isCurrentUrlAllowed()) onStartRetest()
         }
     }
 

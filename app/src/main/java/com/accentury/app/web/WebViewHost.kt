@@ -52,6 +52,7 @@ sealed interface WebLoadState {
  * [url]이 바뀌면 같은 WebView에서 이어 로드한다 (인트로 → 테스트 진입, KAN-100).
  *
  * @param sessionToken 브리지 getSessionToken이 웹에 건넬 세션 토큰 공급자 (KAN-13)
+ * @param onStartRetest 결과 화면의 [다시 테스트하기] (KAN-34). 메인 스레드로 온다
  * @param onWebViewCreated 결과를 웹으로 주입하려면(evaluateJavascript) 상위가 인스턴스를 알아야 한다
  * @param onWebViewReleased 해제된 인스턴스. 상위가 들고 있는 참조를 놓을 자리다
  */
@@ -63,6 +64,7 @@ fun WebViewHost(
     sessionToken: () -> String,
     onRequestMicPermission: () -> Unit,
     onStartVoiceItem: (VoiceItemStart) -> Unit,
+    onStartRetest: () -> Unit,
     modifier: Modifier = Modifier,
     timeoutMs: Long = LOAD_TIMEOUT_MS,
     onWebViewCreated: (WebView) -> Unit = {},
@@ -160,6 +162,7 @@ fun WebViewHost(
                                 sessionToken = sessionToken,
                                 onRequestMicPermission = onRequestMicPermission,
                                 onStartVoiceItem = onStartVoiceItem,
+                                onStartRetest = onStartRetest,
                             ),
                             "AccenturyBridge",
                         )

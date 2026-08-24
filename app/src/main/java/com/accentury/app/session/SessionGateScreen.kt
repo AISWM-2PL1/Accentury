@@ -45,8 +45,17 @@ fun SessionGateScreen(
         // 통째로 다시 돌리는 경로 하나뿐이다.
         if (gate.state !is SessionGateState.Creating) return@LaunchedEffect
 
-        // 재응시(KAN-107)의 이전 토큰은 아직 넘기지 않는다 — 2단계에서 붙는다.
-        val result = client.create(appVersion = appVersion)
+        /*
+         * 버려 둔 세션이 있으면 그 토큰을 함께 보내 서버에서도 지운다 (KAN-107).
+         *
+         * 테스트를 종료하고 인트로로 돌아온 경우가 이 자리다 — 앱은 이미 세션을 버렸지만 서버는
+         * 다음 생성 요청이 이전 토큰을 실어야 지운다. 없으면(최초 응시, 또는 폐기가 이미 끝난 뒤)
+         * null이고 그때는 평범한 세션 생성이다.
+         *
+         * 결과 화면의 재응시는 이 경로를 타지 않는다 — 게이트 화면이 뜨지 않는 자리에서 벌어지므로
+         * MainActivity가 직접 건다 (SessionGateController.beginRetest).
+         */
+        val result = client.create(appVersion = appVersion, previousToken = gate.pendingPreviousToken)
 
         // 취소된 뒤 도착한 앞 시도의 결과는 버린다. 재시도가 이 이펙트를 다시 걸었는데 앞 시도의
         // 실패가 뒤늦게 반영되면, 방금 시작한 '준비 중'이 실패 화면으로 되돌아간다.

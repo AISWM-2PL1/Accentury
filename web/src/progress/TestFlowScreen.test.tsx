@@ -137,7 +137,7 @@ const findDevSubmit = () => screen.findByRole('button', { name: '제출 (개발�
 /** 네이티브가 녹음을 마치고 결과를 돌려주는 상황 */
 function deliverResult(itemId: string) {
   act(() => {
-    window.AccenturyWeb!.onItemResult(
+    window.AccenturyWeb!.onItemResult!(
       JSON.stringify({
         itemId,
         attemptId: `attempt-${itemId}`,

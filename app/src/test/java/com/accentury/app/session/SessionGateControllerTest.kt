@@ -2,6 +2,7 @@ package com.accentury.app.session
 
 import androidx.compose.runtime.saveable.SaverScope
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -148,6 +149,180 @@ class SessionGateControllerTest {
         assertEquals("st_xyz", restored.sessionToken)
         assertEquals("gn-2026.08.1", restored.testVersion)
         assertTrue(restored.expiresAt.isNotBlank())
+    }
+
+    // --- 재응시 (KAN-34 2단계, KAN-107) ---
+
+    /** 세션을 확보한 상태 = 결과 화면에서 [다시 테스트하기]를 누를 수 있는 상태. */
+    private fun readyController(): SessionGateController {
+        val controller = SessionGateController()
+        controller.onResult(SessionResult.Created(session))
+        return controller
+    }
+
+    private val newSession = session.copy(sessionId = "s_def", sessionToken = "st_uvw")
+
+    @Test
+    fun `재응시는 지금 세션의 토큰을 폐기 대상으로 넘긴다 - 폐기와 발급이 한 요청이다`() {
+        assertEquals("st_xyz", readyController().beginRetest())
+    }
+
+    @Test
+    fun `재응시 중 두 번째 호출은 무시된다 - 더블탭이 만든 세션은 곧바로 고아가 된다`() {
+        val controller = readyController()
+        assertEquals("st_xyz", controller.beginRetest())
+
+        assertNull(controller.beginRetest())
+        assertTrue(controller.retestInFlight)
+    }
+
+    @Test
+    fun `버릴 세션이 없으면 재응시를 걸지 않는다`() {
+        val controller = SessionGateController()
+
+        assertNull(controller.beginRetest())
+        assertFalse(controller.retestInFlight)
+    }
+
+    @Test
+    fun `재응시에 성공하면 새 세션으로 갈린다`() {
+        val controller = readyController()
+        controller.beginRetest()
+
+        val outcome = controller.onRetestResult(SessionResult.Created(newSession))
+
+        assertEquals(RetestOutcome.Replaced(newSession), outcome)
+        assertEquals(newSession, controller.session)
+        assertFalse(controller.retestInFlight)
+    }
+
+    @Test
+    fun `재응시에 실패해도 이전 세션은 그대로다 - 서버도 안 지웠고 결과 화면이 아직 조회한다`() {
+        val controller = readyController()
+        controller.beginRetest()
+
+        val outcome = controller.onRetestResult(SessionResult.TransportError("boom"))
+
+        assertEquals(RetestOutcome.Failed(SessionFailureReason.Network, null, null), outcome)
+        assertEquals(session, controller.session)
+        assertEquals(SessionGateState.Ready(session), controller.state)
+    }
+
+    @Test
+    fun `재응시 실패는 서버가 준 코드와 대기 시간을 그대로 싣는다`() {
+        val controller = readyController()
+        controller.beginRetest()
+
+        val outcome = controller.onRetestResult(
+            rejected(code = "RATE_LIMITED", retryable = true, retryAfterMs = 5_000L),
+        )
+
+        assertEquals(RetestOutcome.Failed(SessionFailureReason.RateLimited, "RATE_LIMITED", 5_000L), outcome)
+    }
+
+    @Test
+    fun `재응시 실패는 최초 생성과 같은 판정 규칙을 쓴다`() {
+        val controller = readyController()
+        controller.beginRetest()
+
+        val outcome = controller.onRetestResult(
+            rejected(code = "VALIDATION_FAILED", retryable = false, retryAfterMs = null),
+        )
+
+        assertEquals(RetestOutcome.Failed(SessionFailureReason.Unsupported, "VALIDATION_FAILED", null), outcome)
+    }
+
+    @Test
+    fun `실패한 재응시는 다시 걸 수 있다`() {
+        val controller = readyController()
+        controller.beginRetest()
+        controller.onRetestResult(SessionResult.TransportError("boom"))
+
+        assertEquals("st_xyz", controller.beginRetest())
+    }
+
+    @Test
+    fun `성공한 재응시의 다음 재응시는 새 세션의 토큰을 넘긴다`() {
+        val controller = readyController()
+        controller.beginRetest()
+        controller.onRetestResult(SessionResult.Created(newSession))
+
+        assertEquals("st_uvw", controller.beginRetest())
+    }
+
+    // --- 폐기 대기 토큰 (KAN-34 2단계) ---
+
+    @Test
+    fun `최초 응시에는 폐기할 세션이 없다`() {
+        assertNull(SessionGateController().pendingPreviousToken)
+    }
+
+    @Test
+    fun `종료 후 재시작은 버린 세션의 토큰을 다음 생성에 넘긴다 - 재응시와 같은 폐기 경로다`() {
+        val controller = readyController()
+
+        controller.restart()
+
+        assertEquals("st_xyz", controller.pendingPreviousToken)
+    }
+
+    @Test
+    fun `새 세션을 받으면 폐기 대기가 풀린다 - 발급이 곧 폐기 완료 통지다`() {
+        val controller = readyController()
+        controller.restart()
+
+        controller.onResult(SessionResult.Created(newSession))
+
+        assertNull(controller.pendingPreviousToken)
+    }
+
+    @Test
+    fun `생성에 실패하면 폐기 대기가 남는다 - 다음 시도가 다시 실어야 한다`() {
+        val controller = readyController()
+        controller.restart()
+
+        controller.onResult(SessionResult.TransportError("boom"))
+
+        assertEquals("st_xyz", controller.pendingPreviousToken)
+    }
+
+    @Test
+    fun `버릴 세션이 없는 재시도는 앞서 적어 둔 폐기 대기를 지우지 않는다`() {
+        val controller = readyController()
+        controller.restart() // 종료: 세션을 버리며 토큰을 적어 둔다
+        controller.onResult(SessionResult.TransportError("boom"))
+
+        controller.restart() // 실패 화면의 [다시 시도]: 버릴 세션이 없다
+
+        assertEquals("st_xyz", controller.pendingPreviousToken)
+    }
+
+    @Test
+    fun `재응시 성공도 폐기 대기를 남기지 않는다 - 그 요청이 이미 폐기를 실어 보냈다`() {
+        val controller = readyController()
+        controller.beginRetest()
+        controller.onRetestResult(SessionResult.Created(newSession))
+
+        assertNull(controller.pendingPreviousToken)
+    }
+
+    @Test
+    fun `폐기 대기 토큰은 회전을 넘기지 않는다 - 이미 버려진 익명 세션의 만료를 앞당길 뿐이다`() {
+        val controller = readyController()
+        controller.restart()
+
+        assertNull(rotate(controller).pendingPreviousToken)
+    }
+
+    @Test
+    fun `재응시 진행 중에 회전하면 진행 표시가 풀려 다시 누를 수 있다`() {
+        val controller = readyController()
+        controller.beginRetest()
+
+        val restored = rotate(controller)
+
+        assertFalse(restored.retestInFlight)
+        assertEquals(session, restored.session)
     }
 
     private fun rejected(code: String?, retryable: Boolean, retryAfterMs: Long?) = SessionResult.Rejected(

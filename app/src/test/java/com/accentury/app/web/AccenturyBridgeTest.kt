@@ -42,6 +42,7 @@ class AccenturyBridgeTest {
             sessionToken = { "" },
             onRequestMicPermission = {},
             onStartVoiceItem = { received = it },
+            onStartRetest = {},
         )
         bridge.startVoiceItem(payloadJson)
         queue.drain()
@@ -59,6 +60,7 @@ class AccenturyBridgeTest {
             sessionToken = { "" },
             onRequestMicPermission = { fired++ },
             onStartVoiceItem = {},
+            onStartRetest = {},
         )
         bridge.requestMicPermission()
         queue.drain()
@@ -76,6 +78,7 @@ class AccenturyBridgeTest {
             sessionToken = { "" },
             onRequestMicPermission = { fired++ },
             onStartVoiceItem = {},
+            onStartRetest = {},
         )
         bridge.requestMicPermission()
         queue.drain()
@@ -96,11 +99,88 @@ class AccenturyBridgeTest {
             sessionToken = { "" },
             onRequestMicPermission = { fired++ },
             onStartVoiceItem = {},
+            onStartRetest = {},
         )
         bridge.requestMicPermission() // 호출 시점엔 허용 상태
         allowedNow = false // 실행 전에 allowlist 밖으로 이동
         queue.drain()
         assertEquals(0, fired)
+    }
+
+    /** startRetest를 한 번 호출하고 콜백이 몇 번 불렸는지 돌려준다. */
+    private fun startRetest(allowed: Boolean): Int {
+        val queue = FakeMainQueue()
+        var fired = 0
+        val bridge = AccenturyBridge(
+            postToMain = queue::post,
+            isCurrentUrlAllowed = { allowed },
+            isOriginAllowedNow = { false },
+            sessionToken = { "" },
+            onRequestMicPermission = {},
+            onStartVoiceItem = {},
+            onStartRetest = { fired++ },
+        )
+        bridge.startRetest()
+        queue.drain()
+        return fired
+    }
+
+    @Test
+    fun `허용된 origin이면 재응시 콜백이 실행된다`() {
+        assertEquals(1, startRetest(allowed = true))
+    }
+
+    @Test
+    fun `allowlist 밖 origin에서는 재응시가 무시된다`() {
+        // 재응시는 서버 쪽 세션·결과를 즉시 폐기시키는 호출이라(KAN-107) origin 검증이 곧 보안 경계다.
+        assertEquals(0, startRetest(allowed = false))
+    }
+
+    @Test
+    fun `재응시도 실행 시점 origin으로 판정한다`() {
+        // 호출 직후 allowlist 밖으로 리다이렉트되는 경합. 판정은 메인 스레드 실행 시점 값이어야 한다 (§8).
+        val queue = FakeMainQueue()
+        var allowedNow = true
+        var fired = 0
+        val bridge = AccenturyBridge(
+            postToMain = queue::post,
+            isCurrentUrlAllowed = { allowedNow },
+            isOriginAllowedNow = { false },
+            sessionToken = { "" },
+            onRequestMicPermission = {},
+            onStartVoiceItem = {},
+            onStartRetest = { fired++ },
+        )
+        bridge.startRetest() // 호출 시점엔 허용 상태
+        allowedNow = false // 실행 전에 allowlist 밖으로 이동
+        queue.drain()
+
+        assertEquals(0, fired)
+    }
+
+    @Test
+    fun `연타는 브리지가 아니라 콜백 너머에서 걸러진다 - 브리지는 호출을 그대로 넘긴다`() {
+        /*
+         * 진행 중이라는 사실의 주인은 상태 머신 하나여야 한다 (SessionGateController.retestInFlight).
+         * 브리지에도 플래그를 두면 두 값이 어긋나는 상태가 생기고, 어긋나는 순간 막으려던 이중
+         * 요청이 새어 나간다. 그래서 브리지는 세지 않고, 여기서는 그 계약을 못박는다.
+         */
+        val queue = FakeMainQueue()
+        var fired = 0
+        val bridge = AccenturyBridge(
+            postToMain = queue::post,
+            isCurrentUrlAllowed = { true },
+            isOriginAllowedNow = { false },
+            sessionToken = { "" },
+            onRequestMicPermission = {},
+            onStartVoiceItem = {},
+            onStartRetest = { fired++ },
+        )
+        bridge.startRetest()
+        bridge.startRetest()
+        queue.drain()
+
+        assertEquals(2, fired)
     }
 
     @Test
@@ -112,6 +192,7 @@ class AccenturyBridgeTest {
             sessionToken = { "" },
             onRequestMicPermission = {},
             onStartVoiceItem = {},
+            onStartRetest = {},
         )
         assertEquals(BRIDGE_CONTRACT_VERSION, bridge.getContractVersion())
     }
@@ -124,6 +205,7 @@ class AccenturyBridgeTest {
         sessionToken = { token },
         onRequestMicPermission = {},
         onStartVoiceItem = {},
+        onStartRetest = {},
     )
 
     @Test
@@ -248,6 +330,7 @@ class AccenturyBridgeTest {
             sessionToken = { "" },
             onRequestMicPermission = {},
             onStartVoiceItem = { received = it },
+            onStartRetest = {},
         )
         bridge.startVoiceItem(payload()) // 호출 시점엔 허용 상태
         allowedNow = false // 실행 전에 allowlist 밖으로 이동
