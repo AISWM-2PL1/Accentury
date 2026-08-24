@@ -25,5 +25,6 @@ interface CounterStore {
      * @throws RuntimeException 같은 키를 다른 요청이 먼저 만든 경우 (유니크 제약 위반) -
      *                          호출부가 UPDATE로 되돌아가는 신호다.
      */
-    void insert(LocalDate statDate, String testVersion, String scoreVersion, CounterDelta delta);
+    void insert(LocalDate statDate, String testVersion, String scoreVersion, Traffic traffic,
+                CounterDelta delta);
 }

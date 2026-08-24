@@ -279,7 +279,7 @@ class AnalyticsApiTest extends IntegrationTest {
                         long started, long completed,
                         long outsider, long traveler, long wannabe, long honorary, long nativeTier,
                         long intonation, long vocabulary, long overall, long scored) {
-        store.insert(date, "gn-2026.08.1", scoreVersion,
+        store.insert(date, "gn-2026.08.1", scoreVersion, Traffic.REAL,
                 new CounterDelta(started, completed, outsider, traveler, wannabe, honorary, nativeTier,
                         intonation, vocabulary, overall, scored));
     }

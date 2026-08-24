@@ -2,6 +2,8 @@ package app.accentury.backend.session;
 
 import app.accentury.backend.analysis.AnalysisJobRepository;
 import app.accentury.backend.analytics.AnalyticsCounters;
+import app.accentury.backend.analytics.SyntheticTraffic;
+import app.accentury.backend.analytics.Traffic;
 import app.accentury.backend.common.AccenturyProperties;
 import app.accentury.backend.common.ApiException;
 import app.accentury.backend.common.ErrorCode;
@@ -43,6 +45,7 @@ public class SessionService {
     private final AccenturyProperties properties;
     private final RateLimits rateLimits;
     private final AnalyticsCounters counters;
+    private final SyntheticTraffic syntheticTraffic;
     private final TransactionTemplate transactionTemplate;
 
     public SessionService(TestSessionRepository repository,
@@ -52,6 +55,7 @@ public class SessionService {
                           TestDefinitionRegistry testDefinitions,
                           AccenturyProperties properties,
                           RateLimits rateLimits, AnalyticsCounters counters,
+                          SyntheticTraffic syntheticTraffic,
                           TransactionTemplate transactionTemplate) {
         this.repository = repository;
         this.vocabAnswerRepository = vocabAnswerRepository;
@@ -61,6 +65,7 @@ public class SessionService {
         this.properties = properties;
         this.rateLimits = rateLimits;
         this.counters = counters;
+        this.syntheticTraffic = syntheticTraffic;
         // 폐기+생성은 자신이 커밋 지점이어야 한다 (REQUIRES_NEW) - 바깥 트랜잭션에 합류하면
         // "카운터는 커밋 뒤" 불변식이 깨져, 바깥이 롤백해도 존재한 적 없는 세션이 집계에
         // 남는다 (2026-08-17 리뷰). 공용 템플릿 빈의 전파는 바꾸지 않도록 사본을 쓴다.
@@ -89,15 +94,26 @@ public class SessionService {
      * 고정할 두 버전은 활성 정의 스냅샷 <b>한 번</b>에서 함께 꺼낸다 (KAN-26) - 나눠 읽으면
      * 그사이 활성 전환이 끼어들어 한 세션이 A의 문항과 B의 채점식에 걸릴 수 있다. 활성 전환은
      * 이 지점 뒤로는 이 세션에 영향을 주지 않는다 (§5.4, KAN-26 AC).
+     * <p>
+     * 검증용 스모크(KAN-138)가 {@code X-Admin-Token}으로 표시한 세션은 합성 트래픽이 되어
+     * 집계가 실사용자와 갈린다. 판정은 <b>여기 한 번</b>이고 세션 행에 남아, 완주 카운터도
+     * 같은 통으로 간다 ({@link Traffic}). 나머지 경로는 실사용자와 완전히 같다 - 요청 제한도
+     * 그대로 받는다. 스모크 전용 분기가 늘수록 "스모크는 통과하는데 사용자는 깨지는" 구간이
+     * 생겨, 스모크가 검증하는 경로와 실제 경로가 갈라지기 때문이다.
      *
      * @param clientIp            요청 제한의 기준 IP - {@link app.accentury.backend.common.ClientIps}가
      *                            신뢰 프록시 규칙으로 정한 값
      * @param authorizationHeader 재응시일 때만 실려 오는 이전 세션의 {@code Authorization} 헤더 -
      *                            이 엔드포인트는 인증 불필요이므로(§2.1) 없으면 최초 응시다.
+     * @param adminToken          합성 트래픽 표시용 {@code X-Admin-Token} 헤더 (KAN-138) -
+     *                            없으면 실사용자다.
      */
     public SessionResponse create(@Nullable CreateSessionRequest request, String clientIp,
-                                  @Nullable String authorizationHeader) {
+                                  @Nullable String authorizationHeader,
+                                  @Nullable String adminToken) {
         rateLimits.check(RateLimits.Scope.SESSION_CREATE, clientIp);
+        // 저장 전에 판정한다 - 표시가 틀렸으면 세션도 만들지 않는다 (KAN-138).
+        Traffic traffic = syntheticTraffic.resolve(adminToken);
 
         String previousTokenHash = retakeTokenHash(authorizationHeader);
         TestDefinition active = testDefinitions.active().definition();
@@ -131,6 +147,7 @@ public class SessionService {
                     client != null && client.platform() != null ? client.platform().name() : null,
                     client != null ? client.appVersion() : null,
                     request != null ? request.campaignToken() : null,
+                    traffic,
                     now,
                     expiresAt));
             return summary;
@@ -144,12 +161,12 @@ public class SessionService {
         }
 
         // 토큰은 로그에 남기지 않는다 (§2.6, NFR-SC-07).
-        log.info("세션 생성 sessionId={} platform={} testVersion={}",
-                sessionId, client != null ? client.platform() : null, testVersion);
+        log.info("세션 생성 sessionId={} platform={} testVersion={} traffic={}",
+                sessionId, client != null ? client.platform() : null, testVersion, traffic);
 
         // 응시 시도 1건 (KAN-106) - 폐기+생성 트랜잭션이 커밋된 뒤다.
         // 실패는 카운터 쪽에서 삼킨다 - 통계가 세션 생성을 막으면 안 된다 (FR-AN-10).
-        counters.recordSessionStarted(now, testVersion, scoreVersion);
+        counters.recordSessionStarted(now, testVersion, scoreVersion, traffic);
 
         return new SessionResponse(sessionId, token, testVersion, scoreVersion, expiresAt);
     }

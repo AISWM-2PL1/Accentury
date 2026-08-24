@@ -46,13 +46,19 @@ public class AnalyticsQueryService {
      *       하나를 보려던 호출자가 보낸 적도 없는 {@code from}이 뒤라는 400을 받는다.</li>
      * </ul>
      *
-     * @param from null이면 {@code to}가 정한다 (둘 다 null이면 오늘, 설정 타임존 기준).
-     * @param to   null이면 오늘
+     * <p>
+     * 트래픽 종류는 기본이 {@link Traffic#REAL}이다 (KAN-138) - 리포트를 읽는 사람이 원하는
+     * 것은 실사용자 지표이고, 검증용 스모크(KAN-138)를 보려면 명시적으로 요구해야 한다.
+     *
+     * @param from    null이면 {@code to}가 정한다 (둘 다 null이면 오늘, 설정 타임존 기준).
+     * @param to      null이면 오늘
+     * @param traffic null이면 두 종류를 모두 담는다 - 컨트롤러의 {@code traffic=ALL}이다.
      * @throws ApiException 400 - 역전된 기간이나 상한을 넘는 기간. 실수로 전 기간을 훑는
      *                      질의가 운영 DB를 붙잡지 않게 막는다.
      */
     @Transactional(readOnly = true)
-    public AnalyticsResponse query(@Nullable LocalDate from, @Nullable LocalDate to) {
+    public AnalyticsResponse query(@Nullable LocalDate from, @Nullable LocalDate to,
+                                  @Nullable Traffic traffic) {
         LocalDate today = LocalDate.now(zone);
         LocalDate end = to != null ? to : today;
         LocalDate start = from != null ? from : end;
@@ -66,10 +72,14 @@ public class AnalyticsQueryService {
                     "조회 기간이 너무 깁니다: " + days + "일 (최대 " + maxQueryDays + "일)");
         }
 
-        List<DailyCounter> found =
-                repository.findByStatDateBetweenOrderByStatDateAscTestVersionAscScoreVersionAsc(start, end);
+        List<DailyCounter> found = traffic != null
+                ? repository.findByStatDateBetweenAndTrafficOrderByStatDateAscTestVersionAscScoreVersionAsc(
+                        start, end, traffic)
+                : repository.findByStatDateBetweenOrderByStatDateAscTestVersionAscScoreVersionAscTrafficAsc(
+                        start, end);
         List<AnalyticsResponse.Row> rows = found.stream()
-                .map(c -> new AnalyticsResponse.Row(c.statDate(), c.testVersion(), c.scoreVersion(), counts(c)))
+                .map(c -> new AnalyticsResponse.Row(c.statDate(), c.testVersion(), c.scoreVersion(),
+                        c.traffic(), counts(c)))
                 .toList();
         return new AnalyticsResponse(start, end, zone.getId(), rows, total(rows));
     }
@@ -106,6 +116,7 @@ public class AnalyticsQueryService {
      * 엔티티를 다시 순회하면 {@link DailyCounter} 필드 목록이 이 클래스에 두 번 복제되어,
      * 새 지표를 {@link #counts}에만 추가하면 합계가 그 지표를 조용히 누락한다.
      * 버전이 섞일 수 있으므로 참고값이다 - 버전별 비교는 {@code rows}로 한다.
+     * {@code traffic=ALL}로 받았다면 실사용자와 합성이 함께 더해진 값이라는 점도 같다.
      */
     private static AnalyticsResponse.Counts total(List<AnalyticsResponse.Row> rows) {
         Map<String, Long> tiers = new LinkedHashMap<>();

@@ -1,5 +1,6 @@
 package app.accentury.backend;
 
+import app.accentury.backend.analytics.Traffic;
 import app.accentury.backend.session.TestSession;
 import app.accentury.backend.session.TestSessionRepository;
 
@@ -35,7 +36,7 @@ public final class TestSessions {
     public static TestSession bare(String id) {
         Instant now = Instant.now();
         return new TestSession(id, sha256Hex(id), "gn-2026.08.1", "sv-0.3",
-                null, null, null, now, now.plus(Duration.ofMinutes(30)));
+                null, null, null, Traffic.REAL, now, now.plus(Duration.ofMinutes(30)));
     }
 
     private static String sha256Hex(String value) {

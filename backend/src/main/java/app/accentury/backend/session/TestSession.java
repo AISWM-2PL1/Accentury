@@ -1,7 +1,10 @@
 package app.accentury.backend.session;
 
+import app.accentury.backend.analytics.Traffic;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.PostPersist;
@@ -61,6 +64,16 @@ public class TestSession implements Persistable<String> {
     @Column(name = "campaign_token", length = 64)
     private @Nullable String campaignToken;
 
+    /**
+     * 이 세션이 실사용자인지 검증용 합성 트래픽인지 (KAN-138).
+     * <p>
+     * 생성 시점에 한 번 정해지고 이후 바뀌지 않는다. 완주 카운터(KAN-106)가 이 값을 따라가므로
+     * ({@code CompletionService}), 응시와 완주가 언제나 같은 통에 들어간다.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 10)
+    private Traffic traffic;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
@@ -85,7 +98,7 @@ public class TestSession implements Persistable<String> {
 
     public TestSession(String id, String tokenHash, String testVersion, String scoreVersion,
                        @Nullable String platform, @Nullable String appVersion, @Nullable String campaignToken,
-                       Instant createdAt, Instant expiresAt) {
+                       Traffic traffic, Instant createdAt, Instant expiresAt) {
         this.isNew = true;
         this.id = id;
         this.tokenHash = tokenHash;
@@ -94,6 +107,7 @@ public class TestSession implements Persistable<String> {
         this.platform = platform;
         this.appVersion = appVersion;
         this.campaignToken = campaignToken;
+        this.traffic = traffic;
         this.createdAt = createdAt;
         this.expiresAt = expiresAt;
     }
@@ -174,6 +188,10 @@ public class TestSession implements Persistable<String> {
 
     public @Nullable String campaignToken() {
         return campaignToken;
+    }
+
+    public Traffic traffic() {
+        return traffic;
     }
 
     public Instant createdAt() {

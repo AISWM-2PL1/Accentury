@@ -1,5 +1,6 @@
 package app.accentury.backend.session;
 
+import app.accentury.backend.analytics.Traffic;
 import app.accentury.backend.IntegrationTest;
 import app.accentury.backend.SessionTestFlow;
 import app.accentury.backend.SessionTestFlow.SessionHandle;
@@ -152,7 +153,7 @@ class SessionRetakeApiTest extends IntegrationTest {
 
         CreateSessionRequest oversized = new CreateSessionRequest("a".repeat(80), null);
         assertThrows(RuntimeException.class, () -> sessionService.create(
-                oversized, "127.0.0.1", "Bearer " + old.token()));
+                oversized, "127.0.0.1", "Bearer " + old.token(), null));
 
         assertTrue(sessionRepository.findById(old.id()).isPresent(), "폐기가 함께 롤백되어야 한다");
         assertEquals(1, vocabAnswerRepository.countBySessionId(old.id()), "하위 데이터도 그대로여야 한다");
@@ -182,7 +183,7 @@ class SessionRetakeApiTest extends IntegrationTest {
         Instant now = Instant.now();
         TestSession expired = sessionRepository.save(new TestSession(
                 SessionTokens.newSessionId(), SessionTokens.hash(token),
-                activeTestVersion(), activeScoreVersion(), null, null, null,
+                activeTestVersion(), activeScoreVersion(), null, null, null, Traffic.REAL,
                 now.minus(31, ChronoUnit.MINUTES), now.minus(1, ChronoUnit.MINUTES)));
 
         retake(token);
@@ -291,7 +292,7 @@ class SessionRetakeApiTest extends IntegrationTest {
     /** 같은 DB를 다른 테스트와 함께 쓰므로 절대값이 아니라 증가분을 본다 (AnalyticsCountersIntegrationTest와 같은 규칙). */
     private long sessionsStartedToday() {
         String id = DailyCounter.idOf(LocalDate.now(properties.analytics().zone()),
-                activeTestVersion(), activeScoreVersion());
+                activeTestVersion(), activeScoreVersion(), Traffic.REAL);
         return countersRepository.findById(id).map(DailyCounter::sessionsStarted).orElse(0L);
     }
 }

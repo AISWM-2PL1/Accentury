@@ -1,5 +1,6 @@
 package app.accentury.backend.session;
 
+import app.accentury.backend.analytics.Traffic;
 import app.accentury.backend.IntegrationTest;
 import app.accentury.backend.common.ApiException;
 import app.accentury.backend.common.ErrorCode;
@@ -40,7 +41,7 @@ class SessionServiceTest extends IntegrationTest {
 
     @Test
     void 토큰은_원문이_아니라_SHA256_해시로_저장된다() {
-        SessionResponse created = service.create(null, "127.0.0.1", null);
+        SessionResponse created = service.create(null, "127.0.0.1", null, null);
 
         TestSession stored = repository.findById(created.sessionId()).orElseThrow();
         assertNotEquals(created.sessionToken(), stored.tokenHash());
@@ -50,7 +51,7 @@ class SessionServiceTest extends IntegrationTest {
 
     @Test
     void 발급된_토큰으로_자기_세션을_인증할_수_있다() {
-        SessionResponse created = service.create(null, "127.0.0.1", null);
+        SessionResponse created = service.create(null, "127.0.0.1", null, null);
 
         TestSession session = service.authenticate(created.sessionId(), created.sessionToken());
 
@@ -61,8 +62,8 @@ class SessionServiceTest extends IntegrationTest {
 
     @Test
     void 다른_세션의_토큰으로는_접근할_수_없다() {
-        SessionResponse mine = service.create(null, "127.0.0.1", null);
-        SessionResponse others = service.create(null, "127.0.0.1", null);
+        SessionResponse mine = service.create(null, "127.0.0.1", null, null);
+        SessionResponse others = service.create(null, "127.0.0.1", null, null);
 
         ApiException e = assertThrows(ApiException.class,
                 () -> service.authenticate(mine.sessionId(), others.sessionToken()));
@@ -73,7 +74,7 @@ class SessionServiceTest extends IntegrationTest {
 
     @Test
     void 모르는_토큰은_SESSION_EXPIRED다() {
-        SessionResponse created = service.create(null, "127.0.0.1", null);
+        SessionResponse created = service.create(null, "127.0.0.1", null, null);
 
         ApiException e = assertThrows(ApiException.class,
                 () -> service.authenticate(created.sessionId(), "st_never-issued-token"));
@@ -97,7 +98,7 @@ class SessionServiceTest extends IntegrationTest {
         // Codex sol 리뷰 P1 - 만료 검사가 ID 비교보다 늦으면, 주기 삭제 전의 만료 토큰만
         // 403을 받아서 "아직 저장소에 남아 있다"는 사실이 새어 나간다.
         saveSessionExpiredAt(Instant.now().minus(1, ChronoUnit.MINUTES), "st_expired_3");
-        SessionResponse other = service.create(null, "127.0.0.1", null);
+        SessionResponse other = service.create(null, "127.0.0.1", null, null);
 
         ApiException e = assertThrows(ApiException.class,
                 () -> service.authenticate(other.sessionId(), "st_expired_3"));
@@ -110,7 +111,7 @@ class SessionServiceTest extends IntegrationTest {
     @Test
     void 주기_삭제는_만료_세션만_지운다() {
         TestSession expired = saveSessionExpiredAt(Instant.now().minus(1, ChronoUnit.MINUTES), "st_expired_2");
-        SessionResponse alive = service.create(null, "127.0.0.1", null);
+        SessionResponse alive = service.create(null, "127.0.0.1", null, null);
 
         service.purgeExpired();
 
@@ -126,7 +127,10 @@ class SessionServiceTest extends IntegrationTest {
         // 슬쩍 들어오는 것을 리뷰가 아니라 테스트가 막는다.
         Set<String> allowed = Set.of("id", "tokenHash", "testVersion", "scoreVersion",
                 "platform", "appVersion", "campaignToken", "createdAt", "expiresAt",
-                "completedAt");   // 완료 가드 (KAN-15/16) - 시각뿐, 식별 정보 아님
+                "completedAt",    // 완료 가드 (KAN-15/16) - 시각뿐, 식별 정보 아님
+                // 실사용자냐 검증용 스모크냐의 두 값뿐이다 (KAN-138) - 개인을 좁히지 않는다.
+                // 오히려 이 표시가 없으면 스모크가 실사용자 통계에 섞인다.
+                "traffic");
 
         Set<String> actual = Stream.of(TestSession.class.getDeclaredFields())
                 // @Transient는 컬럼이 아니다 - 이 검사는 저장소에 남는 것만 본다 (예: Persistable의 isNew 플래그).
@@ -141,7 +145,7 @@ class SessionServiceTest extends IntegrationTest {
     private TestSession saveSessionExpiredAt(Instant expiresAt, String token) {
         return repository.save(new TestSession(
                 SessionTokens.newSessionId(), SessionTokens.hash(token),
-                "gn-2026.08.1", "sv-0.3", null, null, null,
+                "gn-2026.08.1", "sv-0.3", null, null, null, Traffic.REAL,
                 expiresAt.minus(30, ChronoUnit.MINUTES), expiresAt));
     }
 }

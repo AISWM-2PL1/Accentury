@@ -37,7 +37,7 @@ class AnalyticsCountersTest {
         RecordingStore store = new RecordingStore();
         // UTC로는 8월 16일 23:00이지만 KST로는 8월 17일 08:00이다.
         counters(store, "Asia/Seoul").recordSessionStarted(
-                Instant.parse("2026-08-16T23:00:00Z"), TEST_VERSION, "sv-0.3");
+                Instant.parse("2026-08-16T23:00:00Z"), TEST_VERSION, "sv-0.3", Traffic.REAL);
 
         assertEquals(Set.of("2026-08-17|" + TEST_VERSION + "|sv-0.3"), store.rows.keySet());
     }
@@ -46,7 +46,7 @@ class AnalyticsCountersTest {
     void 타임존을_UTC로_두면_같은_시각이_전날로_간다() {
         RecordingStore store = new RecordingStore();
         counters(store, "UTC").recordSessionStarted(
-                Instant.parse("2026-08-16T23:00:00Z"), TEST_VERSION, "sv-0.3");
+                Instant.parse("2026-08-16T23:00:00Z"), TEST_VERSION, "sv-0.3", Traffic.REAL);
 
         assertEquals(Set.of("2026-08-16|" + TEST_VERSION + "|sv-0.3"), store.rows.keySet());
     }
@@ -57,11 +57,50 @@ class AnalyticsCountersTest {
         AnalyticsCounters counters = counters(store, "Asia/Seoul");
         Instant at = Instant.parse("2026-08-17T01:00:00Z");
 
-        counters.recordSessionStarted(at, TEST_VERSION, "sv-0.3");
-        counters.recordSessionStarted(at, "gn-2026.09.1", "sv-0.3");
-        counters.recordSessionStarted(at, TEST_VERSION, "sv-0.4");
+        counters.recordSessionStarted(at, TEST_VERSION, "sv-0.3", Traffic.REAL);
+        counters.recordSessionStarted(at, "gn-2026.09.1", "sv-0.3", Traffic.REAL);
+        counters.recordSessionStarted(at, TEST_VERSION, "sv-0.4", Traffic.REAL);
 
         assertEquals(3, store.rows.size(), "버전 조합마다 별도 행이어야 통계가 섞이지 않는다");
+    }
+
+    @Test
+    void 실사용자_식별자는_트래픽_축이_생기기_전과_같다() {
+        // 배포 겹침과 롤백에서 옛 바이너리와 새 바이너리가 같은 업무 키에 같은 식별자를 만들어야
+        // 한다 (Codex sol 리뷰 P2). 여기가 어긋나면 한쪽의 증가가 0행 UPDATE로 조용히 사라지고,
+        // 경고 로그 말고는 흔적도 없다. 형식을 "정리"하고 싶어질 때 이 테스트가 먼저 깨진다.
+        assertEquals("2026-08-17|" + TEST_VERSION + "|sv-0.3",
+                DailyCounter.idOf(LocalDate.of(2026, 8, 17), TEST_VERSION, "sv-0.3", Traffic.REAL));
+        // 합성만 접미사를 받는다 - 옛 바이너리는 이 행을 만들지 않으므로 겹칠 일이 없다.
+        assertEquals("2026-08-17|" + TEST_VERSION + "|sv-0.3|SYNTHETIC",
+                DailyCounter.idOf(LocalDate.of(2026, 8, 17), TEST_VERSION, "sv-0.3", Traffic.SYNTHETIC));
+    }
+
+    @Test
+    void 트래픽_종류가_다르면_다른_행에_쌓인다() {
+        // 검증용 스모크가 실사용자 통계를 흔들지 않기 위한 축이다 (KAN-138). 버전 축과 같은
+        // 성격이라 같은 자리에서 갈린다 - 여기서 접히면 분리 자체가 성립하지 않는다.
+        RecordingStore store = new RecordingStore();
+        AnalyticsCounters counters = counters(store, "Asia/Seoul");
+        Instant at = Instant.parse("2026-08-17T01:00:00Z");
+
+        counters.recordSessionStarted(at, TEST_VERSION, "sv-0.3", Traffic.REAL);
+        counters.recordSessionStarted(at, TEST_VERSION, "sv-0.3", Traffic.SYNTHETIC);
+
+        assertEquals(Set.of("2026-08-17|" + TEST_VERSION + "|sv-0.3",
+                        "2026-08-17|" + TEST_VERSION + "|sv-0.3|SYNTHETIC"),
+                store.rows.keySet());
+    }
+
+    @Test
+    void 완주는_넘겨받은_트래픽_종류를_그대로_따른다() {
+        // 완주 시점에 다시 판정하면 응시와 완주가 다른 통에 들어가 완주율이 뜻을 잃는다.
+        RecordingStore store = new RecordingStore();
+        counters(store, "Asia/Seoul").recordSessionCompleted(
+                Instant.parse("2026-08-17T01:00:00Z"), TEST_VERSION,
+                score("HONORARY", 75, 60, 70), Traffic.SYNTHETIC);
+
+        assertEquals(Set.of("2026-08-17|" + TEST_VERSION + "|sv-0.3|SYNTHETIC"), store.rows.keySet());
     }
 
     // === 증가 순서 - UPDATE 먼저, 없을 때만 INSERT ===
@@ -72,9 +111,9 @@ class AnalyticsCountersTest {
         AnalyticsCounters counters = counters(store, "Asia/Seoul");
         Instant at = Instant.parse("2026-08-17T01:00:00Z");
 
-        counters.recordSessionStarted(at, TEST_VERSION, "sv-0.3");
+        counters.recordSessionStarted(at, TEST_VERSION, "sv-0.3", Traffic.REAL);
         store.calls.clear();
-        counters.recordSessionStarted(at, TEST_VERSION, "sv-0.3");
+        counters.recordSessionStarted(at, TEST_VERSION, "sv-0.3", Traffic.REAL);
 
         assertEquals(1, store.calls.size(), "두 번째부터는 문장 하나로 끝나야 한다");
         assertTrue(store.calls.getFirst().startsWith("increment:"));
@@ -85,14 +124,16 @@ class AnalyticsCountersTest {
         // INSERT 직전에 다른 요청이 같은 키의 행을 만든 상황
         RecordingStore store = new RecordingStore() {
             @Override
-            public void insert(LocalDate statDate, String testVersion, String scoreVersion, CounterDelta delta) {
-                rows.put(DailyCounter.idOf(statDate, testVersion, scoreVersion), CounterDelta.sessionStarted());
+            public void insert(LocalDate statDate, String testVersion, String scoreVersion,
+                           Traffic traffic, CounterDelta delta) {
+                rows.put(DailyCounter.idOf(statDate, testVersion, scoreVersion, traffic),
+                        CounterDelta.sessionStarted());
                 calls.add("insert-conflict");
                 throw new IllegalStateException("유니크 제약 위반");
             }
         };
         counters(store, "Asia/Seoul").recordSessionStarted(
-                Instant.parse("2026-08-17T01:00:00Z"), TEST_VERSION, "sv-0.3");
+                Instant.parse("2026-08-17T01:00:00Z"), TEST_VERSION, "sv-0.3", Traffic.REAL);
 
         assertEquals(List.of("increment:2026-08-17|" + TEST_VERSION + "|sv-0.3",
                         "insert-conflict",
@@ -108,9 +149,9 @@ class AnalyticsCountersTest {
         AnalyticsCounters counters = counters(new FailingStore(), "Asia/Seoul");
 
         assertDoesNotThrow(() -> counters.recordSessionStarted(
-                Instant.parse("2026-08-17T01:00:00Z"), TEST_VERSION, "sv-0.3"));
+                Instant.parse("2026-08-17T01:00:00Z"), TEST_VERSION, "sv-0.3", Traffic.REAL));
         assertDoesNotThrow(() -> counters.recordSessionCompleted(
-                Instant.parse("2026-08-17T01:00:00Z"), TEST_VERSION, score("HONORARY", 75, 60, 70)));
+                Instant.parse("2026-08-17T01:00:00Z"), TEST_VERSION, score("HONORARY", 75, 60, 70), Traffic.REAL));
     }
 
     @Test
@@ -121,9 +162,9 @@ class AnalyticsCountersTest {
         Instant at = Instant.parse("2026-08-17T01:00:00Z");
 
         assertDoesNotThrow(() -> counters.recordSessionCompleted(
-                at, TEST_VERSION, score("LEGEND", 90, 90, 90)), "모르는 등급");
+                at, TEST_VERSION, score("LEGEND", 90, 90, 90), Traffic.REAL), "모르는 등급");
         assertDoesNotThrow(() -> counters.recordSessionStarted(
-                at, "gn-a|b", "sv-0.3"), "키 구분자가 들어간 버전");
+                at, "gn-a|b", "sv-0.3", Traffic.REAL), "키 구분자가 들어간 버전");
     }
 
     // === 완주 증가분 (등급과 점수) ===
@@ -132,7 +173,7 @@ class AnalyticsCountersTest {
     void 완주는_등급_한_칸과_세_점수를_함께_올린다() {
         RecordingStore store = new RecordingStore();
         counters(store, "Asia/Seoul").recordSessionCompleted(
-                Instant.parse("2026-08-17T01:00:00Z"), TEST_VERSION, score("HONORARY", 75, 60, 70));
+                Instant.parse("2026-08-17T01:00:00Z"), TEST_VERSION, score("HONORARY", 75, 60, 70), Traffic.REAL);
 
         CounterDelta delta = store.rows.values().iterator().next();
         assertEquals(0, delta.sessionsStarted(), "완주는 시도를 다시 세지 않는다");
@@ -179,8 +220,9 @@ class AnalyticsCountersTest {
         }
 
         @Override
-        public void insert(LocalDate statDate, String testVersion, String scoreVersion, CounterDelta delta) {
-            String id = DailyCounter.idOf(statDate, testVersion, scoreVersion);
+        public void insert(LocalDate statDate, String testVersion, String scoreVersion,
+                           Traffic traffic, CounterDelta delta) {
+            String id = DailyCounter.idOf(statDate, testVersion, scoreVersion, traffic);
             calls.add("insert:" + id);
             rows.put(id, delta);
         }
@@ -195,7 +237,8 @@ class AnalyticsCountersTest {
         }
 
         @Override
-        public void insert(LocalDate statDate, String testVersion, String scoreVersion, CounterDelta delta) {
+        public void insert(LocalDate statDate, String testVersion, String scoreVersion,
+                           Traffic traffic, CounterDelta delta) {
             throw new IllegalStateException("DB 장애");
         }
     }

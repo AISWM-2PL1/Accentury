@@ -27,8 +27,12 @@ public record AnalyticsResponse(LocalDate from, LocalDate to, String zone,
      * @param date         집계 일자 ({@code zone} 기준)
      * @param testVersion  테스트 정의 버전 - 다르면 문항이 다르므로 같은 통계가 아니다.
      * @param scoreVersion 점수 버전 - 다르면 등급 경계가 다르므로 분포를 비교할 수 없다.
+     * @param traffic      이 줄이 실사용자인지 검증용 합성 트래픽인지 (KAN-138). 기본 조회는
+     *                     REAL만 담지만, 필드는 언제나 싣는다 - 없으면 traffic=ALL로 받은
+     *                     응답에서 어느 줄이 무엇인지 알 수 없다.
      */
-    public record Row(LocalDate date, String testVersion, String scoreVersion, Counts counts) {
+    public record Row(LocalDate date, String testVersion, String scoreVersion, Traffic traffic,
+                      Counts counts) {
     }
 
     /**

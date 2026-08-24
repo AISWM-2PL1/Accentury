@@ -131,8 +131,11 @@ public class CompletionService {
                     session.id(), session.testVersion(), session.scoreVersion());
             // 완주 1건과 등급, 점수 (KAN-106) - 트랜잭션이 커밋된 이 자리여야 한다.
             // 안에서 부르면 세션 행 잠금을 쥔 채 커넥션을 더 잡고, 롤백된 완료까지 세게 된다.
+            // 트래픽 종류는 세션이 생성 시점에 정한 값을 그대로 따른다 (KAN-138) - 여기서
+            // 다시 판정하면 응시와 완주가 다른 통에 들어가 완주율이 뜻을 잃는다.
             counters.recordSessionCompleted(
-                    Objects.requireNonNull(outcome.confirmedAt()), session.testVersion(), confirmed);
+                    Objects.requireNonNull(outcome.confirmedAt()), session.testVersion(),
+                    confirmed, session.traffic());
         }
         return outcome.response();
     }

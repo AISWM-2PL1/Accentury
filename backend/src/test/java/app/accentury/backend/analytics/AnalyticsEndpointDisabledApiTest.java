@@ -10,6 +10,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -46,6 +47,22 @@ class AnalyticsEndpointDisabledApiTest extends IntegrationTest {
         mockMvc.perform(get("/admin/v0/test-definitions"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("RESOURCE_NOT_FOUND"));
+    }
+
+    @Test
+    void 토큰이_없는_서버에서_합성_표시를_시도하면_401이다() throws Exception {
+        // 검증 수단이 없는데 조용히 실사용자로 흘리면, 파이프라인이 시크릿을 빠뜨린 날
+        // 스모크가 "제외됐겠지" 하고 통과하면서 오염이 그대로 들어간다 (KAN-138).
+        mockMvc.perform(post("/v0/sessions").header(AdminAuth.TOKEN_HEADER, "any-token-long-enough-0000000000"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("ADMIN_UNAUTHORIZED"));
+    }
+
+    @Test
+    void 표시가_없으면_토큰_미설정_서버에서도_평소대로_세션이_생긴다() throws Exception {
+        // 합성 표시는 선택 기능이다 - 토큰이 없다고 일반 세션 생성이 막히면 안 된다.
+        mockMvc.perform(post("/v0/sessions"))
+                .andExpect(status().isCreated());
     }
 
     @Test
