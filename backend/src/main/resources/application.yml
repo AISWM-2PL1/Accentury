@@ -49,6 +49,26 @@ logging:
   pattern:
     console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSS} %5p [%X{correlationId:-}] --- [%15.15t] %-40.40logger{39} : %mask(%m){}%n%maskEx"
 
+# ALB 대상 그룹 헬스체크 경로 (KAN-131, 소비처 KAN-125). health 하나만 노출하고 상세는 감춘다 -
+# 응답이 {"status":"UP"} 한 줄이라 내부 구성(DB 존재, 디스크 경로)이 밖으로 드러나지 않는다.
+# 인증이 없는 것은 의도다 - ALB가 자격 증명 없이 두드리는 경로라 인증이 걸리면 대상이 계속
+# 비정상 판정된다. 이 경로는 /v0/* 밖이라 CloudFront를 거치지 않고 ALB 내부에서만 쓰인다.
+# 노출 폭이 Boot 기본값과 같아도 명시해서 못박는다 - 기본값에 기대면 의존성 추가나 부트
+# 업그레이드가 노출 폭을 조용히 바꿔도 잡을 자리가 없다 (ActuatorHealthApiTest가 검증).
+# 나머지 관측성(메트릭 exporter, 대시보드)은 KAN-38 범위다 - KAN-27이 등록한 Micrometer
+# 게이지도 그때까지 비노출로 남는다.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health    # health 외(env, beans, metrics 등)는 web에 올리지 않는다.
+      discovery:
+        enabled: false     # /actuator 엔드포인트 목록 페이지도 끈다 - 헬스체크에 불필요하다.
+  endpoint:
+    health:
+      show-details: never      # 컴포넌트(db, diskSpace)별 세부 상태를 숨긴다.
+      show-components: never   # 컴포넌트 이름 목록도 숨긴다 - 종합 status만 남는다.
+
 # 활성 테스트 버전과 점수 버전은 여기 없다 (KAN-26). 발행 입력이 DB로 확정되면서(2026-08-09,
 # 명세서 §6) 활성 버전은 active_test_version 한 행이 정본이 됐고, 점수 버전은 그 정의가
 # 선언한 값을 따른다. 전환은 PUT /admin/v0/active-version이고, 발행은 마이그레이션이다.
