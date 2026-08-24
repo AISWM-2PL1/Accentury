@@ -65,6 +65,16 @@ public interface DailyCounterRepository extends Repository<DailyCounter, String>
      * 양 끝 일자를 포함한다. 정렬은 일자 오름차순, 같은 일자 안에서는 버전 순이다 -
      * 버전 전환일에 두 줄이 나오는데 그 순서가 흔들리면 리포트를 비교하기 어렵다.
      */
-    List<DailyCounter> findByStatDateBetweenOrderByStatDateAscTestVersionAscScoreVersionAsc(
+    List<DailyCounter> findByStatDateBetweenOrderByStatDateAscTestVersionAscScoreVersionAscTrafficAsc(
             LocalDate from, LocalDate to);
+
+    /**
+     * 한 종류의 트래픽만 (KAN-138) - 리포트의 기본 경로다.
+     * <p>
+     * 조회 쪽에서 거르는 것이 아니라 <b>질의에서</b> 거른다. 전부 읽어 와 자바에서 버리면
+     * 합성 행이 늘어난 만큼 매번 헛일을 하고, 무엇보다 나중에 합계를 더하는 코드가 필터를
+     * 한 번 빠뜨리면 조용히 섞인다.
+     */
+    List<DailyCounter> findByStatDateBetweenAndTrafficOrderByStatDateAscTestVersionAscScoreVersionAsc(
+            LocalDate from, LocalDate to, Traffic traffic);
 }

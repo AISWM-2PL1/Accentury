@@ -374,7 +374,8 @@ class ResultApiTest extends IntegrationTest {
         sessionRepository.flush();
         sessionRepository.save(new TestSession(stored.id(), stored.tokenHash(),
                 stored.testVersion(), stored.scoreVersion(), stored.platform(), stored.appVersion(),
-                stored.campaignToken(), stored.createdAt(), Instant.now().minusSeconds(1)));
+                stored.campaignToken(), stored.traffic(), stored.createdAt(),
+                Instant.now().minusSeconds(1)));
     }
 
     /** 완료된 세션과 결과의 expires_at을 과거로 되돌린다 - 24시간 경과를 흉내낸다 (§5.5). */

@@ -16,7 +16,7 @@ import java.time.LocalDate;
  * 하지 않는다.
  * <p>
  * 두 갈래 사이에는 언제나 틈이 있다 (UPDATE가 0을 반환한 뒤 다른 요청이 먼저 INSERT).
- * 그 경합은 (일자, 버전, 버전) 유니크 제약이 잡고, 진 쪽은 UPDATE로 되돌아온다
+ * 그 경합은 (일자, 버전, 버전, 트래픽) 유니크 제약이 잡고, 진 쪽은 UPDATE로 되돌아온다
  * ({@link AnalyticsCounters}가 그 순서를 맡는다). DB별 upsert 문법(PostgreSQL
  * {@code ON CONFLICT}) 대신 이 형태를 쓰는 것은 테스트가 H2에서 돌기 때문이다.
  * <p>
@@ -52,8 +52,9 @@ class DailyCounterStore implements CounterStore {
      */
     @Override
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void insert(LocalDate statDate, String testVersion, String scoreVersion, CounterDelta delta) {
-        entityManager.persist(new DailyCounter(statDate, testVersion, scoreVersion, delta));
+    public void insert(LocalDate statDate, String testVersion, String scoreVersion, Traffic traffic,
+                       CounterDelta delta) {
+        entityManager.persist(new DailyCounter(statDate, testVersion, scoreVersion, traffic, delta));
         entityManager.flush();
     }
 }

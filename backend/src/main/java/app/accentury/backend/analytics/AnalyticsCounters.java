@@ -46,19 +46,23 @@ public class AnalyticsCounters {
      *
      * @param at 세션이 생긴 시각 - 일자 경계는 설정 타임존 기준이다.
      */
-    public void recordSessionStarted(Instant at, String testVersion, String scoreVersion) {
-        record(at, testVersion, scoreVersion, CounterDelta::sessionStarted);
+    public void recordSessionStarted(Instant at, String testVersion, String scoreVersion,
+                                    Traffic traffic) {
+        record(at, testVersion, scoreVersion, traffic, CounterDelta::sessionStarted);
     }
 
     /**
      * 완주 1건과 그 등급, 점수 (KAN-16 - {@code /complete}가 결과를 확정한 뒤).
      * 완료 재시도는 결과를 다시 만들지 않으므로 여기도 오지 않는다 (§3.6 멱등).
      *
-     * @param at    결과가 확정된 시각 - 결과 행의 {@code createdAt}과 같은 값이라 일자가 어긋나지 않는다.
-     * @param score 집계 결과 (KAN-21) - 등급과 세 점수를 그대로 더한다.
+     * @param at      결과가 확정된 시각 - 결과 행의 {@code createdAt}과 같은 값이라 일자가 어긋나지 않는다.
+     * @param score   집계 결과 (KAN-21) - 등급과 세 점수를 그대로 더한다.
+     * @param traffic 세션이 생성 시점에 정한 값을 그대로 넘긴다 (KAN-138) - 여기서 다시
+     *                판정하지 않는다. 응시와 완주가 다른 통에 들어가면 완주율이 뜻을 잃는다.
      */
-    public void recordSessionCompleted(Instant at, String testVersion, AggregateScore score) {
-        record(at, testVersion, score.scoreVersion(), () -> CounterDelta.completion(score));
+    public void recordSessionCompleted(Instant at, String testVersion, AggregateScore score,
+                                       Traffic traffic) {
+        record(at, testVersion, score.scoreVersion(), traffic, () -> CounterDelta.completion(score));
     }
 
     /**
@@ -71,7 +75,7 @@ public class AnalyticsCounters {
      * {@link DailyCounter#idOf}의 구분자 검사가 정확히 그런 예외다. 백스톱이 사용자를 죽이면
      * 백스톱이 아니다 (Fable 리뷰 P2).
      */
-    private void record(Instant at, String testVersion, String scoreVersion,
+    private void record(Instant at, String testVersion, String scoreVersion, Traffic traffic,
                         Supplier<CounterDelta> deltaSupplier) {
         // 커밋 후 호출 계약(클래스 javadoc)이 지켜지는지 값싸게 감시한다. 깨지면 REQUIRES_NEW가
         // 두 번째 커넥션을 잡아 풀 고갈로 가고, 롤백될 요청까지 세게 된다 (Fable 리뷰 P3).
@@ -81,12 +85,12 @@ public class AnalyticsCounters {
         try {
             CounterDelta delta = deltaSupplier.get();
             LocalDate date = LocalDate.ofInstant(at, zone);
-            String id = DailyCounter.idOf(date, testVersion, scoreVersion);
+            String id = DailyCounter.idOf(date, testVersion, scoreVersion, traffic);
             if (store.increment(id, delta)) {
                 return;
             }
             try {
-                store.insert(date, testVersion, scoreVersion, delta);
+                store.insert(date, testVersion, scoreVersion, traffic, delta);
                 return;
             } catch (RuntimeException firstWriterWon) {
                 // 같은 키를 다른 요청이 먼저 만들었다 - 하루에 한 번 있는 정상 경합이다.
@@ -99,8 +103,9 @@ public class AnalyticsCounters {
         } catch (RuntimeException e) {
             // 사용자 요청은 이미 성공했다 (티켓 제약) - 여기서 끝내고 통계 1건만 버린다.
             // 식별자 유도 자체가 실패했을 수 있으므로 키 조각을 그대로 남긴다.
-            log.warn("익명 집계 카운터 증가 실패 - 이 1건은 통계에 빠진다 at={} testVersion={} scoreVersion={}",
-                    at, testVersion, scoreVersion, e);
+            log.warn("익명 집계 카운터 증가 실패 - 이 1건은 통계에 빠진다 "
+                            + "at={} testVersion={} scoreVersion={} traffic={}",
+                    at, testVersion, scoreVersion, traffic, e);
         }
     }
 }

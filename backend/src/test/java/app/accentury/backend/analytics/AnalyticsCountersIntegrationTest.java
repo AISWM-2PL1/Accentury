@@ -189,7 +189,7 @@ class AnalyticsCountersIntegrationTest extends IntegrationTest {
                 pool.execute(() -> {
                     try {
                         start.await();
-                        counters.recordSessionStarted(at, testVersion, activeScoreVersion());
+                        counters.recordSessionStarted(at, testVersion, activeScoreVersion(), Traffic.REAL);
                     } catch (Exception e) {
                         failures.incrementAndGet();
                     } finally {
@@ -205,7 +205,7 @@ class AnalyticsCountersIntegrationTest extends IntegrationTest {
 
         assertEquals(0, failures.get());
         String id = DailyCounter.idOf(LocalDate.now(properties.analytics().zone()),
-                testVersion, activeScoreVersion());
+                testVersion, activeScoreVersion(), Traffic.REAL);
         assertEquals(threads, countersRepository.findById(id).orElseThrow().sessionsStarted(),
                 "조회 후 저장이면 증가가 서로를 덮어써 이 수가 모자란다");
     }
@@ -217,11 +217,11 @@ class AnalyticsCountersIntegrationTest extends IntegrationTest {
         // 가짜 저장소가 아니라 진짜 DB에서 이 성질을 못박는다 (Fable 리뷰 P3).
         LocalDate day = LocalDate.of(2026, 5, 5);
         String testVersion = "gn-dup-" + UUID.randomUUID().toString().substring(0, 8);
-        String id = DailyCounter.idOf(day, testVersion, "sv-0.3");
-        store.insert(day, testVersion, "sv-0.3", CounterDelta.sessionStarted());
+        String id = DailyCounter.idOf(day, testVersion, "sv-0.3", Traffic.REAL);
+        store.insert(day, testVersion, "sv-0.3", Traffic.REAL, CounterDelta.sessionStarted());
 
         assertThrows(RuntimeException.class,
-                () -> store.insert(day, testVersion, "sv-0.3", CounterDelta.sessionStarted()),
+                () -> store.insert(day, testVersion, "sv-0.3", Traffic.REAL, CounterDelta.sessionStarted()),
                 "유니크 제약 위반이 예외로 올라와야 UPDATE 복귀 갈래가 성립한다");
 
         // 실패한 두 번째는 흔적을 남기지 않았고, 복구 갈래(UPDATE)는 그대로 동작한다.
@@ -235,7 +235,7 @@ class AnalyticsCountersIntegrationTest extends IntegrationTest {
         // 서로 다른 키 셋이 같은 식별자로 접히면 조용히 남의 행에 합산된다 (Fable 리뷰 P3).
         // 증가는 실패하지만 사용자 요청 경로와 마찬가지로 예외는 새지 않는다.
         Instant at = Instant.now();
-        assertDoesNotThrow(() -> counters.recordSessionStarted(at, "gn-a|b", "sv-0.3"));
+        assertDoesNotThrow(() -> counters.recordSessionStarted(at, "gn-a|b", "sv-0.3", Traffic.REAL));
 
         // ("gn-a|b", "sv-0.3")과 ("gn-a", "b|sv-0.3")이 함께 접히던 자리다.
         String collidingId = LocalDate.now(properties.analytics().zone()) + "|gn-a|b|sv-0.3";
@@ -252,6 +252,8 @@ class AnalyticsCountersIntegrationTest extends IntegrationTest {
                 .getAttributes().stream().map(Attribute::getName).collect(Collectors.toSet());
 
         assertEquals(Set.of("id", "statDate", "testVersion", "scoreVersion",
+                        // 두 값(REAL, SYNTHETIC)뿐인 키 축이다 (KAN-138) - 개인을 좁히지 않는다.
+                        "traffic",
                         "sessionsStarted", "sessionsCompleted",
                         "tierOutsider", "tierTraveler", "tierWannabe", "tierHonorary", "tierNative",
                         "intonationSum", "vocabularySum", "overallSum", "scoredCount"),
@@ -305,7 +307,7 @@ class AnalyticsCountersIntegrationTest extends IntegrationTest {
 
     private String todayId() {
         return DailyCounter.idOf(LocalDate.now(properties.analytics().zone()),
-                activeTestVersion(), activeScoreVersion());
+                activeTestVersion(), activeScoreVersion(), Traffic.REAL);
     }
 
     /** 오늘 행의 값 - 아직 없으면 전부 0이다. */

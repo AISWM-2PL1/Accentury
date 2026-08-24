@@ -56,7 +56,8 @@ class CounterFailureIsolationApiTest extends IntegrationTest {
         }
 
         @Override
-        public void insert(LocalDate statDate, String testVersion, String scoreVersion, CounterDelta delta) {
+        public void insert(LocalDate statDate, String testVersion, String scoreVersion,
+                           Traffic traffic, CounterDelta delta) {
             throw new IllegalStateException("집계 저장소 장애 (테스트)");
         }
     }
