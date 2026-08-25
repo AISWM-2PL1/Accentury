@@ -1,7 +1,22 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+}
+
+/**
+ * 가짜 마이크 asset 이름. `-PfakeMic=` 프로퍼티가 우선이고, 없으면 local.properties(gitignore 대상)의
+ * `fakeMic=`을 본다 - Android Studio의 Run 버튼은 gradle 프로퍼티를 넘길 수 없어서다. 둘 다 없으면 "".
+ */
+fun fakeMicAsset(): String {
+    (project.findProperty("fakeMic") as String?)?.let { return it }
+    val local = rootProject.file("local.properties")
+    if (!local.exists()) return ""
+    val props = Properties()
+    local.inputStream().use { props.load(it) }
+    return props.getProperty("fakeMic") ?: ""
 }
 
 android {
@@ -31,11 +46,8 @@ android {
             buildConfigField("String", "WEB_URL", "\"http://10.0.2.2:5173\"")
             // 에뮬레이터 마이크가 무음만 주는 환경에서 assets의 WAV를 마이크 대신 끼운다.
             // 예: ./gradlew :app:installDebug -PfakeMic=fake_mic.wav (audio/PcmSources.kt).
-            buildConfigField(
-                "String",
-                "FAKE_MIC_ASSET",
-                "\"${project.findProperty("fakeMic") ?: ""}\"",
-            )
+            // Android Studio Run은 프로퍼티를 못 받으므로 local.properties의 fakeMic=도 읽는다.
+            buildConfigField("String", "FAKE_MIC_ASSET", "\"${fakeMicAsset()}\"")
         }
         release {
             // 코드가 이 필드를 참조하므로 릴리스에도 있어야 한다. 상수 ""라 파일 재생 경로는 죽는다.
