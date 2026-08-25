@@ -60,6 +60,12 @@ fun RecordingScreen(
     // 상단 레인의 정적 가이드 곡선 (KAN-102). null은 안 실어 보낸 구버전 웹 - 레인만 비운다.
     guideF0: GuideF0? = null,
     /*
+     * 사용자 곡선 y축의 중심 음높이 (KAN-105). 목소리 점검 화면이 미리 잰 값을 넘긴다.
+     * null이면 이 녹음의 첫 유성 프레임들로 직접 잡는다([userCurveCenterHz]) - 그 전까지는
+     * 곡선을 그리지 않는다. 결선은 KAN-105 2단계고, 지금은 기본값이라 호출부가 안 바뀐다.
+     */
+    centerHz: Float? = null,
+    /*
      * 제출한 시도의 결과가 웹에 닿기를 기다리는 중인가 (KAN-146).
      * 화면을 갈아끼우지 않고 이 화면 안에서 아래쪽만 바꾼다 - 문항 문구도 곡선도 제자리에 남아,
      * [다음]을 누른 뒤 다음 문항이 뜰 때까지가 한 화면의 상태 변화로 읽힌다.
@@ -100,7 +106,7 @@ fun RecordingScreen(
         else -> emptyList()
     }
     // 프레임이 청크마다 늘어나므로 remember로 묶지 않는다 - 어차피 매 방출마다 다시 계산해야 한다.
-    val myPoints = userCurveDisplayPoints(pitchFrames, windowMs)
+    val mySegments = userCurveDisplayPoints(pitchFrames, windowMs, centerHz)
 
     Column(modifier = Modifier.fillMaxSize().padding(Spacing.x4)) {
         /*
@@ -127,7 +133,7 @@ fun RecordingScreen(
         )
 
         Spacer(modifier = Modifier.height(Spacing.x4))
-        CurveCard(guidePoints = guidePoints, userPoints = myPoints)
+        CurveCard(guidePoints = guidePoints, userSegments = mySegments)
 
         Spacer(modifier = Modifier.weight(1f))
 
@@ -239,7 +245,7 @@ fun RecordingScreen(
  * 곡선 캔버스의 레인 하나 (ux-ui.md §D — 위/아래 2단, 같은 가로폭·같은 시간축).
  * 위 레인은 정적 가이드 곡선(KAN-102), 아래 레인은 녹음 중 자라는 사용자 곡선(KAN-104)이다.
  *
- * 좌표는 [guideCurveDisplayPoints]와 [userCurveDisplayPoints]가 만든 0..1 비율이고
+ * 좌표는 [guideCurveDisplayPoints]와 [userCurveDisplayPoints]가 만든 0..1 비율의 선분 목록이고
  * 여기서는 캔버스 크기만 곱한다 -
  * 곡선 처리 규칙은 전부 저쪽(JVM 테스트 가능)에, 여기는 픽셀 변환만 남긴다.
  * 점이 없으면 빈 레인이다: 전부 무성이거나 구버전 웹이 곡선을 안 실어 보낸 경우고,
@@ -248,7 +254,7 @@ fun RecordingScreen(
 @Composable
 private fun CurveLane(
     label: String,
-    points: List<CurvePoint>,
+    segments: List<List<CurvePoint>>,
     lineColor: Color,
     dashed: Boolean,
 ) {
@@ -270,27 +276,31 @@ private fun CurveLane(
             } else {
                 null
             }
-            if (points.size >= 2) {
-                val path = Path()
-                points.forEachIndexed { i, p ->
-                    val x = p.x * size.width
-                    val y = p.y * size.height
-                    if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            // 선분마다 따로 그린다 - 긴 무성 구간에서 곡선이 끊기므로(KAN-105) 하나로 이으면
+            // 쉼 구간을 가로지르는 가짜 사선이 생긴다. 가이드는 선분 하나짜리 목록이다.
+            segments.forEach { points ->
+                if (points.size >= 2) {
+                    val path = Path()
+                    points.forEachIndexed { i, p ->
+                        val x = p.x * size.width
+                        val y = p.y * size.height
+                        if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                    }
+                    drawPath(
+                        path,
+                        lineColor,
+                        style = Stroke(
+                            width = stroke,
+                            cap = StrokeCap.Round,
+                            join = StrokeJoin.Round,
+                            pathEffect = effect,
+                        ),
+                    )
+                } else if (points.size == 1) {
+                    // 점이 하나뿐인 선분 - 선은 못 그리니 그 시각에 점 하나로 남긴다
+                    val p = points.single()
+                    drawCircle(lineColor, radius = stroke, center = Offset(p.x * size.width, p.y * size.height))
                 }
-                drawPath(
-                    path,
-                    lineColor,
-                    style = Stroke(
-                        width = stroke,
-                        cap = StrokeCap.Round,
-                        join = StrokeJoin.Round,
-                        pathEffect = effect,
-                    ),
-                )
-            } else if (points.size == 1) {
-                // 유성 프레임이 하나뿐인 극단 - 선은 못 그리니 그 시각에 점 하나로 남긴다
-                val p = points.single()
-                drawCircle(lineColor, radius = stroke, center = Offset(p.x * size.width, p.y * size.height))
             }
         }
         // 라벨은 레인 좌상단에 얹는다(시안). 곡선 상단 여백 10% 안쪽이라 겹치지 않는다
@@ -313,7 +323,7 @@ private val DASH_OFF = 3.dp
  * 화면의 위아래를 나눈다.
  */
 @Composable
-private fun CurveCard(guidePoints: List<CurvePoint>, userPoints: List<CurvePoint>) {
+private fun CurveCard(guidePoints: List<CurvePoint>, userSegments: List<List<CurvePoint>>) {
     val colors = MaterialTheme.accenturyColors
     Column(
         modifier = Modifier
@@ -325,8 +335,19 @@ private fun CurveCard(guidePoints: List<CurvePoint>, userPoints: List<CurvePoint
         verticalArrangement = Arrangement.spacedBy(Spacing.x2),
     ) {
         Text("억양 곡선", style = MaterialTheme.typography.labelLarge)
-        CurveLane(label = "가이드", points = guidePoints, lineColor = colors.guideCurve, dashed = true)
-        CurveLane(label = "내 억양", points = userPoints, lineColor = colors.userCurve, dashed = false)
+        // 가이드는 무성 구간을 보간으로 이어 둔 하나짜리 폴리라인이라 선분 하나로 감싼다.
+        CurveLane(
+            label = "가이드",
+            segments = listOf(guidePoints),
+            lineColor = colors.guideCurve,
+            dashed = true,
+        )
+        CurveLane(
+            label = "내 억양",
+            segments = userSegments,
+            lineColor = colors.userCurve,
+            dashed = false,
+        )
     }
 }
 
