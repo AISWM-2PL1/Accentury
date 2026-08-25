@@ -1,7 +1,11 @@
 package com.accentury.app.recording
 
+import com.accentury.app.audio.READ_CHUNK_SIZE
 import com.accentury.app.audio.RecordingEngine
+import com.accentury.app.audio.SAMPLE_RATE
 import kotlin.math.log2
+import kotlin.math.pow
+import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
 /**
@@ -28,6 +32,9 @@ import kotlin.math.roundToLong
  * - **무성 구간은 길이로 갈라 다룬다** (KAN-105). 자음·무성음 같은 짧은 구멍은 직전 값을
  *   유지해 선을 잇고, 문장 사이 쉼처럼 긴 구멍은 선을 끊는다([HOLD_MAX_GAP_MS]).
  *   KAN-104는 무성 프레임을 전부 버려서 폴리라인이 쉼 구간을 가로지르는 가짜 사선을 그렸다.
+ * - **EMA는 프레임 개수가 아니라 시간으로 감쇠한다** (KAN-105). 구멍을 건너뛴 뒤의 첫 유성
+ *   값이 옛 값에 끌려가지 않게, 벌어진 간격만큼 옛 값의 몫을 줄인다 - 자세한 이유는
+ *   [USER_CURVE_EMA_ALPHA]에 적었다.
  *
  * y를 뒤집는 것(`1 - 정규화값`)은 가이드와 같다 - Canvas는 아래로 갈수록 y가 커진다.
  *
@@ -67,20 +74,48 @@ const val CENTER_MIN_VOICED_FRAMES = 8
  * α=0.3이면 시정수가 약 3.3프레임 ≈ 107ms - 부드러움과 반응성의 트레이드오프다. 낮출수록
  * 곡선은 매끄럽지만 억양 변화가 늦게 따라오고, 높일수록 YIN의 프레임 단위 떨림이 그대로 보인다.
  * 최종값은 실기기에서 눈으로 정한다(KAN-105 4단계) - 그때 이 상수 하나만 바꾸면 되게 두었다.
+ *
+ * **적용은 프레임 개수가 아니라 시간 기준이다.** 무성 구멍을 사이에 두고 32ms짜리 α를 한 번만
+ * 먹이면, 구멍이 얼마나 길든 새 값은 옛 값에 (1-α)=70%만큼 끌려간다 - 구멍이 길수록 그 옛 값은
+ * 못 믿을 값인데도 그렇다. 그래서 직전 유성 프레임과 벌어진 만큼을 프레임 수로 환산해
+ * `retain = (1-α)^gapFrames`를 쓴다. 연속 프레임(gapFrames=1)이면 `직전*0.7 + 현재*0.3`과
+ * 정확히 같고, 구멍이 길어지면 옛 값의 몫이 저절로 사그라든다(100ms→34%, 250ms→6%, 500ms→0.3%).
  */
 const val USER_CURVE_EMA_ALPHA = 0.3f
 
 /**
  * 이 길이 이하의 무성 구간은 선을 잇고(직전 값 유지), 넘으면 끊는다.
  *
- * 100ms는 자음·무성음(파열음 폐쇄 구간 등)과 문장 사이 쉼을 가르는 선이다. 무조건 이으면
- * 쉼 구간에 긴 가짜 평선이 생기고 다음 발화의 첫 값이 옛 값에 끌려간다. 무조건 끊으면
- * 한 어절 안에서도 자음마다 선이 조각난다.
+ * 자음·무성음(파열음 폐쇄 구간 등)과 문장 사이 쉼을 가르는 선이다. 무조건 이으면 쉼 구간에
+ * 긴 가짜 평선이 생기고, 무조건 끊으면 한 어절 안에서도 자음마다 선이 조각난다.
+ *
+ * **100 → 250 (KAN-105).** 기식음이 많은 화자는 어절 안 자음 구간이 100ms를 예사로 넘긴다
+ * (30대 샘플은 유성 판정률이 49%였다) - 그 화자에게는 100ms 기준이 한 어절을 대여섯 조각으로
+ * 잘랐다. 늘리지 못하던 이유는 "구멍 뒤 첫 유성 값이 옛 값에 70% 끌려간다"였는데, EMA가
+ * 시간 가중으로 바뀌면서([USER_CURVE_EMA_ALPHA]) 그 부작용이 사라졌다 - 250ms 구멍이면 옛 값의
+ * 몫이 6%밖에 안 남는다. 남는 대가는 쉼이 시작된 뒤 최대 250ms짜리 평선인데, 인과적 곡선에서는
+ * "쉼이 시작됐다"를 그 자리에서 알 방법이 없으므로 감수한다.
  *
  * 판정은 프레임 개수가 아니라 timestampMs 차이로 한다 - 청크 경계에서 프레임 수가 흔들려도
  * 시각은 흔들리지 않는다.
  */
-const val HOLD_MAX_GAP_MS = 100L
+const val HOLD_MAX_GAP_MS = 250L
+
+/**
+ * Review 화면에서 메워 주는 무성 구멍의 최대 길이. 이보다 긴 구멍은 진짜 쉼으로 보고 둔다.
+ *
+ * 실시간 곡선의 [HOLD_MAX_GAP_MS]보다 넉넉한 이유는 [fillShortGaps]에 적었다.
+ */
+const val REVIEW_FILL_MAX_GAP_MS = 500L
+
+/**
+ * 프레임 하나가 나오는 간격 (ms).
+ *
+ * 마이크를 [READ_CHUNK_SIZE]샘플씩 읽고 `OverlappedFramer`의 hop도 같은 크기라, 분석 창이
+ * 그 간격마다 하나씩 완성된다. 16kHz에서 512/16000 = 32ms다. 숫자를 박아 두지 않고 두 상수에서
+ * 뽑는 건, 청크 크기나 표본율이 바뀌면 EMA의 시간 환산도 같이 따라와야 하기 때문이다.
+ */
+private const val FRAME_INTERVAL_MS = READ_CHUNK_SIZE * 1000.0 / SAMPLE_RATE
 
 /**
  * 창 길이를 가이드 길이의 몇 배로 잡을지.
@@ -169,6 +204,13 @@ fun userCurveCenterHz(frames: List<RecordingEngine.PitchFrame>): Float? {
  *
  * 스무딩과 중심 계산은 **창을 자르기 전 전체 프레임**으로 한다. 창은 보여줄 구간을 고르는
  * 일일 뿐이라, 창이 미끄러졌다고 남아 있는 점의 y가 달라지면 안 된다.
+ *
+ * **"선을 잇는가"와 "옛 값을 얼마나 끌고 오는가"는 이제 다른 일이다.** [HOLD_MAX_GAP_MS] 판정은
+ * 선분을 가를지만 정하고, 옛 값의 몫은 시간 가중 EMA가 간격을 보고 연속적으로 정한다. 예전에는
+ * 둘이 한 판정에 묶여 있어서, 유지 한계를 늘리면 "구멍이 길어도 옛 값을 70% 끌고 온다"가 딸려
+ * 왔다 - 그 결합을 풀었기에 [HOLD_MAX_GAP_MS]를 250까지 늘릴 수 있었다. 끊김 뒤에는 어차피
+ * 간격이 250ms를 넘어 옛 값의 몫이 6% 아래로 떨어지므로, 선분 첫 값을 그대로 놓는 것은
+ * 시간 가중 식이 이미 내놓는 답을 정확히 0으로 못박는 일에 가깝다.
  */
 fun userCurveDisplayPoints(
     frames: List<RecordingEngine.PitchFrame>,
@@ -200,12 +242,17 @@ fun userCurveDisplayPoints(
             // 긴 구멍이면 아무것도 안 둔다 - 다음 유성 프레임에서 새 선분이 시작된다.
             if (!withinHold) continue
         } else {
-            // 유성 구간이 새로 시작될 때(맨 처음, 또는 긴 구멍 뒤)는 EMA를 첫 값으로 초기화한다.
-            // 직전 발화의 값에서 끌려오면 새 발화의 첫 몇 프레임이 통째로 거짓 위치에 놓인다.
             val st = 12.0 * log2(hz / center.toDouble())
-            smoothed = if (withinHold) {
-                smoothed * (1.0 - USER_CURVE_EMA_ALPHA) + st * USER_CURVE_EMA_ALPHA
+            smoothed = if (previousMs != null && withinHold) {
+                // 시간 가중 EMA. 직전 유성 프레임에서 벌어진 만큼을 프레임 수로 환산해 옛 값의
+                // 몫을 그만큼 거듭 깎는다 - 연속 프레임이면 gapFrames=1이라 기존 식과 같다.
+                val gapFrames = ((frame.timestampMs - previousMs).toDouble() / FRAME_INTERVAL_MS)
+                    .roundToInt()
+                    .coerceAtLeast(1)
+                val retain = (1.0 - USER_CURVE_EMA_ALPHA).pow(gapFrames)
+                st + (smoothed - st) * retain
             } else {
+                // 선분이 새로 시작될 때(맨 처음, 또는 끊김 뒤)는 첫 값 그대로 놓는다.
                 st
             }
             if (!withinHold) current = null // 새 선분
@@ -227,6 +274,58 @@ fun userCurveDisplayPoints(
     }
 
     return segments
+}
+
+/**
+ * 두 유성 프레임 사이의 짧은 무성 구멍을 **semitone 선형 보간**으로 메운 프레임 목록.
+ * 원본은 건드리지 않고 같은 길이·같은 순서·같은 timestampMs의 새 목록을 돌려준다.
+ *
+ * **Review 화면 전용이다.** 실시간 곡선은 인과적이어야 해서(자기보다 뒤의 프레임을 보면 과거가
+ * 다시 그려진다) 구멍을 앞 값으로 유지하는 수밖에 없지만, Review는 녹음이 끝나 데이터가 완성된
+ * 뒤라 구멍의 양옆을 다 보고 메워도 거짓이 아니다. 가이드 곡선([guideCurveDisplayPoints])이
+ * 이미 같은 규칙으로 무성 구간을 잇고 있어, 위아래 두 레인의 규칙이 이것으로 맞아떨어진다.
+ *
+ * 보간을 Hz가 아니라 log(semitone) 영역에서 하는 이유는 곡선의 y축이 semitone이기 때문이다 -
+ * Hz 선형 보간은 화면 위에서 아래로 휜 선이 된다. 200Hz와 800Hz 사이의 한가운데는 500Hz가
+ * 아니라 기하평균 400Hz다. EMA를 semitone에 거는 것과 같은 근거다.
+ *
+ * 구멍 길이는 양옆 유성 프레임의 timestampMs 차이로 잰다([HOLD_MAX_GAP_MS]와 같은 기준).
+ * [maxGapMs]를 넘는 구멍은 진짜 쉼으로 보고 그대로 둔다 - 문장 사이가 이어지면 안 된다.
+ * 앞뒤 가장자리의 구멍(녹음 시작 전·끝난 뒤)도 그대로다. 이어 줄 반대쪽 이웃이 없어 메우는
+ * 것이 보간이 아니라 값을 지어내는 일이 된다.
+ *
+ * 메운 프레임을 [userCurveDisplayPoints]의 EMA가 다시 스무딩해도 상관없다 - 보간값은 직선
+ * 위에 놓여 있어 스무딩이 거의 움직이지 않는다.
+ */
+fun fillShortGaps(
+    frames: List<RecordingEngine.PitchFrame>,
+    maxGapMs: Long = REVIEW_FILL_MAX_GAP_MS,
+): List<RecordingEngine.PitchFrame> {
+    val voiced = frames.withIndex().mapNotNull { (i, f) ->
+        f.voicedHz()?.let { IndexedValue(i, it) }
+    }
+    // 유성이 하나뿐이면 사이에 낀 구멍이라는 게 없다.
+    if (voiced.size < 2) return frames
+
+    val filled = frames.toMutableList()
+    for (k in 0 until voiced.size - 1) {
+        val (i0, hz0) = voiced[k]
+        val (i1, hz1) = voiced[k + 1]
+        if (i1 - i0 <= 1) continue // 붙어 있어 메울 자리가 없다
+
+        val startMs = frames[i0].timestampMs
+        val spanMs = frames[i1].timestampMs - startMs
+        if (spanMs <= 0L || spanMs > maxGapMs) continue
+
+        // semitone 영역이면 곧 log2(Hz)의 상수배라, 밑이 무엇이든 선형 보간 결과는 같다.
+        val log0 = log2(hz0.toDouble())
+        val log1 = log2(hz1.toDouble())
+        for (i in i0 + 1 until i1) {
+            val t = (frames[i].timestampMs - startMs).toDouble() / spanMs
+            filled[i] = frames[i].copy(pitchHz = 2.0.pow(log0 + (log1 - log0) * t).toFloat())
+        }
+    }
+    return filled
 }
 
 /**

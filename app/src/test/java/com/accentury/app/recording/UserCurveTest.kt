@@ -249,13 +249,47 @@ class UserCurveTest {
     fun `유지는 직전 유성 프레임 기준이라 구멍이 길어지면 멈춘다`() {
         // 무성이 계속되면 HOLD_MAX_GAP_MS를 넘는 순간부터는 점을 두지 않는다
         val longHole = centerFrames() + frames(
-            null, null, null, null, null, null,
+            null, null, null, null, null, null, null, null, null, null,
             startMs = CENTER_MIN_VOICED_FRAMES * FRAME_MS,
         )
         val points = userCurveDisplayPoints(longHole, WINDOW_MS).single()
         val heldCount = points.size - CENTER_MIN_VOICED_FRAMES
-        // 마지막 유성 시각에서 32/64/96ms 떨어진 셋만 유지되고, 128ms부터는 끊긴다
-        assertEquals(3, heldCount)
+        // 마지막 유성 시각에서 32ms씩 떨어진 프레임 중 250ms 이하인 일곱(32~224ms)만 유지되고,
+        // 256ms부터는 끊긴다
+        assertEquals((HOLD_MAX_GAP_MS / FRAME_MS).toInt(), heldCount)
+        assertEquals(7, heldCount)
+    }
+
+    // --- 시간 가중 EMA -------------------------------------------------------
+
+    @Test
+    fun `구멍이 길수록 옛 값의 몫이 줄어든다`() {
+        // 100ms 구멍은 프레임 3개어치라 0.7^3 = 34%가 남는다
+        assertEquals(0.343, residualAfterGap(100L), 0.005)
+        // 250ms(유지 한계)는 프레임 8개어치라 0.7^8 = 6%다 - 옛 값에 끌려가지 않는다
+        assertEquals(0.058, residualAfterGap(250L), 0.005)
+    }
+
+    @Test
+    fun `유지 한계 안의 구멍은 선분을 가르지 않는다`() {
+        val segments = userCurveDisplayPoints(gapThenJump(250L), WINDOW_MS)
+        assertEquals("250ms는 HOLD_MAX_GAP_MS 이하라 한 선분이다", 1, segments.size)
+    }
+
+    @Test
+    fun `연속 프레임의 EMA는 시간 가중 전후가 같다`() {
+        // gapFrames=1이면 retain=0.7이라 `직전*0.7 + 현재*0.3`과 정확히 같다
+        assertEquals(1.0 - USER_CURVE_EMA_ALPHA, residualAfterGap(FRAME_MS), 1e-3)
+    }
+
+    @Test
+    fun `유지 한계를 넘는 구멍은 선을 끊고 새 값 그대로 시작한다`() {
+        val jumpSt = 3.5
+        val over = centerFrames() + listOf(frame(after(300L), semitone(jumpSt)))
+        val segments = userCurveDisplayPoints(over, WINDOW_MS)
+        assertEquals("300ms는 HOLD_MAX_GAP_MS를 넘어 선분이 갈린다", 2, segments.size)
+        val expectedY = 0.5f - (jumpSt / USER_CURVE_SPAN_SEMITONE).toFloat()
+        assertEquals(expectedY, segments[1].single().y, 1e-4f)
     }
 
     // --- 실시간성 ------------------------------------------------------------
@@ -300,8 +334,102 @@ class UserCurveTest {
         assertEquals("최신 점은 오른쪽 끝이다", 1f, points.last().x, 1e-5f)
     }
 
+    // --- Review 구멍 보간 ----------------------------------------------------
+
+    @Test
+    fun `짧은 구멍은 semitone 선형으로 메워진다`() {
+        val filled = fillShortGaps(HOLE_192MS)
+
+        assertEquals("개수가 보존된다", HOLE_192MS.size, filled.size)
+        assertEquals(
+            "시각과 순서가 보존된다",
+            HOLE_192MS.map { it.timestampMs },
+            filled.map { it.timestampMs },
+        )
+        // 양 끝 유성 값은 그대로다
+        assertEquals(200f, filled[1].pitchHz!!, 1e-3f)
+        assertEquals(800f, filled[7].pitchHz!!, 1e-3f)
+        // 구멍 한가운데(t=128, 비율 0.5)는 산술평균 500이 아니라 기하평균 400이다
+        assertEquals(400f, filled[4].pitchHz!!, 1e-2f)
+        // 나머지 구멍 자리도 전부 채워졌고, 단조 증가한다
+        val inside = (2..6).map { filled[it].pitchHz!! }
+        assertTrue("구멍이 다 채워져야 한다: $inside", inside.all { it > 0f })
+        for (k in 0 until inside.size - 1) {
+            assertTrue("보간값은 단조 증가한다: $inside", inside[k] < inside[k + 1])
+        }
+    }
+
+    @Test
+    fun `앞뒤 가장자리 구멍은 그대로 둔다`() {
+        val filled = fillShortGaps(HOLE_192MS)
+        assertNull("녹음 시작 전 무성", filled.first().pitchHz)
+        assertNull("녹음이 끝난 뒤 무성", filled.last().pitchHz)
+    }
+
+    @Test
+    fun `긴 구멍은 진짜 쉼이라 메우지 않는다`() {
+        // 유성 두 개 사이가 608ms라 REVIEW_FILL_MAX_GAP_MS(500)를 넘는다
+        val hole = listOf(frame(0L, 200f)) +
+            List(18) { frame((it + 1) * FRAME_MS, null) } +
+            listOf(frame(19 * FRAME_MS, 800f))
+        val filled = fillShortGaps(hole)
+
+        assertEquals(hole.size, filled.size)
+        assertEquals(hole, filled)
+        assertTrue("구멍이 그대로 null이다", filled.subList(1, 19).all { it.pitchHz == null })
+    }
+
+    @Test
+    fun `메울 짝이 없으면 원본 그대로다`() {
+        assertEquals(emptyList<RecordingEngine.PitchFrame>(), fillShortGaps(emptyList()))
+        val allUnvoiced = frames(null, null, null)
+        assertEquals(allUnvoiced, fillShortGaps(allUnvoiced))
+        val onlyOneVoiced = frames(null, 200f, null)
+        assertEquals(onlyOneVoiced, fillShortGaps(onlyOneVoiced))
+    }
+
+    @Test
+    fun `메운 프레임은 곡선을 한 선분으로 잇는다`() {
+        // 608ms 구멍은 실시간 곡선이라면 선분을 가르지만, 한계를 늘려 메우면 한 선분이 된다
+        val hole = centerFrames() +
+            List(18) { frame(after((it + 1) * FRAME_MS), null) } +
+            listOf(frame(after(19 * FRAME_MS), semitone(3.0)))
+        assertEquals(2, userCurveDisplayPoints(hole, WINDOW_MS).size)
+        val filled = fillShortGaps(hole, maxGapMs = 1000L)
+        assertEquals(1, userCurveDisplayPoints(filled, WINDOW_MS).size)
+    }
+
+    /** 중심 프레임 뒤 [gapMs] 만큼 떨어진 곳에 7 semitone 점프를 두었을 때, 남은 옛 값의 비율 */
+    private fun residualAfterGap(gapMs: Long): Double {
+        val jumpSt = 7.0
+        val points = userCurveDisplayPoints(gapThenJump(gapMs), WINDOW_MS).last()
+        val onScreenSt = (0.5 - points.last().y) * USER_CURVE_SPAN_SEMITONE
+        // 옛 값이 0 semitone(중심)이었으므로, 목표에 못 미친 몫이 곧 옛 값의 잔존 비율이다
+        return (jumpSt - onScreenSt) / jumpSt
+    }
+
+    private fun gapThenJump(gapMs: Long): List<RecordingEngine.PitchFrame> =
+        centerFrames() + listOf(frame(after(gapMs), semitone(7.0)))
+
     private companion object {
         const val FRAME_MS = 32L
+
+        /**
+         * 앞뒤 가장자리가 무성이고, 32ms(200Hz)와 224ms(800Hz) 사이에 192ms짜리 구멍이 있다.
+         * 두 옥타브 차이라 한가운데의 기하평균이 400Hz로 딱 떨어진다.
+         */
+        val HOLE_192MS = listOf(
+            RecordingEngine.PitchFrame(0L, null),
+            RecordingEngine.PitchFrame(32L, 200f),
+            RecordingEngine.PitchFrame(64L, null),
+            RecordingEngine.PitchFrame(96L, null),
+            RecordingEngine.PitchFrame(128L, null),
+            RecordingEngine.PitchFrame(160L, null),
+            RecordingEngine.PitchFrame(192L, null),
+            RecordingEngine.PitchFrame(224L, 800f),
+            RecordingEngine.PitchFrame(256L, null),
+        )
+
         const val CENTER_HZ = 200f
         const val WINDOW_MS = 2000L
         const val LONG_GAP_MS = 500L

@@ -102,7 +102,10 @@ fun RecordingScreen(
     // 재녹음을 시작하면 Recording의 빈 목록으로 바뀌므로 지난 곡선이 새 녹음에 섞이지 않는다.
     val pitchFrames = when (val s = state) {
         is RecordingUiState.Recording -> s.pitchFrames
-        is RecordingUiState.Review -> s.pitchFrames
+        // Review에서만 짧은 무성 구멍을 메운다. 녹음 중에는 곡선이 인과적이어야 해서(뒤 프레임을
+        // 보면 이미 그린 과거가 다시 그려진다) 구멍을 앞 값으로 유지하는 수밖에 없지만, 완료 후에는
+        // 데이터가 다 모여 있어 구멍의 양옆을 보고 이어도 거짓이 아니다 - fillShortGaps KDoc 참고.
+        is RecordingUiState.Review -> fillShortGaps(s.pitchFrames)
         else -> emptyList()
     }
     // 프레임이 청크마다 늘어나므로 remember로 묶지 않는다 - 어차피 매 방출마다 다시 계산해야 한다.
