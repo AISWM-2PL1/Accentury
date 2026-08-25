@@ -95,26 +95,21 @@ fun RecordingScreen(
         is RecordingUiState.Review -> fillShortGaps(s.pitchFrames)
         else -> emptyList()
     }
-    // 어느 창을 쓸지는 여기 한 곳에서만 정한다. 아래 두 곳(가이드 정렬, 사용자 곡선)이 서로 다른
-    // 창을 쓰면 같은 x가 다른 시각을 가리켜 두 레인의 시간축이 어긋난다.
-    // 녹음 중에는 최신 구간이 오른쪽 끝에 붙어야 하니 미끄러지는 라이브 창을 그대로 쓰고,
-    // 녹음이 끝난 Review에서는 발화 전체가 들어오게 창을 늘린다 - reviewWindowMs KDoc 참고.
+    // 이 창은 사용자 레인만 쓴다. 녹음 중에는 최신 구간이 오른쪽 끝에 붙어야 하니 미끄러지는
+    // 라이브 창을 그대로 쓰고, 녹음이 끝난 Review에서는 발화 전체가 들어오게 창을 늘린다
+    // - reviewWindowMs KDoc 참고.
     val windowMs = when (state) {
         is RecordingUiState.Review -> reviewWindowMs(pitchFrames, liveWindowMs)
         else -> liveWindowMs
     }
-    val guidePoints = remember(guideF0, windowMs) {
-        if (guideF0?.unit != "semitone") {
-            emptyList()
-        } else {
-            // 창이 가이드보다 넓으므로 가이드는 그 앞부분만 차지한다 - 같은 x가 같은 시각을
-            // 가리키게 좌표를 창 기준으로 옮긴다.
-            alignGuideToWindow(
-                points = guideCurveDisplayPoints(guideF0.values),
-                guideMs = guideDurationMs(guideF0.frameIntervalMs, guideF0.values.size),
-                windowMs = windowMs,
-            )
-        }
+    // 가이드는 사용자 창과 무관하게 항상 자기 길이로 레인 폭 전체를 쓴다 (2026-08-25 결정,
+    // KAN-104의 원래 모양으로 되돌림). 가이드 레인은 "정답 억양이 어떤 모양인가"를 보여 주는
+    // 그림이라 레인을 꽉 채워야 오르내림이 읽힌다. 사용자 창(가이드의 2배, Review는 녹음 전체
+    // 길이)에 맞춰 축소하면 발화가 길수록 가이드가 왼쪽 구석에 작게 눌려, 정작 비교하라고 놓은
+    // 곡선이 더 안 보였다. 대가로 두 레인의 시간축이 달라지는 것은 감수한다 - 두 레인은 이제
+    // 같은 시각을 맞춰 보는 도구가 아니라 모양을 견주는 도구다.
+    val guidePoints = remember(guideF0) {
+        if (guideF0?.unit != "semitone") emptyList() else guideCurveDisplayPoints(guideF0.values)
     }
     // 프레임이 청크마다 늘어나므로 remember로 묶지 않는다 - 어차피 매 방출마다 다시 계산해야 한다.
     val mySegments = userCurveDisplayPoints(pitchFrames, windowMs, centerHz)
