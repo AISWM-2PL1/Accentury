@@ -2,8 +2,9 @@
 #
 # 환경당 인스턴스 1대가 구조적 전제다: backend의 요청 제한 5축(RateLimits),
 # AI 회로 차단기, pollAfterMs 혼잡 판정, 분석 디스패처가 전부 인메모리다.
-# scale 금지. 운영용 compose 파일 자체는 KAN-124의 산출물이고, 여기서는
-# 그 파일이 /opt/accentury/docker-compose.yml에 놓이면 기동되는 그릇까지 만든다.
+# scale 금지. 운영용 compose 파일(docker-compose.yml)과 기동 스크립트(accentury-up.sh)는
+# 이 모듈의 파일이고, user_data가 첫 부팅에 /opt/accentury로 옮긴다. 환경별 값은 부팅마다
+# SSM Parameter Store(${ssm_prefix}/*)에서 읽으므로 두 환경의 호스트 구성은 완전히 같다.
 
 locals {
   name = "accentury-${var.env}"
@@ -11,6 +12,12 @@ locals {
 
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
+
+locals {
+  # 이미지는 계정 공유 ECR(infra/bootstrap)에서 당긴다. staging과 prod가 같은 SHA 태그를
+  # 승격 모델로 나눠 쓴다 (KAN-128).
+  ecr_registry = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${data.aws_region.current.region}.amazonaws.com"
+}
 
 # AL2023 x86_64 최신 AMI를 SSM 퍼블릭 파라미터에서 읽는다. 값은 시간이 지나면
 # 바뀌므로 ami를 ignore_changes로 고정한다 - 그래야 AMI 갱신이 "plan 변경 없음"
@@ -90,10 +97,17 @@ resource "aws_instance" "this" {
 
   user_data = templatefile("${path.module}/user_data.sh.tftpl", {
     compose_version = var.compose_version
+    env             = var.env
+    ssm_prefix      = var.ssm_prefix
+    ecr_registry    = local.ecr_registry
+    region          = data.aws_region.current.region
+    compose_yml     = file("${path.module}/docker-compose.yml")
+    up_script       = file("${path.module}/accentury-up.sh")
   })
   # cloud-init은 이 스크립트를 인스턴스당 한 번만 실행한다. 기본 동작(in-place
   # 갱신)이면 user_data 변경이 적용된 것처럼 보이지만 실제로는 반영되지 않으므로
-  # 인스턴스를 교체한다. 호스트는 무상태다 - 상태는 전부 RDS와 SSM에 있다.
+  # 인스턴스를 교체한다. compose 파일이나 기동 스크립트를 고쳐도 같은 이유로 교체된다.
+  # 호스트는 무상태다 - 상태는 전부 RDS와 SSM에 있고, env 파일은 tmpfs(/run)에만 있다.
   user_data_replace_on_change = true
 
   root_block_device {

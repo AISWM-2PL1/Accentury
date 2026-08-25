@@ -1,8 +1,11 @@
 #!/bin/bash
-# EC2 첫 부팅 부트스트랩 (KAN-124). docker와 compose 플러그인을 깔고,
-# /opt/accentury/docker-compose.yml이 놓이면 부팅마다 자동 기동되는
-# systemd 유닛을 등록한다. compose 파일 배치와 컨테이너 기동은 KAN-124,
-# KAN-128(배포 파이프라인)의 몫이다.
+# EC2 첫 부팅 부트스트랩 (KAN-124). docker와 compose 플러그인을 깔고, 운영 compose 파일과
+# 기동 스크립트를 /opt/accentury에 놓고, 부팅마다 자동 기동되는 systemd 유닛을 등록한다.
+# 컨테이너 이미지 태그를 SSM에 써 넣는 것은 배포 파이프라인(KAN-128)의 몫이고, 그 전까지는
+# 유닛이 "IMAGE_TAG 없음"으로 실패한 채 기다린다.
+#
+# cloud-init은 이 스크립트를 인스턴스당 한 번만 실행한다. 여기 들어가는 파일(compose,
+# 스크립트)이 바뀌면 인스턴스가 교체된다 (main.tf의 user_data_replace_on_change).
 set -euxo pipefail
 
 dnf install -y docker
@@ -15,22 +18,46 @@ curl -fsSL "https://github.com/docker/compose/releases/download/${compose_versio
   -o /usr/local/lib/docker/cli-plugins/docker-compose
 chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 
-mkdir -p /opt/accentury
+# ---- 환경별 값 (비밀 아님). accentury-up.sh가 source 한다. ----
+mkdir -p /etc/accentury
+cat > /etc/accentury/env.conf <<'CONF'
+ACCENTURY_ENV=${env}
+SSM_PREFIX=${ssm_prefix}
+ECR_REGISTRY=${ecr_registry}
+AWS_REGION=${region}
+CONF
 
+# ---- 운영 compose 파일과 기동 스크립트 (레포 infra/modules/compute/의 사본) ----
+mkdir -p /opt/accentury
+cat > /opt/accentury/docker-compose.yml <<'COMPOSE'
+${compose_yml}
+COMPOSE
+
+cat > /opt/accentury/accentury-up.sh <<'SCRIPT'
+${up_script}
+SCRIPT
+chmod 755 /opt/accentury/accentury-up.sh
+
+# ---- systemd: 부팅마다 SSM 값을 새로 읽어 compose up ----
 cat > /etc/systemd/system/accentury.service <<'UNIT'
 [Unit]
 Description=Accentury backend + ai (docker compose)
 Requires=docker.service
 After=docker.service network-online.target
-# compose 파일이 아직 배치되지 않았으면 조용히 건너뛴다 (KAN-124가 배치).
-ConditionPathExists=/opt/accentury/docker-compose.yml
+Wants=network-online.target
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=/opt/accentury
-ExecStart=/usr/bin/docker compose up -d
-ExecStop=/usr/bin/docker compose down
+ExecStart=/opt/accentury/accentury-up.sh
+# 배포(KAN-128): SSM IMAGE_TAG 갱신 후 `systemctl reload accentury` - 내렸다 올리지 않고
+# 바뀐 서비스만 다시 만든다.
+ExecReload=/opt/accentury/accentury-up.sh
+# ExecStart가 성공한 뒤에만 실행되므로 compose.env가 존재한다.
+ExecStop=/usr/bin/docker compose --env-file /run/accentury/compose.env down
+# 첫 기동은 이미지 pull(backend 약 600MB)이 포함된다.
+TimeoutStartSec=900
 
 [Install]
 WantedBy=multi-user.target
@@ -38,3 +65,7 @@ UNIT
 
 systemctl daemon-reload
 systemctl enable accentury.service
+# 첫 부팅에서도 바로 시도한다. SSM/ECR 일시 장애와 IAM 전파 지연은 스크립트가 백오프로
+# 재시도한다(약 4분). IMAGE_TAG가 아직 없으면 즉시 실패로 남고, 파이프라인이 태그를 넣은 뒤
+# `systemctl start accentury`나 재부팅으로 올라온다. user_data 자체는 실패시키지 않는다.
+systemctl start accentury.service || true
