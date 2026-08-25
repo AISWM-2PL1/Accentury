@@ -187,8 +187,13 @@ fun userCurveDisplayPoints(
     return segments
 }
 
-/** 이 프레임의 유효한 유성 F0. 무성이거나 값이 성립하지 않으면 null이다. */
-private fun RecordingEngine.PitchFrame.voicedHz(): Float? {
+/**
+ * 이 프레임의 유효한 유성 F0. 무성이거나 값이 성립하지 않으면 null이다.
+ *
+ * internal인 이유: 목소리 점검([VoiceCheckController])이 유성 프레임을 세는데, "무엇이 유성인가"의
+ * 정의가 둘로 갈리면 곡선이 그려지는 조건과 점검이 통과하는 조건이 조용히 어긋난다.
+ */
+internal fun RecordingEngine.PitchFrame.voicedHz(): Float? {
     val hz = pitchHz ?: return null
     return if (hz.isFinite() && hz > 0f) hz else null
 }
