@@ -65,6 +65,8 @@ import com.accentury.app.recording.RecordingScreen
 import com.accentury.app.audio.RecordingEngine
 import com.accentury.app.audio.defaultPcmSource
 import com.accentury.app.recording.RecordingViewModel
+import com.accentury.app.recording.VoiceCheckScreen
+import com.accentury.app.recording.VoiceCheckViewModel
 import com.accentury.app.session.OkHttpSessionClient
 import com.accentury.app.session.RetestOutcome
 import com.accentury.app.session.SessionGateController
@@ -134,20 +136,26 @@ private fun TestFlow(modifier: Modifier = Modifier) {
             PackageManager.PERMISSION_GRANTED
 
     /*
-     * 시작 게이트의 세 칸 (KAN-34).
+     * 시작 게이트의 네 칸 (KAN-34, KAN-105).
      *
-     * 웹의 [시작하기] → 마이크 권한(KAN-98) → 세션 생성(KAN-9) 순서로 지나야 테스트가 열린다.
-     * 앞의 둘은 "지났는가"라는 불리언이지만 세 번째는 **받아 온 값 자체**가 통과 표시다 —
-     * 진입 URL·업로드·브리지 토큰이 전부 그 값에서 나오므로, 진입 여부를 세션과 따로 들면
-     * "들어갔는데 세션이 없다"는 표현 가능한 어긋남이 생긴다. 그래서 예전의 `testEntered`
-     * 불리언을 없애고 [SessionGateController.session]이 그 자리를 대신한다.
+     * 웹의 [시작하기] → 마이크 권한(KAN-98) → 목소리 점검(KAN-105) → 세션 생성(KAN-9) 순서로
+     * 지나야 테스트가 열린다. 앞의 둘은 "지났는가"라는 불리언이지만 뒤의 둘은 **받아 온 값 자체**가
+     * 통과 표시다 — 세션은 진입 URL·업로드·브리지 토큰이 전부 거기서 나오므로, 진입 여부를 세션과
+     * 따로 들면 "들어갔는데 세션이 없다"는 표현 가능한 어긋남이 생긴다. 그래서 예전의 `testEntered`
+     * 불리언을 없애고 [SessionGateController.session]이 그 자리를 대신한다. 목소리 점검도 같은 꼴이다 —
+     * 통과의 결과물이 중심 음높이라, 통과 여부를 따로 들면 "지났는데 중심이 없다"가 생긴다.
      *
-     * 셋 다 회전·프로세스 복원을 넘긴다. 증발하면 통과한 게이트가 다시 서고 인트로로 되돌아가는데,
+     * **점검이 권한과 세션 사이인 이유**: 마이크가 방금 열려 확인할 것이 바로 앞에 있고, 아직
+     * 네트워크를 쓰기 전이라 전부 기기 안에서 끝난다. 세션 뒤로 밀면 이미 발급된 세션(만료가 도는
+     * 자원)을 든 채 점검에 붙들리는 구간이 생긴다.
+     *
+     * 넷 다 회전·프로세스 복원을 넘긴다. 증발하면 통과한 게이트가 다시 서고 인트로로 되돌아가는데,
      * 세션이 증발하는 경우는 그보다 나빠서 — 응답에서 한 번만 노출되는 토큰이라(Session KDoc)
      * 되찾을 길이 없고 진행 중이던 응시가 통째로 죽는다.
      */
     var startRequested by rememberSaveable { mutableStateOf(false) }
     var micPassed by rememberSaveable { mutableStateOf(false) }
+    var voiceCenterHz by rememberSaveable { mutableStateOf<Float?>(null) }
     val sessionGate = rememberSaveable(saver = SessionGateController.saver()) { SessionGateController() }
     val sessionClient = remember { OkHttpSessionClient(DEV_BASE_URL) }
     val session = sessionGate.session
@@ -255,6 +263,13 @@ private fun TestFlow(modifier: Modifier = Modifier) {
         }
     }
     val viewModel: RecordingViewModel = viewModel(factory = recordingFactory)
+
+    // 목소리 점검도 같은 소스를 쓴다 - 디버그의 가짜 마이크가 점검 화면에도 그대로 흐르고,
+    // 점검이 잰 중심이 실제 문항에서 쓸 마이크와 같은 경로에서 나온다.
+    val voiceCheckFactory = remember(appContext) {
+        VoiceCheckViewModel.factory(defaultPcmSource(appContext))
+    }
+    val voiceCheckViewModel: VoiceCheckViewModel = viewModel(factory = voiceCheckFactory)
 
     /*
      * 브리지 getSessionToken(KAN-13)이 읽을 토큰 자리 (KAN-34).
@@ -414,8 +429,17 @@ private fun TestFlow(modifier: Modifier = Modifier) {
                 startRequested && session == null && !micPassed ->
                     PermissionGate(onGranted = { micPassed = true })
 
-                // 시작 게이트 2칸 — 세션 생성 (KAN-34). 확보되면 테스트 URL이 로드되고 조건이
-                // 풀려 이 화면이 사라진다.
+                // 시작 게이트 2칸 — 목소리 점검 (KAN-105). 중심 음높이를 받으면 조건이 풀린다.
+                // 마이크가 막 열린 자리라 여기서 확인하고, 잰 값은 이후 모든 문항의 곡선 축이 된다.
+                startRequested && session == null && micPassed && voiceCenterHz == null ->
+                    VoiceCheckScreen(
+                        viewModel = voiceCheckViewModel,
+                        onDone = { voiceCenterHz = it },
+                    )
+
+                // 시작 게이트 3칸 — 세션 생성 (KAN-34). 확보되면 테스트 URL이 로드되고 조건이
+                // 풀려 이 화면이 사라진다. 여기 닿았다는 것은 앞의 두 칸을 이미 지났다는 뜻이라
+                // (위 두 분기가 그 경우를 먼저 가져간다) 조건을 다시 적지 않는다.
                 startRequested && session == null -> SessionGateScreen(
                     gate = sessionGate,
                     client = sessionClient,
@@ -423,6 +447,9 @@ private fun TestFlow(modifier: Modifier = Modifier) {
                     onBackToIntro = {
                         startRequested = false
                         micPassed = false
+                        // 점검도 함께 되돌린다 - 인트로로 돌아간 뒤 다시 시작하면 마이크를 새로
+                        // 열게 되므로, 그 마이크가 잘 잡히는지는 그때 다시 확인해야 맞다.
+                        voiceCenterHz = null
                         // 실패 상태를 그대로 두면 다음 [시작하기]가 같은 실패 화면으로 곧장 떨어진다.
                         sessionGate.restart()
                     },
@@ -457,6 +484,9 @@ private fun TestFlow(modifier: Modifier = Modifier) {
                         afterUploadFailure = (phase as? TestFlowPhase.Recording)?.afterUploadFailure == true,
                         // 그 전환에서 서버가 준 문구. null이면 화면이 기본 안내를 쓴다.
                         failureMessage = (phase as? TestFlowPhase.Recording)?.failureMessage,
+                        // 시작 게이트의 점검이 잰 중심 음높이 (KAN-105). 이 자리까지 왔다는 것은
+                        // 점검을 지났다는 뜻이라 실제로는 항상 값이 있다.
+                        centerHz = voiceCenterHz,
                         viewModel = viewModel,
                         onSubmit = { attemptId, durationMs, quality ->
                             // consumeRecording은 PCM을 넘기면서 뷰모델에서 지운다 (FR-DP-02: 보관하지 않음).
@@ -517,6 +547,8 @@ private fun RecordingOverlay(
     afterUploadFailure: Boolean,
     /** 그 전환에서 서버가 준 문구 (KAN-147). null이면 화면이 기본 안내를 쓴다. */
     failureMessage: String?,
+    /** 사용자 곡선 y축의 중심 음높이 (KAN-105). 시작 게이트의 목소리 점검이 잰 값이다. */
+    centerHz: Float?,
     viewModel: RecordingViewModel,
     onSubmit: (attemptId: String, durationMs: Long, quality: QualityStatus) -> Unit,
 ) {
@@ -532,6 +564,7 @@ private fun RecordingOverlay(
             submitting = submitting,
             afterUploadFailure = afterUploadFailure,
             failureMessage = failureMessage,
+            centerHz = centerHz,
             viewModel = viewModel,
         )
     }
