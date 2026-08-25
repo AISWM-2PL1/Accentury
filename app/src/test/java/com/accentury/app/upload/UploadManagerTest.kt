@@ -1,6 +1,7 @@
 package com.accentury.app.upload
 
 import com.accentury.app.audio.ClientQuality
+import com.accentury.app.net.TransportFailure
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -65,6 +66,13 @@ class UploadManagerTest {
 
         fun callsFor(attemptId: String): Int = received.count { it.attemptId == attemptId }
     }
+
+    /**
+     * 종류를 따지지 않는 전송 실패. 이 테스트들이 보는 것은 "응답이 안 왔다"는 사실 하나뿐이라
+     * 갈래는 [TransportFailure.Unknown]으로 고정하고, 그때 나오는 문구를 [TRANSPORT_FAILED]로 받는다.
+     */
+    private fun transportError(failure: TransportFailure = TransportFailure.Unknown) =
+        UploadResult.TransportError(failure, "network down")
 
     private fun requestOf(attemptId: String, itemId: String = "item-1") = UploadRequest(
         attemptId = attemptId,
@@ -141,10 +149,30 @@ class UploadManagerTest {
     fun `TransportError는 재시도 가능한 Failed가 된다`() = withManager { fake, manager ->
         manager.enqueue(requestOf("at-1"))
         advanceUntilIdle()
-        fake.respond("at-1", UploadResult.TransportError("timeout"))
+        fake.respond("at-1", transportError(TransportFailure.Timeout))
         advanceUntilIdle()
 
-        assertEquals(UploadState.Failed(true, "timeout"), manager.uploads.value["at-1"])
+        assertEquals(
+            UploadState.Failed(true, "응답이 늦어요. 다시 시도해 주세요"),
+            manager.uploads.value["at-1"],
+        )
+    }
+
+    /*
+     * 전송 실패 문구는 예외 종류에서 온다 (KAN-147 2단계). OkHttp가 준 "Unable to resolve host ..."
+     * 같은 문구가 상태 바에 그대로 뜨면 사용자는 자기가 끊긴 건지 서버가 죽은 건지 알 수 없다.
+     */
+    @Test
+    fun `기기가 끊긴 전송 실패는 연결을 확인하라는 문구로 내려온다`() = withManager { fake, manager ->
+        manager.enqueue(requestOf("at-1"))
+        advanceUntilIdle()
+        fake.respond("at-1", transportError(TransportFailure.Offline))
+        advanceUntilIdle()
+
+        assertEquals(
+            UploadState.Failed(retryable = true, message = "인터넷 연결을 확인해 주세요"),
+            manager.uploads.value["at-1"],
+        )
     }
 
     /*
@@ -217,19 +245,19 @@ class UploadManagerTest {
         advanceUntilIdle()
 
         repeat(3) {
-            fake.respond("at-1", UploadResult.TransportError("network down"))
+            fake.respond("at-1", transportError())
             advanceUntilIdle()
-            assertEquals(UploadState.Failed(true, "network down"), manager.uploads.value["at-1"])
+            assertEquals(TRANSPORT_FAILED, manager.uploads.value["at-1"])
             manager.retry("at-1")
             advanceUntilIdle()
             assertEquals(UploadState.InFlight, manager.uploads.value["at-1"])
         }
 
-        fake.respond("at-1", UploadResult.TransportError("network down"))
+        fake.respond("at-1", transportError())
         advanceUntilIdle()
 
         assertEquals(4, fake.callsFor("at-1"))
-        assertEquals(UploadState.Failed(true, "network down"), manager.uploads.value["at-1"])
+        assertEquals(TRANSPORT_FAILED, manager.uploads.value["at-1"])
     }
 
     @Test
@@ -238,7 +266,7 @@ class UploadManagerTest {
 
         manager.enqueue(original)
         advanceUntilIdle()
-        fake.respond("at-1", UploadResult.TransportError("network down"))
+        fake.respond("at-1", transportError())
         advanceUntilIdle()
 
         manager.retry("at-1")
@@ -280,15 +308,15 @@ class UploadManagerTest {
 
         manager.enqueue(original)
         advanceUntilIdle()
-        fake.respond("at-1", UploadResult.TransportError("network down"))
+        fake.respond("at-1", transportError())
         advanceUntilIdle()
-        assertEquals(UploadState.Failed(true, "network down"), manager.uploads.value["at-1"])
+        assertEquals(TRANSPORT_FAILED, manager.uploads.value["at-1"])
 
         // 같은 멱등 키에 다른 payload를 붙이려는 시도는 상태도 호출 횟수도 건드리지 못한다.
         manager.enqueue(original.copy(wavBytes = ByteArray(32) { 0x7F }))
         advanceUntilIdle()
         assertEquals(1, fake.callsFor("at-1"))
-        assertEquals(UploadState.Failed(true, "network down"), manager.uploads.value["at-1"])
+        assertEquals(TRANSPORT_FAILED, manager.uploads.value["at-1"])
 
         manager.retry("at-1")
         advanceUntilIdle()
@@ -308,7 +336,7 @@ class UploadManagerTest {
 
         assertTrue(snapshot.contentEquals(fake.received.first().wavBytes))
 
-        fake.respond("at-1", UploadResult.TransportError("network down"))
+        fake.respond("at-1", transportError())
         advanceUntilIdle()
         manager.retry("at-1")
         advanceUntilIdle()
@@ -326,7 +354,8 @@ class UploadManagerTest {
         fake.failWith("at-1", RuntimeException("unexpected boom"))
         advanceUntilIdle()
 
-        assertEquals(UploadState.Failed(true, "unexpected boom"), manager.uploads.value["at-1"])
+        // 예외 문구는 사용자가 읽을 말이 아니다. 원인 불명 전송 실패와 같은 안내로 덮인다 (KAN-147 2단계).
+        assertEquals(TRANSPORT_FAILED, manager.uploads.value["at-1"])
     }
 
     @Test
@@ -349,9 +378,9 @@ class UploadManagerTest {
     fun `discard한 Failed 건은 상태와 원본이 사라지고 같은 키로 다시 enqueue할 수 있다`() = withManager { fake, manager ->
         manager.enqueue(requestOf("at-1"))
         advanceUntilIdle()
-        fake.respond("at-1", UploadResult.TransportError("network down"))
+        fake.respond("at-1", transportError())
         advanceUntilIdle()
-        assertEquals(UploadState.Failed(true, "network down"), manager.uploads.value["at-1"])
+        assertEquals(TRANSPORT_FAILED, manager.uploads.value["at-1"])
 
         manager.discard("at-1")
         assertEquals(null, manager.uploads.value["at-1"])
@@ -392,7 +421,7 @@ class UploadManagerTest {
         manager.enqueue(requestOf("at-inflight", itemId = "item-3"))
         advanceUntilIdle()
         fake.respond("at-done", UploadResult.Accepted("aj_1"))
-        fake.respond("at-failed", UploadResult.TransportError("network down"))
+        fake.respond("at-failed", transportError())
         advanceUntilIdle()
         assertEquals(3, manager.uploads.value.size)
 
@@ -444,9 +473,9 @@ class UploadManagerTest {
             assertEquals(UploadState.InFlight, manager.uploads.value["at-1"])
 
             // 새 시도의 원본이 남아 있어야 재시도가 같은 바이트를 다시 보낼 수 있다.
-            fake.respond("at-1", UploadResult.TransportError("network down"))
+            fake.respond("at-1", transportError())
             advanceUntilIdle()
-            assertEquals(UploadState.Failed(true, "network down"), manager.uploads.value["at-1"])
+            assertEquals(TRANSPORT_FAILED, manager.uploads.value["at-1"])
 
             manager.retry("at-1")
             advanceUntilIdle()
@@ -527,3 +556,6 @@ class UploadManagerTest {
     private fun UploadManager.readPrivateField(name: String): Any =
         UploadManager::class.java.getDeclaredField(name).also { it.isAccessible = true }.get(this)!!
 }
+
+/** [TransportFailure.Unknown]에 붙는 안내 문구. 화면에 실제로 뜨는 말이라 테스트가 직접 적어 못 박는다. */
+private val TRANSPORT_FAILED = UploadState.Failed(true, "전송에 실패했어요. 다시 시도해 주세요")

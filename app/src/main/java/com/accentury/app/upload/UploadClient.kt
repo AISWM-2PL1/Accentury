@@ -1,7 +1,9 @@
 package com.accentury.app.upload
 
 import com.accentury.app.audio.ClientQuality
+import com.accentury.app.net.TransportFailure
 import com.accentury.app.net.await
+import com.accentury.app.net.toTransportFailure
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -45,8 +47,16 @@ sealed interface UploadResult {
         val retryAfterMs: Long?,
     ) : UploadResult
 
-    /** 응답이 아예 오지 않은 전송 실패. 의미상 항상 재시도 가능. */
-    data class TransportError(val reason: String) : UploadResult
+    /**
+     * 응답이 아예 오지 않은 전송 실패. 의미상 항상 재시도 가능.
+     *
+     * @property failure 사용자에게 뭐라고 말할지 정하는 갈래 (KAN-147).
+     * @property reason 원본 예외 문구. 로그·디버깅용이라 화면에 그대로 내보내지 않는다.
+     */
+    data class TransportError(
+        val failure: TransportFailure,
+        val reason: String,
+    ) : UploadResult
 }
 
 /**
@@ -90,7 +100,7 @@ class OkHttpUploadClient(
             toResult(response.code, body)
         }
     } catch (e: IOException) {
-        UploadResult.TransportError(e.message ?: e.javaClass.simpleName)
+        UploadResult.TransportError(e.toTransportFailure(), e.message ?: e.javaClass.simpleName)
     }
 
     private fun buildRequest( //어디로, 어떤 방법으로, 어떤 헤더를 가지고, 어떤 형식으로 보낼지 정해주는 일. 주문서 짜주는 느낌

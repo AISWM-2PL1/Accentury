@@ -1,5 +1,6 @@
 package com.accentury.app.upload
 
+import com.accentury.app.net.TransportFailure
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -149,15 +150,16 @@ class UploadManager(
                     }
                     // 응답이 오지 않은 것은 녹음의 문제가 아니다. 언제든 다시 보낼 수 있게 남긴다.
                     is UploadResult.TransportError ->
-                        UploadState.Failed(retryable = true, message = result.reason)
+                        UploadState.Failed(retryable = true, message = result.failure.userMessage())
                 }
             } catch (e: CancellationException) {
                 // 취소는 실패가 아니다. 상태를 건드리지 않고 코루틴 취소를 그대로 전파한다.
                 throw e
             } catch (e: Throwable) {
                 // 클라이언트 구현이 예외를 흘리더라도 InFlight로 고착되지 않게 실패로 내린다.
-                // 원인을 모르는 실패라 녹음을 버리게 하지 않고 재시도 쪽에 남긴다.
-                UploadState.Failed(retryable = true, message = e.message ?: e.javaClass.simpleName)
+                // 원인을 모르는 실패라 녹음을 버리게 하지 않고 재시도 쪽에 남긴다. 예외 문구는
+                // 사용자가 읽을 말이 아니므로 삼키고, 원인 불명 전송 실패와 같은 안내를 쓴다.
+                UploadState.Failed(retryable = true, message = TransportFailure.Unknown.userMessage())
             }
             publish(attemptId, coroutineContext.job, state)
         }
@@ -197,4 +199,18 @@ class UploadManager(
          */
         private val RERECORD_CODES = setOf("AUDIO_TOO_LONG", "AUDIO_TOO_LARGE", "AUDIO_TOO_QUIET")
     }
+}
+
+/**
+ * 전송 실패를 사용자가 읽을 한 줄로 옮긴다 (KAN-147 2단계).
+ *
+ * OkHttp 예외 문구("timeout", "Unable to resolve host ...")를 그대로 상태 바에 태우면
+ * 사용자는 자기가 끊긴 건지 서버가 죽은 건지 알 수 없다. 원인을 단정할 수 있는 만큼만 말하고,
+ * 어느 쪽이든 복구 수단은 하나([재시도])라 문구는 전부 "다시 시도" 쪽으로 모은다.
+ */
+private fun TransportFailure.userMessage(): String = when (this) {
+    TransportFailure.Offline -> "인터넷 연결을 확인해 주세요"
+    TransportFailure.ServerUnreachable -> "서버에 연결할 수 없어요. 잠시 후 다시 시도해 주세요"
+    TransportFailure.Timeout -> "응답이 늦어요. 다시 시도해 주세요"
+    TransportFailure.Unknown -> "전송에 실패했어요. 다시 시도해 주세요"
 }

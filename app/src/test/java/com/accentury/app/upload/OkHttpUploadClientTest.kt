@@ -1,6 +1,7 @@
 package com.accentury.app.upload
 
 import com.accentury.app.audio.ClientQuality
+import com.accentury.app.net.TransportFailure
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -174,14 +175,20 @@ class OkHttpUploadClientTest {
         assertTrue((result as UploadResult.Rejected).retryable)
     }
 
+    /*
+     * 실제 예외가 무엇으로 올라오는지까지 확인한다 (KAN-147 2단계). 분류표만 단위 테스트하면
+     * OkHttp가 다른 예외를 던지는 순간 사용자는 엉뚱한 안내를 받는데 아무도 모른다.
+     */
     @Test
-    fun `서버 연결이 끊기면 TransportError를 반환한다`() = runTest {
+    fun `서버 연결이 끊기면 서버 쪽 문제로 분류한 TransportError를 반환한다`() = runTest {
         val client = client()
         server.shutdown()
 
         val result = client.upload("sess-1", "token-1", request)
 
         assertTrue(result is UploadResult.TransportError)
-        assertTrue((result as UploadResult.TransportError).reason.isNotBlank())
+        result as UploadResult.TransportError
+        assertEquals(TransportFailure.ServerUnreachable, result.failure)
+        assertTrue(result.reason.isNotBlank())
     }
 }
