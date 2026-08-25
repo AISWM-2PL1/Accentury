@@ -72,6 +72,23 @@ class FilePcmSourceTest {
     }
 
     @Test
+    fun `기본 청크는 마이크와 같은 READ_CHUNK_SIZE다 - KAN-105`() {
+        // 가짜 마이크가 실제 마이크와 다른 페이스로 흘리면 곡선이 자라는 모습도 달라져,
+        // 파일로 눈으로 다듬은 결과가 실기기에서 그대로 재현되지 않는다.
+        val samples = ShortArray(READ_CHUNK_SIZE * 2) { (it % 1000).toShort() }
+
+        val chunks = runBlocking {
+            FilePcmSource(
+                open = { ByteArrayInputStream(wavBytes(samples)) },
+                realtime = false,
+            ).recordingFlow().toList()
+        }
+
+        assertEquals(2, chunks.size)
+        chunks.forEach { assertEquals(READ_CHUNK_SIZE, it.size) }
+    }
+
+    @Test
     fun `샘플 값이 리틀엔디언 그대로 전달된다`() {
         // 부호·상하위 바이트가 갈리는 값들 - 엔디언이 뒤집히면 바로 어긋난다.
         val samples = shortArrayOf(0, 1, -1, 256, -256, 32767, -32768, 4660)
@@ -161,10 +178,10 @@ class FilePcmSourceTest {
         val outcome = engine.record {}
 
         outcome as RecordingEngine.Outcome.Success
-        // 2.5초 파일. 마지막 청크가 짧아 청크 하나(128ms)만큼의 오차는 허용한다.
+        // 2.5초 파일. 마지막 청크가 짧아 청크 하나(32ms)만큼의 오차는 허용한다.
         assertTrue(
             "durationMs=${outcome.durationMs}",
-            kotlin.math.abs(outcome.durationMs - 2_500L) <= CHUNK_SIZE * 1000L / SAMPLE_RATE,
+            kotlin.math.abs(outcome.durationMs - 2_500L) <= READ_CHUNK_SIZE * 1000L / SAMPLE_RATE,
         )
     }
 
