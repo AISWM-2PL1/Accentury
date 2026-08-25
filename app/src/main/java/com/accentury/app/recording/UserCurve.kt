@@ -15,12 +15,16 @@ import kotlin.math.roundToLong
  * "지금까지 들어온 만큼"이라는 것 - 매 청크마다 다시 불리므로, 프레임이 늘어도 이미 그린
  * 부분이 흔들리지 않는 규칙이 필요하다. 아래 결정들이 그 요구에서 나왔다.
  *
- * - **시간축은 가이드 길이의 [USER_CURVE_WINDOW_SCALE]배 창이고, 가이드는 그 왼쪽 절반에
- *   놓인다.** 두 레인의 폭 하나가 같은 시간을 뜻한다는 규칙(KAN-104/AC4)은 그대로다 -
- *   위아래 두 곡선의 x가 같은 시각을 가리켜야 "여기서 올렸어야 했다"를 눈으로 맞춰 볼 수
- *   있다. 다만 창을 가이드보다 넓게 잡아([userCurveWindowMs]) 실제 발화가 다 들어오게 하고,
- *   가이드 곡선 쪽을 같은 축으로 축소해 넣는다([alignGuideToWindow]). 녹음이 창 길이를
- *   넘어가면 창이 미끄러져 최신 프레임이 항상 오른쪽 끝에 있게 하고, 밀린 프레임은 버린다.
+ * - **사용자 창은 가이드 길이의 [USER_CURVE_WINDOW_SCALE]배다**([userCurveWindowMs], Review는
+ *   녹음 전체 길이 [reviewWindowMs]). 시드 가이드보다 실제 발화가 길어서, 창을 가이드에
+ *   맞춰 놓으면 발화 앞부분이 창 밖으로 밀린다. 녹음이 창 길이를 넘어가면 창이 미끄러져
+ *   최신 프레임이 항상 오른쪽 끝에 있게 하고, 밀린 프레임은 버린다.
+ * - **가이드 레인은 별도 시간축이다** (2026-08-25 결정). 가이드는 사용자 창이 얼마든 자기
+ *   길이로 레인 폭 전체를 쓴다 - KAN-104의 원래 모양이다. 한때 가이드를 사용자 창에 맞춰
+ *   축소해 두 레인의 같은 x가 같은 시각이 되게 했지만(KAN-104/AC4), 발화가 길수록 가이드가
+ *   왼쪽 구석에 작게 눌려 정작 비교하라고 놓은 곡선이 더 안 보였다. 두 레인은 이제 같은 시각을
+ *   맞춰 보는 도구가 아니라 **모양을 견주는 도구**다 - 세로축이 둘 다 semitone이라 오르내림의
+ *   폭과 방향은 그대로 비교된다.
  * - **y축은 화자 중심 ±[USER_CURVE_SPAN_SEMITONE]/2 고정 폭 창이다** (KAN-105).
  *   KAN-104는 80..400Hz 밴드를 통째로 썼는데, 그 밴드는 27.9 semitone이라 실제 발화가
  *   레인 높이의 1/4밖에 안 썼다. 실제 샘플(여성 20대, 경남 대화)에서 F0 중앙값 219Hz,
@@ -165,29 +169,10 @@ fun userCurveWindowMs(frameIntervalMs: Int?, valueCount: Int?): Long {
  * `windowStartMs = max(0, newest - window)`가 0이 되어 처음부터 끝까지 그려진다. 한 프레임 간격
  * ([FRAME_INTERVAL_MS])을 더 얹는 건 마지막 점이 x=1인 오른쪽 모서리에 딱 붙지 않게 하기
  * 위해서다 - 그 프레임도 자기 몫의 폭을 차지한다.
- *
- * 가이드도 [alignGuideToWindow]로 같은 창에 정렬되므로, 발화가 길수록 가이드는 왼쪽에 작게
- * 놓인다. 눌린 것처럼 보이지만 그게 "두 레인의 같은 x가 같은 시각"이라는 규칙이 유지된다는
- * 뜻이라 의도된 모양이다.
  */
 fun reviewWindowMs(frames: List<RecordingEngine.PitchFrame>, liveWindowMs: Long): Long {
     val lastMs = frames.maxOfOrNull { it.timestampMs } ?: return liveWindowMs
     return maxOf(liveWindowMs, lastMs + FRAME_INTERVAL_MS.roundToLong())
-}
-
-/**
- * 가이드 표시 좌표를 사용자 창과 같은 시간축에 놓는다. 가이드가 창의 앞부분만 차지하므로
- * x를 `guideMs / windowMs` 비율로 줄인다 - 배율이 2배면 왼쪽 절반이다.
- *
- * y는 건드리지 않는다. 가이드 레인은 자기 스케일(GuideCurve)이라 창 길이와 무관하다.
- *
- * 길이를 알 수 없으면([guideMs] 또는 [windowMs]가 0 이하) 원본을 그대로 준다 - 축소 비율을
- * 지어내느니 KAN-104까지의 "레인 전체가 가이드" 모양으로 두는 편이 덜 틀리다.
- */
-fun alignGuideToWindow(points: List<CurvePoint>, guideMs: Long, windowMs: Long): List<CurvePoint> {
-    if (guideMs <= 0L || windowMs <= 0L) return points
-    val ratio = (guideMs.toDouble() / windowMs).toFloat()
-    return points.map { CurvePoint(it.x * ratio, it.y) }
 }
 
 /**

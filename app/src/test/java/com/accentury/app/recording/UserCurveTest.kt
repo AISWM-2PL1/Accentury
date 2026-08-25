@@ -89,37 +89,6 @@ class UserCurveTest {
         assertTrue("마지막 점은 오른쪽 모서리에 붙지 않는다: ${points.last().x}", points.last().x < 1f)
     }
 
-    // --- 가이드를 사용자 창에 맞추기 -----------------------------------------
-
-    @Test
-    fun `가이드 x는 창 비율만큼 줄고 y는 그대로다`() {
-        val points = listOf(CurvePoint(0f, 0.2f), CurvePoint(0.5f, 0.8f), CurvePoint(1f, 0.4f))
-        val aligned = alignGuideToWindow(points, guideMs = 1000L, windowMs = 2000L)
-
-        assertEquals(listOf(0f, 0.25f, 0.5f), aligned.map { it.x })
-        assertEquals(points.map { it.y }, aligned.map { it.y })
-    }
-
-    @Test
-    fun `가이드가 창을 다 채우면 좌표가 그대로다`() {
-        val points = listOf(CurvePoint(0f, 0.2f), CurvePoint(1f, 0.4f))
-        assertEquals(points, alignGuideToWindow(points, guideMs = 900L, windowMs = 900L))
-    }
-
-    @Test
-    fun `길이를 알 수 없으면 가이드 좌표를 그대로 둔다`() {
-        val points = listOf(CurvePoint(0f, 0.2f), CurvePoint(1f, 0.4f))
-        assertEquals(points, alignGuideToWindow(points, guideMs = 0L, windowMs = 2000L))
-        assertEquals(points, alignGuideToWindow(points, guideMs = -1L, windowMs = 2000L))
-        assertEquals(points, alignGuideToWindow(points, guideMs = 1000L, windowMs = 0L))
-        assertEquals(points, alignGuideToWindow(points, guideMs = 1000L, windowMs = -1L))
-    }
-
-    @Test
-    fun `가이드 점이 없으면 빈 목록이다`() {
-        assertEquals(emptyList<CurvePoint>(), alignGuideToWindow(emptyList(), 1000L, 2000L))
-    }
-
     // --- 그릴 게 없는 경우 ---------------------------------------------------
 
     @Test
