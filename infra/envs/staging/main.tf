@@ -6,6 +6,17 @@ data "aws_route53_zone" "this" {
   name = var.hosted_zone_name
 }
 
+# 인증서 조회는 도메인 + 태그로 고정한다. domain은 주 도메인 이름만 비교하고 SAN은
+# 보지 않으며(2026-08-25 실측: domain = "*.accentury.app"은 empty result), data 소스가
+# SAN 목록을 내보내지도 않는다. 그래서 나중에 apex 전용 인증서가 하나 더 발급되면
+# most_recent가 그것을 잡아 staging.accentury.app이 인증서 불일치로 502가 난다.
+# 와일드카드 인증서 2장(us-east-1, 서울)에 accentury-role = wildcard 태그를 붙여 두고
+# (KAN-119, README 사전 요건) 그 태그로만 고른다. 태그가 없으면 plan이 empty result로
+# 시끄럽게 실패한다 - 조용한 502보다 낫다 (PR 리뷰 반영, 2026-08-25).
+locals {
+  wildcard_certificate_tags = { accentury-role = "wildcard" }
+}
+
 data "aws_acm_certificate" "cloudfront" {
   provider = aws.us_east_1
 
@@ -13,6 +24,7 @@ data "aws_acm_certificate" "cloudfront" {
   # 주 도메인은 accentury.app이고 SAN에 *.accentury.app이 있다.
   domain      = var.acm_certificate_domain
   statuses    = ["ISSUED"]
+  tags        = local.wildcard_certificate_tags
   most_recent = true
 }
 
@@ -21,6 +33,7 @@ data "aws_acm_certificate" "cloudfront" {
 data "aws_acm_certificate" "alb" {
   domain      = var.acm_certificate_domain
   statuses    = ["ISSUED"]
+  tags        = local.wildcard_certificate_tags
   most_recent = true
 }
 

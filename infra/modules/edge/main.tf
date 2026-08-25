@@ -54,6 +54,17 @@ resource "aws_lb_target_group_attachment" "backend" {
 #     서울 리전 ACM 인증서(accentury.app + *.accentury.app, KAN-119)로 충분하다.
 #   - VPC 오리진 문서는 NLB TLS 리스너만 미지원으로 적고 ALB HTTPS에는 제약이 없다.
 # HTTP 80 리스너는 두지 않는다 - 평문 경로를 남길 이유가 없고, alb-sg도 443만 연다.
+#
+# 리소스 이름이 http에서 https로 바뀌었다. state에 옛 리스너가 있는 환경(이 변경 전에
+# 지은 스택)에서는 moved가 없으면 삭제 후 생성이 되어 그 사이 /v0/*, /admin/v0/* 전체가
+# 502가 된다. port, protocol, certificate_arn, ssl_policy는 전부 제자리 수정 가능한
+# 속성(load_balancer_arn만 교체 강제)이라 moved만 있으면 ModifyListener 한 번으로 끝난다
+# (PR 리뷰 반영, 2026-08-25).
+moved {
+  from = aws_lb_listener.http
+  to   = aws_lb_listener.https
+}
+
 resource "aws_lb_listener" "https" {
   load_balancer_arn = aws_lb.this.arn
   port              = 443

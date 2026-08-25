@@ -110,8 +110,19 @@ diff -r infra/envs/staging infra/envs/prod
   로컬 설치 1.15.8에서 확인했고, DynamoDB 잠금 테이블은 필요 없다.)
 - AWS CLI 프로파일(accentury-cli, ap-northeast-2). CI OIDC 연동은 범위 밖이다
   (2026-08-20 결정, 추후 별도 티켓).
-- 선행 완료 상태: Route 53 호스팅 영역과 us-east-1 인증서 (KAN-119). 둘은
-  Terraform이 소유하지 않고 data 소스로 조회만 한다. destroy에도 지워지지 않는다.
+- 선행 완료 상태: Route 53 호스팅 영역과 ACM 인증서 2장 (KAN-119). us-east-1
+  인증서는 CloudFront 뷰어 구간, 서울 인증서는 ALB 오리진 구간(KAN-125)에 쓴다.
+  셋 다 Terraform이 소유하지 않고 data 소스로 조회만 한다. destroy에도 지워지지
+  않는다.
+- 인증서 2장에는 태그 `accentury-role = wildcard`가 붙어 있어야 한다. 조회가
+  도메인 + 이 태그로 고정돼 있어서(apex 전용 인증서가 추가돼도 잘못 잡히지
+  않게), 태그가 없으면 plan이 "empty result"로 실패한다. 인증서를 재발급하면
+  다시 붙인다:
+
+  ```
+  aws acm add-tags-to-certificate --region us-east-1      --certificate-arn <arn> --tags Key=accentury-role,Value=wildcard
+  aws acm add-tags-to-certificate --region ap-northeast-2 --certificate-arn <arn> --tags Key=accentury-role,Value=wildcard
+  ```
 - ECR 이미지 (KAN-120): EC2가 t3.small(x86_64)이므로 이미지는 linux/amd64여야
   한다. `scripts/push-images.sh`의 기본 PLATFORM이 그 값이다 (KAN-124에서 고정).
   ECR 리포지토리 자체는 bootstrap 스택이 소유한다.
