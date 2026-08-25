@@ -2,6 +2,7 @@ package com.accentury.app.recording
 
 import com.accentury.app.audio.RecordingEngine
 import kotlin.math.log2
+import kotlin.math.roundToLong
 
 /**
  * 녹음 중 쌓인 사용자 F0 프레임을 캔버스 좌표로 바꾼다 (KAN-104 → KAN-105에서 다듬음).
@@ -10,10 +11,12 @@ import kotlin.math.log2
  * "지금까지 들어온 만큼"이라는 것 - 매 청크마다 다시 불리므로, 프레임이 늘어도 이미 그린
  * 부분이 흔들리지 않는 규칙이 필요하다. 아래 결정들이 그 요구에서 나왔다.
  *
- * - **시간축은 가이드 길이에 맞춘다.** 사용자 레인의 폭 하나가 가이드 레인의 폭 하나와 같은
- *   시간을 뜻한다([userCurveWindowMs]). 위아래 두 곡선의 x가 같은 시각을 가리켜야 "여기서
- *   올렸어야 했다"를 눈으로 맞춰 볼 수 있다. 녹음이 그 길이를 넘어가면 창이 미끄러져
- *   최신 프레임이 항상 오른쪽 끝에 있게 하고, 창 밖으로 밀린 프레임은 버린다.
+ * - **시간축은 가이드 길이의 [USER_CURVE_WINDOW_SCALE]배 창이고, 가이드는 그 왼쪽 절반에
+ *   놓인다.** 두 레인의 폭 하나가 같은 시간을 뜻한다는 규칙(KAN-104/AC4)은 그대로다 -
+ *   위아래 두 곡선의 x가 같은 시각을 가리켜야 "여기서 올렸어야 했다"를 눈으로 맞춰 볼 수
+ *   있다. 다만 창을 가이드보다 넓게 잡아([userCurveWindowMs]) 실제 발화가 다 들어오게 하고,
+ *   가이드 곡선 쪽을 같은 축으로 축소해 넣는다([alignGuideToWindow]). 녹음이 창 길이를
+ *   넘어가면 창이 미끄러져 최신 프레임이 항상 오른쪽 끝에 있게 하고, 밀린 프레임은 버린다.
  * - **y축은 화자 중심 ±[USER_CURVE_SPAN_SEMITONE]/2 고정 폭 창이다** (KAN-105).
  *   KAN-104는 80..400Hz 밴드를 통째로 썼는데, 그 밴드는 27.9 semitone이라 실제 발화가
  *   레인 높이의 1/4밖에 안 썼다. 실제 샘플(여성 20대, 경남 대화)에서 F0 중앙값 219Hz,
@@ -33,8 +36,12 @@ import kotlin.math.log2
  * 사용자에게는 곡선이 저 혼자 꿈틀대는 것으로 보인다.
  */
 
-/** 가이드가 없거나 쓸 수 없을 때의 창 길이. 1초면 실시간 곡선이 움직이는 게 보인다 */
-private const val FALLBACK_WINDOW_MS = 1000L
+/**
+ * 가이드가 없거나 쓸 수 없을 때의 창 길이. 가이드 길이를 모르니 1초를 기준 길이로 삼고,
+ * 아래 [USER_CURVE_WINDOW_SCALE]을 똑같이 곱한다 - 창을 넓히는 이유(실제 발화가 기준 길이보다
+ * 길다)는 가이드가 있든 없든 같으므로, 폴백만 1초로 두면 이 경우에만 앞부분이 밀려난다.
+ */
+private const val FALLBACK_GUIDE_MS = 1000L
 
 /**
  * 표시 창의 세로 폭 (semitone). 중심에서 위아래로 절반씩이므로 ±7 semitone이다.
@@ -76,18 +83,53 @@ const val USER_CURVE_EMA_ALPHA = 0.3f
 const val HOLD_MAX_GAP_MS = 100L
 
 /**
- * 사용자 레인 한 폭이 담을 시간. 가이드 전체 길이와 같게 잡는다 - 프레임 간격 x 구간 수다.
+ * 창 길이를 가이드 길이의 몇 배로 잡을지.
  *
- * 가이드가 없거나(정의에 guideF0가 없음) 길이를 계산할 수 없으면([FALLBACK_WINDOW_MS]).
- * 값이 1개뿐이면 구간이 0이라 길이가 0이 되고, 간격이 0 이하면 시간축 자체가 무의미하다.
+ * 시드 가이드는 한 문항이 0.9~1.2초인데 같은 문장을 실제로 읽으면 1.5~2.5초가 나온다.
+ * 1배 창이면 말이 끝나기도 전에 발화 앞부분이 창 밖으로 밀려, 사용자는 자기 곡선의 시작을
+ * 볼 수 없다. 2배면 그 발화가 통째로 들어오면서도 곡선이 지나치게 눌리지 않는다.
+ *
+ * 정확한 값은 실기기에서 눈으로 정한다(KAN-105 4단계) - 그때 이 상수 하나만 바꾸면 되게 두었다.
+ */
+const val USER_CURVE_WINDOW_SCALE = 2.0
+
+/**
+ * 가이드 곡선이 담는 시간. 프레임 간격 x 구간 수다. 길이를 알 수 없으면 0이다 -
+ * 값이 1개뿐이면 구간이 0이고, 간격이 0 이하면 시간축 자체가 무의미하다.
  *
  * 인자를 GuideF0가 아니라 원시값으로 받는 건 [guideCurveDisplayPoints]와 같은 이유다 -
  * 그리기 계산이 bridge 레이어의 payload 타입을 알 필요가 없다.
  */
-fun userCurveWindowMs(frameIntervalMs: Int?, valueCount: Int?): Long {
-    if (frameIntervalMs == null || frameIntervalMs <= 0) return FALLBACK_WINDOW_MS
-    if (valueCount == null || valueCount < 2) return FALLBACK_WINDOW_MS
+fun guideDurationMs(frameIntervalMs: Int?, valueCount: Int?): Long {
+    if (frameIntervalMs == null || frameIntervalMs <= 0) return 0L
+    if (valueCount == null || valueCount < 2) return 0L
     return frameIntervalMs.toLong() * (valueCount - 1)
+}
+
+/**
+ * 사용자 레인 한 폭이 담을 시간. 가이드 길이의 [USER_CURVE_WINDOW_SCALE]배다.
+ *
+ * 가이드가 없거나(정의에 guideF0가 없음) 길이를 계산할 수 없으면 [FALLBACK_GUIDE_MS]를
+ * 가이드 길이로 놓고 같은 배율을 곱한다.
+ */
+fun userCurveWindowMs(frameIntervalMs: Int?, valueCount: Int?): Long {
+    val guideMs = guideDurationMs(frameIntervalMs, valueCount).takeIf { it > 0L } ?: FALLBACK_GUIDE_MS
+    return (guideMs * USER_CURVE_WINDOW_SCALE).roundToLong()
+}
+
+/**
+ * 가이드 표시 좌표를 사용자 창과 같은 시간축에 놓는다. 가이드가 창의 앞부분만 차지하므로
+ * x를 `guideMs / windowMs` 비율로 줄인다 - 배율이 2배면 왼쪽 절반이다.
+ *
+ * y는 건드리지 않는다. 가이드 레인은 자기 스케일(GuideCurve)이라 창 길이와 무관하다.
+ *
+ * 길이를 알 수 없으면([guideMs] 또는 [windowMs]가 0 이하) 원본을 그대로 준다 - 축소 비율을
+ * 지어내느니 KAN-104까지의 "레인 전체가 가이드" 모양으로 두는 편이 덜 틀리다.
+ */
+fun alignGuideToWindow(points: List<CurvePoint>, guideMs: Long, windowMs: Long): List<CurvePoint> {
+    if (guideMs <= 0L || windowMs <= 0L) return points
+    val ratio = (guideMs.toDouble() / windowMs).toFloat()
+    return points.map { CurvePoint(it.x * ratio, it.y) }
 }
 
 /**
