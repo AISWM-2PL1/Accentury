@@ -18,11 +18,13 @@ import com.accentury.app.BuildConfig
  *
  * WAV는 16kHz 모노 16bit여야 한다 ([FilePcmSource] 참고). `app/src/debug/assets/`에 두면
  * 디버그 빌드에만 실린다.
+ *
+ * 파일 소스는 스피커로도 나간다 ([MonitoredPcmSource]) - 에뮬레이터면 호스트 스피커로 들린다.
  */
 fun defaultPcmSource(context: Context): PcmSource {
     val assetName = BuildConfig.FAKE_MIC_ASSET
     if (!BuildConfig.DEBUG || assetName.isEmpty()) return AudioRecorder()
     // Activity가 아니라 앱 컨텍스트를 붙잡는다 - 소스는 ViewModel과 함께 화면 회전 너머까지 산다.
     val assets = context.applicationContext.assets
-    return FilePcmSource(open = { assets.open(assetName) })
+    return MonitoredPcmSource(FilePcmSource(open = { assets.open(assetName) }))
 }
