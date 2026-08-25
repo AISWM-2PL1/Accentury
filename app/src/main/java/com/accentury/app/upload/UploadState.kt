@@ -23,5 +23,11 @@ sealed interface UploadState {
         val retryable: Boolean,
         val message: String?,
         val rerecord: Boolean = false,
-    ) : UploadState
+    ) : UploadState {
+        init {
+            // 문서로만 둔 불변식은 리팩터링 한 번에 깨진다. 만드는 자리에서 막아 두 복구 경로가
+            // 한 화면에 겹치는 상태 자체가 생기지 않게 한다.
+            require(!(retryable && rerecord)) { "재전송(retryable)과 재녹음(rerecord)은 함께 설 수 없다" }
+        }
+    }
 }

@@ -14,6 +14,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -555,6 +556,17 @@ class UploadManagerTest {
 
     private fun UploadManager.readPrivateField(name: String): Any =
         UploadManager::class.java.getDeclaredField(name).also { it.isAccessible = true }.get(this)!!
+
+    @Test
+    fun `재전송과 재녹음이 함께 선 실패 상태는 만들 수 없다`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            UploadState.Failed(retryable = true, message = "x", rerecord = true)
+        }
+        // 한쪽만 서는 조합은 그대로 허용된다.
+        UploadState.Failed(retryable = true, message = "x", rerecord = false)
+        UploadState.Failed(retryable = false, message = "x", rerecord = true)
+        UploadState.Failed(retryable = false, message = "x", rerecord = false)
+    }
 }
 
 /** [TransportFailure.Unknown]에 붙는 안내 문구. 화면에 실제로 뜨는 말이라 테스트가 직접 적어 못 박는다. */
