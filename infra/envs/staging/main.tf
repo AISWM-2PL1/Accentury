@@ -16,6 +16,14 @@ data "aws_acm_certificate" "cloudfront" {
   most_recent = true
 }
 
+# 같은 도메인의 서울 리전 인증서 (KAN-119의 2장째). ALB 443 리스너에 걸어 오리진
+# 구간도 HTTPS로 만든다 (KAN-125). 2026-08-25 CLI 확인: accentury.app + *.accentury.app, ISSUED.
+data "aws_acm_certificate" "alb" {
+  domain      = var.acm_certificate_domain
+  statuses    = ["ISSUED"]
+  most_recent = true
+}
+
 module "network" {
   source = "../../modules/network"
 
@@ -57,5 +65,6 @@ module "edge" {
   alb_sg_id           = module.network.alb_sg_id
   instance_id         = module.compute.instance_id
   acm_certificate_arn = data.aws_acm_certificate.cloudfront.arn
+  alb_certificate_arn = data.aws_acm_certificate.alb.arn
   zone_id             = data.aws_route53_zone.this.zone_id
 }
