@@ -9,6 +9,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.accentury.app.audio.PcmSource
 import com.accentury.app.audio.RecordingEngine
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -46,7 +47,6 @@ class VoiceCheckViewModel(
     /** 시간이 다 됐거나 실패한 뒤의 [다시 시도]. 쌓인 것을 전부 버리고 처음부터 듣는다. */
     @RequiresPermission(android.Manifest.permission.RECORD_AUDIO)
     fun restart() {
-        listeningJob?.cancel()
         listen()
     }
 
@@ -56,10 +56,11 @@ class VoiceCheckViewModel(
      *
      * 정지 요청이 아니라 취소인 이유: 취소는 소스의 finally까지 즉시 내려가 AudioRecord를
      * 놓지만, 정지 요청은 다음 청크 경계까지 기다린다.
+     *
+     * 취소만 하고 job 참조는 지우지 않는다 — 다음 [listen]이 이 job의 **완료**를 기다려야 한다.
      */
     fun stop() {
         listeningJob?.cancel()
-        listeningJob = null
     }
 
     @RequiresPermission(android.Manifest.permission.RECORD_AUDIO)
@@ -71,7 +72,16 @@ class VoiceCheckViewModel(
         controller.restart()
         _state.value = controller.state
 
+        /*
+         * 이전 캡처가 **완전히 끝난 뒤에** 새 캡처를 연다. cancel()이 돌아왔다고 마이크가 풀린
+         * 것이 아니다 — AudioRecord.stop/release는 소스 flow의 finally에서, 그것도 IO 디스패처
+         * 위에서 일어나므로 cancel() 반환 시점엔 아직 마이크를 쥐고 있을 수 있다. 회전으로
+         * 화면이 즉시 다시 서서 stop() 직후 start()가 불리면, 새 AudioRecord가 아직 살아 있는
+         * 이전 것과 겹쳐 "마이크 점유 중"으로 초기화에 실패한다. join으로 직렬화해서 막는다.
+         */
+        val previous = listeningJob
         listeningJob = viewModelScope.launch {
+            previous?.cancelAndJoin()
             val outcome = engine.record { progress ->
                 // true면 준비가 끝났다는 뜻 - 더 들어도 판정이 안 바뀌므로 마이크를 놓는다.
                 if (controller.onProgress(progress.rms, progress.pitchFrames)) engine.requestStop()

@@ -105,6 +105,7 @@ Review에서는 `reviewWindowMs`가 창을 "녹음 전체 길이(마지막 프�
 
 - **centerHz** — `userCurveCenterHz`가 잡은 중심을 `Ready` 상태에 실어 보내고, 이후 모든 문항의 `userCurveDisplayPoints(centerHz = ...)`가 그 값을 y축 중심으로 쓴다. 문항마다 다시 잡으면 같은 사람의 곡선이 문항마다 다른 축에 놓인다.
 - **볼륨 문턱** — `VOICED_MIN_RMS = 100f`가 `AudioQuality.QUIET_RMS_THRESHOLD`와 같은 값이다. 덕분에 "점검을 통과한 볼륨이면 곡선이 나온다"가 성립한다. 두 값이 갈리면 점검은 통과했는데 곡선은 안 그려지는 구간이 생기고, 사용자에게는 설명할 방법이 없다.
+- **회전 시 재시작은 이전 캡처 종료를 기다린다** — `VoiceCheckViewModel.stop()`은 취소만 하고 job 참조를 남기며, 다음 `start()`가 새 코루틴 안에서 `cancelAndJoin()`으로 이전 캡처의 완료를 기다린 뒤에야 엔진을 연다. `cancel()`이 돌아와도 `AudioRecord.stop/release`는 소스 flow의 finally에서 IO로 일어나 아직 마이크를 쥐고 있을 수 있어서, 연속 회전이면 두 `AudioRecord`가 겹쳐 열려 "마이크 점유 중"으로 초기화가 실패한다.
 
 ## 6. 개발 도구 — 가짜 마이크
 
