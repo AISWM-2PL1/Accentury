@@ -79,14 +79,24 @@ fun RecordingScreen(
     // 문항이 사는 동안 곡선 데이터는 정적이다 - 좌표 계산은 마운트당 한 번이면 된다.
     // unit 가드: "0은 무성이 아니다" 규칙(GuideCurve)은 semitone에서만 참이다. 모르는 단위는
     // 자기 스케일 덕에 그럴듯하게 그려지면서 무성 판정만 조용히 틀리므로, 안 그리는 쪽을 택한다.
-    val guidePoints = remember(guideF0) {
-        if (guideF0?.unit == "semitone") guideCurveDisplayPoints(guideF0.values) else emptyList()
-    }
-    // 창 길이에는 unit 가드를 걸지 않는다. 위 가드는 "값을 어떻게 읽을 것인가"의 문제라
+    // 창 길이에는 unit 가드를 걸지 않는다. 아래 가드는 "값을 어떻게 읽을 것인가"의 문제라
     // 단위를 모르면 그릴 수 없지만, 길이는 간격 x 구간 수라서 단위와 무관하게 맞는다.
     // 그래서 가이드를 못 그리는 경우에도 두 레인의 시간축은 여전히 같게 잡을 수 있다.
     val windowMs = remember(guideF0) {
         userCurveWindowMs(guideF0?.frameIntervalMs, guideF0?.values?.size)
+    }
+    val guidePoints = remember(guideF0, windowMs) {
+        if (guideF0?.unit != "semitone") {
+            emptyList()
+        } else {
+            // 창이 가이드보다 넓으므로 가이드는 그 앞부분만 차지한다 - 같은 x가 같은 시각을
+            // 가리키게 좌표를 창 기준으로 옮긴다.
+            alignGuideToWindow(
+                points = guideCurveDisplayPoints(guideF0.values),
+                guideMs = guideDurationMs(guideF0.frameIntervalMs, guideF0.values.size),
+                windowMs = windowMs,
+            )
+        }
     }
     // 녹음 중에는 자라는 곡선, 완료 후에는 방금 녹음의 곡선을 남긴다 (2026-08-18 결정).
     // 재녹음을 시작하면 Recording의 빈 목록으로 바뀌므로 지난 곡선이 새 녹음에 섞이지 않는다.

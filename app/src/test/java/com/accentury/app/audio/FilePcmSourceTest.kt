@@ -161,10 +161,10 @@ class FilePcmSourceTest {
         val outcome = engine.record {}
 
         outcome as RecordingEngine.Outcome.Success
-        // 5.45초 파일. 마지막 청크가 짧아 청크 하나(128ms)만큼의 오차는 허용한다.
+        // 2.5초 파일. 마지막 청크가 짧아 청크 하나(128ms)만큼의 오차는 허용한다.
         assertTrue(
             "durationMs=${outcome.durationMs}",
-            kotlin.math.abs(outcome.durationMs - 5_450L) <= CHUNK_SIZE * 1000L / SAMPLE_RATE,
+            kotlin.math.abs(outcome.durationMs - 2_500L) <= CHUNK_SIZE * 1000L / SAMPLE_RATE,
         )
     }
 
