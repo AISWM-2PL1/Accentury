@@ -29,8 +29,17 @@ android {
             // 에뮬레이터에서 호스트의 Vite dev 서버를 가리킨다 (web/에서 npm run dev).
             // 10.0.2.2 평문 허용은 network_security_config.xml에 이미 있다.
             buildConfigField("String", "WEB_URL", "\"http://10.0.2.2:5173\"")
+            // 에뮬레이터 마이크가 무음만 주는 환경에서 assets의 WAV를 마이크 대신 끼운다.
+            // 예: ./gradlew :app:installDebug -PfakeMic=fake_mic.wav (audio/PcmSources.kt).
+            buildConfigField(
+                "String",
+                "FAKE_MIC_ASSET",
+                "\"${project.findProperty("fakeMic") ?: ""}\"",
+            )
         }
         release {
+            // 코드가 이 필드를 참조하므로 릴리스에도 있어야 한다. 상수 ""라 파일 재생 경로는 죽는다.
+            buildConfigField("String", "FAKE_MIC_ASSET", "\"\"")
             optimization {
                 enable = false
             }
