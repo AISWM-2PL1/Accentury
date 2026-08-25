@@ -50,8 +50,9 @@ android {
             buildConfigField("String", "FAKE_MIC_ASSET", "\"${fakeMicAsset()}\"")
         }
         release {
-            // 코드가 이 필드를 참조하므로 릴리스에도 있어야 한다. 상수 ""라 파일 재생 경로는 죽는다.
-            buildConfigField("String", "FAKE_MIC_ASSET", "\"\"")
+            // FAKE_MIC_ASSET은 여기에 없다. 이 필드를 읽는 코드가 src/debug에만 있어서다
+            // (audio/PcmSources.kt) - 릴리스에는 파일 재생 경로가 상수 ""로 죽어 있는 게
+            // 아니라 아예 존재하지 않는다.
             optimization {
                 enable = false
             }
