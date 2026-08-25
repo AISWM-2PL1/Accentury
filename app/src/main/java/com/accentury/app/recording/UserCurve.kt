@@ -153,6 +153,29 @@ fun userCurveWindowMs(frameIntervalMs: Int?, valueCount: Int?): Long {
 }
 
 /**
+ * 녹음이 끝난 Review 화면이 쓸 창 길이. 라이브 창([userCurveWindowMs])과 "녹음 전체 길이" 중
+ * 긴 쪽이다. 프레임이 없으면 라이브 창을 그대로 쓴다.
+ *
+ * 녹음 중에는 창이 미끄러져야 한다 - 지금 내 목소리가 오른쪽 끝에 붙어 있어야 방금 낸 소리와
+ * 화면이 같이 움직인다. 그런데 녹음이 끝나면 볼 대상이 "방금 한 발화 전체"로 바뀐다. 라이브 창을
+ * 그대로 두면 창 길이를 넘긴 발화는 마지막 구간만 남고 앞부분이 잘려 나가, 정작 다시 볼 수 있게
+ * 된 시점에 앞부분을 못 본다.
+ *
+ * 창을 마지막 프레임 시각까지 늘리면 [userCurveDisplayPoints]의
+ * `windowStartMs = max(0, newest - window)`가 0이 되어 처음부터 끝까지 그려진다. 한 프레임 간격
+ * ([FRAME_INTERVAL_MS])을 더 얹는 건 마지막 점이 x=1인 오른쪽 모서리에 딱 붙지 않게 하기
+ * 위해서다 - 그 프레임도 자기 몫의 폭을 차지한다.
+ *
+ * 가이드도 [alignGuideToWindow]로 같은 창에 정렬되므로, 발화가 길수록 가이드는 왼쪽에 작게
+ * 놓인다. 눌린 것처럼 보이지만 그게 "두 레인의 같은 x가 같은 시각"이라는 규칙이 유지된다는
+ * 뜻이라 의도된 모양이다.
+ */
+fun reviewWindowMs(frames: List<RecordingEngine.PitchFrame>, liveWindowMs: Long): Long {
+    val lastMs = frames.maxOfOrNull { it.timestampMs } ?: return liveWindowMs
+    return maxOf(liveWindowMs, lastMs + FRAME_INTERVAL_MS.roundToLong())
+}
+
+/**
  * 가이드 표시 좌표를 사용자 창과 같은 시간축에 놓는다. 가이드가 창의 앞부분만 차지하므로
  * x를 `guideMs / windowMs` 비율로 줄인다 - 배율이 2배면 왼쪽 절반이다.
  *
