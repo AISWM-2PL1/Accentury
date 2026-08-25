@@ -152,6 +152,23 @@ class RecordingEngineTest {
     }
 
     @Test
+    fun `읽기 청크가 hop과 같으면 청크마다 프레임이 정확히 1개씩 나온다 - KAN-105`() = runBlocking {
+        // 실제 마이크의 방출 단위(READ_CHUNK_SIZE = 512). 곡선이 4점씩 계단으로 자라지 않고
+        // 청크마다 1점씩 이어져야 32ms 주기로 갱신된다.
+        val chunkCount = 10
+        val engine = RecordingEngine(sine220Source(chunkSize = READ_CHUNK_SIZE, chunkCount = chunkCount))
+        val reports = mutableListOf<List<RecordingEngine.PitchFrame>>()
+
+        engine.record { reports += it.pitchFrames }
+
+        assertEquals(chunkCount, reports.size)
+        // 창(2048)을 채우는 동안은 빈 리포트고, 채운 뒤로는 hop이 곧 청크라 매번 1개다.
+        val warmupChunks = CHUNK_SIZE / READ_CHUNK_SIZE - 1
+        reports.take(warmupChunks).forEach { assertTrue(it.isEmpty()) }
+        reports.drop(warmupChunks).forEach { assertEquals(1, it.size) }
+    }
+
+    @Test
     fun `캡처 예외는 Failure로 변환된다`() = runBlocking {
         val failing = FakeSource(
             flow { throw AudioRecorder.CaptureException("녹음 중 권한 회수") },

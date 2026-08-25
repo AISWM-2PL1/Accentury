@@ -72,12 +72,7 @@ internal fun CurveLane(
             // 쉼 구간을 가로지르는 가짜 사선이 생긴다. 가이드는 선분 하나짜리 목록이다.
             segments.forEach { points ->
                 if (points.size >= 2) {
-                    val path = Path()
-                    points.forEachIndexed { i, p ->
-                        val x = p.x * size.width
-                        val y = p.y * size.height
-                        if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
-                    }
+                    val path = smoothPath(points, size.width, size.height)
                     drawPath(
                         path,
                         lineColor,
@@ -103,6 +98,37 @@ internal fun CurveLane(
             modifier = Modifier.padding(start = Spacing.x3, top = Spacing.x1),
         )
     }
+}
+
+/**
+ * 선분 하나를 부드러운 [Path]로 만든다 (KAN-105 3단계). 점이 2개면 직선, 3개 이상이면
+ * 이웃 점의 중간점을 잇는 2차 베지어다: 점 p[i]를 제어점으로 쓰고 끝점은 (p[i]+p[i+1])/2다.
+ *
+ * 곡선이 점을 정확히 지나는 Catmull-Rom 대신 이 방식을 쓰는 이유는 둘이다.
+ * 하나, 인과성 - Catmull-Rom은 구간 [p[i], p[i+1]]을 정하려고 p[i+2]까지 봐야 해서, 32ms마다
+ * 점이 하나씩 붙는 실시간 곡선에서는 마지막 구간이 매 프레임 다시 그려진다(꼬리가 꿈틀거린다).
+ * 중간점 방식은 이미 들어온 점만으로 구간이 확정돼 한 번 그린 곳이 흔들리지 않는다.
+ * 둘, 오버슈트 - Catmull-Rom은 제어점 밖으로 부풀어 실제 F0에 없는 봉우리를 만든다.
+ * 2차 베지어는 볼록껍질 안에 머물러 값에 없는 음높이를 그리지 않는다.
+ *
+ * 대가는 곡선이 중간 점들을 정확히 지나지 않는다는 것인데, 피치 곡선은 개별 프레임 값을
+ * 읽는 그래프가 아니라 억양의 모양을 보는 그림이라 꺾임이 사라지는 쪽이 낫다.
+ */
+private fun smoothPath(points: List<CurvePoint>, width: Float, height: Float): Path {
+    val path = Path()
+    val x = { i: Int -> points[i].x * width }
+    val y = { i: Int -> points[i].y * height }
+    path.moveTo(x(0), y(0))
+    if (points.size == 2) {
+        path.lineTo(x(1), y(1))
+        return path
+    }
+    for (i in 1 until points.size - 1) {
+        path.quadraticTo(x(i), y(i), (x(i) + x(i + 1)) / 2f, (y(i) + y(i + 1)) / 2f)
+    }
+    // 마지막 점은 제어점이 될 짝이 없다 - 직전 중간점에서 곧장 이어 붙인다.
+    path.lineTo(x(points.size - 1), y(points.size - 1))
+    return path
 }
 
 private val CURVE_STROKE = 2.dp

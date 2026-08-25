@@ -25,7 +25,8 @@ import java.io.InputStream
  */
 class FilePcmSource(
     private val open: () -> InputStream,
-    private val chunkSize: Int = CHUNK_SIZE,
+    /** 마이크와 같은 단위로 흘린다 - 청크 길이가 다르면 곡선이 자라는 페이스도 달라진다. */
+    private val chunkSize: Int = READ_CHUNK_SIZE,
     /**
      * 청크 하나가 실제로 담는 시간만큼 쉬어 가며 흘릴지 여부.
      *

@@ -68,8 +68,10 @@ class MonitoredPcmSource(private val inner: PcmSource) : PcmSource {
                     .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                     .build(),
             )
-            // 청크 몇 개 분량은 물고 있어야 write가 매번 막히지 않는다 - 재생이 끊기면
+            // 0.5초 분량은 물고 있어야 write가 매번 막히지 않는다 - 재생이 끊기면
             // 파일 페이스로 흘러오는 청크를 제때 받지 못해 분석 쪽까지 밀린다.
+            // 청크가 32ms(READ_CHUNK_SIZE)로 잘게 쪼개져도 버퍼는 시간 기준으로 잡는다 -
+            // 청크 수 기준으로 줄이면 write 사이 간격만 짧아지고 언더런 여유는 사라진다.
             .setBufferSizeInBytes(maxOf(minBufferSize, CHUNK_SIZE * 2 * 4))
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
