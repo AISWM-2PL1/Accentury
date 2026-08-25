@@ -50,6 +50,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import com.accentury.app.audio.AudioQuality
 import com.accentury.app.audio.QualityStatus
 import com.accentury.app.audio.WavWriter
@@ -60,6 +62,8 @@ import com.accentury.app.bridge.retestFailurePayload
 import com.accentury.app.permission.MicPermissionController
 import com.accentury.app.permission.MicPermissionState
 import com.accentury.app.recording.RecordingScreen
+import com.accentury.app.audio.RecordingEngine
+import com.accentury.app.audio.defaultPcmSource
 import com.accentury.app.recording.RecordingViewModel
 import com.accentury.app.session.OkHttpSessionClient
 import com.accentury.app.session.RetestOutcome
@@ -242,7 +246,15 @@ private fun TestFlow(modifier: Modifier = Modifier) {
     }
 
     // RecordingScreen이 기본값으로 잡는 것과 같은 인스턴스. onNext에서 PCM을 꺼내려면 여기서도 필요하다.
-    val viewModel: RecordingViewModel = viewModel()
+    // 엔진을 여기서 만들어 넣는 이유는 PCM 소스 선택에 Context가 필요해서다 (defaultPcmSource).
+    // 프로퍼티 없이 빌드하면 소스는 그대로 AudioRecorder라 동작이 달라지지 않는다.
+    val appContext = context.applicationContext
+    val recordingFactory = remember(appContext) {
+        viewModelFactory {
+            initializer { RecordingViewModel(RecordingEngine(defaultPcmSource(appContext))) }
+        }
+    }
+    val viewModel: RecordingViewModel = viewModel(factory = recordingFactory)
 
     /*
      * 브리지 getSessionToken(KAN-13)이 읽을 토큰 자리 (KAN-34).
