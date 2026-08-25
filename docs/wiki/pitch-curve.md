@@ -85,6 +85,8 @@ Hz가 아니라 log 영역에서 보간하는 이유는 곡선의 y축이 semito
 
 이 파이프라인의 **녹음 중** 계산은 전부 **인과적**이다. EMA는 직전까지의 값만 보고, 유지 판정은 직전 유성 시각만 보고, 베지어는 이웃 두 점의 중간점을 끝점으로 써서 이미 들어온 점만으로 구간이 확정된다. 중심 음높이도 처음 8개로 잠근 뒤 다시 계산하지 않는다. 실시간 곡선에서 미래를 한 점이라도 참조하면 프레임이 쌓일 때마다 과거가 다시 그려지고, 사용자 눈에는 곡선이 저 혼자 꿈틀대는 것으로 보인다. 스플라인·중앙값 필터처럼 양옆을 보는 매끄러움은 **녹음이 끝난 뒤의 확인 화면에서나** 쓸 수 있다.
 
+**렌더의 잔여 비인과 구간은 마지막 16ms다.** 중간점 베지어에서 다시 그려지는 곳은 직전 중간점부터 마지막 점까지의 반 구간뿐이고, 프레임 간격 32ms의 절반이라 16ms다 — 곡선 조각의 모양이 다음 점에 달려 있는 한 마지막 조각은 미정이므로 어떤 스무딩으로도 이보다 줄일 수 없다. 정확히 0인 방법은 점을 그대로 잇는 직선 폴리라인뿐이고 그 대가가 꺾임이다. 명령 목록(`smoothPathCommands`)이 순수 함수라 이 성질은 `CurvePathTest`가 못박는다 — n점 명령에서 꼬리 `LineTo` 하나를 뺀 나머지가 n+1점 명령의 접두사와 같다.
+
 ### Review 화면의 창 길이
 
 Review에서는 `reviewWindowMs`가 창을 "녹음 전체 길이(마지막 프레임 시각 + 32ms)"와 라이브 창 중 긴 쪽으로 잡아, 미끄러지던 창이 처음부터 끝까지 다 담게 만든다. 녹음 중에는 지금 내 목소리가 오른쪽 끝에 붙어야 하니 창이 미끄러지는 게 맞지만, 끝난 뒤에 볼 대상은 방금 한 발화 전체다 — 라이브 창을 그대로 두면 정작 다시 볼 수 있게 된 시점에 마지막 2초 말고는 못 본다. 창 선택은 `RecordingScreen`의 한 자리에서만 한다.
@@ -112,7 +114,7 @@ Review에서는 `reviewWindowMs`가 창을 "녹음 전체 길이(마지막 프�
 ./gradlew :app:installDebug -PfakeMic=fake_mic.wav
 ```
 
-Android Studio의 Run 버튼은 gradle 프로퍼티를 넘길 수 없어서, `local.properties`(gitignore 대상)에 `fakeMic=fake_mic.wav`를 적으면 같은 효과다. 둘 다 없으면 `BuildConfig.FAKE_MIC_ASSET`이 빈 문자열이라 평소대로 마이크를 쓰고, 릴리스 빌드는 이 필드가 상수 `""`로 고정돼 파일 재생 경로 자체가 없다.
+Android Studio의 Run 버튼은 gradle 프로퍼티를 넘길 수 없어서, `local.properties`(gitignore 대상)에 `fakeMic=fake_mic.wav`를 적으면 같은 효과다. 둘 다 없으면 `BuildConfig.FAKE_MIC_ASSET`이 빈 문자열이라 평소대로 마이크를 쓴다.
 
 | 항목 | 현재 |
 |---|---|
@@ -120,6 +122,7 @@ Android Studio의 Run 버튼은 gradle 프로퍼티를 넘길 수 없어서, `lo
 | 포맷 | 16kHz 모노 16bit 고정. 리샘플·다운믹스를 하지 않는다 — 조용히 변환해 주면 실제 마이크와 다른 조건에서 곡선을 보게 된다 |
 | 페이스 | 마이크와 같은 512샘플 단위, 청크가 담는 시간만큼 쉬어 가며 흘린다(`realtime = true`). 그래야 스무딩 계수와 체감 지연을 평가할 수 있다 |
 | 모니터 | 파일 소스일 때만 `MonitoredPcmSource`가 씌워져 지나가는 청크를 스피커로도 낸다. 곡선이 이상할 때 파일 탓인지 분석 탓인지 귀로 가른다 |
+| 소스셋 | `FilePcmSource`·`MonitoredPcmSource`와 디버그 쪽 `defaultPcmSource`는 `app/src/debug/java/`에만 있다 — **릴리스 DEX에 없다**(`strings classes*.dex | grep -c 'FilePcmSource\|MonitoredPcmSource'` = 0). 릴리스는 `app/src/release/java/`의 같은 시그니처 `defaultPcmSource`가 `AudioRecorder()`만 돌려준다. 실행 중 `BuildConfig.DEBUG` 분기로 막지 않는 이유는 릴리스가 `optimization.enable = false`라 죽은 분기도 코드로 남기 때문이다 — 없는 클래스는 남을 수가 없다 |
 
 ## 7. 실기기 튜닝 체크리스트
 
