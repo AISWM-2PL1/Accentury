@@ -44,13 +44,24 @@ resource "aws_lb_target_group_attachment" "backend" {
   port             = 8080
 }
 
-# 리스너는 HTTP 80으로 시작한다 (KAN-125). CloudFront에서 ALB까지는 AWS 관리
-# 경로이고 사용자 구간(브라우저-CloudFront)은 us-east-1 인증서로 암호화된다.
-# 오리진 구간 HTTPS 승격은 KAN-125의 별도 확인 항목이다.
-resource "aws_lb_listener" "http" {
+# 오리진 구간(CloudFront -> ALB)도 HTTPS다 (KAN-125, 2026-08-25 확정). 처음에는 HTTP 80으로
+# 시작했지만 AWS 문서 확인 결과 전환에 걸림돌이 없었다:
+#   - CloudFront는 오리진 인증서가 신뢰 CA 발급(ELB는 ACM 가능)이고, 인증서 도메인이
+#     Origin domain 값 "또는 오리진으로 전달되는 Host 헤더" 중 하나와 일치하면 받아들인다
+#     (Require HTTPS for communication between CloudFront and your custom origin).
+#   - /v0/*, /admin/v0/* 동작은 Managed-AllViewer라 Host(accentury.app 등)가 ALB까지 온다.
+#     그래서 ALB DNS 이름(internal-*.elb.amazonaws.com)과 인증서가 안 맞아도 문제없고,
+#     서울 리전 ACM 인증서(accentury.app + *.accentury.app, KAN-119)로 충분하다.
+#   - VPC 오리진 문서는 NLB TLS 리스너만 미지원으로 적고 ALB HTTPS에는 제약이 없다.
+# HTTP 80 리스너는 두지 않는다 - 평문 경로를 남길 이유가 없고, alb-sg도 443만 연다.
+resource "aws_lb_listener" "https" {
   load_balancer_arn = aws_lb.this.arn
-  port              = 80
-  protocol          = "HTTP"
+  port              = 443
+  protocol          = "HTTPS"
+  # TLS 1.2 이상 + 1.3. 클라이언트는 CloudFront뿐이라 구형 호환은 필요 없다.
+  # 이름은 2026-08-25 `aws elbv2 describe-ssl-policies`로 확인.
+  ssl_policy      = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+  certificate_arn = var.alb_certificate_arn
 
   default_action {
     type             = "forward"
@@ -62,11 +73,12 @@ resource "aws_lb_listener" "http" {
 
 resource "aws_cloudfront_vpc_origin" "alb" {
   vpc_origin_endpoint_config {
-    name                   = "${local.name}-alb"
-    arn                    = aws_lb.this.arn
+    name = "${local.name}-alb"
+    arn  = aws_lb.this.arn
+    # http_port는 필수 속성이라 적지만 https-only 정책에서는 쓰이지 않는다.
     http_port              = 80
     https_port             = 443
-    origin_protocol_policy = "http-only"
+    origin_protocol_policy = "https-only"
 
     origin_ssl_protocols {
       items    = ["TLSv1.2"]
@@ -102,10 +114,10 @@ data "aws_security_group" "cloudfront_vpc_origins" {
 
 resource "aws_vpc_security_group_ingress_rule" "alb_from_cloudfront" {
   security_group_id            = var.alb_sg_id
-  description                  = "HTTP from CloudFront VPC origin ENIs only"
+  description                  = "HTTPS from CloudFront VPC origin ENIs only"
   ip_protocol                  = "tcp"
-  from_port                    = 80
-  to_port                      = 80
+  from_port                    = 443
+  to_port                      = 443
   referenced_security_group_id = data.aws_security_group.cloudfront_vpc_origins.id
 }
 

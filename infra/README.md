@@ -48,7 +48,7 @@ Route 53 호스팅 영역 ── Porkbun에서 NS 위임 ── ACM 인증서 2�
                                          │
   사설 서브넷 x2 (AZ a, c)               ▼
   ┌──────────────────────────────────────────────────────────┐
-  │ internal ALB  alb-sg: VPC 오리진 SG → 80만          KAN-125 │
+  │ internal ALB  alb-sg: VPC 오리진 SG → 443만 (HTTPS) KAN-125 │
   │   대상 그룹 instance:8080, 헬스체크 /actuator/health KAN-131 │
   └──────────────────────────┬───────────────────────────────┘
                              │ 8080 (ec2-sg: alb-sg만, SSH 없음)
@@ -308,3 +308,11 @@ terraform destroy
   값을 올린다.
 - **push-images.sh 기본 PLATFORM=linux/amd64**: IMMUTABLE 태그라 arm64로 잘못
   올린 SHA는 다시 올릴 수 없다. 기본값을 운영 아키텍처로 고정해 그 사고를 막는다.
+- **오리진 구간(CloudFront -> ALB) HTTPS** (2026-08-25 확정, KAN-125): ALB
+  리스너는 443 하나뿐이고(HTTP 80 없음) 서울 리전 ACM 인증서(accentury.app +
+  *.accentury.app)를 건다. CloudFront는 오리진 인증서 도메인이 Origin domain 값
+  또는 오리진으로 전달되는 Host 헤더와 맞으면 받아들이는데(AWS 문서 "Require
+  HTTPS for communication between CloudFront and your custom origin"), API 동작이
+  Managed-AllViewer라 Host가 ALB까지 가므로 ALB DNS 이름과 인증서가 달라도
+  된다. VPC 오리진 정책은 https-only, alb-sg 인바운드는 443만 연다. 인증서
+  2장(us-east-1은 뷰어 구간, 서울은 오리진 구간)이 각각 쓰인다.

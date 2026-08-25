@@ -30,7 +30,12 @@ variable "instance_id" {
 
 variable "acm_certificate_arn" {
   type        = string
-  description = "us-east-1 와일드카드 인증서 (KAN-119, data 소스로만 참조)"
+  description = "us-east-1 와일드카드 인증서 - CloudFront 뷰어 구간용 (KAN-119, data 소스로만 참조)"
+}
+
+variable "alb_certificate_arn" {
+  type        = string
+  description = "ALB 리전(ap-northeast-2) 와일드카드 인증서 - CloudFront에서 ALB로 가는 오리진 구간 HTTPS용 (KAN-119, KAN-125, data 소스로만 참조)"
 }
 
 variable "zone_id" {
