@@ -134,6 +134,9 @@ class RecordingEngineTest {
         engine.record { progress -> progress.pitchFrames.forEach { timestamps += it.timestampMs } }
 
         assertTrue(timestamps.size >= 5)
+        // 시각은 창 중앙이다 - 첫 창(0..2047)의 중앙은 1024샘플 = 64ms.
+        assertEquals(CHUNK_SIZE / 2 * 1000L / SAMPLE_RATE, timestamps.first())
+        assertEquals(64L, timestamps.first())
         timestamps.zipWithNext().forEach { (prev, next) -> assertEquals(32L, next - prev) }
     }
 

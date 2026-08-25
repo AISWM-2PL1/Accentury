@@ -129,8 +129,9 @@ class RecordingViewModelTest {
         val review = vm.uiState.value as RecordingUiState.Review
         // 4청크 x 2048샘플이면 프레이머가 (8192 - 2048) / 512 + 1 = 13개 창을 완성한다
         assertEquals(13, review.pitchFrames.size)
-        // 녹음 중 마지막으로 방출된 누적과 같은 내용이어야 한다 - 완료 직전 곡선이 그대로 남는다
-        assertEquals(0L, review.pitchFrames.first().timestampMs)
+        // 녹음 중 마지막으로 방출된 누적과 같은 내용이어야 한다 - 완료 직전 곡선이 그대로 남는다.
+        // 첫 창(0..2047)의 시각은 그 중앙인 1024샘플 = 64ms다.
+        assertEquals(64L, review.pitchFrames.first().timestampMs)
     }
 
     @Test
@@ -147,7 +148,8 @@ class RecordingViewModelTest {
         dispatcher.scheduler.advanceTimeBy(150)
         val frames = (vm.uiState.value as RecordingUiState.Recording).pitchFrames
         assertEquals(afterFirstChunk, frames.size)
-        assertEquals(0L, frames.first().timestampMs)
+        // 시각이 첫 창의 중앙(64ms)으로 되돌아왔다 = 이전 녹음의 프레이머 상태가 안 남았다.
+        assertEquals(64L, frames.first().timestampMs)
 
         vm.reset()
         advanceUntilIdle()

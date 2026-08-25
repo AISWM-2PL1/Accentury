@@ -7,7 +7,7 @@ import java.util.concurrent.atomic.AtomicReference
 
 class RecordingEngine(private val source: PcmSource = AudioRecorder()) {
 
-    /** 분석 창 1개의 F0. timestampMs는 창 시작 샘플의 시각이고, 무성음이면 pitchHz가 null이다. */
+    /** 분석 창 1개의 F0. timestampMs는 창 **중앙** 샘플의 시각이고, 무성음이면 pitchHz가 null이다. */
     data class PitchFrame(
         val timestampMs: Long,
         val pitchHz: Float?,
@@ -52,7 +52,13 @@ class RecordingEngine(private val source: PcmSource = AudioRecorder()) {
                     totalSamples += chunk.size
                     val pitchFrames = framer.push(chunk).map { frame ->
                         PitchFrame(
-                            timestampMs = frame.startSampleIndex * 1000L / SAMPLE_RATE,
+                            // 창 시작이 아니라 **중앙**의 시각이다. YIN이 낸 F0는 창 하나(128ms)
+                            // 전체를 대표하는 값이라 대표 시각도 그 한가운데가 맞다. 시작 시각으로
+                            // 찍으면 곡선이 실제보다 64ms 앞당겨 그려져, 같은 시간축에 놓인 가이드
+                            // 곡선과 정렬이 어긋난다. 체감 지연은 이 변경으로 달라지지 않는다 -
+                            // 값이 나오는 시점이 창이 다 찬 뒤라는 사실은 그대로고, 시간축 위의
+                            // **위치**만 정직해진다.
+                            timestampMs = (frame.startSampleIndex + frame.samples.size / 2) * 1000L / SAMPLE_RATE,
                             pitchHz = YinPitchEstimator.estimate(frame.samples),
                         )
                     }
