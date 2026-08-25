@@ -20,8 +20,31 @@ object YinPitchEstimator {
     const val MIN_F0_HZ = 80
     const val MAX_F0_HZ = 400
 
-    /** CMNDF 절대 임계값. 원 논문 권장 0.1~0.2 - 낮출수록 무성음 판정이 보수적. */
-    private const val CMNDF_THRESHOLD = 0.15f
+    /**
+     * CMNDF 절대 임계값. 원 논문 권장은 0.1~0.2지만 우리는 0.25로 느슨하게 잡았다.
+     *
+     * 근거 - 우리 용도는 정밀 F0 측정이 아니라 실시간 억양 곡선이라, 판단 기준이
+     * "끊김 < 약간의 오검출"이다. 곡선이 조각나면 사용자가 억양을 읽을 수 없지만
+     * 한두 점이 살짝 튀는 건 곡선 모양을 해치지 않는다.
+     *
+     * 실제 대화 샘플 실측(KAN-105) - 유성 판정률 / 옥타브 오류(중앙값 대비 1.8배 밖):
+     * | 임계값 | 20대 샘플 | 50대 샘플 | 옥타브 오류 |
+     * | 0.15  | 85%      | 36~48%   | -          |
+     * | 0.25  | 91%      | 72~77%   | 0~1개       |
+     * | 0.30  | +2~7%p   | +2~7%p   | -          |
+     * 0.15는 50대 목소리에서 곡선이 조각났고, 0.30은 0.25 대비 이득이 작아 0.25로 정했다.
+     */
+    private const val CMNDF_THRESHOLD = 0.25f
+
+    /**
+     * 유성 판정을 시도할 최소 청크 RMS. `AudioQuality.QUIET_RMS_THRESHOLD`와 같은 값이다.
+     *
+     * 임계값을 0.25로 느슨하게 잡으면 마이크 잡음이나 무음 구간에서도 CMNDF가 우연히
+     * 0.25 아래로 내려가 가짜 피치가 나올 수 있다. 소리가 없는 곳에서는 판정 자체를 안 한다.
+     * 점검 화면의 볼륨 판정(`VoiceCheckController`)과 같은 문턱을 쓰므로
+     * "점검을 통과한 볼륨이면 곡선이 나온다"가 일관되게 유지된다.
+     */
+    const val VOICED_MIN_RMS = 100f
 
     /**
      * 한 PCM 청크의 F0(Hz)를 추정한다. 무성음이거나 판별 불가면 null.
@@ -32,6 +55,9 @@ object YinPitchEstimator {
         val tauMax = sampleRate / MIN_F0_HZ // 16kHz 기준 200샘플
         val window = chunk.size - tauMax // 적분 창: x[j+τ]가 청크를 벗어나지 않는 범위
         if (window <= tauMax) return null
+
+        // 에너지 게이트 - CMNDF 계산 앞에 둬서 무음 프레임은 O(W·τ) 연산을 아예 건너뛴다.
+        if (calculateRms(chunk) < VOICED_MIN_RMS) return null
 
         val x = FloatArray(chunk.size) { chunk[it].toFloat() }
 

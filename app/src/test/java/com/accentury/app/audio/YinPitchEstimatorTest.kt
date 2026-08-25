@@ -70,8 +70,11 @@ class YinPitchEstimatorTest {
 
     @Test
     fun `백색잡음은 무성음으로 판정한다`() {
-        val random = Random(42)
+        val random = Random(42) // 시드 고정 - 무성음 판정 결과가 실행마다 흔들리지 않게.
         val noise = ShortArray(CHUNK_SIZE) { (random.nextInt(16000) - 8000).toShort() }
+        // 잡음 RMS(약 4600)는 에너지 게이트를 한참 넘는다. 게이트가 아니라
+        // CMNDF가 무성음으로 판정해야 이 테스트에 의미가 있다.
+        assertTrue(calculateRms(noise) > YinPitchEstimator.VOICED_MIN_RMS)
         assertNull(YinPitchEstimator.estimate(noise))
     }
 
@@ -84,5 +87,29 @@ class YinPitchEstimatorTest {
     @Test
     fun `탐색에 필요한 길이보다 짧은 청크는 무성음으로 판정한다`() {
         assertNull(YinPitchEstimator.estimate(sine(220.0, size = 256)))
+    }
+
+    @Test
+    fun `에너지 게이트 아래의 작은 사인파는 무성음으로 판정한다`() {
+        // 진폭 50이면 RMS는 약 35 - 게이트(100) 아래라 CMNDF가 뭐라고 하든 판정하지 않는다.
+        assertNull(YinPitchEstimator.estimate(sine(220.0, amplitude = 50.0)))
+    }
+
+    @Test
+    fun `에너지 게이트 위면 작은 진폭이어도 F0를 추정한다`() {
+        // 진폭 3000이면 RMS는 약 2121 - 게이트를 넉넉히 넘는다.
+        val f0 = YinPitchEstimator.estimate(sine(220.0, amplitude = 3000.0))
+        assertNotNull(f0)
+        assertEquals(220f, f0!!, 3f)
+    }
+
+    @Test
+    fun `에너지 게이트 경계를 사이에 두고 판정이 갈린다`() {
+        // 사인파 RMS = 진폭/√2. 진폭 138이면 약 97.6(게이트 아래), 160이면 약 113(게이트 위).
+        assertNull(YinPitchEstimator.estimate(sine(220.0, amplitude = 138.0)))
+
+        val f0 = YinPitchEstimator.estimate(sine(220.0, amplitude = 160.0))
+        assertNotNull(f0)
+        assertEquals(220f, f0!!, 3f)
     }
 }
