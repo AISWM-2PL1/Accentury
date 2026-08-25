@@ -18,6 +18,81 @@ infra/
     prod/             main.tf + terraform.tfvars
 ```
 
+## 구성도
+
+에픽 KAN-118(프로토타입 스텁 배포)이 정한 구조다. 요청은 위에서 아래로 한 줄로만
+내려가고, 각 단계는 바로 앞 단계의 보안 그룹만 허용한다 (참조 사슬, KAN-121).
+인터넷에서 ALB, 8080, 5432에 직접 닿을 길이 없고, ai는 EC2 안 compose 내부
+네트워크에만 있어 backend 말고는 아무도 부를 수 없다.
+
+```
+사용자 (Android 앱 WebView / 스탠드얼론 웹)
+  │  https://accentury.app  (staging: staging.accentury.app)
+  ▼
+Route 53 호스팅 영역 ── Porkbun에서 NS 위임 ── ACM 인증서 2장 (us-east-1, 서울)   KAN-119
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ CloudFront 배포 (단일 출처, PriceClass_200)                KAN-126 │
+│   [WAF 웹 ACL us-east-1: 관리형 규칙 2종 + rate limit]     KAN-149 │
+│   기본 /*            → S3 (SPA 재작성 Function)                  │
+│   /v0/*  /admin/v0/* → VPC 오리진 (캐싱 끔)                      │
+└──────┬─────────────────────────────────┬────────────────────────┘
+       │                                 │ VPC 오리진 ENI
+       ▼                                 │ (CloudFront-VPCOrigins-Service-SG)
+  S3 web 버킷                            │
+  (웹 번들 KAN-127, 등급 이미지 KAN-132, │
+   개인정보처리방침 KAN-133)             │
+                                         │
+═══════ VPC (staging 10.1.0.0/16 | prod 10.0.0.0/16, 피어링/NAT 없음) ═══════ KAN-121
+                                         │
+  사설 서브넷 x2 (AZ a, c)               ▼
+  ┌──────────────────────────────────────────────────────────┐
+  │ internal ALB  alb-sg: VPC 오리진 SG → 80만          KAN-125 │
+  │   대상 그룹 instance:8080, 헬스체크 /actuator/health KAN-131 │
+  └──────────────────────────┬───────────────────────────────┘
+                             │ 8080 (ec2-sg: alb-sg만, SSH 없음)
+  퍼블릭 서브넷 x2           ▼
+  ┌──────────────────────────────────────────────────────────┐
+  │ EC2 t3.small x86 (AL2023, 환경당 1대 고정)         KAN-124 │
+  │   systemd accentury.service → accentury-up.sh            │
+  │   docker compose (/opt/accentury/docker-compose.yml)     │
+  │   ┌──────────────┐  http://ai:8000  ┌────────────────┐   │
+  │   │ backend :8080│ ───────────────▶ │ ai :8000        │   │
+  │   │ Spring Boot  │   내부 네트워크만 │ FastAPI 워커 1  │   │
+  │   └──────┬───────┘                  └────────────────┘   │
+  └──────────┼───────────────────────────────────────────────┘
+             │ 5432 (rds-sg: ec2-sg만)
+  사설 서브넷 ▼
+  ┌──────────────────────────────────────────────────────────┐
+  │ RDS PostgreSQL 16  db.t4g.micro, 단일 AZ, 백업 7일  KAN-122 │
+  │   마스터 비밀번호 = Secrets Manager 관리형                 │
+  │   스키마 = Flyway 마이그레이션                      KAN-123 │
+  └──────────────────────────────────────────────────────────┘
+
+EC2가 밖으로 거는 연결 (퍼블릭 서브넷이라 NAT 불필요)
+  ├─ SSM Session Manager (접속, SSH 키 없음)                     KAN-124
+  ├─ SSM Parameter Store /accentury/{env}/*  → 컨테이너 env       KAN-129
+  │    IMAGE_TAG, SPRING_DATASOURCE_*, ACCENTURY_*, ACCENTURY_AI_*
+  └─ ECR accentury/backend, accentury/ai (commit SHA 태그)        KAN-120
+
+배포 파이프라인 (GitHub Actions, OIDC)                            KAN-128
+  Dev 병합     → 테스트 → 이미지 빌드 → ECR push → SSM IMAGE_TAG 갱신
+                 → systemctl reload accentury → staging 자동 → E2E 스모크 KAN-138
+  Release 병합 → 재빌드 없이 같은 SHA → 승인 → prod
+  웹 번들      → S3 업로드 + CloudFront 무효화                     KAN-127
+
+운영
+  ├─ ALB 5xx, 헬스체크 실패 알림 (CloudWatch)                      KAN-134
+  └─ Terraform: bootstrap(state 버킷, ECR) + envs/{staging,prod}    KAN-140
+     같은 모듈 x 2환경, 차이는 tfvars뿐. staging은 미사용 시 destroy
+```
+
+ECS/Fargate가 없는 이유: backend의 요청 제한, 회로 차단기, 혼잡 판정, 디스패처
+큐가 전부 프로세스 메모리라 인스턴스를 1개로 고정해야 하고, 그러면 ECS의 이점이
+사라진다 (아래 설계 결정 기록). AI 실모델용 GPU 서버 분리는 KAN-36, KAN-57 판정
+이후다. WAF(KAN-149)는 이 문서 작성 시점(2026-08-25)에 아직 코드가 없다.
+
 workspace가 아니라 디렉토리 분리를 쓴다. workspace는 현재 선택된 환경이 눈에
 보이지 않아 prod에 실수로 apply할 위험이 있다. 디렉토리가 갈려 있으면 어느
 환경을 만지는지 경로로 드러난다.
