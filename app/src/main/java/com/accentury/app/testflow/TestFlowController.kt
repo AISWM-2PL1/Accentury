@@ -31,20 +31,33 @@ sealed interface TestFlowPhase {
      * VOICE 진입 요청이 왔는데 마이크 권한이 없다 — 게이트(KAN-98)를 다시 세운다.
      * 시작 게이트에서 한 번 허용받았어도 설정에서 회수될 수 있어, 진입마다 확인이 필요하다.
      * 통과하면 [pending]으로 녹음을 이어간다 — 권한 때문에 문항 하나를 잃지 않는다.
+     *
+     * [afterUploadFailure]와 [failureMessage]는 [Recording]의 같은 이름 필드로 그대로 넘어간다
+     * (KAN-147) — 이 게이트가 서는 경로 하나가 업로드 재녹음 전환이라, 여기서 들고 있지 않으면
+     * 권한을 허용받아 녹음 화면이 열리는 순간 "왜 다시 녹음하는지"가 사라진다.
      */
-    data class NeedsPermission(val pending: VoiceItemStart) : TestFlowPhase
+    data class NeedsPermission(
+        val pending: VoiceItemStart,
+        val afterUploadFailure: Boolean = false,
+        val failureMessage: String? = null,
+    ) : TestFlowPhase
 
     /**
      * 녹음 화면이 웹 위를 덮고 있다.
      *
-     * [afterUploadFailure]는 이 화면이 업로드 포기([TestFlowController.onUploadGivenUp])로 스스로
-     * 다시 열린 것인지다 (KAN-147). 사용자가 [다음]을 누르고 웹으로 돌아간 뒤에 벌어지는 일이라,
-     * 이유를 적어두지 않으면 녹음 화면이 까닭 없이 되돌아온 것으로 보인다. 기본값 false는
+     * [afterUploadFailure]는 이 화면이 업로드 재녹음 전환([TestFlowController.onUploadGivenUp])으로
+     * 스스로 다시 열린 것인지다 (KAN-147). 사용자가 [다음]을 누르고 웹으로 돌아간 뒤에 벌어지는
+     * 일이라, 이유를 적어두지 않으면 녹음 화면이 까닭 없이 되돌아온 것으로 보인다. 기본값 false는
      * 웹 요청으로 정상 진입한 경우다.
+     *
+     * [failureMessage]는 그 이유로 서버가 준 문구다. 녹음이 왜 거절됐는지(너무 길다, 너무 작다)는
+     * 서버만 아는 것이라, 앱이 지어낸 일반 문구로 덮으면 사용자는 다음 녹음에서 같은 실패를
+     * 반복한다. null이면 화면이 기본 안내를 쓴다.
      */
     data class Recording(
         val start: VoiceItemStart,
         val afterUploadFailure: Boolean = false,
+        val failureMessage: String? = null,
     ) : TestFlowPhase
 
     /**
@@ -160,10 +173,17 @@ class TestFlowController private constructor(
      * 사용자가 같은 문항을 두 번 시작하는 셈이다.
      *
      * 게이트가 서 있지 않을 때 오는 허용 통지(설정 복귀 시의 ON_RESUME 재확인 등)는 무시한다.
+     *
+     * 게이트가 들고 있던 재녹음 사유는 그대로 옮긴다 (KAN-147) — 권한 팝업이 한 번 끼었다고
+     * 사용자가 읽어야 할 서버 안내가 사라지면 안 된다.
      */
     fun onPermissionGranted() {
-        val pending = (phase as? TestFlowPhase.NeedsPermission)?.pending ?: return
-        phase = TestFlowPhase.Recording(pending)
+        val gate = phase as? TestFlowPhase.NeedsPermission ?: return
+        phase = TestFlowPhase.Recording(
+            start = gate.pending,
+            afterUploadFailure = gate.afterUploadFailure,
+            failureMessage = gate.failureMessage,
+        )
     }
 
     /**
@@ -207,8 +227,11 @@ class TestFlowController private constructor(
     }
 
     /**
-     * 이 시도의 업로드를 포기했다 - 재시도 상한을 다 썼거나 서버가 재시도 불가라고 답했다
-     * (KAN-147, 2026-08-25 결정: 재시도 2회, 그래도 실패하면 녹음 화면 자동 재개).
+     * 이 시도의 업로드를 포기하고 녹음부터 다시 한다 - 서버가 녹음 자체를 거절해
+     * [UploadState.Failed.rerecord]가 선 경우다 (KAN-147, 2026-08-25 B안).
+     *
+     * 전송 실패는 여기로 오지 않는다. 그쪽은 [재시도]가 계속 서 있어 사용자가 직접 다시 보낸다 -
+     * 응답이 오지 않은 것과 서버가 이 녹음을 못 쓰겠다고 답한 것은 복구 경로가 다르다.
      *
      * 웹이 아니라 네이티브가 화면을 다시 여는 이유: 브리지 표면을 최소로 두기로 한 계약이라
      * 웹은 네이티브 쪽 업로드 실패를 통지받지 않는다. 그래서 웹은 결과가 올 때까지 그 문항의 대기
@@ -224,10 +247,13 @@ class TestFlowController private constructor(
      * 되돌아가는 것은 [continuesFrom]이 이미 다루는 "제출에서 녹음으로 되돌아온 것"이라,
      * 호출자 쪽 되감기가 RecordingViewModel을 초기화해 새 녹음을 받을 상태로 만든다.
      *
+     * @param message 서버가 이 녹음을 거절하며 준 문구. 다시 열리는 녹음 화면이 그대로 보여준다 -
+     *   왜 다시 녹음해야 하는지는 서버만 아는 것이라, 앱이 지어낸 일반 문구로 덮으면 사용자가
+     *   같은 실패를 반복한다. null이면 화면이 기본 안내를 쓴다.
      * @return 이 컨트롤러가 시도를 거둬갔는가. false면 이미 밀려났거나 모르는 시도라 할 일이 없다.
      *   true면 호출자가 그 업로드의 바이트와 상태를 폐기한다.
      */
-    fun onUploadGivenUp(attemptId: String, micGranted: Boolean): Boolean {
+    fun onUploadGivenUp(attemptId: String, micGranted: Boolean, message: String? = null): Boolean {
         val dropped = pendingAttempts.remove(attemptId) ?: return false
         when (phase) {
             is TestFlowPhase.Recording, is TestFlowPhase.NeedsPermission -> Unit
@@ -236,10 +262,12 @@ class TestFlowController private constructor(
                 // 웹의 [녹음 화면 다시 열기]에 맡긴다 - 업로드 폐기는 그대로 진행한다.
                 val start = dropped.start
                 if (start != null) {
+                    // 권한이 회수됐으면 게이트가 먼저 서지만 사유는 게이트가 들고 간다 -
+                    // 통과 직후 열리는 녹음 화면이 그대로 이어받는다.
                     phase = if (micGranted) {
-                        TestFlowPhase.Recording(start, afterUploadFailure = true)
+                        TestFlowPhase.Recording(start, afterUploadFailure = true, failureMessage = message)
                     } else {
-                        TestFlowPhase.NeedsPermission(start)
+                        TestFlowPhase.NeedsPermission(start, afterUploadFailure = true, failureMessage = message)
                     }
                 }
             }
@@ -362,7 +390,17 @@ class TestFlowController private constructor(
             is TestFlowPhase.Submitting -> current.start
         },
         attemptId = (phase as? TestFlowPhase.Submitting)?.attemptId,
-        afterUploadFailure = (phase as? TestFlowPhase.Recording)?.afterUploadFailure == true,
+        // 재녹음 사유는 두 페이즈가 나눠 든다 (KAN-147) - 게이트에서 회전해도 사유를 잃지 않는다.
+        afterUploadFailure = when (val current = phase) {
+            is TestFlowPhase.Recording -> current.afterUploadFailure
+            is TestFlowPhase.NeedsPermission -> current.afterUploadFailure
+            else -> false
+        },
+        failureMessage = when (val current = phase) {
+            is TestFlowPhase.Recording -> current.failureMessage
+            is TestFlowPhase.NeedsPermission -> current.failureMessage
+            else -> null
+        },
         attempts = pendingAttempts.values.map {
             SavedAttempt(it.meta.itemId, it.meta.attemptId, it.meta.durationMs, it.meta.quality, it.start)
         },
@@ -404,9 +442,10 @@ class TestFlowController private constructor(
             val attemptId = flow.attemptId
             val phase = when {
                 start == null -> TestFlowPhase.Web
-                flow.phase == SavedPhase.NEEDS_PERMISSION -> TestFlowPhase.NeedsPermission(start)
+                flow.phase == SavedPhase.NEEDS_PERMISSION ->
+                    TestFlowPhase.NeedsPermission(start, flow.afterUploadFailure, flow.failureMessage)
                 flow.phase == SavedPhase.RECORDING ->
-                    TestFlowPhase.Recording(start, flow.afterUploadFailure)
+                    TestFlowPhase.Recording(start, flow.afterUploadFailure, flow.failureMessage)
                 flow.phase == SavedPhase.SUBMITTING && attemptId != null ->
                     TestFlowPhase.Submitting(start, attemptId)
                 else -> TestFlowPhase.Web
@@ -435,8 +474,16 @@ private data class SavedFlow(
     val start: VoiceItemStart? = null,
     /** SUBMITTING이 기다리는 시도. 다른 페이즈에서는 null이다. */
     val attemptId: String? = null,
-    /** RECORDING이 업로드 포기로 다시 열린 화면인가 (KAN-147). 다른 페이즈에서는 뜻이 없다. */
+    /**
+     * RECORDING·NEEDS_PERMISSION이 업로드 재녹음 전환으로 다시 열린 화면인가 (KAN-147).
+     * 다른 페이즈에서는 뜻이 없다.
+     */
     val afterUploadFailure: Boolean = false,
+    /**
+     * 그 전환에서 서버가 준 문구 (KAN-147). 기본값 null은 이 필드가 생기기 전 형식으로 저장된
+     * 값도 그대로 복원되게 한다 - 그렇게 복원된 화면은 기본 안내를 쓴다.
+     */
+    val failureMessage: String? = null,
     val attempts: List<SavedAttempt> = emptyList(),
 )
 

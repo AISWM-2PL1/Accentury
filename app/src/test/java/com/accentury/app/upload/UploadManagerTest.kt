@@ -124,16 +124,16 @@ class UploadManagerTest {
         advanceUntilIdle()
         fake.respond(
             "at-1",
-            UploadResult.Rejected("AUDIO_TOO_LARGE", "파일이 너무 큽니다", retryable = false, retryAfterMs = null),
+            UploadResult.Rejected("SESSION_COMPLETED", "이미 종료된 세션입니다", retryable = false, retryAfterMs = null),
         )
         advanceUntilIdle()
 
-        assertEquals(UploadState.Failed(false, "파일이 너무 큽니다"), manager.uploads.value["at-1"])
+        assertEquals(UploadState.Failed(false, "이미 종료된 세션입니다"), manager.uploads.value["at-1"])
 
         manager.retry("at-1")
         advanceUntilIdle()
 
-        assertEquals(UploadState.Failed(false, "파일이 너무 큽니다"), manager.uploads.value["at-1"])
+        assertEquals(UploadState.Failed(false, "이미 종료된 세션입니다"), manager.uploads.value["at-1"])
         assertEquals(1, fake.callsFor("at-1"))
     }
 
@@ -145,6 +145,91 @@ class UploadManagerTest {
         advanceUntilIdle()
 
         assertEquals(UploadState.Failed(true, "timeout"), manager.uploads.value["at-1"])
+    }
+
+    /*
+     * 녹음 자체를 거절한 코드는 재전송이 아니라 재녹음으로 간다 (KAN-147, 2026-08-25 B안).
+     * 같은 바이트를 다시 보내면 서버가 같은 답을 할 뿐이라 [재시도]를 세워둘 자리가 아니다.
+     */
+    @Test
+    fun `녹음이 문제라고 답한 거절은 재녹음 전환으로 내려온다`() = withManager { fake, manager ->
+        manager.enqueue(requestOf("at-1"))
+        advanceUntilIdle()
+        fake.respond(
+            "at-1",
+            UploadResult.Rejected("AUDIO_TOO_LONG", "녹음이 너무 깁니다", retryable = false, retryAfterMs = null),
+        )
+        advanceUntilIdle()
+
+        assertEquals(
+            UploadState.Failed(retryable = false, message = "녹음이 너무 깁니다", rerecord = true),
+            manager.uploads.value["at-1"],
+        )
+    }
+
+    /*
+     * AUDIO_TOO_QUIET은 서버가 재시도 가능이라고 주지만 같은 바이트를 다시 보내면 같은 판정이
+     * 돌아온다. 재녹음이 재전송을 이기고, 두 복구 경로가 함께 서지 않는다.
+     */
+    @Test
+    fun `서버가 재시도 가능이라 해도 녹음이 문제면 재녹음이 이긴다`() = withManager { fake, manager ->
+        manager.enqueue(requestOf("at-1"))
+        advanceUntilIdle()
+        fake.respond(
+            "at-1",
+            UploadResult.Rejected("AUDIO_TOO_QUIET", "소리가 너무 작습니다", retryable = true, retryAfterMs = null),
+        )
+        advanceUntilIdle()
+
+        assertEquals(
+            UploadState.Failed(retryable = false, message = "소리가 너무 작습니다", rerecord = true),
+            manager.uploads.value["at-1"],
+        )
+    }
+
+    /*
+     * 녹음과 무관한 서버 거절은 재녹음으로 보내지 않는다 (KAN-147, B안). 자동 전환을 걸면 사용자가
+     * 읽어야 할 서버 안내가 녹음 화면에 밀려 사라지고, 그 문항은 다시 녹음해도 같은 거절을 받는다.
+     */
+    @Test
+    fun `세션이 끝나 거절된 건은 재녹음으로 보내지 않고 서버 문구를 남긴다`() = withManager { fake, manager ->
+        manager.enqueue(requestOf("at-1"))
+        advanceUntilIdle()
+        fake.respond(
+            "at-1",
+            UploadResult.Rejected("SESSION_EXPIRED", "세션이 만료되었습니다", retryable = false, retryAfterMs = null),
+        )
+        advanceUntilIdle()
+
+        assertEquals(
+            UploadState.Failed(retryable = false, message = "세션이 만료되었습니다", rerecord = false),
+            manager.uploads.value["at-1"],
+        )
+    }
+
+    /*
+     * 전송 실패에는 상한이 없다 (KAN-147, B안). 응답이 오지 않은 것은 녹음의 문제가 아니라
+     * 잠깐 끊긴 것일 뿐이라, 여기서 녹음을 빼앗으면 되돌릴 수 없는 손실이 된다.
+     */
+    @Test
+    fun `전송 실패는 몇 번을 다시 보내도 재시도 가능으로 남는다`() = withManager { fake, manager ->
+        manager.enqueue(requestOf("at-1"))
+        advanceUntilIdle()
+
+        repeat(3) {
+            fake.respond("at-1", UploadResult.TransportError("network down"))
+            advanceUntilIdle()
+            assertEquals(UploadState.Failed(true, "network down"), manager.uploads.value["at-1"])
+            manager.retry("at-1")
+            advanceUntilIdle()
+            assertEquals(UploadState.InFlight, manager.uploads.value["at-1"])
+        }
+
+        fake.respond("at-1", UploadResult.TransportError("network down"))
+        advanceUntilIdle()
+
+        assertEquals(4, fake.callsFor("at-1"))
+        assertEquals(UploadState.Failed(true, "network down"), manager.uploads.value["at-1"])
     }
 
     @Test
@@ -170,68 +255,6 @@ class UploadManagerTest {
 
         assertEquals(UploadState.Done("aj_retry"), manager.uploads.value["at-1"])
     }
-
-    /*
-     * 재시도 상한 (KAN-147, 2026-08-25 결정). 같은 멱등 키로 같은 바이트를 다시 보내는 일이라
-     * 두 번을 넘겨 성공하는 경우가 거의 없는데, [재시도] 버튼을 계속 남겨두면 사용자는 눌러도
-     * 아무 일이 없는 버튼 앞에 갇힌다. 상한을 넘긴 뒤의 복구는 재녹음이고 그 신호가 retryable=false다.
-     */
-    @Test
-    fun `재시도는 2번까지다 - 세 번째 실패는 재시도 불가로 내려온다`() = withManager { fake, manager ->
-        manager.enqueue(requestOf("at-1"))
-        advanceUntilIdle()
-        fake.respond("at-1", UploadResult.TransportError("network down"))
-        advanceUntilIdle()
-        assertEquals(UploadState.Failed(true, "network down"), manager.uploads.value["at-1"])
-
-        // 1회차
-        manager.retry("at-1")
-        advanceUntilIdle()
-        fake.respond("at-1", UploadResult.TransportError("network down"))
-        advanceUntilIdle()
-        assertEquals(UploadState.Failed(true, "network down"), manager.uploads.value["at-1"])
-
-        // 2회차 - 상한을 다 쓴다. 이 실패부터는 서버가 뭐라 하든 재시도 불가다.
-        manager.retry("at-1")
-        advanceUntilIdle()
-        fake.respond("at-1", UploadResult.TransportError("network down"))
-        advanceUntilIdle()
-        assertEquals(UploadState.Failed(false, "network down"), manager.uploads.value["at-1"])
-
-        // 상한을 넘긴 재시도는 무시된다 - 전송 횟수도 상태도 그대로다.
-        manager.retry("at-1")
-        advanceUntilIdle()
-        assertEquals(3, fake.callsFor("at-1"))
-        assertEquals(UploadState.Failed(false, "network down"), manager.uploads.value["at-1"])
-    }
-
-    /*
-     * 폐기는 시도 자체를 버리는 것이라 소진한 횟수도 함께 푼다. 같은 키로 다시 걸리는 업로드는
-     * 다른 바이트를 보내는 새 시도이므로 앞 시도의 소진분을 물려받을 이유가 없다.
-     */
-    @Test
-    fun `폐기하면 재시도 횟수도 풀린다 - 같은 키의 새 시도가 상한을 물려받지 않는다`() =
-        withManager { fake, manager ->
-            manager.enqueue(requestOf("at-1"))
-            advanceUntilIdle()
-            repeat(2) {
-                fake.respond("at-1", UploadResult.TransportError("network down"))
-                advanceUntilIdle()
-                manager.retry("at-1")
-                advanceUntilIdle()
-            }
-            fake.respond("at-1", UploadResult.TransportError("network down"))
-            advanceUntilIdle()
-            assertEquals(UploadState.Failed(false, "network down"), manager.uploads.value["at-1"])
-
-            manager.discard("at-1")
-            manager.enqueue(requestOf("at-1"))
-            advanceUntilIdle()
-            fake.respond("at-1", UploadResult.TransportError("network down"))
-            advanceUntilIdle()
-
-            assertEquals(UploadState.Failed(true, "network down"), manager.uploads.value["at-1"])
-        }
 
     @Test
     fun `같은 attemptId로 다시 enqueue해도 이중 업로드하지 않는다`() = withManager { fake, manager ->

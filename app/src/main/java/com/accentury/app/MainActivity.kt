@@ -211,11 +211,14 @@ private fun TestFlow(modifier: Modifier = Modifier) {
     }
 
     /*
-     * 확정 실패한 업로드를 걷고 그 문항의 녹음 화면을 다시 연다 (KAN-147).
+     * 녹음을 새로 해야 풀리는 실패를 걷고 그 문항의 녹음 화면을 다시 연다 (KAN-147, B안).
      *
-     * 재시도 상한을 다 썼거나 서버가 재시도 불가라고 답한 건이 여기로 온다 - 어느 쪽이든 결과가
-     * 나올 일이 없어 복구 경로는 재녹음 하나뿐이고, 웹은 네이티브 쪽 실패를 통지받지 않으므로
-     * (브리지 표면 최소 원칙) 그 문항의 대기 화면에 그대로 멈춰 있다.
+     * 서버가 녹음 자체를 거절한 건(rerecord)만 여기로 온다 - 그것만이 재전송으로 풀리지 않아
+     * 복구 경로가 재녹음 하나뿐이다. 전송 실패는 [재시도]가 계속 서 있고, 그 외 서버 거절은
+     * 서버 문구를 단 실패 행으로 상태 바에 그대로 남는다.
+     *
+     * 웹은 네이티브 쪽 실패를 통지받지 않으므로(브리지 표면 최소 원칙) 그 문항의 대기 화면에
+     * 그대로 멈춰 있다 - 여기서 화면을 다시 열어도 진행을 앞지르지 않는 근거다.
      *
      * 위 결과 전달 이펙트와 같은 키(uploads)로 돌고, 그보다 뒤에 선언한다. 정확성은 순서에 기대지
      * 않는다 - onUploadsChanged는 Submitting일 때만, onResultDelivered는 기다리던 attemptId일 때만
@@ -230,8 +233,9 @@ private fun TestFlow(modifier: Modifier = Modifier) {
      */
     LaunchedEffect(uploads) {
         uploads.forEach { (attemptId, state) ->
-            if (state !is UploadState.Failed || state.retryable) return@forEach
-            if (flow.onUploadGivenUp(attemptId, micGranted = isMicGranted())) {
+            if (state !is UploadState.Failed || !state.rerecord) return@forEach
+            // 서버 문구를 그대로 실어 보낸다 - 왜 다시 녹음해야 하는지는 서버만 안다.
+            if (flow.onUploadGivenUp(attemptId, micGranted = isMicGranted(), message = state.message)) {
                 uploadViewModel?.discard(attemptId)
             }
         }
@@ -436,9 +440,11 @@ private fun TestFlow(modifier: Modifier = Modifier) {
                     RecordingOverlay(
                         start = overlayStart,
                         submitting = submitting,
-                        // 업로드 포기로 이 화면이 스스로 다시 열렸는가 (KAN-147). 제출을 기다리는
-                        // 중에는 뜻이 없는 값이라 Recording일 때만 본다.
+                        // 업로드 재녹음 전환으로 이 화면이 스스로 다시 열렸는가 (KAN-147).
+                        // 제출을 기다리는 중에는 뜻이 없는 값이라 Recording일 때만 본다.
                         afterUploadFailure = (phase as? TestFlowPhase.Recording)?.afterUploadFailure == true,
+                        // 그 전환에서 서버가 준 문구. null이면 화면이 기본 안내를 쓴다.
+                        failureMessage = (phase as? TestFlowPhase.Recording)?.failureMessage,
                         viewModel = viewModel,
                         onSubmit = { attemptId, durationMs, quality ->
                             // consumeRecording은 PCM을 넘기면서 뷰모델에서 지운다 (FR-DP-02: 보관하지 않음).
@@ -495,8 +501,10 @@ private fun RecordingOverlay(
     start: VoiceItemStart,
     /** 제출한 시도의 결과를 기다리는 중 — 화면은 그대로 두고 하단만 바꾼다 (KAN-146). */
     submitting: Boolean,
-    /** 업로드 확정 실패로 이 화면이 스스로 다시 열렸는가 (KAN-147) - 안내 문구가 이유를 밝힌다. */
+    /** 업로드 재녹음 전환으로 이 화면이 스스로 다시 열렸는가 (KAN-147) - 안내 문구가 이유를 밝힌다. */
     afterUploadFailure: Boolean,
+    /** 그 전환에서 서버가 준 문구 (KAN-147). null이면 화면이 기본 안내를 쓴다. */
+    failureMessage: String?,
     viewModel: RecordingViewModel,
     onSubmit: (attemptId: String, durationMs: Long, quality: QualityStatus) -> Unit,
 ) {
@@ -511,6 +519,7 @@ private fun RecordingOverlay(
             guideF0 = start.guideF0,
             submitting = submitting,
             afterUploadFailure = afterUploadFailure,
+            failureMessage = failureMessage,
             viewModel = viewModel,
         )
     }

@@ -429,9 +429,10 @@ class TestFlowControllerTest {
     }
 
     /*
-     * 업로드 포기 - 재시도 상한을 다 썼거나 서버가 재시도 불가라고 답한 경우다 (KAN-147,
-     * 2026-08-25 결정). 웹은 네이티브 쪽 실패를 통지받지 않아 그 문항의 대기 화면에 멈춰 있으므로,
-     * 네이티브가 같은 문항의 녹음 화면을 다시 열어도 진행을 앞지르지 않는다.
+     * 재녹음 전환 - 서버가 이 녹음을 못 쓰겠다고 답한 경우다 (KAN-147, 2026-08-25 B안).
+     * 전송 실패는 여기로 오지 않고 [재시도]가 계속 서 있는다. 웹은 네이티브 쪽 실패를 통지받지
+     * 않아 그 문항의 대기 화면에 멈춰 있으므로, 네이티브가 같은 문항의 녹음 화면을 다시 열어도
+     * 진행을 앞지르지 않는다.
      */
     @Test
     fun `업로드를 포기하면 그 문항의 녹음 화면을 다시 연다`() {
@@ -505,18 +506,90 @@ class TestFlowControllerTest {
         assertEquals(TestFlowPhase.Recording(start, afterUploadFailure = true), controller.phase)
     }
 
+    /*
+     * 권한 팝업이 한 번 끼어도 재녹음 사유는 살아남아야 한다 (KAN-147). 게이트가 그 값을 들고
+     * 있지 않으면 통과 직후 열리는 녹음 화면에서 "왜 다시 녹음하는지"가 사라진다.
+     */
     @Test
-    fun `권한이 회수됐으면 게이트를 먼저 세운다 - 다시 열 문항은 그대로 들고 있는다`() {
+    fun `권한이 회수됐으면 게이트를 먼저 세운다 - 다시 열 문항과 사유를 그대로 들고 있는다`() {
         val controller = TestFlowController()
         val start = voiceItem(itemId = "item_1")
         controller.onStartVoiceItem(start, micGranted = true)
         controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
 
-        assertTrue(controller.onUploadGivenUp("at_1", micGranted = false))
+        assertTrue(controller.onUploadGivenUp("at_1", micGranted = false, message = "녹음이 너무 깁니다"))
 
-        assertEquals(TestFlowPhase.NeedsPermission(start), controller.phase)
+        assertEquals(
+            TestFlowPhase.NeedsPermission(start, afterUploadFailure = true, failureMessage = "녹음이 너무 깁니다"),
+            controller.phase,
+        )
+
         controller.onPermissionGranted()
-        assertEquals(TestFlowPhase.Recording(start), controller.phase)
+
+        assertEquals(
+            TestFlowPhase.Recording(start, afterUploadFailure = true, failureMessage = "녹음이 너무 깁니다"),
+            controller.phase,
+        )
+    }
+
+    /*
+     * 게이트에 선 채로 회전해도 사유를 잃지 않는다 - 저장 형식은 두 페이즈의 재녹음 사유를
+     * 같은 자리에 담는다.
+     */
+    @Test
+    fun `게이트에 선 재녹음 사유는 회전을 넘겨도 남는다`() {
+        val controller = TestFlowController()
+        val start = voiceItem(itemId = "item_1")
+        controller.onStartVoiceItem(start, micGranted = true)
+        controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
+        controller.onUploadGivenUp("at_1", micGranted = false, message = "소리가 너무 작습니다")
+
+        val restored = rotate(controller)
+
+        assertEquals(
+            TestFlowPhase.NeedsPermission(start, afterUploadFailure = true, failureMessage = "소리가 너무 작습니다"),
+            restored.phase,
+        )
+        restored.onPermissionGranted()
+        assertEquals(
+            TestFlowPhase.Recording(start, afterUploadFailure = true, failureMessage = "소리가 너무 작습니다"),
+            restored.phase,
+        )
+    }
+
+    /*
+     * 왜 다시 녹음해야 하는지는 서버만 안다 (KAN-147, B안). 앱이 지어낸 일반 문구로 덮으면
+     * 사용자는 다음 녹음에서 같은 실패를 반복한다.
+     */
+    @Test
+    fun `서버가 준 거절 문구가 다시 열린 녹음 화면까지 실려 간다`() {
+        val controller = TestFlowController()
+        val start = voiceItem(itemId = "item_1")
+        controller.onStartVoiceItem(start, micGranted = true)
+        controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
+
+        assertTrue(controller.onUploadGivenUp("at_1", micGranted = true, message = "녹음이 너무 깁니다"))
+
+        assertEquals(
+            TestFlowPhase.Recording(start, afterUploadFailure = true, failureMessage = "녹음이 너무 깁니다"),
+            controller.phase,
+        )
+    }
+
+    @Test
+    fun `다시 열린 녹음 화면은 회전해도 서버 문구를 잃지 않는다`() {
+        val controller = TestFlowController()
+        val start = voiceItem(itemId = "item_1")
+        controller.onStartVoiceItem(start, micGranted = true)
+        controller.onRecordingFinished("at_1", durationMs = 3_200, quality = QualityStatus.NORMAL)
+        controller.onUploadGivenUp("at_1", micGranted = true, message = "녹음이 너무 깁니다")
+
+        val restored = rotate(controller)
+
+        assertEquals(
+            TestFlowPhase.Recording(start, afterUploadFailure = true, failureMessage = "녹음이 너무 깁니다"),
+            restored.phase,
+        )
     }
 
     /*
