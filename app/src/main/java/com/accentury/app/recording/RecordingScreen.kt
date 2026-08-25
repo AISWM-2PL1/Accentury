@@ -66,11 +66,17 @@ fun RecordingScreen(
      */
     submitting: Boolean = false,
     /*
-     * 업로드가 확정 실패해서 이 화면이 스스로 다시 열린 경우인가 (KAN-147).
+     * 서버가 이 녹음을 거절해서 화면이 스스로 다시 열린 경우인가 (KAN-147).
      * 사용자가 [다음]을 누르고 웹으로 돌아간 뒤에 벌어지는 일이라, 이유를 한 줄 적어두지 않으면
      * 녹음 화면이 까닭 없이 되돌아온 것으로 보인다.
      */
     afterUploadFailure: Boolean = false,
+    /*
+     * 그 거절에서 서버가 준 문구 (KAN-147). 녹음이 왜 거절됐는지(너무 길다, 너무 작다)는 서버만
+     * 아는 것이라 그대로 보여준다 - 앱이 지어낸 일반 문구로 덮으면 사용자가 같은 실패를 반복한다.
+     * null이면 아래 기본 안내를 쓴다.
+     */
+    failureMessage: String? = null,
     viewModel: RecordingViewModel = viewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -140,7 +146,11 @@ fun RecordingScreen(
                     RecordButton(contentDescription = "녹음 시작", onClick = viewModel::startRecording)
                     Spacer(modifier = Modifier.height(Spacing.x2))
                     Text(
-                        if (afterUploadFailure) "업로드에 실패해서 다시 녹음이 필요해요" else "버튼을 눌러 녹음",
+                        if (afterUploadFailure) {
+                            failureMessage ?: "업로드에 실패해서 다시 녹음이 필요해요"
+                        } else {
+                            "버튼을 눌러 녹음"
+                        },
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

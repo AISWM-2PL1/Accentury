@@ -13,10 +13,18 @@ import kotlinx.coroutines.launch
 /**
  * 업로드 한 건의 수명(등록 - 전송 - 실패 - 재시도 - 폐기)을 쥐는 자리.
  *
- * 재시도에는 상한이 있다 (KAN-147, 2026-08-25 결정). 같은 멱등 키로 같은 바이트를 다시 보내는
- * 일이라 두 번을 넘겨 성공하는 경우가 거의 없고, 그런데도 [재시도] 버튼을 계속 남겨두면 사용자는
- * 눌러도 아무 일이 없는 버튼 앞에 갇힌다. 상한을 넘긴 실패의 복구 경로는 재전송이 아니라
- * 재녹음이고(호출자가 녹음 화면을 다시 연다), 그 전환의 신호가 `retryable = false`다.
+ * 재시도 횟수에 상한을 두지 않는다 (KAN-147, 2026-08-25 B안). [UploadResult.TransportError]는
+ * 응답이 오지 않았다는 뜻이지 녹음에 문제가 있다는 뜻이 아니고(멱등 키 덕에 서버가 이미 받았을
+ * 수도 있다), 잠깐 끊긴 사용자에게서 녹음을 빼앗는 것은 되돌릴 수 없는 손실이다. 그래서 전송
+ * 실패에는 [재시도]를 계속 남긴다.
+ *
+ * 자동 재녹음으로 넘어가는 것은 서버가 녹음 자체를 거절했다고 답한 코드([RERECORD_CODES])뿐이다.
+ * 그 신호가 [UploadState.Failed.rerecord]고, 그 외의 재시도 불가 거절(세션 만료·재녹음 횟수
+ * 초과 등)은 서버가 준 문구를 단 실패 행으로 화면에 그대로 남는다 - 사용자가 읽어야 할 안내를
+ * 자동 전환이 지워버리지 않게 한다.
+ *
+ * 여기서 이탈 수단을 주지 않는 것은 의도한 공백이다. 실패 화면에서 어디로 빠져나갈지는 KAN-39
+ * 디자인이 정한다.
  */
 class UploadManager(
     private val client: UploadClient,
@@ -46,13 +54,6 @@ class UploadManager(
     private val jobs = mutableMapOf<String, Job>()
 
     /**
-     * 시도별로 이미 쓴 재시도 횟수 (KAN-147). 상한 판정이 실패 상태를 만드는 자리에 있어야 해서
-     * 별도로 센다 - [UploadState.Failed]에 필드를 더하면 이 값을 모르는 호출처가 상태를 만들 수 있다.
-     * 접근은 전부 lock 아래.
-     */
-    private val retriesUsed = mutableMapOf<String, Int>()
-
-    /**
      * 처음 보는 멱등 키만 받는다. 이미 아는 키는 상태와 무관하게 무시해,
      * 하나의 멱등 키에 서로 다른 payload가 붙는 일을 원천 차단한다.
      * 실패한 업로드의 재전송 경로는 [retry] 하나뿐이다.
@@ -63,27 +64,24 @@ class UploadManager(
             // 호출자가 나중에 배열을 바꿔도 재시도 바이트가 흔들리지 않도록 스냅샷을 뜬다.
             val snapshot = request.copy(wavBytes = request.wavBytes.copyOf())
             originals[snapshot.attemptId] = snapshot
-            retriesUsed[snapshot.attemptId] = 0
-            register(snapshot, retriesUsed = 0)
+            register(snapshot)
         }
         job.start()
     }
 
     /**
-     * 실패한 전송을 같은 멱등 키와 같은 바이트로 다시 보낸다. 시도당 [MAX_RETRIES]번까지다 (KAN-147).
+     * 실패한 전송을 같은 멱등 키와 같은 바이트로 다시 보낸다. 횟수 제한은 없다 (KAN-147, B안).
      *
-     * 상한을 넘긴 실패는 애초에 `retryable = false`로 내려오므로 이 함수는 그대로 무시한다 -
-     * 판정을 여기가 아니라 상태를 만드는 자리([register])에 둔 이유는 화면이 [재시도] 버튼을
-     * 그릴지 말지를 같은 값 하나로 정하기 때문이다. 버튼은 보이는데 눌러도 무시되는 구간이 없다.
+     * 재시도 불가로 내려온 실패는 그대로 무시한다 - 판정을 여기가 아니라 상태를 만드는
+     * 자리([register])에 둔 이유는 화면이 [재시도] 버튼을 그릴지 말지를 같은 값 하나로 정하기
+     * 때문이다. 버튼은 보이는데 눌러도 무시되는 구간이 없다.
      */
     fun retry(attemptId: String) {
         val job = synchronized(lock) {
             val request = originals[attemptId] ?: return
             val state = _uploads.value[attemptId]
             if (state !is UploadState.Failed || !state.retryable) return
-            val used = (retriesUsed[attemptId] ?: 0) + 1
-            retriesUsed[attemptId] = used
-            register(request, retriesUsed = used)
+            register(request)
         }
         job.start()
     }
@@ -101,9 +99,9 @@ class UploadManager(
      * 바이트)에 재사용하면 새 녹음이 옛 analysisJobId에 조용히 묶인다.** 새 시도는 항상
      * 새 attemptId를 발급할 것.
      *
-     * 호출처는 둘 다 KAN-147에서 생겼다: 재시도 상한을 넘겨 포기한 업로드(그 문항은 녹음 화면이
-     * 다시 열린다)와, 같은 문항의 새 녹음이 등록되면서 밀려난 앞 시도다. 둘 다 결과가 나올 일이
-     * 없어진 시도라 바이트를 들고 있을 이유가 없다.
+     * 호출처는 둘 다 KAN-147에서 생겼다: 재녹음 전환(rerecord)이 확정된 업로드(그 문항은 녹음
+     * 화면이 다시 열린다)와, 같은 문항의 새 녹음이 등록되면서 밀려난(supersede) 앞 시도다.
+     * 둘 다 결과가 나올 일이 없어진 시도라 바이트를 들고 있을 이유가 없다.
      */
     fun discard(attemptId: String) {
         synchronized(lock) {
@@ -111,9 +109,6 @@ class UploadManager(
             // (락은 재진입 가능) 이미 지워진 항목이라 새 시도의 Job을 건드리지 않는다.
             val job = jobs.remove(attemptId)
             originals.remove(attemptId)
-            // 폐기는 시도 자체를 버리는 것이라 재시도 횟수도 함께 푼다 - 같은 키로 다시 enqueue하면
-            // 그것은 다른 바이트를 보내는 새 시도이므로 앞 시도의 소진분을 물려받을 이유가 없다.
-            retriesUsed.remove(attemptId)
             _uploads.value = _uploads.value - attemptId
             job?.cancel()
         }
@@ -125,7 +120,6 @@ class UploadManager(
             val running = jobs.values.toList()
             jobs.clear()
             originals.clear()
-            retriesUsed.clear()
             _uploads.value = emptyMap()
             running.forEach { it.cancel() }
         }
@@ -134,31 +128,36 @@ class UploadManager(
     /**
      * InFlight 표식과 Job 등록을 한 번에 끝낸다. 반드시 [lock] 안에서 부르고,
      * 반환된 Job은 락을 놓은 뒤에 start한다(코루틴 본문이 호출 스레드에서 인라인으로 돌 수 있으므로).
-     *
-     * [retriesUsed]는 이 전송이 몇 번째 재시도인지다. 전송을 걸 때의 값을 그대로 붙잡아 두는 이유는
-     * 결과가 돌아오는 시점에 다시 세면 그사이 폐기, 재등록으로 값이 바뀌어 있을 수 있어서다.
      */
-    private fun register(request: UploadRequest, retriesUsed: Int): Job {
+    private fun register(request: UploadRequest): Job {
         val attemptId = request.attemptId
         _uploads.value = _uploads.value + (attemptId to UploadState.InFlight)
-        // 상한을 다 쓴 뒤의 실패는 서버가 뭐라 하든 재시도 불가다 (KAN-147). 호출자는 이 값을 보고
-        // [재시도] 대신 녹음 화면을 다시 연다.
-        val retriable = retriesUsed < MAX_RETRIES
         // jobs에 등록하기 전에 본문이 돌면 폐기가 끊을 대상을 놓친다. LAZY로 띄워 등록을 마친 뒤 시작한다.
         val job = scope.launch(start = CoroutineStart.LAZY) {
             val state = try {
                 when (val result = client.upload(sessionId, sessionToken, request)) {
                     is UploadResult.Accepted -> UploadState.Done(result.analysisJobId)
-                    is UploadResult.Rejected ->
-                        UploadState.Failed(result.retryable && retriable, result.message)
-                    is UploadResult.TransportError -> UploadState.Failed(retriable, result.reason)
+                    is UploadResult.Rejected -> {
+                        // 녹음을 새로 해야 풀리는 거절이면 재전송 쪽은 닫는다 (KAN-147). 두 복구
+                        // 경로를 함께 세우면 화면이 어느 쪽을 권하는지 말할 수 없다.
+                        val rerecord = result.code in RERECORD_CODES
+                        UploadState.Failed(
+                            retryable = result.retryable && !rerecord,
+                            message = result.message,
+                            rerecord = rerecord,
+                        )
+                    }
+                    // 응답이 오지 않은 것은 녹음의 문제가 아니다. 언제든 다시 보낼 수 있게 남긴다.
+                    is UploadResult.TransportError ->
+                        UploadState.Failed(retryable = true, message = result.reason)
                 }
             } catch (e: CancellationException) {
                 // 취소는 실패가 아니다. 상태를 건드리지 않고 코루틴 취소를 그대로 전파한다.
                 throw e
             } catch (e: Throwable) {
                 // 클라이언트 구현이 예외를 흘리더라도 InFlight로 고착되지 않게 실패로 내린다.
-                UploadState.Failed(retriable, e.message ?: e.javaClass.simpleName)
+                // 원인을 모르는 실패라 녹음을 버리게 하지 않고 재시도 쪽에 남긴다.
+                UploadState.Failed(retryable = true, message = e.message ?: e.javaClass.simpleName)
             }
             publish(attemptId, coroutineContext.job, state)
         }
@@ -187,9 +186,15 @@ class UploadManager(
 
     companion object {
         /**
-         * 한 시도가 쓸 수 있는 재시도 횟수 (KAN-147, 2026-08-25 결정).
-         * 최초 전송까지 합쳐 세 번째 실패가 확정 실패다 - 그 뒤의 복구는 재녹음이다.
+         * 백엔드 ErrorCode 중 녹음을 새로 해야 풀리는 것들 (KAN-147, 2026-08-25 B안).
+         * 같은 바이트를 다시 보내면 서버가 같은 답을 할 뿐이라 재전송이 아니라 재녹음이 복구 경로다.
+         *
+         * AUDIO_TOO_QUIET은 서버가 `retryable = true`로 주지만 여기서는 재녹음이 이긴다 -
+         * 재전송해도 같은 바이트가 같은 판정을 받는다.
+         *
+         * AUDIO_FORMAT_UNSUPPORTED는 넣지 않는다. 포맷은 클라이언트가 만드는 것이라 사용자가
+         * 다시 녹음해도 같은 포맷이 나간다 - 재녹음을 시켜도 벗어날 수 없는 클라이언트 버그다.
          */
-        const val MAX_RETRIES = 2
+        private val RERECORD_CODES = setOf("AUDIO_TOO_LONG", "AUDIO_TOO_LARGE", "AUDIO_TOO_QUIET")
     }
 }
