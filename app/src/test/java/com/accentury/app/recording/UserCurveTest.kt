@@ -52,6 +52,43 @@ class UserCurveTest {
         assertEquals(2000L, userCurveWindowMs(frameIntervalMs = -5, valueCount = 101))
     }
 
+    @Test
+    fun `Review 창은 라이브 창보다 긴 녹음을 통째로 담는다`() {
+        // 3.168초짜리 녹음이면 2초 라이브 창으로는 앞부분이 잘린다
+        val long = List(100) { frame(it * FRAME_MS, CENTER_HZ) }
+        val lastMs = 99 * FRAME_MS
+        assertTrue("전제: 녹음이 라이브 창보다 길다", lastMs > WINDOW_MS)
+        assertEquals(lastMs + FRAME_MS, reviewWindowMs(long, WINDOW_MS))
+    }
+
+    @Test
+    fun `라이브 창 안에 들어오는 녹음이면 Review도 라이브 창을 쓴다`() {
+        // 창을 녹음 길이에 맞춰 줄이면 짧은 발화가 레인 폭을 억지로 채워 늘어져 보인다
+        assertEquals(WINDOW_MS, reviewWindowMs(centerFrames(), WINDOW_MS))
+    }
+
+    @Test
+    fun `프레임이 없으면 Review 창은 라이브 창 그대로다`() {
+        assertEquals(WINDOW_MS, reviewWindowMs(emptyList(), WINDOW_MS))
+    }
+
+    @Test
+    fun `Review 창으로 그리면 첫 프레임부터 마지막 프레임까지 다 들어온다`() {
+        val total = 100
+        val long = List(total) { frame(it * FRAME_MS, CENTER_HZ) }
+        val windowMs = reviewWindowMs(long, WINDOW_MS)
+        val points = userCurveDisplayPoints(long, windowMs).single()
+
+        assertEquals(total, points.size)
+        assertEquals(
+            "첫 점은 첫 프레임 시각 자리다",
+            long.first().timestampMs.toFloat() / windowMs,
+            points.first().x,
+            1e-5f,
+        )
+        assertTrue("마지막 점은 오른쪽 모서리에 붙지 않는다: ${points.last().x}", points.last().x < 1f)
+    }
+
     // --- 가이드를 사용자 창에 맞추기 -----------------------------------------
 
     @Test

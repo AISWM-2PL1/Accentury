@@ -82,8 +82,26 @@ fun RecordingScreen(
     // 창 길이에는 unit 가드를 걸지 않는다. 아래 가드는 "값을 어떻게 읽을 것인가"의 문제라
     // 단위를 모르면 그릴 수 없지만, 길이는 간격 x 구간 수라서 단위와 무관하게 맞는다.
     // 그래서 가이드를 못 그리는 경우에도 두 레인의 시간축은 여전히 같게 잡을 수 있다.
-    val windowMs = remember(guideF0) {
+    val liveWindowMs = remember(guideF0) {
         userCurveWindowMs(guideF0?.frameIntervalMs, guideF0?.values?.size)
+    }
+    // 녹음 중에는 자라는 곡선, 완료 후에는 방금 녹음의 곡선을 남긴다 (2026-08-18 결정).
+    // 재녹음을 시작하면 Recording의 빈 목록으로 바뀌므로 지난 곡선이 새 녹음에 섞이지 않는다.
+    val pitchFrames = when (val s = state) {
+        is RecordingUiState.Recording -> s.pitchFrames
+        // Review에서만 짧은 무성 구멍을 메운다. 녹음 중에는 곡선이 인과적이어야 해서(뒤 프레임을
+        // 보면 이미 그린 과거가 다시 그려진다) 구멍을 앞 값으로 유지하는 수밖에 없지만, 완료 후에는
+        // 데이터가 다 모여 있어 구멍의 양옆을 보고 이어도 거짓이 아니다 - fillShortGaps KDoc 참고.
+        is RecordingUiState.Review -> fillShortGaps(s.pitchFrames)
+        else -> emptyList()
+    }
+    // 어느 창을 쓸지는 여기 한 곳에서만 정한다. 아래 두 곳(가이드 정렬, 사용자 곡선)이 서로 다른
+    // 창을 쓰면 같은 x가 다른 시각을 가리켜 두 레인의 시간축이 어긋난다.
+    // 녹음 중에는 최신 구간이 오른쪽 끝에 붙어야 하니 미끄러지는 라이브 창을 그대로 쓰고,
+    // 녹음이 끝난 Review에서는 발화 전체가 들어오게 창을 늘린다 - reviewWindowMs KDoc 참고.
+    val windowMs = when (state) {
+        is RecordingUiState.Review -> reviewWindowMs(pitchFrames, liveWindowMs)
+        else -> liveWindowMs
     }
     val guidePoints = remember(guideF0, windowMs) {
         if (guideF0?.unit != "semitone") {
@@ -97,16 +115,6 @@ fun RecordingScreen(
                 windowMs = windowMs,
             )
         }
-    }
-    // 녹음 중에는 자라는 곡선, 완료 후에는 방금 녹음의 곡선을 남긴다 (2026-08-18 결정).
-    // 재녹음을 시작하면 Recording의 빈 목록으로 바뀌므로 지난 곡선이 새 녹음에 섞이지 않는다.
-    val pitchFrames = when (val s = state) {
-        is RecordingUiState.Recording -> s.pitchFrames
-        // Review에서만 짧은 무성 구멍을 메운다. 녹음 중에는 곡선이 인과적이어야 해서(뒤 프레임을
-        // 보면 이미 그린 과거가 다시 그려진다) 구멍을 앞 값으로 유지하는 수밖에 없지만, 완료 후에는
-        // 데이터가 다 모여 있어 구멍의 양옆을 보고 이어도 거짓이 아니다 - fillShortGaps KDoc 참고.
-        is RecordingUiState.Review -> fillShortGaps(s.pitchFrames)
-        else -> emptyList()
     }
     // 프레임이 청크마다 늘어나므로 remember로 묶지 않는다 - 어차피 매 방출마다 다시 계산해야 한다.
     val mySegments = userCurveDisplayPoints(pitchFrames, windowMs, centerHz)
