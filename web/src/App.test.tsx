@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
+import { createFakeCapture, sineChunk, type FakeCapture } from './audio/testing/fakeCapture'
 import { REQUIRED_BRIDGE_VERSION } from './bridge/bridge'
 import { snapshotKey } from './progress/progressSnapshot'
 import { clearWebSession, loadWebSession, saveWebSession } from './session/webSession'
@@ -99,6 +100,23 @@ function stubMicrophone() {
     configurable: true,
     value: { getUserMedia: async () => ({ getTracks: () => [] }) as unknown as MediaStream },
   })
+}
+
+/**
+ * 목소리 점검을 통과한다 (KAN-31 4단계). 한 마디(600ms)면 중심이 잠기고 볼륨도 채워진다 —
+ * 유성 프레임 8개가 32ms 간격이라 250ms부터 잠기는데, 첫 프레임이 분석 창(128ms) 뒤에 나온다.
+ *
+ * 점검을 거치지 않으면 세션이 만들어지지 않으므로, 웹 단독 실행의 시작 흐름을 보는 테스트는
+ * 전부 이 문을 지난다.
+ */
+async function passVoiceCheck(capture: FakeCapture) {
+  await act(async () => {
+    capture.emit(sineChunk(600, { sampleRate: capture.sampleRate }))
+  })
+  fireEvent.click(screen.getByRole('button', { name: '다음' }))
+  // 세션 생성이 비동기다 — 저장과 화면 전환까지 microtask를 비운다
+  await act(async () => {})
+  await act(async () => {})
 }
 
 /** DEV 빌드의 퍼널 진단 로그(`[track]`)를 잠재운다 — 동작이 아니라 테스트 출력 소음이다 */
@@ -268,14 +286,69 @@ describe('App — 웹 단독 실행 (KAN-31)', () => {
     await act(async () => {})
   }
 
+  /*
+   * 시작 게이트의 순서 (KAN-31 4단계, 앱 KAN-105 2단계와 같다):
+   * [시작하기] → 마이크 권한 → **목소리 점검** → 세션 생성 → 문항 화면.
+   * 점검이 세션 앞에 있는 이유는 점검이 네트워크를 안 쓰기 때문이다 — 뒤에 두면 이미 발급된
+   * 세션을 든 채 점검에 붙들리는 구간이 생긴다.
+   */
+  it('마이크 권한을 받으면 목소리 점검이 먼저 뜬다 — 아직 세션을 만들지 않는다', async () => {
+    setSearch('?c=kko_share')
+    stubMicrophone()
+    const fetchStub = stubSessionFetch()
+    const navigate = vi.fn()
+    const capture = createFakeCapture()
+
+    render(<App navigate={navigate} voiceCheckCapture={capture.factory} />)
+    await tapStart()
+
+    expect(screen.getByText('목소리를 확인할게요')).toBeInTheDocument()
+    expect(fetchStub).not.toHaveBeenCalled()
+    expect(navigate).not.toHaveBeenCalled()
+    // 점검은 같은 문서 안의 화면이다 — 리로드하면 방금 받은 마이크 권한을 다시 물어야 한다
+    expect(window.location.search).toBe('?c=kko_share')
+  })
+
+  it('점검을 통과하면 잰 중심이 세션과 함께 저장된다 — 문항 곡선의 y축이 된다', async () => {
+    setSearch('')
+    stubMicrophone()
+    stubSessionFetch()
+    const capture = createFakeCapture()
+
+    render(<App navigate={vi.fn()} voiceCheckCapture={capture.factory} />)
+    await tapStart()
+    await passVoiceCheck(capture)
+
+    const stored = loadWebSession()
+    expect(stored?.sessionToken).toBe('st_web')
+    // 대역 발화가 200Hz다 (`sineChunk` 기본값). YIN 추정 오차 범위로 본다
+    expect(stored?.userCurveCenterHz).toBeCloseTo(200, -1)
+  })
+
+  it('앱 안 실행에는 점검이 없다 — 네이티브가 자기 점검 화면을 소유한다 (KAN-105)', async () => {
+    setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0`)
+    stubBridge()
+    stubMicrophone()
+    const capture = createFakeCapture()
+
+    render(<App navigate={vi.fn()} voiceCheckCapture={capture.factory} />)
+    await tapStart()
+
+    // 네이티브 권한 게이트가 받았으므로 웹은 여기서 손을 뗀다 — 화면 전체를 앱이 갈아치운다
+    expect(screen.queryByText('목소리를 확인할게요')).not.toBeInTheDocument()
+    expect(screen.getByText('사투리 억양 테스트')).toBeInTheDocument()
+  })
+
   it('[시작하기]가 공유 링크의 유입 코드를 실어 세션을 만들고 문항 화면으로 넘긴다', async () => {
     setSearch('?c=kko_share')
     stubMicrophone()
     const fetchStub = stubSessionFetch()
     const navigate = vi.fn()
+    const capture = createFakeCapture()
 
-    render(<App navigate={navigate} />)
+    render(<App navigate={navigate} voiceCheckCapture={capture.factory} />)
     await tapStart()
+    await passVoiceCheck(capture)
 
     const [url, init] = fetchStub.mock.calls[0] as unknown as [string, RequestInit]
     expect(url).toMatch(/\/v0\/sessions$/)
@@ -315,15 +388,20 @@ describe('App — 웹 단독 실행 (KAN-31)', () => {
       })),
     )
     const navigate = vi.fn()
+    const capture = createFakeCapture()
 
-    render(<App navigate={navigate} />)
+    render(<App navigate={navigate} voiceCheckCapture={capture.factory} />)
     await tapStart()
+    await passVoiceCheck(capture)
 
     expect(screen.getByRole('alert')).toHaveTextContent('30초 후 다시 시도할 수 있어요')
     // 세션 없이 문항 화면에 들어가면 이후 요청이 전부 401로 막힌다
     expect(navigate).not.toHaveBeenCalled()
-    // [시작하기]가 그대로 재시도 버튼으로 남는다
-    expect(screen.getByRole('button', { name: '시작하기' })).toBeEnabled()
+    /*
+     * 문구는 점검 화면에 붙고 [다음]이 그대로 재시도 버튼으로 남는다 — 인트로로 되돌리면
+     * 방금 통과한 점검을 한 번 더 하게 된다 (`VoiceCheckScreen`의 startFailure).
+     */
+    expect(screen.getByRole('button', { name: '다음' })).toBeEnabled()
   })
 
   /*
@@ -385,6 +463,7 @@ describe('App — 웹 단독 실행 (KAN-31)', () => {
     stubMicrophone()
     const fetchStub = stubSessionFetch()
     const navigate = vi.fn()
+    const capture = createFakeCapture()
     // 인스턴스의 프로토타입을 잡는다 — jsdom에서는 전역 `Storage.prototype`과 다른 객체다
     const setItem = vi
       .spyOn(Object.getPrototypeOf(sessionStorage) as Storage, 'setItem')
@@ -393,8 +472,9 @@ describe('App — 웹 단독 실행 (KAN-31)', () => {
       })
 
     try {
-      render(<App navigate={navigate} />)
+      render(<App navigate={navigate} voiceCheckCapture={capture.factory} />)
       await tapStart()
+      await passVoiceCheck(capture)
 
       expect(screen.getByRole('alert')).toHaveTextContent(
         '이 브라우저에서는 테스트를 이어갈 수 없어요',
@@ -995,11 +1075,20 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
     stubSessionFetch()
     const queue = stubDataLayer()
 
-    render(<App navigate={vi.fn()} />)
+    const capture = createFakeCapture()
+
+    render(<App navigate={vi.fn()} voiceCheckCapture={capture.factory} />)
     fireEvent.click(screen.getByRole('button', { name: '시작하기' }))
-    // 웹 마이크 게이트와 세션 생성이 둘 다 비동기다
+    // 웹 마이크 게이트가 비동기다
     await act(async () => {})
     await act(async () => {})
+    /*
+     * 목소리 점검은 새 이벤트를 만들지 않는다 — 사용자에게 "테스트 시작"은 여전히 한 번이고,
+     * 그 한 번은 세션이 실제로 만들어진 뒤에 센다.
+     */
+    expect(queue).toEqual([{ event: 'referral_opened', campaign: 'kko_share' }])
+
+    await passVoiceCheck(capture)
 
     expect(queue).toEqual([
       { event: 'referral_opened', campaign: 'kko_share' },

@@ -183,6 +183,28 @@ describe('세션 저장 — 탭 안에서만, 리로드는 견딘다', () => {
     expect(getWebSessionToken()).toBe('st_1')
   })
 
+  /*
+   * 목소리 점검이 잰 중심 (KAN-31 4단계). 서버가 주는 값이 아니라 웹이 얹는 값이라
+   * 저장소를 왕복해도 남아야 문항 화면의 곡선이 같은 축을 쓴다.
+   */
+  it('목소리 점검이 잰 중심을 세션과 함께 나른다', () => {
+    saveWebSession({ ...SESSION, userCurveCenterHz: 187.5 })
+
+    expect(loadWebSession()?.userCurveCenterHz).toBe(187.5)
+  })
+
+  it('중심이 없거나 성립하지 않으면 없는 것으로 읽는다 — 곡선이 폴백으로 내려간다', () => {
+    saveWebSession(SESSION)
+    expect(loadWebSession()?.userCurveCenterHz).toBeUndefined()
+
+    // 0이나 NaN을 그대로 내려보내면 y축 중심이 성립하지 않아 곡선이 통째로 사라진다
+    sessionStorage.setItem(
+      'accentury.webSession',
+      JSON.stringify({ ...SESSION, userCurveCenterHz: 0 }),
+    )
+    expect(loadWebSession()?.userCurveCenterHz).toBeUndefined()
+  })
+
   it('지우면 토큰이 빈 문자열이 된다', () => {
     saveWebSession(SESSION)
     clearWebSession()

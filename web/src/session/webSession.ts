@@ -55,6 +55,19 @@ export interface WebSession {
   testVersion: string
   /** 토큰 만료 시각 (UTC ISO-8601). 기본 30분 */
   expiresAt: string
+  /**
+   * 목소리 점검이 잰 이 화자의 중심 음높이 (Hz, KAN-31 4단계). 문항 화면의 '내 억양' 곡선이
+   * y축 중심으로 쓴다 (`userCurve.ts`).
+   *
+   * **서버가 주는 값이 아니라 웹이 재서 붙이는 값이라 선택적이다.** `createWebSession`의 201
+   * 본문에는 없고, [saveWebSession] 직전에 [VoiceCheckScreen]이 넘긴 값을 얹는다. 값이 없어도
+   * 세션은 성립한다 — 곡선은 그 녹음에서 중심을 다시 잡는 폴백으로 내려간다.
+   *
+   * 세션과 함께 저장하는 이유는 수명이 같기 때문이다. 화면 전환이 문서를 다시 로드하므로
+   * 중심도 저장소를 거쳐야 문항 화면에 닿고, 재응시로 세션이 바뀌면 그때 다시 잰 값이 같은
+   * 키를 덮어쓴다 — 따로 두면 새 세션에 옛 화자의 중심이 붙어 있을 수 있다.
+   */
+  userCurveCenterHz?: number
 }
 
 /** 세션 생성 하나에 필요한 선택 입력. 둘 다 없으면 평범한 첫 응시다 */
@@ -226,14 +239,27 @@ export function getWebSessionToken(): string {
 /** 201 본문(또는 저장된 JSON)을 세션으로 읽는다. 네 값이 다 있는 문자열이 아니면 null */
 function readSession(body: unknown): WebSession | null {
   if (typeof body !== 'object' || body === null) return null
-  const { sessionId, sessionToken, testVersion, expiresAt } = body as Record<string, unknown>
+  const { sessionId, sessionToken, testVersion, expiresAt, userCurveCenterHz } = body as Record<
+    string,
+    unknown
+  >
   if (![sessionId, sessionToken, testVersion, expiresAt].every(isFilledString)) return null
   return {
     sessionId: sessionId as string,
     sessionToken: sessionToken as string,
     testVersion: testVersion as string,
     expiresAt: expiresAt as string,
+    /*
+     * 중심은 있으면 싣고 없으면 뺀다 — 서버 응답에는 애초에 없는 필드이고(웹이 붙인다),
+     * 저장된 값이 깨졌으면 없는 것과 같이 다뤄야 한다. 여기서 걸러야 0이나 NaN이 y축 중심으로
+     * 내려가 곡선이 통째로 사라지는 일이 없다 (`userCurveDisplayPoints`는 그런 중심을 버린다).
+     */
+    ...(isPositiveNumber(userCurveCenterHz) ? { userCurveCenterHz: userCurveCenterHz as number } : {}),
   }
+}
+
+function isPositiveNumber(value: unknown): boolean {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
 }
 
 function isFilledString(value: unknown): boolean {

@@ -47,6 +47,14 @@ export interface WebVoiceRecorderProps {
   onUploaded: (result: ItemResult) => void
   /** 주입용 캡처 (테스트용). 기본값은 실제 Web Audio 캡처다 */
   capture?: CaptureFactory
+  /**
+   * 목소리 점검(KAN-31 4단계)이 잰 화자의 중심 음높이 (Hz). 곡선의 y축 중심이 된다.
+   *
+   * 없으면 곡선이 **이 녹음의** 처음 8개 유성 프레임으로 중심을 잡는다 (`userCurve.ts`).
+   * 문항마다 축이 조금씩 달라지는 대신 곡선은 반드시 그려진다 — 저장된 중심이 없다는 이유로
+   * 레인이 비어 있으면 사용자에게는 녹음이 안 되는 것으로 보인다.
+   */
+  userCurveCenterHz?: number | null
 }
 
 type UploadState =
@@ -70,7 +78,13 @@ const QUALITY_MESSAGE: Record<Exclude<QualityStatus, 'NORMAL'>, string> = {
   CLIPPED: '소리가 너무 커요. 마이크에서 조금 떨어져 주세요',
 }
 
-export function WebVoiceRecorder({ item, upload, onUploaded, capture }: WebVoiceRecorderProps) {
+export function WebVoiceRecorder({
+  item,
+  upload,
+  onUploaded,
+  capture,
+  userCurveCenterHz = null,
+}: WebVoiceRecorderProps) {
   const [uploadState, setUploadState] = useState<UploadState>({ kind: 'idle' })
 
   /*
@@ -149,7 +163,7 @@ export function WebVoiceRecorder({ item, upload, onUploaded, capture }: WebVoice
   const curveCard = (
     <CurveCard
       guidePoints={guidePoints}
-      userSegments={userCurveDisplayPoints(curveFrames, windowMs)}
+      userSegments={userCurveDisplayPoints(curveFrames, windowMs, userCurveCenterHz)}
     />
   )
 

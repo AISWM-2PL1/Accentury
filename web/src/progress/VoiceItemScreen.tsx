@@ -41,6 +41,13 @@ export interface VoiceItemScreenProps {
     upload: (itemId: string, recording: Recording, attemptId: string) => Promise<UploadAccepted>
     /** 주입용 캡처 (테스트용) */
     capture?: CaptureFactory
+    /**
+     * 목소리 점검이 잰 화자의 중심 음높이 (Hz, KAN-31 4단계). 곡선의 y축 중심이 된다.
+     *
+     * 별도 prop이 아니라 이 묶음 안에 있는 이유: 브라우저 녹음 경로에만 닿는 값이라
+     * 업로드·캡처와 수명도 조건도 같다. 밖으로 빼면 네이티브 경로에서도 받아야 할 것처럼 읽힌다.
+     */
+    userCurveCenterHz?: number | null
   }
   /** 브라우저 녹음이 접수됐다. 브리지 경로의 `onItemResult`와 같은 모양이다 */
   onWebUploaded: (result: ItemResult) => void
@@ -111,6 +118,7 @@ export function VoiceItemScreen({
           upload={(recording, attemptId) => webRecording.upload(item.itemId, recording, attemptId)}
           onUploaded={onWebUploaded}
           capture={webRecording.capture}
+          userCurveCenterHz={webRecording.userCurveCenterHz}
         />
       ) : (
         <div className="item-screen__footer">
