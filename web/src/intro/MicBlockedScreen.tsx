@@ -10,7 +10,7 @@
  * 권한 거부(denied)만 설정으로 되돌릴 수 있어 [다시 시도]를 같이 준다.
  */
 
-import { storeUrlFor, type StorePlatform } from '../audio/storeLink'
+import { storeLabelFor, storeUrlFor, type StorePlatform } from '../audio/storeLink'
 import { Button } from '../ui'
 
 export interface MicBlockedScreenProps {
@@ -38,7 +38,7 @@ const COPY: Record<MicBlockedScreenProps['reason'], { title: string; body: strin
 
 export function MicBlockedScreen({ reason, platform, onRetry }: MicBlockedScreenProps) {
   const copy = COPY[reason]
-  const storeLabel = platform === 'ios' ? 'App Store' : 'Play 스토어'
+  const storeLabel = storeLabelFor(platform)
 
   return (
     <main className="screen">
