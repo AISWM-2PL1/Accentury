@@ -28,5 +28,5 @@ output "rds_endpoint" {
 
 output "rds_master_user_secret_arn" {
   value       = module.data.master_user_secret_arn
-  description = "KAN-129가 SSM 파라미터를 채울 때 읽는 마스터 자격 증명"
+  description = "RDS 관리형 마스터 시크릿 (7일 자동 회전). 값을 SSM에 복사하지 않는다 - backend가 SPRING_DATASOURCE_URL의 secretsManagerSecretId로 연결 시점에 직접 읽는다 (KAN-129). 운영자가 psql로 붙을 때만 get-secret-value로 읽는다."
 }

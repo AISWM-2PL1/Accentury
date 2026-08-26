@@ -12,6 +12,7 @@ infra/
     network/          VPC, 서브넷, 보안 그룹 3종 (KAN-121)
     data/             RDS PostgreSQL (KAN-122)
     compute/          EC2, 운영 compose 파일, 기동 스크립트, systemd 유닛 (KAN-124)
+    config/           backend 환경 변수의 정본인 SSM 파라미터와 관리자 토큰 (KAN-129)
     edge/             internal ALB, VPC 오리진, CloudFront, S3 (KAN-125, KAN-126)
   envs/
     staging/          main.tf + terraform.tfvars
@@ -73,7 +74,10 @@ Route 53 호스팅 영역 ── Porkbun에서 NS 위임 ── ACM 인증서 2�
 EC2가 밖으로 거는 연결 (퍼블릭 서브넷이라 NAT 불필요)
   ├─ SSM Session Manager (접속, SSH 키 없음)                     KAN-124
   ├─ SSM Parameter Store /accentury/{env}/*  → 컨테이너 env       KAN-129
-  │    IMAGE_TAG, SPRING_DATASOURCE_*, ACCENTURY_*, ACCENTURY_AI_*
+  │    SPRING_PROFILES_ACTIVE=deploy, SPRING_DATASOURCE_URL, ACCENTURY_* (config 모듈)
+  │    IMAGE_TAG (파이프라인 KAN-128)
+  ├─ Secrets Manager RDS 마스터 시크릿 → backend가 연결 시점에 직접 읽음  KAN-129
+  │    (awsSecretsManager 플러그인, 7일 회전을 앱이 따라감)
   └─ ECR accentury/backend, accentury/ai (commit SHA 태그)        KAN-120
 
 배포 파이프라인 (GitHub Actions, OIDC)                            KAN-128
@@ -187,9 +191,6 @@ terraform apply
 
 ### 3. apply 이후 남는 수동 단계 (다른 티켓)
 
-- SSM 파라미터 채우기: `/accentury/{env}/*` (KAN-129). RDS 마스터 자격 증명은
-  output `rds_master_user_secret_arn`의 Secrets Manager 시크릿에서 읽는다.
-  이름 규약은 아래 "EC2 컨테이너 기동" 절.
 - 이미지 태그 반영: `/accentury/{env}/IMAGE_TAG`에 ECR의 commit SHA 태그를 넣고
   `systemctl start accentury` (첫 기동) 또는 `systemctl reload accentury`
   (교체). 파이프라인(KAN-128)이 이 두 단계를 자동화한다.
@@ -219,9 +220,85 @@ EC2는 무상태 호스트다. 첫 부팅 user_data가 docker, compose, 운영 c
 
 | SSM 파라미터 (`/accentury/{env}/` 아래) | 가는 곳 | 용도 |
 | --- | --- | --- |
-| `IMAGE_TAG` | compose.env | `image:` 보간. 두 서비스가 같은 SHA 태그를 쓴다. **없으면 기동 실패** |
+| `IMAGE_TAG` | compose.env | `image:` 보간. 두 서비스가 같은 SHA 태그를 쓴다. **없으면 기동 실패.** 파이프라인(KAN-128)이 쓴다 |
 | `ACCENTURY_AI_*` | ai.env | ai 컨테이너 환경 변수 (스텁은 없어도 뜬다) |
-| 그 외 전부 | backend.env | backend 컨테이너 환경 변수 (`SPRING_DATASOURCE_URL`, `ACCENTURY_ANALYSIS_AIBASEURL`, `ACCENTURY_TRUSTEDPROXIES`, `ACCENTURY_ADMIN_TOKEN` 등, KAN-129) |
+| 그 외 전부 | backend.env | backend 컨테이너 환경 변수. `modules/config`가 만든다 (아래 표, KAN-129) |
+
+backend 환경 변수는 전부 Terraform `modules/config`가 만든다 - 값이 다른 모듈의
+출력(RDS 주소, 시크릿 ARN, VPC CIDR, 도메인)이라 손으로 넣으면 재구축 때 어긋난다.
+compute 모듈의 인스턴스가 config의 파라미터 이름 목록을 참조(precondition)하므로
+첫 부팅의 기동 스크립트가 SSM을 읽는 시점에 파라미터가 이미 있다 (없으면 env 파일이 빈 채로 만들어지고 컨테이너
+재시작은 그 파일을 재사용하므로 reload 전까지 기동이 막힌다).
+
+| `/accentury/{env}/` 아래 | 값 | 타입 |
+| --- | --- | --- |
+| `SPRING_PROFILES_ACTIVE` | `deploy` (두 환경 동일). 이 프로파일에서만 backend가 아래 5개 누락 시 기동을 세운다 (`DeploymentConfigGuard`) | String |
+| `SPRING_DATASOURCE_URL` | `jdbc:aws-wrapper:postgresql://<RDS 주소>:5432/accentury?secretsManagerSecretId=<마스터 시크릿 ARN>` | String |
+| `ACCENTURY_ANALYSIS_AIBASEURL` | `http://ai:8000` (compose 내부 네트워크, 두 환경 동일) | String |
+| `ACCENTURY_TRUSTEDPROXIES` | 해당 환경 VPC CIDR 하나 | String |
+| `ACCENTURY_RESULT_WEBTESTURL` | `https://<도메인>/t?c=kko_share` | String |
+| `ACCENTURY_ADMIN_TOKEN` | `random_password` 48자 영숫자. 관리자 API(§6)와 E2E 스모크(KAN-138)가 쓴다 | SecureString |
+
+**DB 사용자 이름과 비밀번호 파라미터는 없다.** RDS 관리형 마스터 시크릿은 7일마다
+자동 회전되므로(AWS 문서, 일정 변경만 가능) 값을 SSM에 복사하면 첫 회전에서 접속이
+끊긴다. 대신 backend가 AWS Advanced JDBC Wrapper의 `awsSecretsManager` 플러그인으로
+연결 시점에 Secrets Manager를 직접 읽고, 회전 뒤 인증 실패가 나면 시크릿을 다시 받아
+재접속한다 (`backend/src/main/resources/application-deploy.yml`). EC2 역할은 자기
+환경 시크릿 1개의 `GetSecretValue`만 가진다 (compute/main.tf). 비밀번호는 SSM,
+state, env 파일 어디에도 없다.
+
+관리자 토큰 값 읽기 (스모크 실행, 관리자 API 호출용):
+
+```
+aws ssm get-parameter --with-decryption --name /accentury/staging/ACCENTURY_ADMIN_TOKEN \
+  --query Parameter.Value --output text
+```
+
+재발급은 `terraform taint 'module.config.random_password.admin_token'` 후 apply, 그리고
+인스턴스에서 `systemctl reload accentury`다. 값은 Terraform state(S3 암호화 + 버전 관리
+버킷)에 남는다 - KAN-140이 수용한 범위이고, 레포, 이미지, 로그에는 없다.
+
+**E2E 스모크의 GitHub 시크릿도 함께 맞춘다** (KAN-138). `.github/workflows/e2e-smoke.yml`은
+토큰을 `workflow_call` 시크릿 `admin-token` 또는 저장소 시크릿 `ACCENTURY_ADMIN_TOKEN`에서
+읽는다. 토큰이 Terraform 생성으로 바뀌었으므로 apply나 재발급 뒤에 시크릿을 갱신하지
+않으면 원격 스모크가 전부 401로 끝난다.
+
+```
+gh secret set ACCENTURY_ADMIN_TOKEN --body "$(aws ssm get-parameter --with-decryption \
+  --name /accentury/staging/ACCENTURY_ADMIN_TOKEN --query Parameter.Value --output text)"
+```
+
+저장소 시크릿은 하나뿐이라 staging과 prod의 서로 다른 토큰을 동시에 담을 수 없다.
+정식 해법은 파이프라인(KAN-128)이 OIDC로 해당 환경의 SSM을 읽어 `workflow_call`의
+`admin-token`으로 넘기는 것이고, 그 전까지 수동 실행은 staging 값으로 맞춘다.
+
+### 이미 있는 SSM 파라미터 (재구축, 수동 생성분)
+
+`modules/config`가 만드는 이름이 계정에 이미 있으면 apply가 `ParameterAlreadyExists`로
+실패한다 - `aws_ssm_parameter`는 Terraform이 만들지 않은 값을 덮어쓰지 않는다.
+2026-08-26 기준 `/accentury/*` 아래에는 파라미터가 없다 (CLI 확인). 이후 손으로 만든 값이
+있거나 destroy 없이 이 코드를 처음 적용하는 스택이면 두 가지를 한다.
+
+1. 같은 이름 6개는 import로 state에 흡수한다. 값은 apply가 코드 값으로 갱신한다
+   (`admin_token`은 `random_password`의 새 값으로 덮인다).
+
+   ```
+   cd infra/envs/staging
+   for r in spring_profiles_active:SPRING_PROFILES_ACTIVE ai_base_url:ACCENTURY_ANALYSIS_AIBASEURL \
+            datasource_url:SPRING_DATASOURCE_URL trusted_proxies:ACCENTURY_TRUSTEDPROXIES \
+            web_test_url:ACCENTURY_RESULT_WEBTESTURL admin_token:ACCENTURY_ADMIN_TOKEN; do
+     terraform import "module.config.aws_ssm_parameter.${r%%:*}" "/accentury/staging/${r##*:}"
+   done
+   ```
+
+2. 이 설계 이전 이름(`SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD` 등)은
+   Terraform이 모르므로 그대로 남고, 기동 스크립트가 backend.env에 그대로 싣는다. 비어 있지
+   않은 사용자 이름과 비밀번호는 wrapper 플러그인이 시크릿에서 읽는 값과 충돌하므로 지운다.
+
+   ```
+   aws ssm delete-parameters --names /accentury/staging/SPRING_DATASOURCE_USERNAME \
+     /accentury/staging/SPRING_DATASOURCE_PASSWORD
+   ```
 
 값에 탭이나 개행은 넣을 수 없다 (`--output text` 파싱 단위). 그 외 문자(`$`,
 따옴표, `#`, 공백)는 그대로 컨테이너에 들어간다 - env_file을 `format: raw`로
@@ -233,10 +310,25 @@ docker 자체는 컨테이너 환경 변수를 `/var/lib/docker/containers/*/con
 것은 아니다. 레포, 이미지, 로그에 없다는 것이 KAN-122/129의 요구이고 그것은
 충족한다.
 
-주의 (KAN-129): RDS가 관리하는 마스터 비밀번호는 기본 7일마다 자동 회전된다.
-Secrets Manager 값을 SSM에 한 번 복사하는 방식이면 첫 회전에서 backend가 DB
-접속을 잃는다. 회전을 끄거나, 기동 스크립트가 Secrets Manager를 직접 읽도록
-확장하는 것 중 하나를 KAN-129에서 정한다.
+## 환경별 값 차이 (KAN-129)
+
+Terraform 입력의 차이는 `diff -r infra/envs/staging infra/envs/prod`가 전부다
+(`terraform.tfvars`와 `backend.tf`의 state key). 그 차이가 backend 설정으로
+어떻게 흘러가는지의 표다. 여기 없는 backend 설정은 두 환경이 같다.
+
+| 항목 | staging | prod | 흘러가는 곳 |
+| --- | --- | --- | --- |
+| 도메인 | `staging.accentury.app` | `accentury.app` | CloudFront 대체 도메인, Route 53, `ACCENTURY_RESULT_WEBTESTURL` |
+| VPC CIDR | `10.1.0.0/16` | `10.0.0.0/16` | 서브넷 4개, `ACCENTURY_TRUSTEDPROXIES` |
+| RDS 엔드포인트 | `accentury-staging.<id>.ap-northeast-2.rds.amazonaws.com` | `accentury-prod.<id>...` | `SPRING_DATASOURCE_URL` (apply 후 output `rds_endpoint`) |
+| RDS 마스터 시크릿 | `rds!db-<staging uuid>` | `rds!db-<prod uuid>` | `SPRING_DATASOURCE_URL`의 `secretsManagerSecretId`, EC2 역할 정책 |
+| SSM 경로 | `/accentury/staging/*` | `/accentury/prod/*` | EC2 역할 정책, 기동 스크립트 |
+| 관리자 토큰 | 환경별 난수 | 환경별 난수 | `ACCENTURY_ADMIN_TOKEN` |
+| RDS 삭제 보호, 최종 스냅샷 | 없음, 생략 | 켬, 남김 | RDS |
+
+staging 설정으로 prod에 닿을 수 없는 이유: VPC가 분리돼 있고(피어링 없음), EC2
+역할이 자기 환경의 SSM 경로와 시크릿 ARN만 허용하며, 시크릿 ARN 자체가 환경별로
+다르다.
 
 운영 확인 (SSM Session Manager로 접속한 뒤):
 
@@ -312,6 +404,32 @@ terraform destroy
   컨테이너 config에는 환경 변수가 남는다 (암호화 루트 볼륨). 파일 시크릿 마운트로
   그것까지 없애려면 앱이 파일을 읽어야 하므로 KAN-129 판단 사항으로 넘긴다
   (Codex P2, 2026-08-25).
+- **DB 자격 증명은 Secrets Manager에서 연결 시점에** (2026-08-25 확정, KAN-129):
+  RDS 관리형 마스터 시크릿의 7일 회전을 앱이 따라가야 한다. 검토한 대안은 셋이다.
+  (1) Terraform `random_password`로 고정 비밀번호 - 회전이 없고 단순하지만 state와
+  SSM에 비밀번호가 남고 KAN-122의 관리형 시크릿 결정을 되돌린다. (2) 기동 스크립트가
+  Secrets Manager를 읽어 env로 주입 - 회전 시점마다 reload가 필요해 운영 부담이 남는다.
+  (3) AWS Advanced JDBC Wrapper `awsSecretsManager` 플러그인 - AWS가 문서화한 경로이고,
+  회전 뒤 인증 실패에 시크릿을 다시 받아 재접속하며, 비밀번호가 어디에도 복사되지
+  않는다. (3)을 골랐다. 앱 전용 DB 사용자 분리(최소 권한)는 정식 개발 전환 시 검토한다.
+- **trusted-proxies는 VPC CIDR 하나** (KAN-129): VPC 오리진 구조에서 CloudFront 발
+  트래픽은 VPC 안 ENI 사설 IP로 들어오고 ALB도 VPC 안이라 XFF의 오른쪽 두 홉이
+  같은 대역에 든다. CloudFront 오리진 페이싱 공인 대역은 매칭될 일이 없어 넣지 않는다.
+- **Spring 프로파일 이름은 `deploy`** (KAN-129): staging과 prod가 같은 이름을 쓴다.
+  환경 이름을 프로파일로 쓰면 `application-staging.yml` 같은 환경별 파일이 생길 여지가
+  남아 "환경 간 차이는 tfvars와 SSM 값뿐"이 깨진다.
+- **SSM 파라미터는 Terraform 소유, IMAGE_TAG만 예외** (KAN-129): 값이 모듈 출력에서
+  오므로 코드가 정본이다. IMAGE_TAG는 배포마다 바뀌어 Terraform이 소유하면 매 배포가
+  drift라 파이프라인(KAN-128)이 쓴다. destroy해도 IMAGE_TAG는 남으므로 재구축 시
+  이전 태그로 바로 뜰 수 있다 - 그래서 인스턴스가 config 파라미터 뒤에 만들어지도록
+  이름 목록을 참조한다. 모듈 `depends_on`은 쓰지 않는다 - compute의 data 소스까지
+  apply 시점으로 미뤄 user_data가 unknown이 되고, config 값 하나만 바뀌어도 인스턴스가
+  교체된다.
+- **ai 컨테이너는 internal 네트워크에만** (2026-08-26, KAN-129 리뷰): backend가 Secrets
+  Manager를 읽으려면 IMDSv2 hop limit이 2여야 하는데, 그 값은 bridge 안 컨테이너 전부에
+  인스턴스 자격 증명을 연다. 신뢰하지 않는 오디오를 받는 ai가 뚫리면 RDS 시크릿과 관리자
+  토큰까지 읽는 자격 증명이 새므로, ai는 게이트웨이 없는 internal 네트워크에만 붙여 IMDS와
+  인터넷 경로를 끊는다. backend는 default와 internal 둘 다에 붙는다.
 - **backend `mem_limit: 1g`**: KAN-120 실측 권고 하한. t3.small 2GB에서 힙
   768MB(75%) + 나머지 25%로 네이티브 영역, 남은 1GB를 OS, docker, ai 스텁이 쓴다.
 - **ECR 라이프사이클 최근 50개**: 롤백(KAN-128)이 이전 SHA를 다시 당기는 방식이라

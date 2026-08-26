@@ -58,14 +58,29 @@ module "data" {
   skip_final_snapshot = var.db_skip_final_snapshot
 }
 
+# backend 컨테이너 환경 변수 (KAN-129). 값이 network, data 모듈 출력이라 여기서 조립한다.
+module "config" {
+  source = "../../modules/config"
+
+  ssm_prefix                 = var.ssm_prefix
+  domain                     = var.domain
+  vpc_cidr                   = var.vpc_cidr
+  rds_endpoint               = module.data.endpoint
+  rds_master_user_secret_arn = module.data.master_user_secret_arn
+}
+
 module "compute" {
   source = "../../modules/compute"
 
-  env           = var.env
-  subnet_id     = module.network.public_subnet_ids[0]
-  ec2_sg_id     = module.network.ec2_sg_id
-  instance_type = var.instance_type
-  ssm_prefix    = var.ssm_prefix
+  env                        = var.env
+  subnet_id                  = module.network.public_subnet_ids[0]
+  ec2_sg_id                  = module.network.ec2_sg_id
+  instance_type              = var.instance_type
+  ssm_prefix                 = var.ssm_prefix
+  rds_master_user_secret_arn = module.data.master_user_secret_arn
+  # 인스턴스가 SSM 파라미터 생성 뒤에 첫 부팅하도록 순서를 잡는다 (compute/main.tf precondition).
+  # IMAGE_TAG는 Terraform 밖이라 재구축 시 이전 값이 남아 있을 수 있어 이 순서가 실제로 문제가 된다.
+  config_parameter_names = module.config.parameter_names
 }
 
 module "edge" {

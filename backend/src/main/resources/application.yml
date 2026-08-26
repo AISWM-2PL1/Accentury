@@ -86,7 +86,9 @@ accentury:
     processing-timeout: 60s          # 실행 잔류 한도 - 실행 시작 후 이 시간을 넘기면 RETRYABLE_FAILED(ANALYSIS_TIMEOUT) (KAN-24)
     queued-timeout: 5m               # 큐 유실 한도 - 실행을 시작 못 한 채 이 시간이 지나면 정리 (프로세스 사망 대비).
                                      # 정상 큐 소진(수 분)보다 길고, 세션 TTL(30분) 안에 복구가 보이도록 그보다 짧다.
-    # ai-base-url: http://localhost:8000    # AI 서버(FastAPI, 명세서 §4.1) - 미설정이면 전달하지 않는 개발 모드 (KAN-22, 36 배포 시 지정)
+    # ai-base-url: http://localhost:8000    # AI 서버(FastAPI, 명세서 §4.1) - 미설정이면 전달하지 않는 개발 모드 (KAN-22).
+                                            # 배포에서는 SSM ACCENTURY_ANALYSIS_AIBASEURL=http://ai:8000이 넣고, deploy 프로파일은
+                                            # 이 값이 없으면 기동을 세운다 (DeploymentConfigGuard, KAN-129).
     ai-timeout: 10s                  # AI 호출 연결과 읽기 타임아웃 - 추론 P95 3초의 여유 배수
     ai-retries: 2                    # AI 일시 장애(연결 실패, 5xx) 재전송 횟수 - 전달 시점에만 가능 (FR-DP-01)
     dispatch-concurrency: 4          # 분석 전달 워커 수 - GPU 동시 슬롯을 넘지 않게 (명세서 §5.3)
@@ -113,6 +115,8 @@ accentury:
   # 비어 있으면 X-Forwarded-For를 아예 읽지 않는다 - 프록시 없이 뜬 서버에서 헤더 위조로
   # IP 제한을 우회하지 못하게 하는 기본값이다. ALB 뒤에 배포하면 반드시 그 서브넷을 넣어야
   # 한다 (안 넣으면 전원이 ALB IP 하나를 공유해 서로의 한도를 깎는다, KAN-35/36).
+  # 배포(KAN-129): SSM ACCENTURY_TRUSTEDPROXIES=<해당 환경 VPC CIDR> 하나다. CloudFront VPC 오리진 ENI와
+  # ALB가 둘 다 VPC 안이라 XFF의 오른쪽 두 홉이 같은 대역에 들고, deploy 프로파일은 비어 있으면 기동을 세운다.
   trusted-proxies: []    # 예: ["10.0.0.0/16"]
   cors:
     # 스탠드얼론 웹 테스트(KAN-31) 오리진 - 웹 배포 시 지정 (명세서 §2.5).
@@ -121,6 +125,10 @@ accentury:
     # 돌릴 때는 브라우저가 교차 출처 요청을 막아 "문항을 불러오지 못했어요"만 보이는데,
     # 서버 로그에는 아무것도 남지 않아 원인을 짚기 어렵다. 그때는 기동 인자로 넘긴다:
     #   ./gradlew bootRun --args="--accentury.cors.allowed-origins=http://10.0.2.2:5173,http://localhost:5173"
+    #
+    # 배포에서도 빈 배열을 유지한다 (KAN-129, 2026-08-17 확정). 화면(S3)과 API(/v0/*)를 CloudFront가
+    # 같은 도메인에서 내주므로 브라우저 입장에서 교차 출처가 아예 없고(KAN-126), 허용 목록을 두면
+    # 제3자 오리진이 세션 API를 브라우저에서 부를 길만 열린다. 앱 WebView는 CORS 대상이 아니다.
     allowed-origins: []
   # 익명 집계 카운터 (KAN-106, SRS FR-AN-10) - 개인 결과가 24시간 뒤 파기돼도 남는 유일한 영속
   # 데이터다 (NFR-PR-03). 세션 ID, 토큰, IP, 개별 점수는 저장하지 않고 일자별 숫자만 더한다.

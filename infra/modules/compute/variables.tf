@@ -39,3 +39,13 @@ variable "root_volume_size" {
   description = "루트 볼륨 GiB (컨테이너 이미지 2종 + 로그 여유분)"
   default     = 20
 }
+
+variable "rds_master_user_secret_arn" {
+  type        = string
+  description = "이 환경 RDS의 관리형 마스터 시크릿 ARN. backend가 연결 시점에 읽으므로(KAN-129) EC2 역할에 이 시크릿 1개의 GetSecretValue만 준다."
+}
+
+variable "config_parameter_names" {
+  type        = list(string)
+  description = "config 모듈이 만든 SSM 파라미터 이름 목록. 값은 쓰지 않는다 - 인스턴스가 파라미터 생성 뒤에 첫 부팅하도록 순서만 잡는다 (KAN-129)."
+}
