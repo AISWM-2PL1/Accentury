@@ -209,6 +209,12 @@ terraform apply
 정책이 `repo:AISWM-2PL1/Accentury:environment:{env}`로 묶여 있어 environment
 이름은 Terraform의 `env`와 같아야 한다.
 
+역할의 신뢰 정책은 이름만 있는 구형식과 숫자 ID가 붙는 불변 형식
+(`repo:AISWM-2PL1@295795156/Accentury@1308814203:environment:{env}`)을 둘 다
+허용한다. 이 레포는 불변 형식을 쓴다 (2026-07-15 이후 생성 저장소 기본). 저장소를
+옮기거나 다시 만들면 ID가 바뀌므로 `gh api repos/OWNER/REPO/actions/oidc/customization/sub`의
+`sub_claim_prefix`를 확인해 `envs/*/variables.tf`의 기본값을 맞춘다.
+
 어느 브랜치가 어느 environment로 배포하는지는 deployment branch policy로 고정한다
 (staging = Dev, prod = Release). 이것이 없으면 아무 브랜치의 워크플로가 environment를
 지정해 역할을 맡을 수 있다.

@@ -8,6 +8,16 @@ variable "github_repository" {
   description = "배포 워크플로가 도는 GitHub 저장소 (OWNER/REPO)"
 }
 
+variable "github_owner_id" {
+  type        = number
+  description = "저장소 소유자(조직)의 숫자 ID. 불변 subject claim(repo:OWNER@ID/REPO@ID:...)에 들어간다."
+}
+
+variable "github_repository_id" {
+  type        = number
+  description = "저장소의 숫자 ID. 불변 subject claim에 들어간다."
+}
+
 variable "web_bucket_arn" {
   type        = string
   description = "웹 번들 버킷 ARN (edge 모듈 출력). 업로드 권한을 이 버킷 하나로 한정한다."
