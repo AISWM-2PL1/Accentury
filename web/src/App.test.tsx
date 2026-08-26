@@ -139,6 +139,15 @@ afterEach(() => {
   // 진행 화면 분기 테스트가 fetch·localStorage를 스텁한다. 실패로 중단돼도 다음 테스트에
   // 새지 않게 여기서 되돌린다
   vi.unstubAllGlobals()
+  // 진행 스냅샷(`accentury:progress:<sessionId>`)은 실물 localStorage에 남는다. Node 22(CI)의
+  // jsdom에는 localStorage가 살아 있어 앞 테스트가 답한 문항이 다음 테스트로 새면 문항 화면을
+  // 건너뛰고 대기 화면부터 시작한다. Node 25+는 자체 localStorage 전역이 접근 시점에 던지거나
+  // 비어 있어(--localstorage-file 없음) 로컬에서는 재현되지 않는다 — 그래서 try로 감싼다
+  try {
+    window.localStorage?.clear()
+  } catch {
+    /* 저장소 접근 자체가 막힌 런타임 — 새는 상태도 없다 */
+  }
 })
 
 describe('App — 스큐 판정 분기', () => {
