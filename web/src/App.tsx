@@ -2,7 +2,7 @@ import { useCallback, useEffect } from 'react'
 import { track } from './analytics/track'
 import { detectStorePlatform } from './audio/storeLink'
 import { IntroScreen } from './intro/IntroScreen'
-import { START_FAILED_MESSAGE } from './intro/introText'
+import { START_FAILED_MESSAGE, STORAGE_UNAVAILABLE_MESSAGE } from './intro/introText'
 import { getSessionToken, isBridgeCompatible, isStandaloneWeb } from './bridge/bridge'
 import { buildIntroUrl, buildResultUrl, buildTestUrl } from './navigation/entryUrl'
 import { TestFlowScreen } from './progress/TestFlowScreen'
@@ -13,6 +13,7 @@ import { readCampaignToken, sanitizeCampaignToken } from './session/campaign'
 import {
   createWebSession,
   getWebSessionToken,
+  isWebSessionStorageAvailable,
   loadWebSession,
   saveWebSession,
   WebSessionError,
@@ -27,13 +28,18 @@ import {
 const API_BASE =
   (import.meta.env.VITE_API_BASE as string | undefined) ?? (import.meta.env.DEV ? 'http://10.0.2.2:8080' : '')
 
+/**
+ * 문서를 옮기는 지점 (테스트 주입용). 기본값은 `location.href` 대입인데, jsdom은 그 대입을
+ * 구현하지 않아 "어디로 보내려 했는지"를 확인할 수 없다. 주입 지점을 하나 두면 화면 전환을
+ * 실제 이동 없이 검사할 수 있다 (진입 쿼리 조립 자체는 `navigation/entryUrl`이 소유한다).
+ *
+ * `replace`는 히스토리에 새 항목을 쌓는 대신 지금 항목을 덮어쓴다. 뒤로 가기가 돌아가면
+ * **안 되는** 전환에만 쓴다 ([goToResult] 참고).
+ */
+export type Navigate = (url: string, options?: { replace?: boolean }) => void
+
 export interface AppProps {
-  /**
-   * 문서를 옮기는 지점 (테스트 주입용). 기본값은 `location.href` 대입인데, jsdom은 그 대입을
-   * 구현하지 않아 "어디로 보내려 했는지"를 확인할 수 없다. 주입 지점을 하나 두면 화면 전환을
-   * 실제 이동 없이 검사할 수 있다 (진입 쿼리 조립 자체는 `navigation/entryUrl`이 소유한다).
-   */
-  navigate?: (url: string) => void
+  navigate?: Navigate
 }
 
 /**
@@ -115,7 +121,7 @@ function IntroRoute({
   navigate,
 }: {
   standalone: boolean
-  navigate: (url: string) => void
+  navigate: Navigate
 }) {
   /*
    * 유입 계측 (퍼널 1번째 지점). **문서당 한 번**이면 충분하다 — 화면 전환이 전부 같은
@@ -163,8 +169,21 @@ function trackedCampaign(): string | null {
  *
  * @throws Error 사용자에게 보일 문구를 담은 오류 ([startFailureMessage] 참고)
  */
-async function startStandaloneTest(navigate: (url: string) => void): Promise<void> {
+async function startStandaloneTest(navigate: Navigate): Promise<void> {
   const search = window.location.search
+
+  /*
+   * 저장소부터 잰다 — **네트워크보다 먼저**다 (KAN-31). 순서에 이유가 둘 있다.
+   *
+   * 하나는 부작용이다. 세션을 만든 뒤에 막히면 서버에는 아무도 응시하지 않을 세션이 남고,
+   * IP 분당 제한(§2.5) 한 칸도 함께 쓰인다 — 어차피 진행할 수 없는 사람에게 그 둘을 물릴
+   * 이유가 없다.
+   *
+   * 다른 하나는 이 판정이 곧 흐름의 전제라는 점이다. 이 화면 전환은 문서를 다시 로드하므로
+   * 토큰이 저장소를 거쳐야만 다음 문서에 닿는다. 저장소가 없으면 문항 화면의 요청이 전부
+   * 토큰 없이 나가고, 사용자는 이유도 모른 채 진행 화면에 갇힌다.
+   */
+  if (!isWebSessionStorageAvailable()) throw new Error(STORAGE_UNAVAILABLE_MESSAGE)
 
   let session
   try {
@@ -177,6 +196,15 @@ async function startStandaloneTest(navigate: (url: string) => void): Promise<voi
   }
 
   saveWebSession(session)
+
+  /*
+   * 저장한 값을 되읽어 확인한다. 앞의 판정이 이미 걸렀어야 하는 경우지만, 40바이트짜리
+   * 시험값은 통과시키면서 실제 세션에서 할당량에 걸리는 저장소가 있을 수 있다 — 그때
+   * [saveWebSession]은 조용히 삼키므로, 확인하지 않으면 토큰 없이 문항 화면으로 넘어간다.
+   */
+  if (loadWebSession()?.sessionToken !== session.sessionToken) {
+    throw new Error(STORAGE_UNAVAILABLE_MESSAGE)
+  }
 
   /*
    * 시작 계측 (퍼널 2번째 지점). 세션이 실제로 만들어진 뒤에 센다 — 탭 시점에 세면 429나
@@ -220,7 +248,7 @@ function ResultRoute({
 }: {
   sessionId: string
   standalone: boolean
-  navigate: (url: string) => void
+  navigate: Navigate
 }) {
   /*
    * 브리지로 갈 수 없는 환경에서는 예전 동작(인트로 복귀)으로 내려간다.
@@ -329,9 +357,24 @@ function shareResult(result: TestResultView): void {
  * 남기고 지우는 규칙은 [buildResultUrl]이 소유한다. 같은 문서를 다시 로드하는 이유는
  * [goToIntro]와 같다 — 진행 화면이 들고 있던 상태(폴링 타이머·스냅샷 참조)를 확실히
  * 버리기 위해서다.
+ *
+ * ## 이 전환만 히스토리를 덮어쓴다
+ *
+ * 다른 전환은 그대로 쌓는다(인트로→문항, 결과→인트로). 문항 화면에서 뒤로 가 인트로로
+ * 돌아가는 것은 정상 행동이고, 인트로에서 한 번 더 뒤로 가면 사이트를 떠난다.
+ *
+ * 여기만 다른 이유는 **끝난 문서로는 돌아갈 데가 없기 때문**이다. 결과 화면에서 뒤로 가면
+ * `?screen=test` 문서가 되살아나 대기 화면이 다시 폴링하고, READY를 보고 결과로 또 넘어온다 —
+ * 뒤로 가기가 제자리를 맴돌아 아무 데도 못 가는 버튼이 된다. 되살아난 화면에서 할 수 있는
+ * 일도 없다: 완료된 세션은 이후 제출을 409로 거절한다.
+ *
+ * 앱 안(WebView)에서는 이 변화가 눈에 띄지 않는다 — 뒤로 가기는 네이티브가 자기 규칙으로
+ * 다루므로 히스토리에 한 칸이 더 있고 없고가 화면 흐름을 바꾸지 않는다.
  */
-function goToResult(sessionId: string, navigate: (url: string) => void): void {
-  navigate(window.location.pathname + buildResultUrl(window.location.search, sessionId))
+function goToResult(sessionId: string, navigate: Navigate): void {
+  navigate(window.location.pathname + buildResultUrl(window.location.search, sessionId), {
+    replace: true,
+  })
 }
 
 /**
@@ -349,7 +392,7 @@ function goToResult(sessionId: string, navigate: (url: string) => void): void {
  * [startStandaloneTest]가. 여기서 만들면 화면 전환과 세션 생성이 한 덩어리가 되어, 되돌아온
  * 사용자가 시작도 누르기 전에 세션이 하나 생긴다.
  */
-function goToIntro(navigate: (url: string) => void): void {
+function goToIntro(navigate: Navigate): void {
   // 같은 문서를 다시 로드한다 — 결과 화면이 들고 있던 상태를 확실히 버리기 위해서다.
   navigate(window.location.pathname + buildIntroUrl(window.location.search))
 }
@@ -357,8 +400,15 @@ function goToIntro(navigate: (url: string) => void): void {
 /**
  * [AppProps.navigate]의 기본값. 대입 한 줄을 함수로 감싸 두면 화면 전환 지점이 전부
  * `navigate` 하나를 거치게 되어, 테스트가 갈아끼울 자리가 한 곳으로 모인다.
+ *
+ * 두 갈래가 하는 일은 같다 — 문서를 옮긴다. 히스토리에 지금 항목을 남기느냐 덮어쓰느냐만
+ * 다르다.
  */
-function assignHref(url: string): void {
+function assignHref(url: string, options?: { replace?: boolean }): void {
+  if (options?.replace === true) {
+    window.location.replace(url)
+    return
+  }
   window.location.href = url
 }
 

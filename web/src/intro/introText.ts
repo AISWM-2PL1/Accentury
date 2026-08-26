@@ -14,3 +14,13 @@ export const ESTIMATED_MINUTES = 3
  * 문구 없는 실패(스크립트 오류 등)의 마지막 안전망이다.
  */
 export const START_FAILED_MESSAGE = '지금은 시작할 수 없어요. 잠시 후 다시 시도해 주세요.'
+
+/**
+ * 세션 저장소를 쓸 수 없는 브라우저의 문구 (KAN-31).
+ *
+ * [START_FAILED_MESSAGE]와 갈라 둔 이유는 출구가 다르기 때문이다 — 잠시 후 다시 눌러도 같은
+ * 브라우저인 한 결과가 같으므로, "다시 시도"가 아니라 **설정을 바꾸거나 앱으로 가라**고
+ * 알려야 한다. 여기서도 사용자를 탓하지 않는다 (ux-ui.md 비난 없는 카피).
+ */
+export const STORAGE_UNAVAILABLE_MESSAGE =
+  '이 브라우저에서는 테스트를 이어갈 수 없어요. 사생활 보호 모드를 끄거나 앱에서 테스트해 주세요.'

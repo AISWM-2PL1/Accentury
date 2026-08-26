@@ -13,6 +13,7 @@ import {
   clearWebSession,
   createWebSession,
   getWebSessionToken,
+  isWebSessionStorageAvailable,
   loadWebSession,
   saveWebSession,
   WebSessionError,
@@ -212,5 +213,51 @@ describe('세션 저장 — 탭 안에서만, 리로드는 견딘다', () => {
     expect(() => saveWebSession(SESSION)).not.toThrow()
     expect(() => clearWebSession()).not.toThrow()
     expect(getWebSessionToken()).toBe('')
+  })
+})
+
+/*
+ * 저장소 가용성 판정 (KAN-31). 전역을 통째로 갈아끼우지 않고 프로토타입의 메서드만 바꾼다 —
+ * 판정이 보는 것은 저장소의 **동작**이고, 실물 `sessionStorage` 인스턴스를 그대로 두어야
+ * "메서드는 있는데 결과가 다르다"는 실제 상황과 같은 모양이 된다.
+ *
+ * 전역 `Storage.prototype`이 아니라 인스턴스의 프로토타입을 잡는다 — jsdom에서 둘은 같은
+ * 객체가 아니라, 전역 쪽에 스파이를 걸면 실제 호출이 원본으로 그대로 지나간다 (2026-08-26 실증).
+ */
+const storageProto = Object.getPrototypeOf(sessionStorage) as Storage
+
+describe('저장소 가용성 판정 — 토큰이 리로드를 넘을 수 있는가', () => {
+  it('평범한 브라우저에서는 쓸 수 있다고 답하고 시험값을 남기지 않는다', () => {
+    expect(isWebSessionStorageAvailable()).toBe(true)
+    // 잰 자리에서 지운다 — 진단용 값이 탭 수명 내내 남을 이유가 없다
+    expect(sessionStorage.getItem('accentury.webSession.probe')).toBeNull()
+  })
+
+  it('쓰기가 던지면 쓸 수 없다 (사생활 보호 모드·쿠키 전면 차단)', () => {
+    const setItem = vi.spyOn(storageProto, 'setItem').mockImplementation(() => {
+      throw new Error('접근이 거부됐다')
+    })
+
+    try {
+      expect(isWebSessionStorageAvailable()).toBe(false)
+    } finally {
+      setItem.mockRestore()
+    }
+  })
+
+  /*
+   * 던지지 않고 조용히 버리는 저장소가 이 판정의 존재 이유다. 예외만 보면 통과시키게 되고,
+   * 그러면 세션은 만들어졌는데 다음 문서에 토큰이 없는 상태로 사용자를 문항 화면에 보낸다.
+   */
+  it('쓰기가 조용히 버려져도(되읽기가 비었으면) 쓸 수 없다', () => {
+    const setItem = vi.spyOn(storageProto, 'setItem').mockImplementation(() => {})
+    const getItem = vi.spyOn(storageProto, 'getItem').mockReturnValue(null)
+
+    try {
+      expect(isWebSessionStorageAvailable()).toBe(false)
+    } finally {
+      getItem.mockRestore()
+      setItem.mockRestore()
+    }
   })
 })

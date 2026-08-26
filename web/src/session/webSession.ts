@@ -37,6 +37,9 @@ const APP_VERSION = ((import.meta.env.VITE_APP_VERSION as string | undefined) ??
 /** 저장소 키. 오리진 안에서 우리 것임을 알아볼 수 있게 네임스페이스를 붙인다 */
 const WEB_SESSION_KEY = 'accentury.webSession'
 
+/** 저장 가능 여부를 재는 시험용 키. 세션 키와 같은 네임스페이스를 쓰고 잰 자리에서 바로 지운다 */
+const PROBE_KEY = 'accentury.webSession.probe'
+
 /**
  * 발급받은 세션 중 웹이 쓰는 부분.
  *
@@ -137,6 +140,29 @@ export async function createWebSession(
     null,
     isRetryableStatus(response.status),
   )
+}
+
+/**
+ * 이 브라우저에서 세션 저장소를 실제로 쓸 수 있는가 (KAN-31).
+ *
+ * `typeof sessionStorage`나 존재 여부로는 판정할 수 없다. 사생활 보호 모드·쿠키 전면 차단·
+ * 일부 인앱 브라우저는 **API는 그대로 노출한 채** 접근에서 던지거나, 던지지 않고 쓰기를
+ * 조용히 버린다. 그래서 값을 하나 써 보고 **되읽어 같은 값인지**까지 확인한다 — 뒤쪽 경우를
+ * 잡아내는 것이 되읽기다.
+ *
+ * 판정이 필요한 이유는 이 흐름이 화면 전환마다 문서를 다시 로드하기 때문이다 (`saveWebSession`
+ * 주석). 토큰이 리로드를 넘지 못하면 다음 문서의 요청이 전부 토큰 없이 나간다.
+ */
+export function isWebSessionStorageAvailable(): boolean {
+  try {
+    sessionStorage.setItem(PROBE_KEY, PROBE_KEY)
+    const echoed = sessionStorage.getItem(PROBE_KEY)
+    sessionStorage.removeItem(PROBE_KEY)
+    return echoed === PROBE_KEY
+  } catch {
+    // 접근 자체가 거부된 저장소다. 쓸 수 없다는 결론은 조용히 버려지는 경우와 같다.
+    return false
+  }
 }
 
 /**

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import { REQUIRED_BRIDGE_VERSION } from './bridge/bridge'
@@ -231,6 +231,36 @@ describe('App — 웹 단독 실행 (KAN-31)', () => {
     return fetchStub
   }
 
+  /**
+   * 마지막 문항 제출부터 결과 확정까지 한 번에 통과시키는 fetch 대역.
+   * 대기 화면은 들어오자마자 1회 조회하므로(`useAnalysisPolling`) 타이머를 돌리지 않아도
+   * `/complete`가 READY를 주는 지점까지 간다.
+   */
+  function stubCompletedAnalysisFetch() {
+    const ok = (body: unknown) => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => body,
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown) => {
+        const url = String(input)
+        if (url.endsWith('/analyses')) return ok({ pollAfterMs: 800, items: [] })
+        if (url.endsWith('/complete')) return ok({ status: 'READY' })
+        if (url.endsWith('/answer')) return ok({ accepted: true })
+        return ok({
+          testVersion: 'gn-2026.08.1',
+          scoreVersion: 'sv-0.3',
+          dialect: 'GYEONGNAM',
+          estimatedDurationSec: 180,
+          items: [VOCAB_ITEM],
+        })
+      }),
+    )
+  }
+
   /** 인트로 [시작하기] — 웹 마이크 게이트가 비동기라 microtask를 비운다 */
   async function tapStart() {
     fireEvent.click(screen.getByRole('button', { name: '시작하기' }))
@@ -263,6 +293,8 @@ describe('App — 웹 단독 실행 (KAN-31)', () => {
     expect(next.get('sessionId')).toBe('s_web')
     // 유입 계측이 화면 전환 한 번에 끊기지 않는다
     expect(next.get('c')).toBe('kko_share')
+    // 히스토리에 쌓는 전환이다 — 문항 화면에서 뒤로 가 인트로로 돌아오는 것은 정상 행동이다
+    expect(navigate.mock.calls[0][1]).toBeUndefined()
   })
 
   it('세션 생성이 429로 막히면 화면을 옮기지 않고 대기 안내를 띄운다', async () => {
@@ -340,6 +372,63 @@ describe('App — 웹 단독 실행 (KAN-31)', () => {
     expect(url).toMatch(/\/vocab-items\/item-1\/answer$/)
     expect(init.headers).toMatchObject({ Authorization: 'Bearer st_web' })
     expect(window.location.search).not.toContain('st_web')
+  })
+
+  /*
+   * 저장소를 쓸 수 없는 브라우저 (사생활 보호 모드·쿠키 전면 차단·일부 인앱 브라우저).
+   * 화면 전환이 문서를 다시 로드하는 흐름이라 토큰이 저장소를 못 넘으면 다음 문서의 요청이
+   * 전부 토큰 없이 나간다 — 그래서 세션을 만들기 **전에** 판정한다. 순서가 요점이다:
+   * 만든 뒤에 막으면 서버에 고아 세션이 남고 요청 제한 한 칸도 함께 쓰인다.
+   */
+  it('저장소를 쓸 수 없으면 세션을 만들기 전에 막고 안내만 남긴다', async () => {
+    setSearch('?c=kko_share')
+    stubMicrophone()
+    const fetchStub = stubSessionFetch()
+    const navigate = vi.fn()
+    // 인스턴스의 프로토타입을 잡는다 — jsdom에서는 전역 `Storage.prototype`과 다른 객체다
+    const setItem = vi
+      .spyOn(Object.getPrototypeOf(sessionStorage) as Storage, 'setItem')
+      .mockImplementation(() => {
+        throw new Error('접근이 거부됐다')
+      })
+
+    try {
+      render(<App navigate={navigate} />)
+      await tapStart()
+
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        '이 브라우저에서는 테스트를 이어갈 수 없어요',
+      )
+      expect(fetchStub).not.toHaveBeenCalled()
+      // 토큰 없이 문항 화면에 들어가면 모든 요청이 401로 막힌다
+      expect(navigate).not.toHaveBeenCalled()
+    } finally {
+      setItem.mockRestore()
+    }
+  })
+
+  /*
+   * 결과 화면 전환만 히스토리를 덮어쓴다 (KAN-31). 쌓으면 결과에서 뒤로 갔을 때 끝난
+   * `?screen=test` 문서가 되살아나 대기 화면이 다시 폴링하고, READY를 보고 결과로 또 넘어온다.
+   */
+  it('분석이 끝나면 결과 화면으로 히스토리를 덮어쓰며 넘어간다', async () => {
+    setSearch('?c=kko_share&screen=test&testVersion=gn-2026.08.1&sessionId=s_web')
+    saveWebSession({
+      sessionId: 's_web',
+      sessionToken: 'st_web',
+      testVersion: 'gn-2026.08.1',
+      expiresAt: '2026-08-26T03:30:00Z',
+    })
+    stubCompletedAnalysisFetch()
+    const navigate = vi.fn()
+
+    render(<App navigate={navigate} />)
+    await answerVocabulary()
+
+    await waitFor(() => expect(navigate).toHaveBeenCalledTimes(1))
+    const [url, options] = navigate.mock.calls[0] as [string, { replace?: boolean } | undefined]
+    expect(new URLSearchParams(url.split('?')[1] ?? '').get('screen')).toBe('result')
+    expect(options).toEqual({ replace: true })
   })
 })
 
@@ -786,6 +875,8 @@ describe('App — 웹 단독 결과 화면 (KAN-31 2단계)', () => {
 
     expect(navigate).toHaveBeenCalledTimes(1)
     const next = new URLSearchParams(navigate.mock.calls[0][0].split('?')[1] ?? '')
+    // 결과에서 인트로로는 그대로 쌓는다 — 여기서 뒤로 가면 사이트를 떠나는 것이 맞다
+    expect(navigate.mock.calls[0][1]).toBeUndefined()
     // 유입 계측이 재응시 한 번에 끊기지 않는다
     expect(next.get('c')).toBe('kko_x')
     expect(next.get('screen')).toBeNull()
