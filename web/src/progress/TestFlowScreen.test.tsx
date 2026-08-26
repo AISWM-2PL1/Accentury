@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { StrictMode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createFakeCapture, sineChunk, type FakeCapture } from '../audio/testing/fakeCapture'
 import { TestFlowScreen } from './TestFlowScreen'
 import type { FetchLike } from './fetchTestDefinition'
 import { snapshotKey, type SnapshotStorage } from './progressSnapshot'
@@ -8,6 +9,10 @@ import type { TestDefinition, TestItem } from './testDefinition'
 
 const TEST_VERSION = 'gn-2026.08.1'
 const API_BASE = 'http://localhost:8080'
+/** 브라우저 단독 실행의 세션 토큰. 실제 출처는 KAN-31이 정한다 (App.tsx의 DEV 통로) */
+const WEB_TOKEN = 'web-token'
+/** 브라우저 녹음이 담는 길이. 품질 게이트(1초)를 넉넉히 넘긴다 */
+const VOICE_DURATION_MS = 2_000
 
 function item(seq: number): TestItem {
   if (seq % 2 === 1) {
@@ -50,6 +55,15 @@ function tenItemDefinition(): TestDefinition {
 function okFetch(): ReturnType<typeof vi.fn<FetchLike>> {
   return vi.fn<FetchLike>(async (input) => {
     const url = String(input)
+    // 브리지가 없는 실행에서는 음성 문항이 웹에서 녹음돼 이 경로로 올라간다 (KAN-56 Stage 3)
+    if (url.endsWith('/recording')) {
+      return {
+        ok: true,
+        status: 202,
+        headers: { get: () => null },
+        json: async () => ({ analysisJobId: 'job-web' }),
+      } as unknown as Response
+    }
     if (url.endsWith('/analyses')) {
       return {
         ok: true,
@@ -77,6 +91,11 @@ function okFetch(): ReturnType<typeof vi.fn<FetchLike>> {
   })
 }
 
+/** 대역이 실제로 받은 URL들. 요청 "종류"를 세는 단언에 쓴다 */
+function urls(fetchImpl: ReturnType<typeof vi.fn<FetchLike>>): string[] {
+  return fetchImpl.mock.calls.map(([input]) => String(input))
+}
+
 function memoryStorage(): SnapshotStorage {
   const map = new Map<string, string>()
   return {
@@ -88,28 +107,40 @@ function memoryStorage(): SnapshotStorage {
 
 interface RenderOptions {
   storage?: SnapshotStorage
+  /**
+   * 기본값이 빈 문자열이 아니라 실제 세션인 이유: 브라우저 녹음 업로드가 세션 없이는 가드에
+   * 걸린다 (`uploadRecording`의 CLIENT_MISSING_sessionId). 세션 키 분리를 검사하는 테스트만
+   * 자기 값을 명시한다.
+   */
   sessionId?: string
   /** StrictMode로 감쌀지. 마운트 effect 이중 실행을 재현할 때만 켠다 */
   strict?: boolean
   /** 분석 대기 화면이 결과 확정을 알릴 자리 (KAN-14) */
   onAnalysisReady?: () => void
+  /** 브라우저 단독 실행의 세션 토큰. 빈 값을 주면 업로드 가드를 재현한다 */
+  webSessionToken?: () => string
 }
 
 function renderScreen(
   fetchImpl: FetchLike,
-  { storage, sessionId, strict, onAnalysisReady }: RenderOptions = {},
+  { storage, sessionId = 'sess-1', strict, onAnalysisReady, webSessionToken }: RenderOptions = {},
 ) {
-  return render(
+  // 브라우저 녹음 경로가 실제로 도는 대역. 앱(브리지 있음) 경로에서는 쓰이지 않는다.
+  const capture = createFakeCapture()
+  const view = render(
     <TestFlowScreen
       apiBase={API_BASE}
       testVersion={TEST_VERSION}
       sessionId={sessionId}
       storage={storage ?? memoryStorage()}
       onAnalysisReady={onAnalysisReady}
+      webSessionToken={webSessionToken ?? (() => WEB_TOKEN)}
+      capture={capture.factory}
       fetchImpl={fetchImpl}
     />,
     strict === true ? { wrapper: StrictMode } : undefined,
   )
+  return { ...view, capture }
 }
 
 /** 네이티브 브리지가 붙은 앱 환경. 돌려주는 spy가 startVoiceItem 호출을 받는다 */
@@ -132,7 +163,8 @@ function stubBridge() {
  * 문구를 기다리면 판정이 나기 전 첫 프레임에서 이미 통과해 버려 동기화 지점 역할을 못 한다.
  */
 const findRecordingWait = () => screen.findByRole('button', { name: '녹음 화면 다시 열기' })
-const findDevSubmit = () => screen.findByRole('button', { name: '제출 (개발용)' })
+/** 브리지가 없는 실행의 동기화 지점 — 웹 녹음 패널이 서면 판정이 끝난 것이다 */
+const findRecordButton = () => screen.findByRole('button', { name: '녹음' })
 
 /** 네이티브가 녹음을 마치고 결과를 돌려주는 상황 */
 function deliverResult(itemId: string) {
@@ -156,26 +188,39 @@ function answerVocabulary() {
 }
 
 /**
- * 브리지가 없는 환경에서 현재 문항을 한 칸 진행시킨다 — 음성은 개발용 제출 버튼,
+ * 브라우저 단독 실행에서 음성 문항 하나를 녹음해 올린다 (KAN-56 Stage 3) —
+ * [녹음] → 발화 조각 → [정지] → [다음]. 업로드는 마지막 [다음]에서만 일어난다 (§5.7).
+ */
+async function recordAndSend(capture: FakeCapture) {
+  fireEvent.click(screen.getByRole('button', { name: '녹음' }))
+  await act(async () => {})
+  await act(async () => {
+    capture.emit(sineChunk(VOICE_DURATION_MS, { sampleRate: capture.sampleRate }))
+  })
+  fireEvent.click(screen.getByRole('button', { name: '정지' }))
+  await act(async () => {})
+  fireEvent.click(screen.getByRole('button', { name: '다음' }))
+  await act(async () => {})
+}
+
+/**
+ * 브리지가 없는 환경에서 현재 문항을 한 칸 진행시킨다 — 음성은 웹 녹음 + 업로드,
  * 어휘는 보기 선택 + [다음]이다. fireEvent를 쓰는 이유는 act로 감싸 리렌더까지 흘려보내기 위해서다.
  */
-function advance() {
-  const devSubmit = screen.queryByRole('button', { name: '제출 (개발용)' })
-  if (devSubmit) {
-    fireEvent.click(devSubmit)
-  } else {
-    answerVocabulary()
+async function advance(capture: FakeCapture) {
+  if (screen.queryByRole('button', { name: '녹음' }) !== null) {
+    await recordAndSend(capture)
+    return
   }
+  answerVocabulary()
+  // 어휘 제출은 비동기다(브라우저 단독 통로도 Promise) — 다음 문항이 뜨기 전에 다음 advance가
+  // 돌지 않도록 microtask를 비운다
+  await act(async () => {})
 }
 
 /** 브리지 없는 환경에서 10문항을 끝까지 민다 */
-async function finishAllItems() {
-  for (let i = 0; i < 10; i += 1) {
-    advance()
-    // 어휘 제출은 비동기다(개발용 통로도 Promise) — 다음 문항이 뜨기 전에 다음 advance가
-    // 돌지 않도록 microtask를 비운다
-    await act(async () => {})
-  }
+async function finishAllItems(capture: FakeCapture) {
+  for (let i = 0; i < 10; i += 1) await advance(capture)
 
   // 마지막 제출 뒤 대기 화면이 마운트되고 첫 회차(analyses → complete)가 순서대로 돈다.
   // 두 요청이 직렬이라 microtask를 한 번 더 비워야 완료 판정까지 반영된다.
@@ -223,6 +268,7 @@ function waitingFetch(handlers: {
     if (url.endsWith('/complete')) return ok(handlers.complete?.() ?? { status: 'PROCESSING' })
     // 브리지가 붙은 경로에서는 어휘 답안이 실제로 서버로 나간다 (KAN-13)
     if (url.endsWith('/answer')) return ok({ accepted: true })
+    if (url.endsWith('/recording')) return ok({ analysisJobId: 'job-web' })
     return ok(tenItemDefinition())
   })
 }
@@ -275,21 +321,21 @@ describe('문항 진행', () => {
   })
 
   it('유형 뱃지가 문항 유형을 따라간다', async () => {
-    renderScreen(okFetch())
-    await findDevSubmit()
+    const { capture } = renderScreen(okFetch())
+    await findRecordButton()
     expect(screen.getByText('🎤 음성 문항')).toBeInTheDocument()
 
-    advance()
+    await advance(capture)
 
     expect(await screen.findByText('어휘 문항 2')).toBeInTheDocument()
     expect(screen.getByText('📝 단어 문항')).toBeInTheDocument()
   })
 
   it('제출을 통지하면 다음 문항과 2/10이 된다', async () => {
-    renderScreen(okFetch())
-    await findDevSubmit()
+    const { capture } = renderScreen(okFetch())
+    await findRecordButton()
 
-    advance()
+    await advance(capture)
 
     expect(screen.getByText('어휘 문항 2')).toBeInTheDocument()
     expect(screen.getByText('2 / 10')).toBeInTheDocument()
@@ -297,31 +343,32 @@ describe('문항 진행', () => {
   })
 
   it('마지막 문항을 제출하면 분석 대기 화면으로 넘어간다 (KAN-14)', async () => {
-    renderScreen(okFetch())
-    await findDevSubmit()
+    const { capture } = renderScreen(okFetch())
+    await findRecordButton()
 
-    await finishAllItems()
+    await finishAllItems(capture)
 
     // 진행률이 분석 기준으로 바뀌고 음성 5문항이 목록으로 선다.
     // 번호는 전체 10문항 기준이라 홀수 자리(정의가 음성·어휘를 번갈아 둔다)로 나온다
     expect(screen.getByRole('progressbar', { name: '분석 진행률' })).toBeInTheDocument()
     expect(screen.getByText('1번 문항')).toBeInTheDocument()
     expect(screen.getByText('9번 문항')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '제출 (개발용)' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '녹음' })).not.toBeInTheDocument()
     expect(screen.queryByRole('radio', { name: '보기1' })).not.toBeInTheDocument()
   })
 
   it('진행 중 저장된 스냅샷으로 다시 열면 그 문항에서 이어진다', async () => {
     const storage = memoryStorage()
-    const { unmount } = renderScreen(okFetch(), { storage })
-    await findDevSubmit()
-    advance()
-    advance()
-    // 어휘 제출(두 번째 advance)이 비동기라, 진행 통지가 스냅샷에 닿기 전에 내리면 안 된다
-    await act(async () => {})
+    const { unmount, capture } = renderScreen(okFetch(), { storage })
+    await findRecordButton()
+    await advance(capture)
+    await advance(capture)
     unmount()
 
-    expect(JSON.parse(storage.getItem(snapshotKey())!).submittedItemIds).toEqual(['item-1', 'item-2'])
+    expect(JSON.parse(storage.getItem(snapshotKey('sess-1'))!).submittedItemIds).toEqual([
+      'item-1',
+      'item-2',
+    ])
 
     renderScreen(okFetch(), { storage })
 
@@ -407,16 +454,15 @@ describe('VOICE 문항 — 네이티브 녹음 화면 전환 (KAN-100)', () => {
     expect(screen.getByText('2 / 10')).toBeInTheDocument()
   })
 
-  it('브리지가 없으면(브라우저 단독) 안내와 개발용 제출 버튼을 남긴다', async () => {
-    renderScreen(okFetch())
-    await findDevSubmit()
+  it('브리지가 없으면(브라우저 단독) 웹 녹음 패널이 그 자리를 맡는다 (KAN-56 Stage 3)', async () => {
+    const { capture } = renderScreen(okFetch())
+    await findRecordButton()
 
-    expect(screen.getByText('녹음 화면을 열 수 없어요 (앱 밖에서 실행 중)')).toBeInTheDocument()
-    // 폴백은 대기 뷰와 배타적이다 — 대기 문구도, 재진입 버튼도 남으면 안 된다
+    // 녹음 패널과 대기 뷰는 배타적이다 — 대기 문구도, 재진입 버튼도 남으면 안 된다
     expect(screen.queryByText('잠시만요…')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '녹음 화면 다시 열기' })).not.toBeInTheDocument()
 
-    advance()
+    await advance(capture)
 
     expect(screen.getByText('어휘 문항 2')).toBeInTheDocument()
   })
@@ -430,6 +476,83 @@ describe('VOICE 문항 — 네이티브 녹음 화면 전환 (KAN-100)', () => {
     unmount()
 
     expect(window.AccenturyWeb).toBeUndefined()
+  })
+})
+
+describe('VOICE 문항 — 브라우저 녹음 업로드 (KAN-56 Stage 3)', () => {
+  it('[다음]에서 녹음이 계약대로 올라가고 다음 문항으로 넘어간다', async () => {
+    const fetchImpl = okFetch()
+    const { capture } = renderScreen(fetchImpl)
+    await findRecordButton()
+
+    await recordAndSend(capture)
+
+    expect(screen.getByText('어휘 문항 2')).toBeInTheDocument()
+
+    const uploads = fetchImpl.mock.calls.filter(([url]) => String(url).endsWith('/recording'))
+    expect(uploads).toHaveLength(1)
+    const [url, init] = uploads[0]
+    expect(url).toBe(`${API_BASE}/v0/sessions/sess-1/voice-items/item-1/recording`)
+    expect(init?.method).toBe('POST')
+
+    const headers = init?.headers as Record<string, string>
+    // 토큰은 브리지가 아니라 웹 세션 통로에서 온다 (KAN-31 전까지는 App의 DEV localStorage)
+    expect(headers.Authorization).toBe(`Bearer ${WEB_TOKEN}`)
+    expect(headers['Idempotency-Key']).toBeTruthy()
+
+    const body = init?.body
+    expect(body).toBeInstanceOf(FormData)
+    const form = body as FormData
+    expect(form.get('audio')).toBeInstanceOf(File)
+    const meta = JSON.parse(form.get('meta') as string)
+    // 길이는 담긴 샘플 수에서 나온 값이라 우리가 흘려보낸 조각과 정확히 같다
+    expect(meta.durationMs).toBe(VOICE_DURATION_MS)
+    expect(Object.keys(meta.clientQuality).sort()).toEqual(['clipped', 'peak', 'rms', 'silenceRatio'])
+  })
+
+  it('업로드 전에는 [다음]을 눌러도 진행이 움직이지 않는다 — 정지만으로는 시도가 없다', async () => {
+    const fetchImpl = okFetch()
+    const { capture } = renderScreen(fetchImpl)
+    await findRecordButton()
+
+    fireEvent.click(screen.getByRole('button', { name: '녹음' }))
+    await act(async () => {})
+    await act(async () => {
+      capture.emit(sineChunk(VOICE_DURATION_MS, { sampleRate: capture.sampleRate }))
+    })
+    fireEvent.click(screen.getByRole('button', { name: '정지' }))
+    await act(async () => {})
+
+    expect(screen.getByText('음성 문항 1')).toBeInTheDocument()
+    expect(screen.getByText('1 / 10')).toBeInTheDocument()
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).endsWith('/recording'))).toHaveLength(0)
+  })
+
+  it('업로드가 실패하면 문항에 남아 재시도를 받는다', async () => {
+    const fetchImpl = vi.fn<FetchLike>(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/recording')) {
+        return {
+          ok: false,
+          status: 503,
+          headers: { get: () => null },
+          json: async () => {
+            throw new SyntaxError('본문이 JSON이 아니다')
+          },
+        } as unknown as Response
+      }
+      return { ok: true, status: 200, json: async () => tenItemDefinition() } as Response
+    })
+    const { capture } = renderScreen(fetchImpl)
+    await findRecordButton()
+
+    await recordAndSend(capture)
+
+    // 진행은 그대로다 — 서버에 시도가 남았다는 확인 없이 다음 문항으로 넘기면 그 문항이
+    // 채점에서 조용히 빠진다 (어휘 제출이 성공 후에만 진행을 미는 것과 같은 규칙)
+    expect(screen.getByText('음성 문항 1')).toBeInTheDocument()
+    expect(screen.getByText('녹음을 보내지 못했어요 (HTTP 503)')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '다시 시도' })).toBeInTheDocument()
   })
 })
 
@@ -479,27 +602,30 @@ describe('VOCABULARY 문항 — 보기 선택 (KAN-13)', () => {
     expect(JSON.parse(init?.body as string)).toEqual({ choiceId: 'c1' })
   })
 
-  it('브리지가 없으면(브라우저 단독) 서버 제출 없이 진행만 민다 — 음성의 개발용 통로와 같다', async () => {
+  it('브리지가 없으면(브라우저 단독) 어휘 답안은 서버로 나가지 않는다 — 음성 업로드와 갈리는 지점', async () => {
     const fetchImpl = okFetch()
-    renderScreen(fetchImpl)
-    await findDevSubmit()
-    advance() // 음성 문항 1 (개발용 제출)
+    const { capture } = renderScreen(fetchImpl)
+    await findRecordButton()
+    await advance(capture) // 음성 문항 1 — 이쪽은 실제로 업로드된다
 
     expect(screen.getByText('어휘 문항 2')).toBeInTheDocument()
     answerVocabulary()
 
     expect(await screen.findByText('음성 문항 3')).toBeInTheDocument()
-    expect(fetchImpl).toHaveBeenCalledTimes(1) // 정의 조회뿐 — 답안 POST가 없다
+    // 어휘 제출 경로는 아직 브리지 토큰에 묶여 있어 브라우저 단독에서는 진행만 민다 (KAN-13).
+    // 녹음은 KAN-56에서 웹 토큰으로 올라가므로 요청이 정의 조회 + 업로드 둘이다.
+    expect(urls(fetchImpl).filter((url) => url.endsWith('/answer'))).toHaveLength(0)
+    expect(urls(fetchImpl).filter((url) => url.endsWith('/recording'))).toHaveLength(1)
   })
 })
 
 describe('세션 격리 — 다른 세션의 진행을 이어받지 않는다', () => {
   it('sessionId를 주면 그 세션 키에 저장한다', async () => {
     const storage = memoryStorage()
-    renderScreen(okFetch(), { storage, sessionId: 'sess-1' })
-    await findDevSubmit()
+    const { capture } = renderScreen(okFetch(), { storage, sessionId: 'sess-1' })
+    await findRecordButton()
 
-    advance()
+    await advance(capture)
 
     expect(storage.getItem(snapshotKey('sess-1'))).not.toBeNull()
     expect(storage.getItem(snapshotKey())).toBeNull()
@@ -507,10 +633,10 @@ describe('세션 격리 — 다른 세션의 진행을 이어받지 않는다', 
 
   it('다른 세션의 스냅샷이 남아 있어도 처음부터 시작한다', async () => {
     const storage = memoryStorage()
-    const { unmount } = renderScreen(okFetch(), { storage, sessionId: 'sess-1' })
-    await findDevSubmit()
-    advance()
-    advance()
+    const { unmount, capture } = renderScreen(okFetch(), { storage, sessionId: 'sess-1' })
+    await findRecordButton()
+    await advance(capture)
+    await advance(capture)
     unmount()
 
     renderScreen(okFetch(), { storage, sessionId: 'sess-2' })
@@ -523,20 +649,27 @@ describe('세션 격리 — 다른 세션의 진행을 이어받지 않는다', 
 })
 
 describe('폴링 부재 — 문항 진행 중에는 요청이 없다 (KAN-14 규칙 2항)', () => {
-  it('정의 조회 1회 외에 추가 요청이 발생하지 않는다', async () => {
+  /*
+   * 규칙은 "요청이 하나도 없다"가 아니라 **주기 요청이 없다**는 것이다. KAN-56 이후 브라우저
+   * 경로에는 음성 문항마다 업로드 POST가 하나씩 생기는데, 그것은 사용자가 [다음]을 눌러
+   * 일어나는 일회성 요청이라 타이머가 도는 폴링과 성격이 다르다. 그래서 총 호출 수 대신
+   * **요청의 종류**를 센다 — 그래야 나중에 진짜 폴링이 끼어들었을 때 여기서 걸린다.
+   */
+  it('정의 조회와 [다음]이 부른 업로드 말고는 요청이 없다', async () => {
     const fetchImpl = okFetch()
     const globalFetch = vi.fn()
     vi.stubGlobal('fetch', globalFetch)
     try {
-      renderScreen(fetchImpl)
-      await findDevSubmit()
+      const { capture } = renderScreen(fetchImpl)
+      await findRecordButton()
 
-      for (let i = 0; i < 10; i += 1) {
-        advance()
-        await act(async () => {}) // 어휘 제출(개발용 통로 포함)은 비동기 — microtask를 비운다
-      }
+      for (let i = 0; i < 10; i += 1) await advance(capture)
 
-      expect(fetchImpl).toHaveBeenCalledTimes(1)
+      const requested = urls(fetchImpl)
+      expect(requested.filter((url) => url.endsWith(`/v0/tests/${TEST_VERSION}`))).toHaveLength(1)
+      // 음성 5문항 × 업로드 1건. 어휘는 브라우저 단독에서 서버로 나가지 않는다
+      expect(requested.filter((url) => url.endsWith('/recording'))).toHaveLength(5)
+      expect(requested).toHaveLength(6)
       expect(globalFetch).not.toHaveBeenCalled()
     } finally {
       vi.unstubAllGlobals()
@@ -571,7 +704,7 @@ describe('분석 대기 결선 (KAN-14)', () => {
   })
 
   it('브리지가 없으면 재녹음 버튼을 그리지 않는다 — 눌러도 녹음 화면이 열리지 않는다', async () => {
-    renderScreen(
+    const view = renderScreen(
       waitingFetch({
         analyses: () => ({
           pollAfterMs: 800,
@@ -584,21 +717,29 @@ describe('분석 대기 결선 (KAN-14)', () => {
       }),
       { sessionId: 'sess-1' },
     )
-    await findDevSubmit()
+    const { capture } = view
+    await findRecordButton()
 
-    await finishAllItems()
+    await finishAllItems(capture)
 
     expect(screen.queryByRole('button', { name: '다시 녹음' })).not.toBeInTheDocument()
   })
 
+  /*
+   * 대기 화면의 토큰은 여전히 **브리지**에서만 온다 (`getSessionToken`). KAN-56이 더한
+   * `webSessionToken`은 녹음 업로드 전용이라, 브라우저 단독 실행은 문항은 다 밀어도 폴링
+   * 앞에서 막힌다 — 웹 단독 세션(KAN-31)이 붙기 전까지 남는 알려진 경계다.
+   */
   it('브리지 없는 실행은 폴링 전에 막힌다 — 세션 토큰이 없다 (결과 화면과 같은 규칙)', async () => {
-    renderScreen(waitingFetch({}), { sessionId: 'sess-1' })
-    await findDevSubmit()
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { capture } = renderScreen(waitingFetch({}), { sessionId: 'sess-1' })
+    await findRecordButton()
 
-    await finishAllItems()
+    await finishAllItems(capture)
 
     // 사용자가 할 수 있는 게 없는 실패라 비난 없는 문구만 남긴다. 진단은 콘솔로 간다
     expect(screen.getByText('분석 상태를 확인할 수 없어요. 앱을 다시 시작해 주세요')).toBeInTheDocument()
+    error.mockRestore()
   })
 
   it('재녹음을 누르면 그 문항으로 녹음 화면을 다시 연다 — 브리지 계약은 그대로다', async () => {

@@ -8,8 +8,32 @@ function setSearch(search: string) {
   window.history.replaceState(null, '', `/${search}`)
 }
 
+const VOICE_ITEM = {
+  itemId: 'item-1',
+  seq: 1,
+  type: 'VOICE',
+  prompt: '어서 오이소',
+  maxDurationMs: 10_000,
+  guideF0: { unit: 'semitone', frameIntervalMs: 10, values: [0, 1] },
+}
+
+/**
+ * 어휘 문항 대역. 스냅샷 키만 보는 테스트가 이걸 쓴다 — 브라우저 단독 실행에서 한 칸 진행하는
+ * 데 브라우저 API가 필요 없는 유일한 유형이기 때문이다. 음성 문항은 KAN-56 이후 웹이 직접
+ * 녹음하는데, App은 캡처를 주입받지 않아(주입 지점은 테스트 전용이다) jsdom에서 마이크를
+ * 열 수 없다. 이 두 테스트가 확인하는 것은 sessionId가 진행 화면까지 닿는지이고 문항 유형은
+ * 그와 무관하다.
+ */
+const VOCAB_ITEM = {
+  itemId: 'item-1',
+  seq: 1,
+  type: 'VOCABULARY',
+  prompt: '어서 오이소',
+  choices: [{ choiceId: 'c1', text: '보기1' }],
+}
+
 /** 문항 하나짜리 정의를 돌려주는 fetch 스텁. 진행 화면 분기에서만 쓴다 */
-function stubDefinitionFetch() {
+function stubDefinitionFetch(item: unknown = VOICE_ITEM) {
   vi.stubGlobal(
     'fetch',
     vi.fn(async () => ({
@@ -20,19 +44,18 @@ function stubDefinitionFetch() {
         scoreVersion: 'sv-0.3',
         dialect: 'GYEONGNAM',
         estimatedDurationSec: 180,
-        items: [
-          {
-            itemId: 'item-1',
-            seq: 1,
-            type: 'VOICE',
-            prompt: '어서 오이소',
-            maxDurationMs: 10_000,
-            guideF0: { unit: 'semitone', frameIntervalMs: 10, values: [0, 1] },
-          },
-        ],
+        items: [item],
       }),
     })),
   )
+}
+
+/** 어휘 문항을 한 칸 민다 — 보기를 고르고 [다음]으로 확정 */
+async function answerVocabulary() {
+  fireEvent.click(await screen.findByRole('radio', { name: '보기1' }))
+  fireEvent.click(screen.getByRole('button', { name: '다음' }))
+  // 제출은 비동기다(브라우저 단독 통로도 Promise) — 스냅샷이 쓰이기까지 microtask를 비운다
+  await act(async () => {})
 }
 
 /**
@@ -95,24 +118,22 @@ describe('App — 문항 진행 화면 진입 쿼리 (KAN-100: 네이티브가 �
     setSearch(
       `?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0&screen=test&testVersion=gn-2026.08.1&sessionId=sess-1`,
     )
-    stubDefinitionFetch()
+    stubDefinitionFetch(VOCAB_ITEM)
     const stored = stubLocalStorage()
 
     render(<App />)
-    // 브리지가 없는 환경이라 음성 문항은 개발용 제출 버튼으로 진행한다.
-    // 문항 문구가 아니라 버튼을 기다리는 이유: 정의 로딩과 브리지 판정은 서로 다른 커밋이다
-    fireEvent.click(await screen.findByRole('button', { name: '제출 (개발용)' }))
+    await answerVocabulary()
 
     expect([...stored.keys()]).toEqual([snapshotKey('sess-1')])
   })
 
   it('sessionId가 없으면 세션 없는 키로 떨어진다 (KAN-9 결선 전 과도기)', async () => {
     setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0&screen=test&testVersion=gn-2026.08.1`)
-    stubDefinitionFetch()
+    stubDefinitionFetch(VOCAB_ITEM)
     const stored = stubLocalStorage()
 
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: '제출 (개발용)' }))
+    await answerVocabulary()
 
     expect([...stored.keys()]).toEqual([snapshotKey()])
   })

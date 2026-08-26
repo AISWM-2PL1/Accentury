@@ -25,6 +25,24 @@ npm test           # vitest
 npm run build      # tsc --noEmit + vite build
 ```
 
+### 브라우저 단독 녹음 확인 (KAN-56)
+
+브리지가 없는 브라우저에서는 음성 문항이 웹 녹음 패널로 열린다([녹음] → [정지] → [재녹음]/[다음]).
+[다음]이 실제로 서버에 올라가려면 세션 토큰이 필요한데, 웹 단독 세션(KAN-31)이 붙기 전까지는
+개발자 콘솔에서 직접 심는다 — **DEV 빌드에서만 읽는 값이다.**
+
+```js
+// POST /v0/sessions 응답의 sessionToken
+localStorage.setItem('accentury.devSessionToken', '<token>')
+```
+
+토큰을 URL 쿼리로 넘기지 않는 것이 규칙이다: 히스토리·액세스 로그·Referer에 남는다.
+
+그런 다음 `http://localhost:5173/?bridge=1&screen=test&testVersion=gn-2026.08.1&sessionId=<sessionId>`로
+연다. 마이크 권한은 브라우저가 직접 묻고, `localhost`는 보안 컨텍스트라 `getUserMedia`가 동작한다
+(에뮬레이터의 `http://10.0.2.2:5173`은 보안 컨텍스트가 아니라 마이크를 열 수 없다 — 앱에서는
+네이티브 녹음 화면이 그 자리를 맡으므로 문제가 되지 않는다).
+
 ## 배포 (미확정)
 
 산출물 `dist/` → CloudFront 원격 전용 서빙. 배포 주체·도메인은 미확정(webview-layer.md §10) — 확정 전까지 release 빌드의 `WEB_URL`은 placeholder다.

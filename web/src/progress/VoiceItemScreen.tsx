@@ -1,17 +1,26 @@
 /**
- * 음성 문항 화면 (KAN-100 Stage 2).
+ * 음성 문항 화면 (KAN-100 Stage 2, KAN-56 Stage 3에서 브라우저 경로 추가).
  *
- * 이 화면 자체는 녹음을 하지 않는다 — 마이크를 잡고 파형을 그리는 건 네이티브 녹음 화면(KAN-87)이고,
- * 여기가 하는 일은 "이 문항으로 넘어가라"고 브리지에 알린 뒤 결과가 돌아올 때까지 자리를 지키는 것뿐이다.
- * 결과 수신은 화면 전체(TestFlowScreen)가 받는다 — 문항마다 수신자를 갈아끼우면 전환 도중
- * 결과가 들어왔을 때 받을 사람이 없는 순간이 생긴다.
+ * 이 화면은 녹음 방법을 둘 중 하나로 **고른다**. 앱 안(브리지 있음)에서는 마이크를 잡고 파형을
+ * 그리는 것이 네이티브 녹음 화면(KAN-87)이라, 여기가 하는 일은 "이 문항으로 넘어가라"고 브리지에
+ * 알린 뒤 결과가 돌아올 때까지 자리를 지키는 것뿐이다 — 결과 수신은 화면 전체(TestFlowScreen)가
+ * 받는다(문항마다 수신자를 갈아끼우면 전환 도중 결과가 들어왔을 때 받을 사람이 없는 순간이 생긴다).
+ *
+ * 브리지가 없으면 브라우저가 직접 녹음한다 ([WebVoiceRecorder]). **이제 개발용 통로가 아니다** —
+ * 앱 없이 웹만으로 응시하는 정식 경로(KAN-56·KAN-31)이고, 옛 [제출 (개발용)] 버튼이 있던 자리를
+ * 그대로 물려받았다. 두 경로가 공유하는 것은 위쪽 대사 카드다: 사용자가 읽을 문장은 녹음 주체와
+ * 무관하고, 카드가 같은 규격으로 남아야 어휘 문항과 번갈아 나올 때 화면이 들썩이지 않는다.
  */
 
 import { useEffect, useRef, useState } from 'react'
+import type { CaptureFactory, Recording } from '../audio'
+import type { UploadAccepted } from '../audio/uploadRecording'
 import { startVoiceItem } from '../bridge/bridge'
+import type { ItemResult } from '../bridge/itemResult'
 import { Button, StatusBlock } from '../ui'
 import { TYPE_BADGE } from './itemBadge'
 import type { VoiceItem } from './testDefinition'
+import { WebVoiceRecorder } from './WebVoiceRecorder'
 
 /*
  * 브리지 판정 전후로 나뉘지 않는 단일 대기 문구 (KAN-146).
@@ -27,11 +36,23 @@ export interface VoiceItemScreenProps {
   /** 진행 표기용 1-기반 순번. 네이티브 녹음 화면이 "3/10"을 그리는 데 쓴다 */
   itemNumber: number
   totalItems: number
-  /** 브리지가 없는 환경(브라우저 단독 개발)에서만 쓰는 임시 제출 통로 */
-  onDevSubmitted: () => void
+  /** 브리지가 없는 환경(브라우저 단독)의 녹음 업로드 결선 */
+  webRecording: {
+    upload: (itemId: string, recording: Recording, attemptId: string) => Promise<UploadAccepted>
+    /** 주입용 캡처 (테스트용) */
+    capture?: CaptureFactory
+  }
+  /** 브라우저 녹음이 접수됐다. 브리지 경로의 `onItemResult`와 같은 모양이다 */
+  onWebUploaded: (result: ItemResult) => void
 }
 
-export function VoiceItemScreen({ item, itemNumber, totalItems, onDevSubmitted }: VoiceItemScreenProps) {
+export function VoiceItemScreen({
+  item,
+  itemNumber,
+  totalItems,
+  webRecording,
+  onWebUploaded,
+}: VoiceItemScreenProps) {
   /*
    * 브리지 호출 결과. `null`은 아직 부르기 전이라는 뜻이다 — 호출은 effect에서 일어나므로
    * 첫 렌더에는 결과가 없다. `null`과 `true`는 화면상 같은 대기 문구를 쓰지만 상태로는 계속 구분한다:
@@ -78,17 +99,16 @@ export function VoiceItemScreen({ item, itemNumber, totalItems, onDevSubmitted }
       </div>
       <div className="item-screen__footer">
         {bridgeAccepted === false ? (
-          <>
-            {/*
-              브리지가 없는 = 브라우저 단독 실행. 에뮬레이터 Chrome으로 진행 화면을 확인하는
-              검증 경로를 살려 두려고 개발용 제출 버튼을 남긴다. 앱에서는 이 분기에 오지 않는다.
-            */}
-            <StatusBlock
-              tone="waiting"
-              message="녹음 화면을 열 수 없어요 (앱 밖에서 실행 중)"
-              action={<Button onClick={onDevSubmitted}>제출 (개발용)</Button>}
-            />
-          </>
+          /*
+            브리지가 없는 = 브라우저 단독 실행. 브라우저가 직접 녹음해 서버로 올린다 (KAN-56 Stage 3).
+            앱에서는 이 분기에 오지 않는다 — 네이티브 녹음 화면이 이 WebView 위를 덮기 때문이다.
+          */
+          <WebVoiceRecorder
+            item={item}
+            upload={(recording, attemptId) => webRecording.upload(item.itemId, recording, attemptId)}
+            onUploaded={onWebUploaded}
+            capture={webRecording.capture}
+          />
         ) : (
           <>
             {/*

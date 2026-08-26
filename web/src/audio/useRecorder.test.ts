@@ -1,31 +1,13 @@
 import { act, renderHook } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { CaptureError, type Capture, type CaptureFactory } from './capture'
+import { CaptureError, type CaptureFactory } from './capture'
+// 캡처 대역은 화면 테스트(WebVoiceRecorder·TestFlowScreen)와 공유한다 — 대역이 갈라지면
+// "훅은 통과하는데 화면만 깨진다"가 대역 차이인지 코드 차이인지 알 수 없게 된다.
+import { createFakeCapture, FAKE_SAMPLE_RATE } from './testing/fakeCapture'
 import { useRecorder } from './useRecorder'
 
-const RATE = 48000
+const RATE = FAKE_SAMPLE_RATE
 const MAX_MS = 10_000
-
-/**
- * 브라우저 없이 상태 기계를 돌리기 위한 가짜 캡처. 실제 워클릿이 하는 일 — 조각을 던지고
- * 정지 요청에 응하는 것 — 두 가지만 흉내 낸다.
- */
-function fakeCapture(sampleRate = RATE) {
-  let deliver: ((chunk: Float32Array) => void) | null = null
-  const stop = vi.fn(async (): Promise<void> => {})
-  const factory: CaptureFactory = async (onChunk) => {
-    deliver = onChunk
-    return { sampleRate, stop } satisfies Capture
-  }
-  return {
-    factory,
-    stop,
-    emit(chunk: Float32Array) {
-      if (deliver === null) throw new Error('캡처가 아직 시작되지 않았다')
-      deliver(chunk)
-    },
-  }
-}
 
 /** 갱신 간격(100ms) 판정을 결정적으로 만들기 위한 조종 가능한 시계 */
 function fakeClock() {
@@ -39,7 +21,7 @@ function setup(capture: CaptureFactory, now: () => number = () => 0) {
 
 describe('useRecorder', () => {
   it('start하면 recording으로 들어간다', async () => {
-    const capture = fakeCapture()
+    const capture = createFakeCapture()
     const { result } = setup(capture.factory)
 
     expect(result.current.state).toEqual({ phase: 'idle' })
@@ -51,7 +33,7 @@ describe('useRecorder', () => {
   })
 
   it('조각이 들어올 때마다 경과 시간이 샘플 수 기준으로 늘어난다', async () => {
-    const capture = fakeCapture()
+    const capture = createFakeCapture()
     const clock = fakeClock()
     const { result } = setup(capture.factory, clock.now)
 
@@ -81,7 +63,7 @@ describe('useRecorder', () => {
   })
 
   it('최대 길이에 닿으면 스스로 멈추고 검토 단계로 넘어간다 (FR-RC-02)', async () => {
-    const capture = fakeCapture()
+    const capture = createFakeCapture()
     const { result } = setup(capture.factory)
 
     await act(async () => {
@@ -100,7 +82,7 @@ describe('useRecorder', () => {
   })
 
   it('사용자가 멈추면 그때까지 담긴 녹음을 들고 검토 단계로 간다', async () => {
-    const capture = fakeCapture()
+    const capture = createFakeCapture()
     const { result } = setup(capture.factory)
 
     await act(async () => {
@@ -124,7 +106,7 @@ describe('useRecorder', () => {
   })
 
   it('정지를 겹쳐 불러도 캡처는 한 번만 닫힌다', async () => {
-    const capture = fakeCapture()
+    const capture = createFakeCapture()
     const { result } = setup(capture.factory)
 
     await act(async () => {
@@ -139,7 +121,7 @@ describe('useRecorder', () => {
   })
 
   it('[재녹음]은 녹음을 버리고 처음으로 되돌린다', async () => {
-    const capture = fakeCapture()
+    const capture = createFakeCapture()
     const { result } = setup(capture.factory)
 
     await act(async () => {
@@ -197,7 +179,7 @@ describe('useRecorder', () => {
   })
 
   it('녹음 중 화면을 떠나면 마이크를 놓는다 (FR-AD-04)', async () => {
-    const capture = fakeCapture()
+    const capture = createFakeCapture()
     const { result, unmount } = setup(capture.factory)
 
     await act(async () => {
@@ -209,7 +191,7 @@ describe('useRecorder', () => {
   })
 
   it('녹음 중이 아닐 때의 stop은 아무 일도 하지 않는다', async () => {
-    const capture = fakeCapture()
+    const capture = createFakeCapture()
     const { result } = setup(capture.factory)
 
     await act(async () => {
@@ -221,7 +203,7 @@ describe('useRecorder', () => {
   })
 
   it('시작하는 도중에는 두 번째 start가 무시된다', async () => {
-    const capture = fakeCapture()
+    const capture = createFakeCapture()
     const { result } = setup(capture.factory)
 
     await act(async () => {
