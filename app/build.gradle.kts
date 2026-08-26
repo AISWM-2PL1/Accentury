@@ -34,9 +34,12 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // 인트로 웹 원격 로드 주소 (webview-layer.md §3 원격 전용).
-        // CloudFront 배포 확정 시 실제 도메인으로 교체한다 (§10 열린 질문 1).
-        buildConfigField("String", "WEB_URL", "\"https://web.accentury.example\"")
+        // 인트로 웹 원격 로드 주소 (webview-layer.md §3 원격 전용). release가 이 값을 쓴다.
+        // prod 도메인이다 - 화면과 API가 같은 출처(CloudFront 단일 출처, KAN-126)라 경로 없이
+        // 루트다. 웹 번들은 Release 병합 시 KAN-127 파이프라인이 이 도메인의 버킷에 올린다.
+        // staging(staging.accentury.app)을 보는 앱 빌드는 아직 없다 - 필요해지면 빌드 타입이나
+        // 플레이버로 추가한다.
+        buildConfigField("String", "WEB_URL", "\"https://accentury.app\"")
     }
 
     buildTypes {

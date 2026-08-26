@@ -15,3 +15,13 @@ output "web_bucket" {
   value       = aws_s3_bucket.web.bucket
   description = "web 번들과 등급 이미지 업로드 대상 (KAN-127)"
 }
+
+output "web_bucket_arn" {
+  value       = aws_s3_bucket.web.arn
+  description = "배포 역할의 업로드 권한 범위 (KAN-127, modules/deploy)"
+}
+
+output "distribution_arn" {
+  value       = aws_cloudfront_distribution.this.arn
+  description = "배포 역할의 무효화 권한 범위 (KAN-127, modules/deploy)"
+}

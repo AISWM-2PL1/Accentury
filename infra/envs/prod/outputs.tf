@@ -30,3 +30,8 @@ output "rds_master_user_secret_arn" {
   value       = module.data.master_user_secret_arn
   description = "RDS 관리형 마스터 시크릿 (7일 자동 회전). 값을 SSM에 복사하지 않는다 - backend가 SPRING_DATASOURCE_URL의 secretsManagerSecretId로 연결 시점에 직접 읽는다 (KAN-129). 운영자가 psql로 붙을 때만 get-secret-value로 읽는다."
 }
+
+output "github_deploy_role_arn" {
+  value       = module.deploy.github_deploy_role_arn
+  description = "GitHub environment 변수 AWS_DEPLOY_ROLE_ARN에 넣는다 (KAN-127, README 'GitHub 설정')"
+}

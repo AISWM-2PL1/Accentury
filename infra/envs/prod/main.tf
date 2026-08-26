@@ -96,3 +96,13 @@ module "edge" {
   alb_certificate_arn = data.aws_acm_certificate.alb.arn
   zone_id             = data.aws_route53_zone.this.zone_id
 }
+
+# 배포 파이프라인 역할 (KAN-127). GitHub Actions가 OIDC로 맡는다. 공급자는 bootstrap 소유.
+module "deploy" {
+  source = "../../modules/deploy"
+
+  env                         = var.env
+  github_repository           = var.github_repository
+  web_bucket_arn              = module.edge.web_bucket_arn
+  cloudfront_distribution_arn = module.edge.distribution_arn
+}

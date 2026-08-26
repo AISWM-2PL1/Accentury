@@ -8,10 +8,13 @@
  */
 
 /* Jua — 제목·대사·등급용. 네이티브가 res/font/jua_regular.ttf로 쓰는 것과 같은 폰트다.
-   CDN이 아니라 자산으로 실어 오프라인·느린 망에서도 글꼴이 바뀌지 않게 한다. */
+   CDN이 아니라 자산으로 실어 오프라인·느린 망에서도 글꼴이 바뀌지 않게 한다.
+   public/이 아니라 src/assets에 두는 이유: 상대 경로 import는 Vite가 해시를 붙여 내보내고,
+   배포 파이프라인(KAN-127)은 index.html 밖의 모든 파일을 immutable 장기 캐시로 올린다.
+   public/의 파일은 이름이 고정이라 그 규칙 아래서는 교체해도 브라우저에 영영 안 닿는다. */
 @font-face {
   font-family: 'Jua';
-  src: url('/fonts/Jua-Regular.woff2') format('woff2');
+  src: url('./assets/fonts/Jua-Regular.woff2') format('woff2');
   font-weight: 400;
   font-style: normal;
   /* swap — 폰트를 기다리며 글자를 감추지 않는다. 대사가 안 보이면 문항을 못 읽는다 */
