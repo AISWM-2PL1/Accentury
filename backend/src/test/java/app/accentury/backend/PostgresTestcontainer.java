@@ -48,4 +48,28 @@ public class PostgresTestcontainer {
     PostgreSQLContainer postgresContainer() {
         return POSTGRES;
     }
+
+    // 아래 접속 정보는 @ServiceConnection을 거치지 않고 다른 드라이버로 붙는 테스트용이다 -
+    // 배포 프로파일 기동 검증(KAN-129)이 AWS Advanced JDBC Wrapper URL을 직접 조립한다.
+    // @ServiceConnection은 URL과 드라이버를 pgjdbc로 덮어써서 wrapper 경로를 검증할 수 없다.
+
+    public static String host() {
+        return POSTGRES.getHost();
+    }
+
+    public static int port() {
+        return POSTGRES.getMappedPort(5432);
+    }
+
+    public static String database() {
+        return POSTGRES.getDatabaseName();
+    }
+
+    public static String username() {
+        return POSTGRES.getUsername();
+    }
+
+    public static String password() {
+        return POSTGRES.getPassword();
+    }
 }

@@ -21,6 +21,17 @@
 # 도는 잔여물 정리가 형제 워커가 처리 중인 오디오를 지운다. --workers 1은 ai/Dockerfile이
 # 고정한다. 같은 내용을 infra/README.md "설계 결정 기록"에도 적어 뒀다.
 
+# 네트워크 (KAN-129). ai는 internal 네트워크에만 붙는다 - 기본 게이트웨이가 없어 인터넷도, 인스턴스
+# 메타데이터(169.254.169.254)도 닿지 않는다. backend가 Secrets Manager를 읽으려고 IMDSv2 hop limit을
+# 2로 올렸는데(compute/main.tf), 그 값은 bridge 안 컨테이너 전부에 인스턴스 프로파일 자격 증명을
+# 열어 준다. 신뢰하지 않는 오디오를 처리하는 ai가 뚫리면 RDS 시크릿과 관리자 토큰까지 읽는 자격
+# 증명이 새는 것이라, ai는 그 경로 자체를 끊는다 (Codex P1). backend는 두 네트워크에 다 붙어
+# ai(http://ai:8000, 내장 DNS)와 AWS API를 모두 본다. 실모델(KAN-22)이 런타임에 밖을 봐야 하면
+# 그때 필요한 목적지만 여는 쪽으로 다시 판단한다 - 이미지 빌드 시점의 다운로드는 영향이 없다.
+networks:
+  backend_ai:
+    internal: true
+
 # 로그 로테이션 - 호스트 디스크(20GB)가 컨테이너 로그로 차지 않게 서비스당 50MB로 막는다.
 x-logging: &log
   driver: json-file
@@ -36,6 +47,7 @@ services:
     restart: unless-stopped
     # 포트를 발행하지 않는다 - backend만 compose 내부 네트워크(http://ai:8000)로 호출한다 (AC).
     # 디버깅으로 직접 찔러 봐야 하면 SSM 세션 안에서 `docker compose exec backend ...`를 쓴다.
+    networks: [backend_ai]
     env_file:
       - path: /run/accentury/ai.env
         required: false
@@ -55,6 +67,7 @@ services:
   backend:
     image: ${ECR_REGISTRY}/accentury/backend:${IMAGE_TAG}
     restart: unless-stopped
+    networks: [default, backend_ai]
     depends_on:
       ai:
         condition: service_healthy

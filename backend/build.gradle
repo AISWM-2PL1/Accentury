@@ -29,6 +29,14 @@ dependencies {
 	// Flyway 10부터 PostgreSQL 지원이 flyway-core 밖의 별도 모듈이다 - 빠지면 기동 시
 	// "Unsupported Database: PostgreSQL"로 죽는다.
 	runtimeOnly 'org.flywaydb:flyway-database-postgresql'
+	// 배포(deploy 프로파일)에서 RDS 자격 증명을 Secrets Manager에서 연결 시점에 읽는다 (KAN-129).
+	// RDS 관리형 마스터 시크릿은 7일마다 회전되는데, 회전 뒤 인증 실패가 나면 awsSecretsManager
+	// 플러그인이 시크릿을 다시 받아 재접속하므로 앱은 회전을 모른다. 로컬과 테스트는 이 드라이버를
+	// 거치지 않는다 (application.yml 기본은 pgjdbc 직접). Java 17+ 빌드는 Boot가 주는 Jackson 3
+	// (tools.jackson)으로 시크릿 JSON을 읽는다 - 별도 jackson-databind 2.x가 필요 없다.
+	runtimeOnly 'software.amazon.jdbc:aws-advanced-jdbc-wrapper:4.4.0'
+	// wrapper 4.4.0이 빌드된 SDK 버전과 맞춘다 (POM optional 의존성이라 직접 적어야 한다).
+	runtimeOnly 'software.amazon.awssdk:secretsmanager:2.46.10'
 	annotationProcessor 'org.projectlombok:lombok'
 	testImplementation 'org.springframework.boot:spring-boot-starter-actuator-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-data-jpa-test'
