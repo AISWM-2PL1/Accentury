@@ -424,6 +424,17 @@
   white-space: nowrap;
 }
 
+/*
+ * 대사 카드와 하단 조작부 사이의 본문 자리 (KAN-56 Stage 5). 지금은 억양 곡선 카드 하나만
+ * 들어간다. 자리를 따로 둔 이유는 아래 .item-screen__footer의 `margin-top: auto`다 — 곡선을
+ * 하단 자리에 같이 넣으면 그 auto가 곡선까지 바닥으로 밀어 대사 카드와 곡선 사이가 벌어진다.
+ */
+.item-screen__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
 /* 문항 화면의 주버튼 자리. 카드가 길어져도 항상 바닥에 붙는다 */
 .item-screen__footer {
   margin-top: auto;
@@ -685,4 +696,62 @@ a.btn {
 
 .record-actions > .btn {
   flex: 1;
+}
+
+/* ── 억양 곡선 카드 (KAN-56 Stage 5) ── */
+
+/*
+ * 가이드·내 억양 두 레인을 담는 카드. 앱 녹음 화면의 CurveCard와 같은 구성이다 — 같은 규격을
+ * 지키는 이유는 대사 카드와 같다: 문항이 두 런타임을 오가는데 카드가 다르게 생기면 사용자가
+ * 곡선이 무엇을 뜻하는지 두 번 배워야 한다.
+ */
+.curve-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--color-curve-lane-border);
+  border-radius: var(--radius-xl);
+  background: var(--color-card);
+}
+
+.curve-card__title {
+  color: var(--color-foreground);
+}
+
+/*
+ * 레인 하나. 높이를 고정하는 이유는 곡선의 y가 0..1 비율이라서다 — 높이가 내용에 따라 변하면
+ * 같은 semitone 등락이 프레임마다 다른 화면 거리로 그려진다.
+ */
+.curve-lane {
+  position: relative;
+  height: var(--curve-lane-height);
+  border: 1px solid var(--color-curve-lane-border);
+  border-radius: var(--radius-md);
+  background: var(--color-curve-lane-surface);
+  overflow: hidden;
+}
+
+/* 라벨은 레인 좌상단에 얹는다(시안). 곡선 그리기 영역 위쪽 여백 안이라 겹치지 않는다 */
+.curve-lane__label {
+  position: absolute;
+  top: var(--space-1);
+  left: var(--space-3);
+  color: var(--color-muted-foreground);
+}
+
+/*
+ * 그리기 영역. 레인 높이에서 라벨 자리(위 16px)와 아래 여백(4px)을 뺀 만큼이다 — 앱의
+ * `padding(top = Spacing.x4, bottom = Spacing.x1)`과 같은 배분이고, 아래 여백은 곡선이
+ * 테두리에 닿지 않게 한다.
+ *
+ * **CurveLane.tsx의 DRAW_HEIGHT(100)가 이 값의 짝이다.** 좌표를 픽셀로 계산하는 쪽은
+ * 스크립트라 CSS 변수를 못 읽고, 렌더마다 실측하면 곡선 높이가 레이아웃에 되먹임된다.
+ * 토큰을 바꾸면 저쪽 상수도 같이 바꿔야 한다.
+ */
+.curve-lane__canvas {
+  display: block;
+  width: 100%;
+  height: calc(var(--curve-lane-height) - var(--space-4) - var(--space-1));
+  margin-top: var(--space-4);
 }

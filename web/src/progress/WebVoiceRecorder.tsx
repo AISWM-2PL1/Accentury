@@ -22,11 +22,20 @@
  * (`quality.ts` 헤더).
  */
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { useRecorder, type CaptureFactory, type QualityStatus, type Recording } from '../audio'
+import { PitchTracker, type PitchFrame } from '../audio/pitchTracker'
 import { UploadError, type UploadAccepted } from '../audio/uploadRecording'
 import type { ItemResult } from '../bridge/itemResult'
 import { newIdempotencyKey } from '../net/idempotencyKey'
+import { CurveCard } from '../recording/CurveCard'
+import { guideCurveDisplayPoints } from '../recording/guideCurve'
+import {
+  fillShortGaps,
+  reviewWindowMs,
+  userCurveDisplayPoints,
+  userCurveWindowMs,
+} from '../recording/userCurve'
 import { Button, StatusBlock } from '../ui'
 import type { VoiceItem } from './testDefinition'
 
@@ -49,6 +58,12 @@ type UploadState =
  * 품질 판정별 안내. 전부 **다음 행동**을 말한다 — "실패했습니다"는 사용자가 할 일을 알려주지
  * 않아서 같은 실패를 반복하게 만든다 (ux-ui.md 비난 없는 카피).
  */
+/**
+ * 곡선을 다시 그리는 최소 간격 (ms). 약 30fps — 사람 눈이 곡선의 움직임을 이어진 것으로
+ * 읽는 하한이면서, 조각 하나가 만든 프레임 여러 개를 한 번에 그리게 묶는 값이다.
+ */
+const CURVE_UPDATE_INTERVAL_MS = 33
+
 const QUALITY_MESSAGE: Record<Exclude<QualityStatus, 'NORMAL'>, string> = {
   TOO_SHORT: '녹음이 너무 짧아요. 1초 이상 읽어 주세요',
   TOO_QUIET: '목소리가 잘 들리지 않아요. 조금 더 크게 읽어 주세요',
@@ -56,8 +71,87 @@ const QUALITY_MESSAGE: Record<Exclude<QualityStatus, 'NORMAL'>, string> = {
 }
 
 export function WebVoiceRecorder({ item, upload, onUploaded, capture }: WebVoiceRecorderProps) {
-  const { state, start, stop, discard } = useRecorder({ maxDurationMs: item.maxDurationMs, capture })
   const [uploadState, setUploadState] = useState<UploadState>({ kind: 'idle' })
+
+  /*
+   * 이 녹음의 F0 분석기. 리샘플러·프레이머가 조각 사이에 걸친 이력을 들고 있어 **녹음 1회당
+   * 하나**이고, [녹음]에서 새로 만들며 [재녹음]·업로드 뒤에 놓는다 (FR-AD-04 — 오디오를 필요
+   * 이상으로 들고 있지 않는다).
+   *
+   * 캡처 레이트를 만들 때 알 수 없어(권한 프롬프트가 끝나야 정해진다) 첫 조각이 올 때 만든다.
+   */
+  const trackerRef = useRef<PitchTracker | null>(null)
+  const framesRef = useRef<PitchFrame[]>([])
+  /*
+   * 곡선 갱신용 리렌더 트리거. 프레임은 ref에 쌓고 이 카운터만 올린다 — 프레임 배열을 state로
+   * 두면 조각마다 배열 하나가 새로 생기고, 그걸 막으려 mutable하게 쓰면 React가 변화를 못 본다.
+   *
+   * 값은 읽지 않고 setter만 쓴다: "무엇이 바뀌었는지"는 ref가 알고, state는 "다시 그려라"는
+   * 신호만 나른다.
+   */
+  const [, bumpCurve] = useState(0)
+  const lastCurveUpdateRef = useRef(0)
+
+  const handleSamples = useCallback((chunk: Float32Array, sampleRate: number) => {
+    const tracker = (trackerRef.current ??= new PitchTracker(sampleRate))
+    if (tracker.push(chunk).length === 0) return
+    framesRef.current = tracker.frames
+
+    /*
+     * 갱신을 33ms(≈30fps)로 묶는다. 조각은 48kHz에서 약 85ms마다 오지만 조각 하나가 프레임
+     * 3개를 만들 수 있고, 그때마다 그리면 한 화면에서 곡선이 세 번 다시 그려진다 — 사람 눈에는
+     * 한 번과 구분되지 않는데 비용만 세 배다. `useRecorder`가 경과 시간을 100ms로 묶는 것과
+     * 같은 판정이고, 곡선은 움직임이 보여야 해서 그보다 촘촘하다.
+     */
+    const now = performance.now()
+    if (now - lastCurveUpdateRef.current < CURVE_UPDATE_INTERVAL_MS) return
+    lastCurveUpdateRef.current = now
+    bumpCurve((version) => version + 1)
+  }, [])
+
+  const { state, start, stop, discard } = useRecorder({
+    maxDurationMs: item.maxDurationMs,
+    capture,
+    onSamples: handleSamples,
+  })
+
+  /** 곡선 상태를 놓는다. 새 녹음을 시작할 때와 이 녹음을 버릴 때 둘 다 여기를 지난다 */
+  const resetCurve = useCallback(() => {
+    trackerRef.current = null
+    framesRef.current = []
+    lastCurveUpdateRef.current = 0
+    bumpCurve((version) => version + 1)
+  }, [])
+
+  /*
+   * 가이드 레인은 정의가 바뀌지 않는 한 그대로다. 단위가 semitone이 아니면(구버전 정의나
+   * 예상 못한 스키마) 빈 레인으로 둔다 — 다른 단위를 semitone 축에 그리면 조용히 틀린 그림이
+   * 된다. 앱 `RecordingScreen`의 판정과 같다.
+   */
+  const guidePoints = useMemo(
+    () => (item.guideF0.unit === 'semitone' ? guideCurveDisplayPoints(item.guideF0.values) : []),
+    [item.guideF0],
+  )
+  /** 사용자 레인이 담을 시간. 가이드 길이의 2배다 (`userCurve.ts`) */
+  const liveWindowMs = useMemo(
+    () => userCurveWindowMs(item.guideF0.frameIntervalMs, item.guideF0.values.length),
+    [item.guideF0],
+  )
+
+  /*
+   * Review에서만 짧은 무성 구멍을 메우고 창을 녹음 전체 길이로 늘린다. 녹음 중에는 곡선이
+   * 인과적이어야 해서(뒤 프레임을 보면 이미 그린 과거가 다시 그려진다) 구멍을 앞 값으로
+   * 유지하는 수밖에 없고, 창도 최신이 오른쪽 끝에 붙도록 미끄러져야 한다 (`pitch-curve.md` §4).
+   */
+  const reviewing = state.phase === 'review'
+  const curveFrames = reviewing ? fillShortGaps(framesRef.current) : framesRef.current
+  const windowMs = reviewing ? reviewWindowMs(curveFrames, liveWindowMs) : liveWindowMs
+  const curveCard = (
+    <CurveCard
+      guidePoints={guidePoints}
+      userSegments={userCurveDisplayPoints(curveFrames, windowMs)}
+    />
+  )
 
   /*
    * 이 녹음의 시도 식별자. [다음]을 처음 누를 때 만들고 재시도에서 그대로 다시 쓴다 (§5.1·§5.2).
@@ -75,12 +169,19 @@ export function WebVoiceRecorder({ item, upload, onUploaded, capture }: WebVoice
    */
   const uploadingRef = useRef(false)
 
-  /** [재녹음] — 녹음도 시도 식별자도 버리고 처음으로 돌아간다. 서버에는 아무 일도 없었다 */
+  /** [재녹음] — 녹음도 곡선도 시도 식별자도 버리고 처음으로 돌아간다. 서버에는 아무 일도 없었다 */
   const retake = useCallback(() => {
     attemptIdRef.current = null
     setUploadState({ kind: 'idle' })
+    resetCurve()
     discard()
-  }, [discard])
+  }, [discard, resetCurve])
+
+  /** [녹음] — 앞 녹음의 곡선을 놓고 새로 시작한다. 분석기는 첫 조각에서 캡처 레이트로 만들어진다 */
+  const beginRecording = useCallback(() => {
+    resetCurve()
+    void start()
+  }, [resetCurve, start])
 
   const send = useCallback(
     async (recording: Recording) => {
@@ -101,6 +202,9 @@ export function WebVoiceRecorder({ item, upload, onUploaded, capture }: WebVoice
          * 곧바로 따라오고 훅의 cleanup이 버퍼까지 놓는다.
          */
         attemptIdRef.current = null
+        // 분석기도 여기서 놓는다 - 접수된 녹음의 F0 프레임을 언마운트까지 들고 있을 이유가 없다.
+        trackerRef.current = null
+        framesRef.current = []
         onUploaded({
           itemId: item.itemId,
           attemptId,
@@ -123,69 +227,89 @@ export function WebVoiceRecorder({ item, upload, onUploaded, capture }: WebVoice
     [item.itemId, onUploaded, upload],
   )
 
-  if (state.phase === 'error') {
-    return (
-      <StatusBlock
-        tone="error"
-        message={state.message}
-        action={
-          <Button onClick={retake} style={{ width: '100%' }}>
-            다시 시도
+  /*
+   * 조작부는 화면 바닥(.item-screen__footer)에, 곡선 카드는 본문(.item-screen__body)에 놓는다.
+   * 두 자리를 한 컴포넌트가 채우므로 조각(fragment)으로 돌려주고, 호출자(VoiceItemScreen)가
+   * 이걸 대사 카드 아래에 그대로 편다 — 곡선을 조작부와 같은 자리에 두면 버튼 위에 120px짜리
+   * 카드가 두 개 얹혀 [정지]가 화면 밖으로 밀린다.
+   */
+  const controls = () => {
+    if (state.phase === 'error') {
+      return (
+        <StatusBlock
+          tone="error"
+          message={state.message}
+          action={
+            <Button onClick={retake} style={{ width: '100%' }}>
+              다시 시도
+            </Button>
+          }
+        />
+      )
+    }
+
+    if (state.phase === 'review') {
+      return (
+        <ReviewPanel
+          recording={state.recording}
+          uploadState={uploadState}
+          onRetake={retake}
+          onSend={() => void send(state.recording)}
+        />
+      )
+    }
+
+    if (state.phase === 'recording') {
+      const ratio = Math.min(1, state.elapsedMs / item.maxDurationMs)
+      return (
+        <>
+          {/*
+            경과 시간은 벽시계가 아니라 담긴 샘플 수에서 온다 (RecordingBuffer.durationMs) —
+            사용자가 보는 숫자와 서버가 파일에서 재는 길이가 같아야 한다.
+            상한에 닿으면 훅이 스스로 멈추므로 [정지]를 못 눌러도 녹음이 잘리지 않는다 (FR-RC-02).
+          */}
+          <p className="type-label record-elapsed">
+            {(state.elapsedMs / 1000).toFixed(1)}초 / {Math.round(item.maxDurationMs / 1000)}초
+          </p>
+          <div className="record-meter" aria-hidden="true">
+            <div className="record-meter__fill" style={{ width: `${ratio * 100}%` }} />
+          </div>
+          <Button onClick={() => void stop()} style={{ width: '100%' }}>
+            정지
           </Button>
-        }
-      />
-    )
-  }
+        </>
+      )
+    }
 
-  if (state.phase === 'review') {
-    return (
-      <ReviewPanel
-        recording={state.recording}
-        uploadState={uploadState}
-        onRetake={retake}
-        onSend={() => void send(state.recording)}
-      />
-    )
-  }
+    if (state.phase === 'starting') {
+      // 권한 프롬프트·컨텍스트 생성 구간. 비활성 버튼을 남기는 이유는 자리를 지키기 위해서다 —
+      // 버튼이 사라졌다 나타나면 그 사이에 아래 내용이 위로 올라왔다 내려간다.
+      return (
+        <Button disabled style={{ width: '100%' }}>
+          준비 중…
+        </Button>
+      )
+    }
 
-  if (state.phase === 'recording') {
-    const ratio = Math.min(1, state.elapsedMs / item.maxDurationMs)
     return (
       <>
-        {/*
-          경과 시간은 벽시계가 아니라 담긴 샘플 수에서 온다 (RecordingBuffer.durationMs) —
-          사용자가 보는 숫자와 서버가 파일에서 재는 길이가 같아야 한다.
-          상한에 닿으면 훅이 스스로 멈추므로 [정지]를 못 눌러도 녹음이 잘리지 않는다 (FR-RC-02).
-        */}
-        <p className="type-label record-elapsed">
-          {(state.elapsedMs / 1000).toFixed(1)}초 / {Math.round(item.maxDurationMs / 1000)}초
-        </p>
-        <div className="record-meter" aria-hidden="true">
-          <div className="record-meter__fill" style={{ width: `${ratio * 100}%` }} />
-        </div>
-        <Button onClick={() => void stop()} style={{ width: '100%' }}>
-          정지
+        <p className="type-caption record-hint">버튼을 누르고 문장을 읽어 주세요</p>
+        <Button onClick={beginRecording} style={{ width: '100%' }}>
+          녹음
         </Button>
       </>
     )
   }
 
-  if (state.phase === 'starting') {
-    // 권한 프롬프트·컨텍스트 생성 구간. 비활성 버튼을 남기는 이유는 자리를 지키기 위해서다 —
-    // 버튼이 사라졌다 나타나면 그 사이에 아래 내용이 위로 올라왔다 내려간다.
-    return (
-      <Button disabled style={{ width: '100%' }}>
-        준비 중…
-      </Button>
-    )
-  }
-
   return (
     <>
-      <p className="type-caption record-hint">버튼을 누르고 문장을 읽어 주세요</p>
-      <Button onClick={() => void start()} style={{ width: '100%' }}>
-        녹음
-      </Button>
+      {/*
+        곡선 카드는 단계와 무관하게 늘 같은 자리에 있다. 녹음 전에는 가이드만 그려져 "이 억양을
+        따라 읽으면 된다"를 먼저 보여 주고, 녹음 중에 아래 레인이 자라며, Review에서 발화 전체가
+        남는다. 단계마다 넣었다 뺐다 하면 그때마다 아래 조작부가 120px씩 오르내린다.
+      */}
+      <div className="item-screen__body">{curveCard}</div>
+      <div className="item-screen__footer">{controls()}</div>
     </>
   )
 }

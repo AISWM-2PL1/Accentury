@@ -97,46 +97,48 @@ export function VoiceItemScreen({
         <h1 className="type-headline">{item.prompt}</h1>
         <p className="type-label prompt-card__sub">이 문장을 따라 읽어주세요</p>
       </div>
-      <div className="item-screen__footer">
-        {bridgeAccepted === false ? (
-          /*
-            브리지가 없는 = 브라우저 단독 실행. 브라우저가 직접 녹음해 서버로 올린다 (KAN-56 Stage 3).
-            앱에서는 이 분기에 오지 않는다 — 네이티브 녹음 화면이 이 WebView 위를 덮기 때문이다.
-          */
-          <WebVoiceRecorder
-            item={item}
-            upload={(recording, attemptId) => webRecording.upload(item.itemId, recording, attemptId)}
-            onUploaded={onWebUploaded}
-            capture={webRecording.capture}
-          />
-        ) : (
-          <>
-            {/*
-              호출 직전(`null`)과 호출이 받아들여진 뒤(`true`)가 같은 문구를 공유한다. 분기를 이렇게
-              뒤집어 둔 이유는 이 <p>가 두 상태에서 같은 위치의 같은 노드로 남아야 React가 교체하지 않고,
-              그래야 전환 도중 문구가 흔들리지 않기 때문이다.
-              네이티브 녹음 화면이 이 WebView 위를 덮으므로, 이 뷰가 실제로 보이는 건 전환 순간·
-              결과를 기다리는 복귀 직후·그리고 네이티브가 결과 없이 돌려보낸 뒤(PCM 없는 제출,
-              복원으로 대기 시도가 걷힌 경우)다.
-            */}
-            <StatusBlock tone="waiting" message={WAITING_MESSAGE} />
-            {bridgeAccepted === true && (
-              /*
-                네이티브가 결과 없이 돌려보낸 뒤의 유일한 재진입 통로. 네이티브는 돌려보냄을 웹에
-                알리지 않으므로(계약 최소 표면) 웹은 그것과 "결과 대기 중"을 구분할 수 없다 — 대신 이
-                버튼은 녹음 중엔 네이티브 화면에 가려 누를 수 없고, 눌리더라도 네이티브 중복 방어(Stage 3)가
-                무시하므로 항상 노출해도 안전하다. 이 버튼이 없으면 돌려보내진 사용자는 이 문항에서
-                빠져나올 수 없다.
-                [나가기] 이탈은 더 이상 없다 (KAN-147): 이탈 버튼은 걷어냈고, 업로드 확정 실패(재시도 2회
-                소진)는 네이티브가 스스로 녹음 화면을 다시 열어 이 버튼을 거치지 않는다.
-              */
-              <Button onClick={requestRecording} style={{ width: '100%' }}>
-                녹음 화면 다시 열기
-              </Button>
-            )}
-          </>
-        )}
-      </div>
+      {bridgeAccepted === false ? (
+        /*
+          브리지가 없는 = 브라우저 단독 실행. 브라우저가 직접 녹음해 서버로 올린다 (KAN-56 Stage 3).
+          앱에서는 이 분기에 오지 않는다 — 네이티브 녹음 화면이 이 WebView 위를 덮기 때문이다.
+
+          이 분기만 하단 자리(.item-screen__footer)를 감싸지 않는다: 녹음 패널은 억양 곡선 카드를
+          본문에, 조작부를 하단에 놓는 **두 자리짜리** 조각을 돌려주기 때문이다 (KAN-56 Stage 5).
+          곡선까지 하단에 밀어 넣으면 카드 두 개가 버튼 위에 쌓여 [정지]가 화면 밖으로 나간다.
+        */
+        <WebVoiceRecorder
+          item={item}
+          upload={(recording, attemptId) => webRecording.upload(item.itemId, recording, attemptId)}
+          onUploaded={onWebUploaded}
+          capture={webRecording.capture}
+        />
+      ) : (
+        <div className="item-screen__footer">
+          {/*
+            호출 직전(`null`)과 호출이 받아들여진 뒤(`true`)가 같은 문구를 공유한다. 분기를 이렇게
+            뒤집어 둔 이유는 이 <p>가 두 상태에서 같은 위치의 같은 노드로 남아야 React가 교체하지 않고,
+            그래야 전환 도중 문구가 흔들리지 않기 때문이다.
+            네이티브 녹음 화면이 이 WebView 위를 덮으므로, 이 뷰가 실제로 보이는 건 전환 순간·
+            결과를 기다리는 복귀 직후·그리고 네이티브가 결과 없이 돌려보낸 뒤(PCM 없는 제출,
+            복원으로 대기 시도가 걷힌 경우)다.
+          */}
+          <StatusBlock tone="waiting" message={WAITING_MESSAGE} />
+          {bridgeAccepted === true && (
+            /*
+              네이티브가 결과 없이 돌려보낸 뒤의 유일한 재진입 통로. 네이티브는 돌려보냄을 웹에
+              알리지 않으므로(계약 최소 표면) 웹은 그것과 "결과 대기 중"을 구분할 수 없다 — 대신 이
+              버튼은 녹음 중엔 네이티브 화면에 가려 누를 수 없고, 눌리더라도 네이티브 중복 방어(Stage 3)가
+              무시하므로 항상 노출해도 안전하다. 이 버튼이 없으면 돌려보내진 사용자는 이 문항에서
+              빠져나올 수 없다.
+              [나가기] 이탈은 더 이상 없다 (KAN-147): 이탈 버튼은 걷어냈고, 업로드 확정 실패(재시도 2회
+              소진)는 네이티브가 스스로 녹음 화면을 다시 열어 이 버튼을 거치지 않는다.
+            */
+            <Button onClick={requestRecording} style={{ width: '100%' }}>
+              녹음 화면 다시 열기
+            </Button>
+          )}
+        </div>
+      )}
     </>
   )
 }
