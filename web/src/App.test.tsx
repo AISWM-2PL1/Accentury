@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import { REQUIRED_BRIDGE_VERSION } from './bridge/bridge'
 import { snapshotKey } from './progress/progressSnapshot'
@@ -101,12 +101,22 @@ function stubMicrophone() {
   })
 }
 
+/** DEV 빌드의 퍼널 진단 로그(`[track]`)를 잠재운다 — 동작이 아니라 테스트 출력 소음이다 */
+let trackLog: ReturnType<typeof vi.spyOn>
+
+beforeEach(() => {
+  trackLog = vi.spyOn(console, 'debug').mockImplementation(() => {})
+})
+
 afterEach(() => {
+  trackLog.mockRestore()
   delete window.AccenturyBridge
   delete window.AccenturyWeb
   setSearch('')
   // 웹 단독 세션은 실물 sessionStorage에 남는다 — 다음 테스트로 토큰이 새지 않게 지운다
   clearWebSession()
+  // 계측 큐도 실물 전역이다 (KAN-31 3단계). 남겨 두면 다음 테스트가 앞 테스트의 이벤트를 센다
+  delete window.dataLayer
   delete (navigator as { mediaDevices?: unknown }).mediaDevices
   // 진행 화면 분기 테스트가 fetch·localStorage를 스텁한다. 실패로 중단돼도 다음 테스트에
   // 새지 않게 여기서 되돌린다
@@ -282,6 +292,34 @@ describe('App — 웹 단독 실행 (KAN-31)', () => {
     expect(navigate).not.toHaveBeenCalled()
     // [시작하기]가 그대로 재시도 버튼으로 남는다
     expect(screen.getByRole('button', { name: '시작하기' })).toBeEnabled()
+  })
+
+  /*
+   * 마이크가 막힌 브라우저의 출구 (KAN-31 AC 5). 화면 자체는 KAN-56이 만들었고, 여기서
+   * 확인하는 것은 **웹 단독 실행의 전 구간**이다 — 인트로 [시작하기]에서 게이트가 막히면
+   * 세션 생성까지 가지 않고 앱 링크로 끝나는가.
+   */
+  it('녹음을 지원하지 않는 브라우저에서는 세션을 만들지 않고 앱으로 보낸다 (AC 5)', async () => {
+    setSearch('?c=kko_share')
+    // 마이크 대역을 일부러 심지 않는다 — jsdom에는 `navigator.mediaDevices`가 없어서 실물의
+    // "지원 없음"(보안 컨텍스트가 아니거나 API가 아예 없는 환경)과 같은 자리다.
+    const fetchStub = vi.fn()
+    vi.stubGlobal('fetch', fetchStub)
+    const navigate = vi.fn()
+
+    render(<App navigate={navigate} />)
+    await tapStart()
+
+    expect(screen.getByText('이 브라우저에서는 녹음을 지원하지 않아요')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '앱으로 테스트하기' })).toHaveAttribute(
+      'href',
+      expect.stringContaining('play.google.com'),
+    )
+    // 되돌릴 여지가 없는 사유라 [다시 시도]는 주지 않는다
+    expect(screen.queryByRole('button', { name: '다시 시도' })).not.toBeInTheDocument()
+    // 응시할 수 없는 사람에게 세션이 생기면 서버에 고아 세션만 쌓인다
+    expect(fetchStub).not.toHaveBeenCalled()
+    expect(navigate).not.toHaveBeenCalled()
   })
 
   it('문항 화면은 저장된 웹 세션 토큰으로 답안을 제출한다 — URL에는 토큰이 없다', async () => {
@@ -791,5 +829,126 @@ describe('App — 웹 단독 결과 화면 (KAN-31 2단계)', () => {
     } finally {
       restoreUa()
     }
+  })
+})
+
+describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
+  /**
+   * GA4 태그가 설치된 상태를 흉내 낸다. 큐를 만드는 것은 태그 스니펫이고(KAN-33) 웹 코드가
+   * 아니므로, 테스트가 그 자리를 대신한다 — 큐가 없는 지금 빌드의 동작은 `track.test.ts` 몫이다.
+   */
+  function stubDataLayer(): Record<string, unknown>[] {
+    const queue: Record<string, unknown>[] = []
+    window.dataLayer = queue
+    return queue
+  }
+
+  /** §3.1 201 응답 */
+  function stubSessionFetch() {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 201,
+        headers: { get: () => null },
+        json: async () => ({
+          sessionId: 's_web',
+          sessionToken: 'st_web',
+          testVersion: 'gn-2026.08.1',
+          scoreVersion: 'sv-0.3',
+          expiresAt: '2026-08-26T03:30:00Z',
+        }),
+      })),
+    )
+  }
+
+  /** §3.7 200 응답 — 결과 화면까지 가야 [앱 다운로드]가 있다 */
+  function stubResultFetch() {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          status: 'READY',
+          scores: { intonation: 78, vocabulary: 60, overall: 72 },
+          tier: { code: 'HONORARY', name: '명예주민', rank: 4, of: 5 },
+          comment: '억양은 거의 토박이인데 단어에서 들켰습니다.',
+          share: {
+            imageUrl: 'https://static.accentury.app/tier/honorary.png',
+            text: '나는 명예주민! 너도 시도해볼래?',
+            webTestUrl: 'https://accentury.app/t?c=kko_share',
+          },
+          testVersion: 'gn-2026.08.1',
+          scoreVersion: 'sv-0.3',
+          expiresAt: '2026-08-22T03:00:00Z',
+        }),
+      })),
+    )
+  }
+
+  it('공유 링크로 인트로가 뜨면 유입을 센다 — 다시 그려도 한 번뿐이다', () => {
+    setSearch('?c=kko_share')
+    const queue = stubDataLayer()
+
+    const { rerender } = render(<App />)
+    // 리렌더마다 세면 같은 화면 한 번 노출이 여러 건으로 부풀어 오른다 (KAN-33 AC)
+    rerender(<App />)
+
+    expect(queue).toEqual([{ event: 'referral_opened', campaign: 'kko_share' }])
+  })
+
+  it('[시작하기]는 세션이 만들어진 뒤에 시작을 센다', async () => {
+    setSearch('?c=kko_share')
+    stubMicrophone()
+    stubSessionFetch()
+    const queue = stubDataLayer()
+
+    render(<App navigate={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: '시작하기' }))
+    // 웹 마이크 게이트와 세션 생성이 둘 다 비동기다
+    await act(async () => {})
+    await act(async () => {})
+
+    expect(queue).toEqual([
+      { event: 'referral_opened', campaign: 'kko_share' },
+      { event: 'referral_test_started', campaign: 'kko_share' },
+    ])
+  })
+
+  it('[앱 다운로드] 탭은 어느 스토어로 갔는지까지 센다', async () => {
+    setSearch('?c=kko_share&screen=result&sessionId=s_web')
+    saveWebSession({
+      sessionId: 's_web',
+      sessionToken: 'st_web',
+      testVersion: 'gn-2026.08.1',
+      expiresAt: '2026-08-26T03:30:00Z',
+    })
+    stubResultFetch()
+    const queue = stubDataLayer()
+
+    render(<App />)
+    const download = await screen.findByRole('link', { name: '앱 다운로드' })
+    // jsdom은 링크 이동을 구현하지 않아 클릭이 "Not implemented" 오류를 남긴다. 확인 대상은
+    // 이동이 아니라 계측이라 기본 동작만 막는다 — 실물에서는 이동이 그대로 일어난다.
+    download.addEventListener('click', (event) => event.preventDefault())
+    fireEvent.click(download)
+
+    // 결과 화면으로 바로 들어온 경로라 유입 이벤트는 없다 (인트로를 거치지 않았다)
+    expect(queue).toEqual([
+      { event: 'app_download_clicked', campaign: 'kko_share', platform: 'unknown' },
+    ])
+  })
+
+  it('앱 안 실행에서는 웹이 아무것도 세지 않는다 — 앱 이벤트는 네이티브 Firebase 몫이다 (KAN-33)', () => {
+    setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0&c=kko_share`)
+    stubBridge()
+    const queue = stubDataLayer()
+
+    render(<App />)
+
+    // 같은 사건이 웹·네이티브 두 경로로 두 번 세어지면 퍼널의 분모가 실제보다 커진다
+    expect(screen.getByRole('button', { name: '시작하기' })).toBeInTheDocument()
+    expect(queue).toEqual([])
   })
 })

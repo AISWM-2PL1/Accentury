@@ -1,4 +1,5 @@
-import { useCallback } from 'react'
+import { useCallback, useEffect } from 'react'
+import { track } from './analytics/track'
 import { detectStorePlatform } from './audio/storeLink'
 import { IntroScreen } from './intro/IntroScreen'
 import { START_FAILED_MESSAGE } from './intro/introText'
@@ -8,7 +9,7 @@ import { TestFlowScreen } from './progress/TestFlowScreen'
 import { ResultScreen } from './result/ResultScreen'
 import { useRetest } from './result/useRetest'
 import type { TestResultView } from './result/testResult'
-import { readCampaignToken } from './session/campaign'
+import { readCampaignToken, sanitizeCampaignToken } from './session/campaign'
 import {
   createWebSession,
   getWebSessionToken,
@@ -75,7 +76,12 @@ export default function App({ navigate = assignHref }: AppProps = {}) {
          * 브리지에서 읽는다 — 둘 다 주면 어느 쪽이 정본인지가 화면마다 갈린다.
          */
         webSessionToken={standalone ? getWebSessionToken : undefined}
-        onAnalysisReady={() => goToResult(params.get('sessionId') ?? '', navigate)}
+        onAnalysisReady={() => {
+          // 완주 계측 (KAN-31 퍼널 3번째 지점). 결과가 실제로 나온 자리라 "끝까지 갔다"를
+          // 여기서만 확실히 말할 수 있다 — 마지막 문항 제출은 아직 분석 실패로 갈 수 있다.
+          if (standalone) track({ name: 'test_completed', campaign: trackedCampaign() })
+          goToResult(params.get('sessionId') ?? '', navigate)
+        }}
       />
     )
   }
@@ -95,12 +101,54 @@ export default function App({ navigate = assignHref }: AppProps = {}) {
     )
   }
 
+  return <IntroRoute standalone={standalone} navigate={navigate} />
+}
+
+/**
+ * 인트로 결선 지점 (KAN-31 3단계). 유입 계측을 이 자리가 소유한다.
+ *
+ * [ResultRoute]와 같은 이유로 컴포넌트를 하나 세웠다 — 유입 계측은 "렌더될 때 한 번"이라
+ * 훅인데, [App]은 스큐 판정에서 조기 반환하므로 그 뒤에 훅을 놓을 수 없다.
+ */
+function IntroRoute({
+  standalone,
+  navigate,
+}: {
+  standalone: boolean
+  navigate: (url: string) => void
+}) {
+  /*
+   * 유입 계측 (퍼널 1번째 지점). **문서당 한 번**이면 충분하다 — 화면 전환이 전부 같은
+   * 문서를 다시 로드하는 방식이라(`goToResult`·`goToIntro`) 이 컴포넌트의 마운트 한 번이
+   * 곧 페이지 조회 한 번이다. 렌더마다 부르면 리렌더가 그대로 중복 노출로 세어진다
+   * (KAN-33 AC "중복 화면 노출로 이벤트가 과다 발생하지 않는다").
+   *
+   * 개발 빌드의 StrictMode는 이펙트를 일부러 두 번 돌린다 — 배포 빌드에서는 그 재실행이
+   * 사라지므로 실사용 집계에는 영향이 없다.
+   */
+  useEffect(() => {
+    // 웹 단독 실행만 여기서 센다. 앱 안 이벤트는 네이티브 Firebase 몫이다 (KAN-33).
+    if (!standalone) return
+    track({ name: 'referral_opened', campaign: trackedCampaign() })
+  }, [standalone])
+
   /*
    * 웹 단독 실행에서만 [시작하기]에 갈 곳이 있다. 앱 안에서는 이 자리가 비어 있어야 한다 —
    * 네이티브가 권한 게이트부터 세션 생성까지 자기 흐름으로 진행하므로, 웹이 세션을 하나 더
    * 만들면 같은 사용자에게 세션이 둘 생긴다.
    */
   return <IntroScreen onWebStart={standalone ? () => startStandaloneTest(navigate) : undefined} />
+}
+
+/**
+ * 계측에 실을 유입 코드. 세션 생성과 **같은 규칙으로 거른 값만** 싣는다 (`campaign.ts`).
+ *
+ * 공유 링크는 메신저를 여러 번 거치며 잘리거나 트래킹 파라미터가 덧붙는 경로라, 걸러 두지
+ * 않으면 집계 축에 한 번 쓰이고 마는 쓰레기 값이 쌓인다 — 서버에 보내지 않기로 한 값을
+ * 계측에는 보낸다면 두 집계가 다른 모수를 세게 된다.
+ */
+function trackedCampaign(): string | null {
+  return sanitizeCampaignToken(readCampaignToken(window.location.search))
 }
 
 /**
@@ -129,6 +177,13 @@ async function startStandaloneTest(navigate: (url: string) => void): Promise<voi
   }
 
   saveWebSession(session)
+
+  /*
+   * 시작 계측 (퍼널 2번째 지점). 세션이 실제로 만들어진 뒤에 센다 — 탭 시점에 세면 429나
+   * 네트워크 실패로 시작하지 못한 사람까지 "시작"으로 세어져 완주율의 분모가 부풀어 오른다.
+   */
+  track({ name: 'referral_test_started', campaign: trackedCampaign() })
+
   // 진입 경로(`/t`)와 나머지 쿼리(`c` 등)는 그대로 두고 화면 지정만 얹는다.
   navigate(
     window.location.pathname +
@@ -184,6 +239,19 @@ function ResultRoute({
   const backToIntro = useCallback(() => goToIntro(navigate), [navigate])
   const retest = useRetest(backToIntro)
 
+  /*
+   * [앱 다운로드]는 웹 단독 실행에만 있다 (KAN-31). UA 판별을 여기서 하는 이유는 화면이
+   * `navigator`를 읽지 않게 하기 위해서다 — 어느 스토어인지는 환경 조회이고, 결과 화면이
+   * 할 일은 받은 값을 그리는 것이다 (마이크 게이트가 [MicBlockedScreen]에 같은 방식으로
+   * 판별 결과만 내려보낸다).
+   *
+   * 값 하나로 CTA와 그 계측이 같이 갈린다 — 각자 `standalone`을 따로 보면 "버튼은 그렸는데
+   * 계측만 빠진" 조합이 생긴다.
+   */
+  const storePlatform = standalone
+    ? detectStorePlatform(navigator.userAgent, navigator.maxTouchPoints)
+    : undefined
+
   return (
     <ResultScreen
       apiBase={API_BASE}
@@ -201,14 +269,23 @@ function ResultRoute({
       sessionToken={standalone ? getWebSessionToken() : (getSessionToken() ?? '')}
       onShare={shareResult}
       retest={retest}
+      storePlatform={storePlatform}
       /*
-       * [앱 다운로드]는 웹 단독 실행에만 있다 (KAN-31). UA 판별을 여기서 하는 이유는 화면이
-       * `navigator`를 읽지 않게 하기 위해서다 — 어느 스토어인지는 환경 조회이고, 결과 화면이
-       * 할 일은 받은 값을 그리는 것이다 (마이크 게이트가 [MicBlockedScreen]에 같은 방식으로
-       * 판별 결과만 내려보낸다).
+       * 다운로드 탭 계측 (퍼널 4번째 지점, KAN-31 3단계). 링크의 이동은 이 콜백과 무관하게
+       * 일어나므로 계측이 무엇을 하든 설치 전환이 끊기지 않는다 ([track]은 던지지 않는다).
+       *
+       * 마지막 지점을 클릭으로 세는 것이 한계다 — 스토어에 실제로 도달했는지는 웹이 알 수
+       * 없고, 설치까지는 스토어 콘솔의 유입 통계가 답한다.
        */
-      storePlatform={
-        standalone ? detectStorePlatform(navigator.userAgent, navigator.maxTouchPoints) : undefined
+      onDownloadClick={
+        storePlatform === undefined
+          ? undefined
+          : () =>
+              track({
+                name: 'app_download_clicked',
+                campaign: trackedCampaign(),
+                platform: storePlatform,
+              })
       }
     />
   )
