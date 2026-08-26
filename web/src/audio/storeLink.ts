@@ -49,3 +49,14 @@ export function storeUrlFor(platform: StorePlatform): string {
   const app = (import.meta.env.VITE_APP_STORE_URL as string | undefined) ?? DEFAULT_APP_STORE_URL
   return platform === 'ios' ? app : play
 }
+
+/**
+ * 스토어 이름 — 링크 아래 "어디로 가는지"를 적는 한 줄에 쓴다.
+ *
+ * URL과 같은 자리에 두는 이유가 URL을 여기 둔 이유와 같다. 이름과 링크가 갈리면 아이폰에서
+ * "Play 스토어로 이동해요"라고 적어 놓고 App Store를 여는 화면이 만들어진다 —
+ * `unknown`을 플레이스토어로 보내는 [storeUrlFor]의 판단이 이 함수에도 그대로 걸린다.
+ */
+export function storeLabelFor(platform: StorePlatform): string {
+  return platform === 'ios' ? 'App Store' : 'Play 스토어'
+}

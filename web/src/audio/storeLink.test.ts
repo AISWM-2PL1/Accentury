@@ -3,6 +3,7 @@ import {
   DEFAULT_APP_STORE_URL,
   DEFAULT_PLAY_STORE_URL,
   detectStorePlatform,
+  storeLabelFor,
   storeUrlFor,
 } from './storeLink'
 
@@ -48,5 +49,14 @@ describe('storeUrlFor', () => {
 
   it('플레이스토어 URL에 앱 패키지명이 들어 있다', () => {
     expect(storeUrlFor('android')).toContain('id=com.accentury.app')
+  })
+})
+
+describe('storeLabelFor', () => {
+  it('이름이 링크와 같은 갈래를 탄다 — unknown은 플레이스토어다', () => {
+    // 링크는 플레이스토어인데 이름만 App Store라고 적히는 조합이 생기면 안 된다
+    expect(storeLabelFor('ios')).toBe('App Store')
+    expect(storeLabelFor('android')).toBe('Play 스토어')
+    expect(storeLabelFor('unknown')).toBe('Play 스토어')
   })
 })

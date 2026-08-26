@@ -23,6 +23,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
+import { storeLabelFor, storeUrlFor, type StorePlatform } from '../audio/storeLink'
 import type { FetchLike } from '../progress/fetchTestDefinition'
 import { Button, StatusBlock, type ButtonVariant } from '../ui'
 import { fetchResult, ResultFetchError } from './fetchResult'
@@ -51,6 +52,22 @@ export interface ResultScreenProps {
    */
   retest: RetestControl
   /**
+   * [앱 다운로드]를 보낼 스토어. **값이 있으면 웹 단독 실행이다** (KAN-31).
+   *
+   * 판정도 감지도 부모가 한다 — 이 화면은 `navigator`를 읽지 않는다. 실행 판정(`standalone`)은
+   * 이미 App이 들고 있고, UA 판별은 렌더마다 같은 답이 나오는 환경 조회라 화면 안에 두면
+   * 테스트가 화면을 그릴 때마다 전역을 갈아끼워야 한다.
+   *
+   * 없으면(앱 안 WebView) 다운로드 CTA 자체를 그리지 않는다. 이미 앱인 사람에게 앱을 받으라는
+   * 화면이 되어서는 안 되고, 그 실행의 전환 목표는 공유다 (KAN-30).
+   */
+  storePlatform?: StorePlatform
+  /**
+   * [앱 다운로드] 탭 계측 자리 (KAN-31 3단계 퍼널). 기본값은 아무것도 하지 않는 것이다 —
+   * 링크의 이동은 이 콜백과 무관하게 일어나므로, 계측이 붙지 않은 지금도 버튼은 제 일을 한다.
+   */
+  onDownloadClick?: () => void
+  /**
    * 주입용 fetch (테스트용).
    *
    * **참조가 안정적이어야 한다** — 이 값이 조회 이펙트의 의존성이라, 렌더마다 새로 만든
@@ -71,6 +88,8 @@ export function ResultScreen({
   sessionToken,
   onShare,
   retest,
+  storePlatform,
+  onDownloadClick,
   fetchImpl,
 }: ResultScreenProps) {
   const [load, setLoad] = useState<LoadState>({ status: 'loading' })
@@ -130,7 +149,19 @@ export function ResultScreen({
             error.retryable ? (
               <Button onClick={retry}>다시 시도</Button>
             ) : (
-              <RetestAction retest={retest} />
+              <>
+                {/*
+                  브라우저에서 결과가 만료된 사람에게도 앱으로 가는 길을 준다 (KAN-31). 이
+                  화면은 "결과가 없다"는 소식만 있고 볼 것이 남아 있지 않아, 재응시 말고 다른
+                  출구가 없으면 앱 설치라는 전환 목표가 이 갈래에서만 통째로 빠진다.
+                */}
+                <AppDownloadAction platform={storePlatform} onDownloadClick={onDownloadClick} />
+                {/*
+                  다운로드가 주버튼인 자리에서는 재응시를 보조로 내린다 — 화면당 주버튼은
+                  하나다 (ux-ui.md Hick's law). 앱 안에서는 여기가 그대로 주버튼이다.
+                */}
+                <RetestAction retest={retest} variant={storePlatform === undefined ? undefined : 'secondary'} />
+              </>
             )
           }
         />
@@ -172,13 +203,67 @@ export function ResultScreen({
       </div>
 
       <div className="screen__footer">
-        <Button onClick={() => onShare(result)} style={{ width: '100%' }}>
+        <AppDownloadAction platform={storePlatform} onDownloadClick={onDownloadClick} />
+        {/*
+          공유 버튼의 무게가 실행에 따라 갈린다. 브라우저에서는 이 화면의 전환 목표가 앱 설치라
+          (KAN-31) 다운로드가 주버튼을 가져가고 공유는 보조로 내려간다 — 주버튼이 둘이면 어느
+          쪽도 주버튼이 아니게 된다 (ux-ui.md Hick's law: 화면당 Primary CTA 1개). 앱 안에서는
+          설치를 권할 이유가 없으므로 공유가 그대로 주버튼이다 (KAN-30).
+        */}
+        <Button
+          variant={storePlatform === undefined ? 'primary' : 'secondary'}
+          onClick={() => onShare(result)}
+          style={{ width: '100%' }}
+        >
           친구에게 공유하기
         </Button>
         {/* 학습 시작이 아니라 다시 테스트다 — 이 화면에서 나가는 길은 공유와 재응시뿐이다 */}
         <RetestAction retest={retest} variant="text" />
       </div>
     </main>
+  )
+}
+
+/**
+ * [앱 다운로드] 한 벌 — 스토어 링크와 그 아래 "어디로 가는지" 한 줄 (KAN-31 2단계).
+ *
+ * 웹 단독 실행에서만 나온다. `platform`이 없으면 아무것도 그리지 않는다 — 두 자리(만료 화면,
+ * 하단)가 각자 `undefined`를 검사하면 한쪽만 빠뜨린 화면이 생긴다.
+ *
+ * 버튼이 아니라 `<a>`인 이유는 [MicBlockedScreen]과 같다: 스토어로 나가는 것은 이동이라
+ * 링크의 기본 동작(새 탭·길게 눌러 복사·스크린 리더의 "링크" 안내)이 전부 의미를 갖는다.
+ * `onClick`으로 location을 바꾸면 그게 전부 사라진다. 생김새만 주버튼과 맞춘다.
+ *
+ * 스토어 URL을 여기서 조립하지 않는다 — 규칙은 [storeUrlFor]가 소유한다. 하드코딩이 두 군데로
+ * 갈리면 앱 패키지명이 바뀌는 날 한쪽만 고쳐진다.
+ */
+function AppDownloadAction({
+  platform,
+  onDownloadClick,
+}: {
+  platform?: StorePlatform
+  onDownloadClick?: () => void
+}) {
+  if (platform === undefined) return null
+
+  return (
+    <>
+      <a
+        className="btn btn--primary"
+        href={storeUrlFor(platform)}
+        style={{ width: '100%' }}
+        /*
+          계측만 걸리는 자리다 (KAN-31 3단계). 이동을 막지 않으므로 여기서 무슨 일이 일어나든
+          링크는 제 일을 한다 — 계측 코드의 예외가 설치 전환을 끊지 않는 것이 요점이다.
+        */
+        onClick={onDownloadClick}
+      >
+        앱 다운로드
+      </a>
+      <p className="type-caption" style={{ color: 'var(--color-muted-foreground)' }}>
+        {storeLabelFor(platform)}로 이동해요
+      </p>
+    </>
   )
 }
 

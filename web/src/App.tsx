@@ -1,4 +1,5 @@
 import { useCallback } from 'react'
+import { detectStorePlatform } from './audio/storeLink'
 import { IntroScreen } from './intro/IntroScreen'
 import { START_FAILED_MESSAGE } from './intro/introText'
 import { getSessionToken, isBridgeCompatible, isStandaloneWeb } from './bridge/bridge'
@@ -166,7 +167,20 @@ function ResultRoute({
   standalone: boolean
   navigate: (url: string) => void
 }) {
-  // 브리지로 갈 수 없는 환경에서는 예전 동작(인트로 복귀)으로 내려간다.
+  /*
+   * 브리지로 갈 수 없는 환경에서는 예전 동작(인트로 복귀)으로 내려간다.
+   *
+   * **웹 단독 실행의 재응시가 정확히 이 길이다** (KAN-31 2단계). 브리지 객체가 없으므로
+   * [startRetest]가 false를 돌려주고 [useRetest]가 곧바로 이 폴백을 부른다 — 브라우저에서는
+   * 네이티브 왕복도, 그 왕복의 실패 회신도 존재하지 않으므로 잠금·카운트다운 UI가 뜰 일이
+   * 없다. 실행별 갈래를 따로 두지 않는 이유가 그것이다.
+   *
+   * 저장된 세션은 **지우지 않는다.** 이전 세션 토큰이 다음 [시작하기]의 Bearer로 나가야 서버가
+   * 그 세션을 폐기하는데(§3.1), 여기서 지우면 보낼 토큰이 사라져 옛 세션이 만료될 때까지
+   * 고아로 남는다. 낡은 토큰이 남는 걱정도 없다 — 새 세션을 저장하는 순간 같은 키를 덮어쓴다.
+   * 30분이 지나 토큰이 만료된 뒤 눌러도 마찬가지다: 서버가 만료된 Bearer를 조용히 무시하고
+   * 새 세션을 주므로 클라이언트가 만료를 판정할 일이 없다.
+   */
   const backToIntro = useCallback(() => goToIntro(navigate), [navigate])
   const retest = useRetest(backToIntro)
 
@@ -187,6 +201,15 @@ function ResultRoute({
       sessionToken={standalone ? getWebSessionToken() : (getSessionToken() ?? '')}
       onShare={shareResult}
       retest={retest}
+      /*
+       * [앱 다운로드]는 웹 단독 실행에만 있다 (KAN-31). UA 판별을 여기서 하는 이유는 화면이
+       * `navigator`를 읽지 않게 하기 위해서다 — 어느 스토어인지는 환경 조회이고, 결과 화면이
+       * 할 일은 받은 값을 그리는 것이다 (마이크 게이트가 [MicBlockedScreen]에 같은 방식으로
+       * 판별 결과만 내려보낸다).
+       */
+      storePlatform={
+        standalone ? detectStorePlatform(navigator.userAgent, navigator.maxTouchPoints) : undefined
+      }
     />
   )
 }

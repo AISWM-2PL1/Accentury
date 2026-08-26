@@ -388,3 +388,85 @@ describe('[다시 테스트하기] 잠금과 안내 — KAN-34', () => {
     expect(await screen.findByRole('button', { name: '다시 시도' })).toBeEnabled()
   })
 })
+
+describe('[앱 다운로드] CTA — KAN-31 2단계', () => {
+  /** 만료 화면 대역. 브라우저에서 결과가 사라진 사람도 같은 CTA를 만나야 한다 */
+  const EXPIRED = jsonFetch(410, envelope('RESULT_EXPIRED', '결과 보관 기간(24시간)이 지났습니다.', false))
+
+  it('웹 단독 실행에서는 스토어로 가는 링크가 주버튼이고 공유가 보조로 내려간다', async () => {
+    renderScreen({ storePlatform: 'android' })
+
+    const download = await screen.findByRole('link', { name: '앱 다운로드' })
+    // 버튼이 아니라 링크다 — 새 탭·길게 눌러 복사·스크린 리더의 "링크" 안내가 살아 있어야 한다
+    expect(download).toHaveAttribute('href', expect.stringContaining('play.google.com'))
+    expect(download.className).toContain('btn--primary')
+    expect(screen.getByText('Play 스토어로 이동해요')).toBeInTheDocument()
+
+    // 화면당 주버튼은 하나다 — 브라우저의 전환 목표는 설치라 공유가 자리를 내준다
+    const share = screen.getByRole('button', { name: '친구에게 공유하기' })
+    expect(share.className).toContain('btn--secondary')
+    expect(share.className).not.toContain('btn--primary')
+  })
+
+  it('아이폰이면 앱스토어로 보내고 안내 문구도 같이 바뀐다', async () => {
+    renderScreen({ storePlatform: 'ios' })
+
+    expect(await screen.findByRole('link', { name: '앱 다운로드' })).toHaveAttribute(
+      'href',
+      expect.stringContaining('apps.apple.com'),
+    )
+    expect(screen.getByText('App Store로 이동해요')).toBeInTheDocument()
+  })
+
+  it('앱 안에서는 다운로드 CTA가 아예 없고 공유가 그대로 주버튼이다', async () => {
+    // 이미 앱인 사람에게 앱을 받으라고 하지 않는다 — 그 실행의 전환 목표는 공유다 (KAN-30)
+    renderScreen()
+
+    await screen.findByText('명예주민')
+    expect(screen.queryByRole('link', { name: '앱 다운로드' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/로 이동해요/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '친구에게 공유하기' }).className).toContain('btn--primary')
+  })
+
+  it('만료(410) 화면에서도 다운로드와 재응시를 함께 준다', async () => {
+    renderScreen({ storePlatform: 'android', fetchImpl: EXPIRED })
+
+    await screen.findByText('결과 보관 기간이 지났어요')
+    expect(screen.getByRole('link', { name: '앱 다운로드' })).toHaveAttribute(
+      'href',
+      expect.stringContaining('play.google.com'),
+    )
+    // 재응시가 사라지지 않는다. 다만 주버튼 자리는 다운로드가 가져간다
+    const retestButton = screen.getByRole('button', { name: '다시 테스트하기' })
+    expect(retestButton.className).toContain('btn--secondary')
+  })
+
+  it('앱 안 만료 화면은 예전 그대로다 — 재응시가 주버튼이다', async () => {
+    renderScreen({ fetchImpl: EXPIRED })
+
+    await screen.findByText('결과 보관 기간이 지났어요')
+    expect(screen.queryByRole('link', { name: '앱 다운로드' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '다시 테스트하기' }).className).toContain('btn--primary')
+  })
+
+  it('탭하면 계측 훅이 불리고 링크의 이동은 그대로 남는다 (3단계 퍼널 자리)', async () => {
+    const onDownloadClick = vi.fn()
+    renderScreen({ storePlatform: 'android', onDownloadClick })
+
+    const download = await screen.findByRole('link', { name: '앱 다운로드' })
+    fireEvent.click(download)
+
+    expect(onDownloadClick).toHaveBeenCalledTimes(1)
+    // 계측이 이동을 대신하지 않는다 — href가 그대로라 클릭을 가로채지 않았다는 뜻이다
+    expect(download).toHaveAttribute('href', expect.stringContaining('play.google.com'))
+  })
+
+  it('계측 훅을 주지 않아도 링크는 제 일을 한다', async () => {
+    renderScreen({ storePlatform: 'unknown' })
+
+    const download = await screen.findByRole('link', { name: '앱 다운로드' })
+    fireEvent.click(download)
+    // 알 수 없는 플랫폼은 플레이스토어로 보낸다 (storeUrlFor 규칙)
+    expect(download).toHaveAttribute('href', expect.stringContaining('play.google.com'))
+  })
+})

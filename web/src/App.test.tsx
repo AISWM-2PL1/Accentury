@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import { REQUIRED_BRIDGE_VERSION } from './bridge/bridge'
 import { snapshotKey } from './progress/progressSnapshot'
-import { clearWebSession, saveWebSession } from './session/webSession'
+import { clearWebSession, loadWebSession, saveWebSession } from './session/webSession'
 
 function setSearch(search: string) {
   window.history.replaceState(null, '', `/${search}`)
@@ -615,5 +615,181 @@ describe('IntroScreen — [시작하기] 결선', () => {
     render(<App />)
     screen.getByRole('button', { name: '시작하기' }).click()
     expect(fn).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('App — 웹 단독 결과 화면 (KAN-31 2단계)', () => {
+  const ANDROID_UA =
+    'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36'
+  const IPHONE_UA =
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1'
+
+  /** 공유 링크로 들어와 브라우저에서 응시를 끝낸 사람의 URL — 브리지도 `?bridge=`도 없다 */
+  const WEB_RESULT_SEARCH = '?c=kko_x&screen=result&sessionId=s_web'
+
+  const WEB_SESSION = {
+    sessionId: 's_web',
+    sessionToken: 'st_web',
+    testVersion: 'gn-2026.08.1',
+    expiresAt: '2026-08-26T03:30:00Z',
+  }
+
+  /** jsdom의 userAgent는 읽기 전용 getter라 정의로 덮는다. 되돌리는 함수를 돌려준다 */
+  function withUserAgent(userAgent: string): () => void {
+    const original = Object.getOwnPropertyDescriptor(Navigator.prototype, 'userAgent')
+    Object.defineProperty(navigator, 'userAgent', { configurable: true, value: userAgent })
+    return () => {
+      delete (navigator as { userAgent?: unknown }).userAgent
+      if (original !== undefined) Object.defineProperty(Navigator.prototype, 'userAgent', original)
+    }
+  }
+
+  /** §3.7 200 본문을 돌려주는 fetch 스텁 */
+  function stubResultFetch() {
+    const fetchStub = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        status: 'READY',
+        scores: { intonation: 78, vocabulary: 60, overall: 72 },
+        tier: { code: 'HONORARY', name: '명예주민', rank: 4, of: 5 },
+        comment: '억양은 거의 토박이인데 단어에서 들켰습니다.',
+        share: {
+          imageUrl: 'https://static.accentury.app/tier/honorary.png',
+          text: '나는 명예주민! 너도 시도해볼래?',
+          webTestUrl: 'https://accentury.app/t?c=kko_share',
+        },
+        testVersion: 'gn-2026.08.1',
+        scoreVersion: 'sv-0.3',
+        expiresAt: '2026-08-22T03:00:00Z',
+      }),
+    }))
+    vi.stubGlobal('fetch', fetchStub)
+    return fetchStub
+  }
+
+  it('결과를 브리지가 아니라 저장된 웹 세션 토큰으로 조회한다 — URL에는 토큰이 없다', async () => {
+    setSearch(WEB_RESULT_SEARCH)
+    saveWebSession(WEB_SESSION)
+    const fetchStub = stubResultFetch()
+
+    render(<App />)
+
+    await screen.findByRole('heading', { name: '명예주민' })
+    const [url, init] = fetchStub.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toContain('/v0/sessions/s_web/result')
+    expect(url).not.toContain('st_web')
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer st_web' })
+    expect(window.location.search).not.toContain('st_web')
+  })
+
+  it('안드로이드 브라우저에서는 [앱 다운로드]가 플레이스토어를 가리킨다', async () => {
+    const restoreUa = withUserAgent(ANDROID_UA)
+    setSearch(WEB_RESULT_SEARCH)
+    saveWebSession(WEB_SESSION)
+    stubResultFetch()
+
+    try {
+      render(<App />)
+
+      const download = await screen.findByRole('link', { name: '앱 다운로드' })
+      expect(download).toHaveAttribute('href', expect.stringContaining('play.google.com'))
+      expect(screen.getByText('Play 스토어로 이동해요')).toBeInTheDocument()
+    } finally {
+      restoreUa()
+    }
+  })
+
+  it('아이폰 브라우저에서는 앱스토어를 가리킨다', async () => {
+    const restoreUa = withUserAgent(IPHONE_UA)
+    setSearch(WEB_RESULT_SEARCH)
+    saveWebSession(WEB_SESSION)
+    stubResultFetch()
+
+    try {
+      render(<App />)
+
+      expect(await screen.findByRole('link', { name: '앱 다운로드' })).toHaveAttribute(
+        'href',
+        expect.stringContaining('apps.apple.com'),
+      )
+    } finally {
+      restoreUa()
+    }
+  })
+
+  it('앱 안 결과 화면에는 다운로드 CTA가 없다 — 실행 판정으로만 갈린다', async () => {
+    setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0&screen=result&sessionId=sess-1`)
+    window.AccenturyBridge = {
+      requestMicPermission: vi.fn(),
+      startVoiceItem: vi.fn(),
+      getContractVersion: () => REQUIRED_BRIDGE_VERSION,
+      getSessionToken: () => 'token-1',
+    }
+    stubResultFetch()
+
+    render(<App />)
+
+    await screen.findByRole('heading', { name: '명예주민' })
+    expect(screen.queryByRole('link', { name: '앱 다운로드' })).not.toBeInTheDocument()
+  })
+
+  it('[다시 테스트하기]는 유입 코드를 그대로 든 인트로로 되돌리고 세션은 남긴다', async () => {
+    setSearch(WEB_RESULT_SEARCH)
+    saveWebSession(WEB_SESSION)
+    stubResultFetch()
+    const navigate = vi.fn()
+
+    render(<App navigate={navigate} />)
+    fireEvent.click(await screen.findByRole('button', { name: '다시 테스트하기' }))
+
+    // 브리지가 없으므로 네이티브 왕복 없이 곧바로 인트로 복귀다 — 잠금 UI가 뜨지 않는다
+    expect(screen.queryByRole('button', { name: '준비 중…' })).not.toBeInTheDocument()
+
+    expect(navigate).toHaveBeenCalledTimes(1)
+    const next = new URLSearchParams(navigate.mock.calls[0][0].split('?')[1] ?? '')
+    // 유입 계측이 재응시 한 번에 끊기지 않는다
+    expect(next.get('c')).toBe('kko_x')
+    expect(next.get('screen')).toBeNull()
+    expect(next.get('sessionId')).toBeNull()
+
+    /*
+     * 세션을 지우지 않는다. 이 토큰이 다음 [시작하기]의 Bearer로 나가야 서버가 옛 세션을
+     * 폐기한다 (§3.1) — 여기서 지우면 보낼 토큰이 없어 옛 세션이 고아로 남는다.
+     */
+    expect(loadWebSession()?.sessionToken).toBe('st_web')
+  })
+
+  it('만료된 결과에서도 다운로드와 재응시를 함께 준다', async () => {
+    const restoreUa = withUserAgent(ANDROID_UA)
+    setSearch(WEB_RESULT_SEARCH)
+    saveWebSession(WEB_SESSION)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: false,
+        status: 410,
+        json: async () => ({
+          code: 'RESULT_EXPIRED',
+          message: '결과 보관 기간(24시간)이 지났습니다.',
+          retryable: false,
+          retryAfterMs: null,
+          correlationId: 'c_test',
+        }),
+      })),
+    )
+
+    try {
+      render(<App />)
+
+      await screen.findByText('결과 보관 기간이 지났어요')
+      expect(screen.getByRole('link', { name: '앱 다운로드' })).toHaveAttribute(
+        'href',
+        expect.stringContaining('play.google.com'),
+      )
+      expect(screen.getByRole('button', { name: '다시 테스트하기' })).toBeInTheDocument()
+    } finally {
+      restoreUa()
+    }
   })
 })
