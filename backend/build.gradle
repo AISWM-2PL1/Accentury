@@ -35,8 +35,13 @@ dependencies {
 	// 거치지 않는다 (application.yml 기본은 pgjdbc 직접). Java 17+ 빌드는 Boot가 주는 Jackson 3
 	// (tools.jackson)으로 시크릿 JSON을 읽는다 - 별도 jackson-databind 2.x가 필요 없다.
 	runtimeOnly 'software.amazon.jdbc:aws-advanced-jdbc-wrapper:4.4.0'
-	// wrapper 4.4.0이 빌드된 SDK 버전과 맞춘다 (POM optional 의존성이라 직접 적어야 한다).
-	runtimeOnly 'software.amazon.awssdk:secretsmanager:2.46.10'
+	// wrapper 4.4.0이 빌드된 SDK 버전과 맞춘다 (POM optional 의존성이라 직접 적어야 한다). 버전은
+	// BOM 한 곳에 두어 SDK 모듈이 늘어도 서로 어긋나지 않게 한다. 플러그인은 동기 클라이언트만 쓰므로
+	// 비동기용 netty 클라이언트는 이미지에서 뺀다 (PR 리뷰).
+	implementation platform('software.amazon.awssdk:bom:2.46.10')
+	runtimeOnly('software.amazon.awssdk:secretsmanager') {
+		exclude group: 'software.amazon.awssdk', module: 'netty-nio-client'
+	}
 	annotationProcessor 'org.projectlombok:lombok'
 	testImplementation 'org.springframework.boot:spring-boot-starter-actuator-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-data-jpa-test'

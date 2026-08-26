@@ -28,14 +28,11 @@ AWS_REGION=${region}
 CONF
 
 # ---- 운영 compose 파일과 기동 스크립트 (레포 infra/modules/compute/의 사본) ----
+# gzip + base64로 실어 온다 (KAN-129 리뷰). 평문 heredoc이면 user_data가 16KB 상한의 91%까지
+# 차서 주석 몇 줄에 apply가 터진다. 압축 뒤에는 약 11KB다. AL2023에 base64와 gzip은 기본이다.
 mkdir -p /opt/accentury
-cat > /opt/accentury/docker-compose.yml <<'COMPOSE'
-${compose_yml}
-COMPOSE
-
-cat > /opt/accentury/accentury-up.sh <<'SCRIPT'
-${up_script}
-SCRIPT
+echo '${compose_yml_b64}' | base64 -d | gunzip > /opt/accentury/docker-compose.yml
+echo '${up_script_b64}' | base64 -d | gunzip > /opt/accentury/accentury-up.sh
 chmod 755 /opt/accentury/accentury-up.sh
 
 # ---- systemd: 부팅마다 SSM 값을 새로 읽어 compose up ----

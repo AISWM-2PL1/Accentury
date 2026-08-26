@@ -114,8 +114,9 @@ resource "aws_instance" "this" {
     ssm_prefix      = var.ssm_prefix
     ecr_registry    = local.ecr_registry
     region          = data.aws_region.current.region
-    compose_yml     = file("${path.module}/docker-compose.yml")
-    up_script       = file("${path.module}/accentury-up.sh")
+    # 16KB user_data 상한 대비 gzip + base64 (평문이면 91%, 압축하면 약 68%).
+    compose_yml_b64 = base64gzip(file("${path.module}/docker-compose.yml"))
+    up_script_b64   = base64gzip(file("${path.module}/accentury-up.sh"))
   })
   # cloud-init은 이 스크립트를 인스턴스당 한 번만 실행한다. 기본 동작(in-place
   # 갱신)이면 user_data 변경이 적용된 것처럼 보이지만 실제로는 반영되지 않으므로
@@ -148,10 +149,12 @@ resource "aws_instance" "this" {
     # 기동이 막힌다. 모듈 depends_on을 쓰지 않는 이유: 그것은 이 모듈의 data 소스(AMI, 계정, IAM
     # 정책 문서)까지 apply 시점으로 미뤄 user_data가 plan에서 unknown이 되고, 그러면 config 값 하나만
     # 바뀌어도(관리자 토큰 재발급 등) user_data_replace_on_change가 인스턴스를 교체한다 (Codex P1).
-    # 이름 목록 참조는 파라미터 "존재"에만 의존하고 값 변경에는 반응하지 않는다.
+    # 이름 목록 참조는 파라미터 "존재"에만 의존하고 값 변경에는 반응하지 않는다. 조건은 항진명제가
+    # 아니라 접두사 일치다 - config가 만든 이름이 이 인스턴스가 읽을 ssm_prefix 아래에 있어야
+    # 기동 스크립트가 그 값을 본다 (두 모듈이 다른 접두사를 받으면 여기서 막힌다).
     precondition {
-      condition     = length(var.config_parameter_names) > 0
-      error_message = "config 모듈의 SSM 파라미터가 있어야 인스턴스를 만들 수 있습니다 (KAN-129)."
+      condition     = contains(var.config_parameter_names, "${var.ssm_prefix}/SPRING_PROFILES_ACTIVE")
+      error_message = "config 모듈의 SSM 파라미터가 이 인스턴스의 ssm_prefix(${var.ssm_prefix}) 아래에 있어야 합니다 (KAN-129)."
     }
   }
 
