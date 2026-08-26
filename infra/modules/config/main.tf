@@ -76,8 +76,8 @@ resource "aws_ssm_parameter" "web_test_url" {
 # 만들지 않기 위해서다 - 48자 영숫자면 엔트로피는 충분하다.
 # state에 평문이 남는다 (S3 암호화 + 버전 관리 버킷, KAN-140이 수용한 범위). 값 조회:
 #   aws ssm get-parameter --with-decryption --name /accentury/{env}/ACCENTURY_ADMIN_TOKEN --query Parameter.Value --output text
-# 재발급은 envs 루트에서 `terraform taint 'module.config.random_password.admin_token'` 후 apply, 그리고
-# 인스턴스에서 systemctl reload accentury (README "관리자 토큰" 절).
+# 재발급은 envs 루트에서 `terraform apply -replace='module.config.random_password.admin_token'`, 그리고
+# 인스턴스에서 systemctl reload accentury (README "관리자 토큰" 절). taint는 0.15.2부터 deprecated다.
 resource "random_password" "admin_token" {
   length  = 48
   special = false
