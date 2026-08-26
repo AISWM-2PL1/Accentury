@@ -103,6 +103,8 @@ module "deploy" {
 
   env                         = var.env
   github_repository           = var.github_repository
+  github_owner_id             = var.github_owner_id
+  github_repository_id        = var.github_repository_id
   web_bucket_arn              = module.edge.web_bucket_arn
   cloudfront_distribution_arn = module.edge.distribution_arn
 }

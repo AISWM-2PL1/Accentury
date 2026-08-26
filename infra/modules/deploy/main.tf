@@ -10,9 +10,20 @@
 # 토큰의 sub가 ref(브랜치) 형식이 아니라 environment 형식으로 나온다. 브랜치 형식(ref:refs/heads/Dev)
 # 으로 묶지 않는 이유: KAN-128의 prod 승인 게이트가 GitHub environment의 required reviewers라
 # job이 어차피 environment를 지정해야 하고, 그러면 sub가 environment 형식이 된다.
+#
+# 2026-07-15 이후 만든 저장소(이 레포 포함)는 sub에 소유자와 저장소의 숫자 ID가 붙는 불변 형식
+# (repo:OWNER@ID/REPO@ID:environment:NAME)을 쓴다 - 이름이 재활용돼도 다른 주체가 못 맡게 하는
+# 장치다. 2026-08-26 첫 실행이 "Not authorized"로 실패한 원인이 이것이었다. 두 형식을 모두 허용한다
+# (StringEquals의 값 목록은 OR). 실제 형식은 `gh api repos/OWNER/REPO/actions/oidc/customization/sub`의
+# sub_claim_prefix로 확인한다.
 
 locals {
   name = "accentury-${var.env}"
+
+  github_subjects = [
+    "repo:${var.github_repository}:environment:${var.env}",
+    "repo:${replace(var.github_repository, "/", "@${var.github_owner_id}/")}@${var.github_repository_id}:environment:${var.env}",
+  ]
 }
 
 # 공급자는 계정에 1개뿐이라 bootstrap 스택이 소유한다 (infra/bootstrap/github-oidc.tf).
@@ -39,7 +50,7 @@ data "aws_iam_policy_document" "assume" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repository}:environment:${var.env}"]
+      values   = local.github_subjects
     }
   }
 }

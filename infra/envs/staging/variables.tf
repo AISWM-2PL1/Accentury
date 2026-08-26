@@ -80,3 +80,14 @@ variable "github_repository" {
   description = "배포 워크플로가 도는 GitHub 저장소 (OWNER/REPO). OIDC 신뢰 정책의 sub 조건에 들어간다 (KAN-127). 두 환경이 같은 값이라 tfvars가 아니라 기본값이다."
   default     = "AISWM-2PL1/Accentury"
 }
+
+# 불변 subject claim용 숫자 ID (KAN-127). 확인: gh api repos/AISWM-2PL1/Accentury --jq '[.owner.id, .id]'
+variable "github_owner_id" {
+  type    = number
+  default = 295795156
+}
+
+variable "github_repository_id" {
+  type    = number
+  default = 1308814203
+}
