@@ -52,6 +52,14 @@ export interface TestFlowScreenProps {
   webSessionToken?: () => string
   /** 주입용 캡처 (테스트용). 브라우저 녹음 경로에만 닿는다 */
   capture?: CaptureFactory
+  /**
+   * 목소리 점검이 잰 화자의 중심 음높이 (Hz, KAN-31 4단계). '내 억양' 곡선의 y축 중심이 된다.
+   *
+   * **웹 단독 실행에만 있다.** 앱 안에서는 네이티브 녹음 화면이 자기 점검 값으로 곡선을 그리고
+   * 이 화면은 녹음 패널 자체를 그리지 않는다. 없으면(null) 곡선이 그 녹음에서 중심을 다시
+   * 잡는 폴백으로 내려간다 (`userCurve.ts`).
+   */
+  userCurveCenterHz?: number | null
   /** 주입용 fetch (테스트용) */
   fetchImpl?: FetchLike
 }
@@ -69,6 +77,7 @@ export function TestFlowScreen({
   onAnalysisReady,
   webSessionToken,
   capture,
+  userCurveCenterHz = null,
   fetchImpl,
 }: TestFlowScreenProps) {
   const [load, setLoad] = useState<LoadState>({ status: 'loading' })
@@ -127,6 +136,7 @@ export function TestFlowScreen({
       onAnalysisReady={onAnalysisReady}
       webSessionToken={webSessionToken}
       capture={capture}
+      userCurveCenterHz={userCurveCenterHz}
       fetchImpl={fetchImpl}
     />
   )
@@ -140,6 +150,7 @@ function TestRunner({
   onAnalysisReady,
   webSessionToken,
   capture,
+  userCurveCenterHz,
   fetchImpl,
 }: {
   definition: TestDefinition
@@ -149,6 +160,7 @@ function TestRunner({
   onAnalysisReady?: () => void
   webSessionToken?: () => string
   capture?: CaptureFactory
+  userCurveCenterHz: number | null
   fetchImpl?: FetchLike
 }) {
   const { state, current, progress, submit } = useTestProgress(definition, storage, sessionId)
@@ -302,7 +314,7 @@ function TestRunner({
           item={current}
           itemNumber={progress.current}
           totalItems={progress.total}
-          webRecording={{ upload: uploadWebRecording, capture }}
+          webRecording={{ upload: uploadWebRecording, capture, userCurveCenterHz }}
           onWebUploaded={receiveResult}
         />
       ) : (

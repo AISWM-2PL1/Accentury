@@ -1,5 +1,6 @@
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { track } from './analytics/track'
+import type { CaptureFactory } from './audio'
 import { detectStorePlatform } from './audio/storeLink'
 import { IntroScreen } from './intro/IntroScreen'
 import { START_FAILED_MESSAGE, STORAGE_UNAVAILABLE_MESSAGE } from './intro/introText'
@@ -10,6 +11,7 @@ import { ResultScreen } from './result/ResultScreen'
 import { useRetest } from './result/useRetest'
 import type { TestResultView } from './result/testResult'
 import { readCampaignToken, sanitizeCampaignToken } from './session/campaign'
+import { VoiceCheckScreen } from './voicecheck/VoiceCheckScreen'
 import {
   createWebSession,
   getWebSessionToken,
@@ -40,6 +42,11 @@ export type Navigate = (url: string, options?: { replace?: boolean }) => void
 
 export interface AppProps {
   navigate?: Navigate
+  /**
+   * 목소리 점검 화면에 주입할 캡처 (테스트용). [navigate]와 같은 자리의 주입 지점이다 —
+   * jsdom에는 `AudioContext`가 없어 실물 캡처로는 시작 게이트 전 구간을 한 번에 볼 수 없다.
+   */
+  voiceCheckCapture?: CaptureFactory
 }
 
 /**
@@ -52,7 +59,7 @@ export interface AppProps {
  *    보낸 브리지 버전이 이 빌드가 요구하는 최소 버전보다 낮으면(또는 없으면) 기능 화면 대신
  *    업데이트 안내를 렌더한다. 구버전 앱은 손대지 않아도 된다.
  */
-export default function App({ navigate = assignHref }: AppProps = {}) {
+export default function App({ navigate = assignHref, voiceCheckCapture }: AppProps = {}) {
   const standalone = isStandaloneWeb(window.location.search)
 
   if (!standalone && !isBridgeCompatible(window.location.search)) {
@@ -82,6 +89,15 @@ export default function App({ navigate = assignHref }: AppProps = {}) {
          * 브리지에서 읽는다 — 둘 다 주면 어느 쪽이 정본인지가 화면마다 갈린다.
          */
         webSessionToken={standalone ? getWebSessionToken : undefined}
+        /*
+         * 목소리 점검이 잰 중심 음높이 (KAN-31 4단계). 웹 단독 실행에만 있다 — 앱 안에서는
+         * 네이티브가 자기 점검 화면에서 재서 자기 녹음 화면에 물려주므로 이 WebView가 알 필요가
+         * 없고, 값을 주면 두 곳이 각자 잰 중심을 들고 다니게 된다.
+         *
+         * 렌더 시점에 한 번 읽는다. 토큰과 달리 요청마다 다시 읽을 이유가 없다 — 이 값은 세션이
+         * 만들어질 때 함께 확정돼 세션이 바뀌기 전에는 변하지 않는다.
+         */
+        userCurveCenterHz={standalone ? (loadWebSession()?.userCurveCenterHz ?? null) : null}
         onAnalysisReady={() => {
           // 완주 계측 (KAN-31 퍼널 3번째 지점). 결과가 실제로 나온 자리라 "끝까지 갔다"를
           // 여기서만 확실히 말할 수 있다 — 마지막 문항 제출은 아직 분석 실패로 갈 수 있다.
@@ -107,7 +123,7 @@ export default function App({ navigate = assignHref }: AppProps = {}) {
     )
   }
 
-  return <IntroRoute standalone={standalone} navigate={navigate} />
+  return <IntroRoute standalone={standalone} navigate={navigate} voiceCheckCapture={voiceCheckCapture} />
 }
 
 /**
@@ -119,9 +135,11 @@ export default function App({ navigate = assignHref }: AppProps = {}) {
 function IntroRoute({
   standalone,
   navigate,
+  voiceCheckCapture,
 }: {
   standalone: boolean
   navigate: Navigate
+  voiceCheckCapture?: CaptureFactory
 }) {
   /*
    * 유입 계측 (퍼널 1번째 지점). **문서당 한 번**이면 충분하다 — 화면 전환이 전부 같은
@@ -139,11 +157,72 @@ function IntroRoute({
   }, [standalone])
 
   /*
+   * 마이크 권한을 받았는가 (KAN-31 4단계). 인트로가 세션 생성으로 곧장 넘어가지 않고 이 값만
+   * 올리는 것이 시작 게이트의 새 계약이다 — 그 다음 화면을 고르는 것은 부모의 일이다.
+   *
+   * URL 화면이 아니라 이 문서의 상태인 이유는 권한이다. 다른 전환처럼 문서를 다시 로드하면
+   * 방금 받은 마이크 권한을 브라우저에 따라 다시 물어야 하는데, 그 프롬프트는 사용자 제스처
+   * 없이는 뜨지 않는다. 결과 화면에서 [다시 테스트하기]로 돌아오면 이 문서가 새로 로드되므로
+   * 이 값도 false로 돌아간다 — 재응시는 마이크를 새로 열게 되므로 점검도 다시 한다(앱과 같다).
+   */
+  const [micGranted, setMicGranted] = useState(false)
+  /** 점검은 통과했는데 세션 생성이 막혔다. 값이 곧 사용자에게 보일 문구다 */
+  const [startFailure, setStartFailure] = useState<string | null>(null)
+  /*
+   * 세션 생성 진행 중 표시. setState는 비동기라 [다음] 연타의 두 번째 클릭이 화면 상태가
+   * 바뀌기 전에 닿을 수 있는데, 그 순간 판정에 쓸 값은 ref다 (`WebVoiceRecorder`의 업로드
+   * 잠금과 같은 이유). 세션이 둘 생기면 하나는 아무도 응시하지 않는 고아로 남는다.
+   */
+  const startingRef = useRef(false)
+
+  /**
+   * 목소리 점검이 끝났다 — 잰 중심을 들고 세션을 만든다 (퍼널 2번째 지점은 그 안에 있다).
+   *
+   * 실패는 화면을 갈아치우지 않고 점검 화면에 문구로 붙인다. 인트로로 되돌리면 방금 통과한
+   * 점검을 한 번 더 하게 되고, [다음]은 그대로 재시도 버튼으로 쓸 수 있다.
+   */
+  const finishVoiceCheck = useCallback(
+    (centerHz: number) => {
+      if (startingRef.current) return
+      startingRef.current = true
+      setStartFailure(null)
+      startStandaloneTest(navigate, centerHz)
+        .catch((error: unknown) => {
+          setStartFailure(error instanceof Error ? error.message : START_FAILED_MESSAGE)
+        })
+        .finally(() => {
+          startingRef.current = false
+        })
+    },
+    [navigate],
+  )
+
+  /*
+   * 권한을 받은 뒤의 시작 게이트 두 번째 칸 (KAN-31 4단계). 앱의 순서를 그대로 옮겼다:
+   * 권한 → 목소리 점검 → 세션 생성. 세션을 점검 뒤로 미루는 이유는 점검이 네트워크를 쓰지
+   * 않아 실패할 구석이 없기 때문이다 — 앞에 두면 이미 발급된 세션을 든 채 점검에 붙들리는
+   * 구간이 생긴다 (`VoiceCheckScreen` 헤더).
+   */
+  if (standalone && micGranted) {
+    return (
+      <VoiceCheckScreen
+        onDone={finishVoiceCheck}
+        startFailure={startFailure}
+        capture={voiceCheckCapture}
+      />
+    )
+  }
+
+  /*
    * 웹 단독 실행에서만 [시작하기]에 갈 곳이 있다. 앱 안에서는 이 자리가 비어 있어야 한다 —
    * 네이티브가 권한 게이트부터 세션 생성까지 자기 흐름으로 진행하므로, 웹이 세션을 하나 더
    * 만들면 같은 사용자에게 세션이 둘 생긴다.
+   *
+   * 인트로가 알리는 것은 "마이크 권한을 받았다"까지다. 예전에는 이 콜백이 곧 세션 생성이라
+   * 그 실패가 인트로의 오류 문구로 떴는데, 이제 그 실패는 점검 화면이 받는다 —
+   * 인트로의 오류 문구는 권한 요청 자체가 던진 경우에 그대로 남아 있다 (`IntroScreen`).
    */
-  return <IntroScreen onWebStart={standalone ? () => startStandaloneTest(navigate) : undefined} />
+  return <IntroScreen onWebStart={standalone ? () => setMicGranted(true) : undefined} />
 }
 
 /**
@@ -167,9 +246,13 @@ function trackedCampaign(): string | null {
  * 실패는 던져서 인트로 화면에 문구로 남긴다. 화면을 옮기지 않는 것이 중요하다 — 세션이 없으면
  * 문항 화면은 401만 잔뜩 만들고, 사용자는 시작도 못 한 채 진행 화면에 갇힌다.
  *
+ * 중심 음높이는 세션과 함께 저장한다 — 목소리 점검이 방금 잰 값이고(KAN-31 4단계), 문항
+ * 화면은 화면 전환(문서 리로드)을 건너온 뒤에 그 값을 읽는다.
+ *
+ * @param userCurveCenterHz 목소리 점검이 잰 이 화자의 중심 음높이 (Hz)
  * @throws Error 사용자에게 보일 문구를 담은 오류 ([startFailureMessage] 참고)
  */
-async function startStandaloneTest(navigate: Navigate): Promise<void> {
+async function startStandaloneTest(navigate: Navigate, userCurveCenterHz: number): Promise<void> {
   const search = window.location.search
 
   /*
@@ -195,7 +278,8 @@ async function startStandaloneTest(navigate: Navigate): Promise<void> {
     throw new Error(startFailureMessage(error))
   }
 
-  saveWebSession(session)
+  // 서버가 준 세션에 웹이 잰 중심을 얹어 한 덩어리로 저장한다 (`webSession.ts`).
+  saveWebSession({ ...session, userCurveCenterHz })
 
   /*
    * 저장한 값을 되읽어 확인한다. 앞의 판정이 이미 걸렀어야 하는 경우지만, 40바이트짜리

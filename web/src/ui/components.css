@@ -755,3 +755,36 @@ a.btn {
   height: calc(var(--curve-lane-height) - var(--space-4) - var(--space-1));
   margin-top: var(--space-4);
 }
+
+/* ── 목소리 점검 (KAN-31 4단계) ── */
+
+/*
+ * 입력 레벨 바. 녹음 패널의 남은 시간 게이지(.record-meter)와 같은 규격이지만 눈금 하나가
+ * 더 있어 따로 둔다 — 저쪽에 눈금을 옵션으로 얹으면 두 화면이 한 클래스를 나눠 쓰면서
+ * 서로의 변경에 걸린다.
+ *
+ * overflow를 숨기지 않는 이유는 눈금이다: 채움만 잘라 내면 되는데 감추면 통과선 표시까지
+ * 함께 잘린다. 대신 채움 쪽에서 모서리를 맞춘다.
+ */
+.level-bar {
+  position: relative;
+  height: var(--progress-bar-height);
+  border-radius: var(--radius-full);
+  background: var(--color-muted);
+}
+
+.level-bar__fill {
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: var(--color-primary);
+  transition: width var(--duration-base) var(--ease-out);
+}
+
+/* 통과선. 채움 위에 그린다 — 넘어선 순간에도 선이 보여야 "통과했다"가 읽힌다 */
+.level-bar__tick {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  background: var(--color-muted-foreground);
+}

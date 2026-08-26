@@ -123,11 +123,20 @@ interface RenderOptions {
    * 토큰이 아예 없는 실행(가드가 막는 경로)을 재현한다.
    */
   webSessionToken?: () => string
+  /** 목소리 점검이 잰 중심 음높이 (KAN-31 4단계). 주지 않으면 곡선이 녹음에서 직접 잡는다 */
+  userCurveCenterHz?: number | null
 }
 
 function renderScreen(
   fetchImpl: FetchLike,
-  { storage, sessionId = 'sess-1', strict, onAnalysisReady, webSessionToken }: RenderOptions = {},
+  {
+    storage,
+    sessionId = 'sess-1',
+    strict,
+    onAnalysisReady,
+    webSessionToken,
+    userCurveCenterHz,
+  }: RenderOptions = {},
 ) {
   // 브라우저 녹음 경로가 실제로 도는 대역. 앱(브리지 있음) 경로에서는 쓰이지 않는다.
   const capture = createFakeCapture()
@@ -142,6 +151,7 @@ function renderScreen(
         webSessionToken ?? (window.AccenturyBridge === undefined ? () => WEB_TOKEN : undefined)
       }
       capture={capture.factory}
+      userCurveCenterHz={userCurveCenterHz}
       fetchImpl={fetchImpl}
     />,
     strict === true ? { wrapper: StrictMode } : undefined,
@@ -482,6 +492,62 @@ describe('VOICE 문항 — 네이티브 녹음 화면 전환 (KAN-100)', () => {
     unmount()
 
     expect(window.AccenturyWeb).toBeUndefined()
+  })
+})
+
+describe('VOICE 문항 — 목소리 점검이 잰 중심 (KAN-31 4단계)', () => {
+  /**
+   * '내 억양' 레인이 실제로 그린 y좌표들 (레인 높이 100px 기준).
+   *
+   * 곡선 좌표는 `M x y` / `Q cx cy x y`라 숫자가 늘 (x, y) 쌍이다 — 홀수 번째가 y다.
+   * 중심이 어디로 갔는지는 이 값 말고는 화면에서 볼 수 없다: 축은 그려지지 않는다.
+   */
+  function userCurveYs(): number[] {
+    const lane = screen.getByRole('img', { name: '내 억양 곡선' })
+    const fromPaths = Array.from(lane.querySelectorAll('path')).flatMap((path) => {
+      const numbers = (path.getAttribute('d') ?? '').match(/-?[\d.]+/g) ?? []
+      return numbers.filter((_, index) => index % 2 === 1).map(Number)
+    })
+    // 점이 하나뿐인 선분은 선이 아니라 점으로 그려진다. 이 정의의 가이드가 10ms짜리라
+    // 사용자 창이 20ms고(가이드의 2배), 그 안에 들어오는 프레임이 하나뿐이다.
+    const fromDots = Array.from(lane.querySelectorAll('circle')).map((dot) =>
+      Number(dot.getAttribute('cy')),
+    )
+    return [...fromPaths, ...fromDots]
+  }
+
+  /** [녹음] → 발화 한 조각. 정지하지 않으므로 실시간 곡선 그대로다 */
+  async function recordOnly(capture: FakeCapture) {
+    fireEvent.click(screen.getByRole('button', { name: '녹음' }))
+    await act(async () => {})
+    await act(async () => {
+      capture.emit(sineChunk(VOICE_DURATION_MS, { sampleRate: capture.sampleRate }))
+    })
+  }
+
+  it('받은 중심이 곡선의 y축 중심이 된다', async () => {
+    // 발화(200Hz)가 중심보다 한 옥타브(12 semitone) 위다. 레인이 담는 폭은 ±7이라
+    // 곡선이 위 끝에 눌린다(y=0) — 중심이 실제로 쓰였을 때만 나오는 그림이다.
+    const { capture } = renderScreen(okFetch(), { userCurveCenterHz: 100 })
+    await findRecordButton()
+
+    await recordOnly(capture)
+
+    const ys = userCurveYs()
+    expect(ys.length).toBeGreaterThan(0)
+    expect(Math.max(...ys)).toBe(0)
+  })
+
+  it('중심이 없으면 이 녹음에서 잡는 폴백으로 내려간다 — 곡선이 사라지지 않는다', async () => {
+    const { capture } = renderScreen(okFetch())
+    await findRecordButton()
+
+    await recordOnly(capture)
+
+    // 중심을 이 녹음에서 잡으면 발화가 곧 중심이라 곡선이 레인 한가운데에 눕는다
+    const ys = userCurveYs()
+    expect(ys.length).toBeGreaterThan(0)
+    expect(Math.min(...ys)).toBeGreaterThan(0)
   })
 })
 
