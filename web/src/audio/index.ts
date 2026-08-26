@@ -61,3 +61,11 @@ export {
   type UseRecorderOptions,
   type UseRecorderResult,
 } from './useRecorder'
+/*
+ * Stage 5의 실시간 F0 분석. 업로드 경로(resample → wav)와 나란한 두 번째 소비자라 같은 배럴에
+ * 둔다 — 곡선 그리기 규칙 자체는 오디오가 아니라 화면의 일이라 `src/recording/`에 있다.
+ */
+export { StreamingResampler } from './streamingResampler'
+export { OverlappedFramer, HOP_SIZE, WINDOW_SIZE, type AnalysisFrame } from './overlappedFramer'
+export { MAX_F0_HZ, MIN_F0_HZ, VOICED_MIN_RMS, estimatePitchHz } from './yin'
+export { PitchTracker, type PitchFrame } from './pitchTracker'

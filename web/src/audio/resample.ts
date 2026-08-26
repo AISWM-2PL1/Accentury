@@ -116,8 +116,13 @@ export function outputLength(inputLength: number, inputRate: number): number {
   return Math.round((inputLength * TARGET_SAMPLE_RATE) / inputRate)
 }
 
-/** 레이트별 커널을 캐시에서 꺼내거나 새로 만든다 */
-function kernelFor(inputRate: number): Float32Array {
+/**
+ * 레이트별 커널을 캐시에서 꺼내거나 새로 만든다.
+ *
+ * {@link StreamingResampler}가 같은 커널을 써야 해서 export한다 — 배치와 스트리밍이 다른
+ * 커널을 쓰면 "업로드된 WAV의 억양"과 "화면에 그려진 억양"이 미세하게 다른 신호에서 나온다.
+ */
+export function kernelFor(inputRate: number): Float32Array {
   const cached = kernelCache.get(inputRate)
   if (cached) return cached
   const built = buildKernel(inputRate)
@@ -147,8 +152,11 @@ function buildKernel(inputRate: number): Float32Array {
   return table
 }
 
-/** 표에서 임의 지점의 커널 값을 선형보간으로 읽는다. 창 밖(|offset| ≥ half)은 0이다 */
-function kernelAt(table: Float32Array, offset: number): number {
+/**
+ * 표에서 임의 지점의 커널 값을 선형보간으로 읽는다. 창 밖(|offset| ≥ half)은 0이다.
+ * {@link kernelFor}와 같은 이유로 export한다.
+ */
+export function kernelAt(table: Float32Array, offset: number): number {
   const pos = Math.abs(offset) * KERNEL_RESOLUTION
   const i = Math.floor(pos)
   if (i >= table.length - 1) return 0

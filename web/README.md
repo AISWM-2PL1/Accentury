@@ -43,6 +43,10 @@ localStorage.setItem('accentury.devSessionToken', '<token>')
 (에뮬레이터의 `http://10.0.2.2:5173`은 보안 컨텍스트가 아니라 마이크를 열 수 없다 — 앱에서는
 네이티브 녹음 화면이 그 자리를 맡으므로 문제가 되지 않는다).
 
+녹음 패널의 억양 곡선 두 레인(가이드·내 억양)은 앱과 **같은 YIN·EMA 규칙**으로 그린다.
+상수와 그 값을 고른 근거는 앱 쪽 [docs/wiki/pitch-curve.md](../docs/wiki/pitch-curve.md)가 정본이고,
+한쪽을 고치면 다른 쪽도 같이 고쳐야 한다.
+
 ## 배포 (미확정)
 
 산출물 `dist/` → CloudFront 원격 전용 서빙. 배포 주체·도메인은 미확정(webview-layer.md §10) — 확정 전까지 release 빌드의 `WEB_URL`은 placeholder다.

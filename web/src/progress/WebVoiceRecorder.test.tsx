@@ -9,14 +9,23 @@ import type { VoiceItem } from './testDefinition'
 
 const MAX_MS = 10_000
 
-function voiceItem(): VoiceItem {
+/**
+ * 1초짜리 가이드 곡선(10ms × 101점). 실제 시드 문항과 같은 규격이라 사용자 창이 그 두 배인
+ * 2초가 된다 — 곡선 테스트가 실제와 같은 창에서 돌아야 "창이 미끄러진다"를 검사할 수 있다.
+ */
+const GUIDE_VALUES: (number | null)[] = Array.from({ length: 101 }, (_, i) =>
+  Math.sin((2 * Math.PI * i) / 100) * 3,
+)
+
+function voiceItem(overrides: Partial<VoiceItem> = {}): VoiceItem {
   return {
     itemId: 'v1',
     seq: 1,
     type: 'VOICE',
     prompt: '"밥 뭇나?"를 평소 말투로 읽어 주세요',
     maxDurationMs: MAX_MS,
-    guideF0: { unit: 'semitone', frameIntervalMs: 10, values: [0, 1] },
+    guideF0: { unit: 'semitone', frameIntervalMs: 10, values: GUIDE_VALUES },
+    ...overrides,
   }
 }
 
@@ -34,12 +43,12 @@ function okUpload(analysisJobId = 'job-1'): UploadMock {
   return vi.fn<UploadFn>(async () => ({ analysisJobId }))
 }
 
-function renderRecorder(upload: UploadMock = okUpload()): Harness {
+function renderRecorder(upload: UploadMock = okUpload(), item: VoiceItem = voiceItem()): Harness {
   const capture = createFakeCapture()
   const onUploaded = vi.fn<(result: ItemResult) => void>()
   render(
     <WebVoiceRecorder
-      item={voiceItem()}
+      item={item}
       upload={upload}
       onUploaded={onUploaded}
       capture={capture.factory}
@@ -314,5 +323,114 @@ describe('캡처 실패', () => {
     click('다시 시도')
     expect(screen.getByRole('button', { name: '녹음' })).toBeInTheDocument()
     warn.mockRestore()
+  })
+})
+
+/**
+ * 억양 곡선 카드 (KAN-56 Stage 5). 곡선 값 자체의 규칙은 `recording/*.test.ts`가 전부 덮으므로
+ * 여기서는 **결선**만 본다 — 어느 레인이 무엇을 그리는가, 녹음이 실제로 곡선을 만드는가,
+ * 단계에 따라 창이 바뀌는가.
+ */
+describe('억양 곡선 (KAN-56 Stage 5)', () => {
+  const lane = (name: string) => screen.getByRole('img', { name })
+  const lanePath = (name: string) => lane(name).querySelector('path')
+
+  /** 곡선 명령 개수. 점이 하나 늘 때 명령도 하나 는다(`curvePath.ts`)이라 곧 점 개수다 */
+  const commandCount = (name: string) =>
+    (lanePath(name)?.getAttribute('d') ?? '').split(/(?=[MLQ] )/).filter(Boolean).length
+
+  it('가이드 레인은 문항 정의의 곡선을 그린다', () => {
+    renderRecorder()
+
+    const d = lanePath('가이드 억양 곡선')!.getAttribute('d')!
+    expect(d.startsWith('M ')).toBe(true)
+    // 101점짜리 가이드라 곡선 조각(Q)이 그만큼 들어간다
+    expect(d).toContain('Q ')
+  })
+
+  it('단위가 semitone이 아니면 가이드 레인을 비워 둔다', () => {
+    // 다른 단위를 semitone 축에 그리면 조용히 틀린 그림이 된다 - 앱 RecordingScreen과 같은 판정
+    renderRecorder(okUpload(), voiceItem({ guideF0: { unit: 'hz', frameIntervalMs: 10, values: [200, 220] } }))
+
+    expect(lanePath('가이드 억양 곡선')).toBeNull()
+  })
+
+  it('녹음 전에는 내 억양 레인이 비어 있다', () => {
+    renderRecorder()
+
+    expect(lanePath('내 억양 곡선')).toBeNull()
+  })
+
+  it('녹음 중에는 발화에서 뽑은 곡선이 자란다', async () => {
+    const { capture } = renderRecorder()
+
+    click('녹음')
+    await act(async () => {})
+    await act(async () => {
+      capture.emit(sineChunk(1_000, { sampleRate: capture.sampleRate, frequency: 220 }))
+    })
+
+    // 220Hz 사인파는 유성 판정을 통과하므로 중심이 잡히고 곡선이 그려진다
+    const d = lanePath('내 억양 곡선')!.getAttribute('d')!
+    expect(d.startsWith('M ')).toBe(true)
+  })
+
+  it('무음만 들어오면 곡선이 생기지 않는다 - 축이 잡히지 않는다', async () => {
+    const { capture } = renderRecorder()
+
+    click('녹음')
+    await act(async () => {})
+    await act(async () => {
+      capture.emit(new Float32Array(capture.sampleRate))
+    })
+
+    expect(lanePath('내 억양 곡선')).toBeNull()
+  })
+
+  it('Review에서는 라이브 창을 넘긴 발화도 통째로 남는다', async () => {
+    // 라이브 창은 가이드(1초)의 두 배인 2초라, 3초 발화는 녹음 중에 앞부분이 창 밖으로 밀린다.
+    // 정지하면 창이 녹음 전체 길이로 늘어나 밀렸던 앞부분이 돌아온다 (pitch-curve.md §4).
+    const { capture } = renderRecorder()
+
+    click('녹음')
+    await act(async () => {})
+    await act(async () => {
+      capture.emit(sineChunk(3_000, { sampleRate: capture.sampleRate, frequency: 220 }))
+    })
+    const live = commandCount('내 억양 곡선')
+
+    click('정지')
+    await act(async () => {})
+
+    expect(commandCount('내 억양 곡선')).toBeGreaterThan(live)
+  })
+
+  it('[재녹음]은 앞 녹음의 곡선을 지운다', async () => {
+    const { capture } = renderRecorder()
+
+    await recordFor(capture, 2_000)
+    expect(lanePath('내 억양 곡선')).not.toBeNull()
+
+    click('재녹음')
+
+    expect(lanePath('내 억양 곡선')).toBeNull()
+    // 가이드는 문항의 것이라 그대로 남는다
+    expect(lanePath('가이드 억양 곡선')).not.toBeNull()
+  })
+
+  it('곡선 카드는 조작부와 다른 자리에 있다', () => {
+    // 카드가 하단 자리에 들어가면 버튼이 화면 밖으로 밀린다
+    const { container } = render(
+      <WebVoiceRecorder
+        item={voiceItem()}
+        upload={okUpload()}
+        onUploaded={vi.fn()}
+        capture={createFakeCapture().factory}
+      />,
+    )
+
+    expect(container.querySelector('.item-screen__body .curve-card')).not.toBeNull()
+    expect(container.querySelector('.item-screen__footer .curve-card')).toBeNull()
+    expect(container.querySelector('.item-screen__footer .btn')).not.toBeNull()
   })
 })

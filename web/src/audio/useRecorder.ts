@@ -34,6 +34,19 @@ export interface UseRecorderOptions {
   capture?: CaptureFactory
   /** 주입용 시계 (테스트용). 갱신 간격을 재는 데만 쓴다 */
   now?: () => number
+  /**
+   * 녹음 중 캡처 조각이 도착할 때마다 부른다 (KAN-56 Stage 5). 실시간 피치 곡선이 이 통로로
+   * 원본 조각을 받아 자기 분석 파이프라인에 흘린다.
+   *
+   * **업로드 경로와 갈라져 있다.** 녹음 버퍼는 조각을 모아 한 번에 16kHz로 리샘플하고, 곡선은
+   * 같은 조각을 스트리밍으로 줄여 32ms마다 F0를 뽑는다 — 두 경로가 필요한 것(정확한 파일 /
+   * 낮은 지연)이 달라 한 계산을 나눠 쓸 수 없다. 대신 같은 커널·같은 문턱을 쓴다
+   * (`streamingResampler.ts`, `yin.ts`).
+   *
+   * 단계가 `recording`일 때만 부른다. 자동 정지 뒤에 도착한 조각은 녹음에 들어가지 않으므로
+   * 곡선에도 들어가면 안 된다.
+   */
+  onSamples?: (chunk: Float32Array, sampleRate: number) => void
 }
 
 export interface UseRecorderResult {
@@ -78,6 +91,16 @@ export function useRecorder(options: UseRecorderOptions): UseRecorderResult {
   if (captureFactoryRef.current === null) captureFactoryRef.current = options.capture ?? webAudioCapture
   const clockRef = useRef<(() => number) | null>(null)
   if (clockRef.current === null) clockRef.current = options.now ?? (() => performance.now())
+
+  /*
+   * 조각 통지만은 렌더마다 최신 함수로 갈아 끼운다. 캡처·시계와 달리 이 콜백은 화면의 상태를
+   * 건드리는 쪽이라 고정해 두면 낡은 클로저가 남는데, 그렇다고 의존성에 넣으면 녹음 도중
+   * handleChunk가 새로 만들어져 워클릿에 걸린 콜백과 훅이 보는 콜백이 갈린다. ref가 그 사이다.
+   */
+  const onSamplesRef = useRef<UseRecorderOptions['onSamples']>(undefined)
+  useEffect(() => {
+    onSamplesRef.current = options.onSamples
+  }, [options.onSamples])
 
   const [state, setState] = useState<RecorderState>({ phase: 'idle' })
 
@@ -138,6 +161,13 @@ export function useRecorder(options: UseRecorderOptions): UseRecorderResult {
     (chunk: Float32Array) => {
       const buffer = bufferRef.current
       if (buffer === null) return
+
+      // 곡선이 먼저 본다. 담기 전에 부르는 이유는 buffer.push가 상한에 걸린 마지막 조각을
+      // 잘라 담기 때문이다 - 곡선은 잘리기 전 조각을 보고, 상한을 넘긴 뒤의 조각은 아래
+      // 단계 판정에서 걸러진다(자동 정지로 phase가 바뀐다).
+      if (phaseRef.current === 'recording') {
+        onSamplesRef.current?.(chunk, buffer.sampleRate)
+      }
 
       if (buffer.push(chunk)) {
         void stop()

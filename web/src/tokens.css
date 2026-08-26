@@ -104,6 +104,9 @@
   --prompt-card-padding: 22px;
   --progress-bar-height: 12px;
   --hero-icon-size: 112px;
+  /* F0 곡선 레인 하나. 앱 Dimens.curveLaneHeight와 같은 값이다 (design-tokens.md) —
+     시안(72px)보다 키웠다: 실제 기기에서는 아래가 비어 곡선이 납작했다 */
+  --curve-lane-height: 120px;
 
   /* ── 그림자 (정본 §5) ──
      전부 시그니처 파랑에 알파를 준 값이다. 회색 그림자와 달리 화면 전체가 한 색조로 묶인다. */
