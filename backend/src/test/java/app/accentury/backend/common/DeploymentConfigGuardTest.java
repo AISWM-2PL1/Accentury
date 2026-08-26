@@ -43,6 +43,18 @@ class DeploymentConfigGuardTest {
     }
 
     @Test
+    void secretsManagerSecretId가_값_없이_붙은_URL은_자격_증명_경로로_치지_않는다() {
+        // "secretsManagerSecretId="만 있으면 플러그인이 읽을 시크릿이 없다 - 있는 셈 치면 첫 연결에서 죽는다.
+        MockEnvironment env = complete()
+                .withProperty("spring.datasource.url", "jdbc:aws-wrapper:postgresql://db.internal:5432/accentury?secretsManagerSecretId=");
+
+        List<String> missing = DeploymentConfigGuard.missing(env);
+
+        assertEquals(1, missing.size(), missing.toString());
+        assertTrue(missing.get(0).contains("secretsManagerSecretId"));
+    }
+
+    @Test
     void 일반_URL이면_사용자_이름과_비밀번호가_있어야_한다() {
         MockEnvironment env = complete()
                 .withProperty("spring.datasource.url", "jdbc:postgresql://db.internal:5432/accentury");

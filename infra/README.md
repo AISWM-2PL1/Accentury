@@ -254,8 +254,8 @@ aws ssm get-parameter --with-decryption --name /accentury/staging/ACCENTURY_ADMI
   --query Parameter.Value --output text
 ```
 
-재발급은 `terraform taint 'module.config.random_password.admin_token'` 후 apply, 그리고
-인스턴스에서 `systemctl reload accentury`다. 값은 Terraform state(S3 암호화 + 버전 관리
+재발급은 `terraform apply -replace='module.config.random_password.admin_token'`(taint는
+deprecated) 뒤 인스턴스에서 `systemctl reload accentury`다. 값은 Terraform state(S3 암호화 + 버전 관리
 버킷)에 남는다 - KAN-140이 수용한 범위이고, 레포, 이미지, 로그에는 없다.
 
 **E2E 스모크의 GitHub 시크릿도 함께 맞춘다** (KAN-138). `.github/workflows/e2e-smoke.yml`은
@@ -399,6 +399,13 @@ terraform destroy
   채널(S3, Run Command) 없이 "재부팅 자동 기동"과 "두 환경 같은 파일" AC가
   성립한다. 대가는 compose 변경 시 인스턴스 교체인데, 호스트가 무상태라 감수한다.
   배포 파이프라인(KAN-128)은 SSM `IMAGE_TAG` 갱신과 `systemctl reload`만 한다.
+  compose 파일과 기동 스크립트는 `base64gzip`으로 실어 온다 (2026-08-26, KAN-129
+  리뷰) - 평문이면 user_data가 16KB 상한의 91%라 주석 몇 줄에 apply가 터진다.
+  압축 뒤 약 11KB이고, 더 커지면 S3 배치로 옮긴다.
+- **ssm_prefix는 env와 결합** (2026-08-26): envs 변수 validation이 `/accentury/{env}`와
+  정확히 같은지 plan에서 세운다. prod tfvars에 staging 접두사를 잘못 적으면 prod EC2
+  역할이 staging 경로를 읽게 되기 때문이다. compute의 인스턴스 precondition도 config가
+  만든 이름이 같은 접두사 아래에 있는지 본다.
 - **env 파일은 tmpfs(/run)**: 재부팅마다 SSM에서 다시 읽으므로 "마지막으로
   반영된 태그"의 정본은 SSM이고, 호스트에 낡은 env 사본이 쌓이지 않는다. docker의
   컨테이너 config에는 환경 변수가 남는다 (암호화 루트 볼륨). 파일 시크릿 마운트로

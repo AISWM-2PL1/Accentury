@@ -10,6 +10,7 @@ import org.springframework.core.env.Environment;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 
 /**
  * 배포 프로파일({@code deploy})의 필수 설정 검증 (KAN-129).
@@ -32,6 +33,14 @@ import java.util.List;
  * 자산 완결성은 {@code TierAssets}가, 토큰 길이는 {@code AdminAuth}가, 프록시 대역 형식은
  * {@code ClientIps}가 각자 기동 시 검증하므로 여기서는 "있는지"만 본다. 값 자체는 로그에 남기지
  * 않는다 - 시크릿이 섞여 있다.
+ * <p>
+ * 프로퍼티와 SSM 파라미터 이름의 대응({@link #SSM_NAMES})은 이 클래스가 정본이다. 이름은 Spring
+ * Boot relaxed binding 규칙(점은 밑줄, 대시는 제거, 대문자)을 따르고, Terraform
+ * {@code infra/modules/config/main.tf}가 같은 이름을 만든다 - 두 쪽의 일치는
+ * {@code SsmEnvironmentBindingTest}가 대조한다. 값 조회는 전부 {@link Binder}로 한다 -
+ * {@code Environment.getProperty}는 대시를 밑줄로만 바꾸지 제거하지는 않아서
+ * {@code ACCENTURY_ANALYSIS_AIBASEURL}을 못 찾고(빈 값으로 오판), {@code @ConfigurationProperties}가
+ * 쓰는 Binder만 그 이름을 읽는다 (이 테스트가 잡은 버그, 2026-08-26).
  */
 @Configuration(proxyBeanMethods = false)
 @Profile(DeploymentConfigGuard.PROFILE)
@@ -43,12 +52,32 @@ class DeploymentConfigGuard {
      */
     static final String PROFILE = "deploy";
 
+    /** 프로퍼티와 그 값을 싣는 SSM 파라미터(= 컨테이너 환경 변수) 이름. */
+    record SsmName(String property, String ssmName) {
+        String label() {
+            return property + " (" + ssmName + ")";
+        }
+    }
+
+    static final SsmName DATASOURCE_URL = new SsmName("spring.datasource.url", "SPRING_DATASOURCE_URL");
+    static final SsmName DATASOURCE_USERNAME = new SsmName("spring.datasource.username", "SPRING_DATASOURCE_USERNAME");
+    static final SsmName DATASOURCE_PASSWORD = new SsmName("spring.datasource.password", "SPRING_DATASOURCE_PASSWORD");
+    static final SsmName AI_BASE_URL = new SsmName("accentury.analysis.ai-base-url", "ACCENTURY_ANALYSIS_AIBASEURL");
+    static final SsmName TRUSTED_PROXIES = new SsmName("accentury.trusted-proxies", "ACCENTURY_TRUSTEDPROXIES");
+    static final SsmName ADMIN_TOKEN = new SsmName("accentury.admin.token", "ACCENTURY_ADMIN_TOKEN");
+    static final SsmName WEB_TEST_URL = new SsmName("accentury.result.web-test-url", "ACCENTURY_RESULT_WEBTESTURL");
+
+    /** 배포에서 값이 와야 하는 프로퍼티 전부 (자격 증명 둘은 Secrets Manager URL이면 비어 있어도 된다). */
+    static final List<SsmName> SSM_NAMES = List.of(DATASOURCE_URL, DATASOURCE_USERNAME, DATASOURCE_PASSWORD,
+            AI_BASE_URL, TRUSTED_PROXIES, ADMIN_TOKEN, WEB_TEST_URL);
+
     /**
-     * JDBC URL에 이 파라미터가 있으면 자격 증명은 AWS Advanced JDBC Wrapper의 awsSecretsManager
-     * 플러그인이 Secrets Manager에서 읽는다 (application-deploy.yml). 그 경우 username과 password는
-     * 비어 있는 것이 맞다 - RDS 관리형 시크릿은 7일마다 회전되므로 값을 복사해 두면 끊긴다.
+     * JDBC URL에 이 파라미터가 <b>값과 함께</b> 있으면 자격 증명은 AWS Advanced JDBC Wrapper의
+     * awsSecretsManager 플러그인이 Secrets Manager에서 읽는다 (application-deploy.yml). 그 경우
+     * username과 password는 비어 있는 것이 맞다 - RDS 관리형 시크릿은 7일마다 회전되므로 값을 복사해
+     * 두면 끊긴다. {@code secretsManagerSecretId=}처럼 값이 빈 것은 인정하지 않는다 (PR 리뷰).
      */
-    private static final String SECRETS_MANAGER_PARAM = "secretsManagerSecretId=";
+    private static final Pattern SECRETS_MANAGER_PARAM = Pattern.compile("[?&]secretsManagerSecretId=[^&#]+");
 
     @Bean
     static BeanFactoryPostProcessor deploymentConfigGuardProcessor(Environment environment) {
@@ -74,38 +103,43 @@ class DeploymentConfigGuard {
     static List<String> missing(Environment environment) {
         List<String> missing = new ArrayList<>();
 
-        String url = environment.getProperty("spring.datasource.url", "");
+        Binder binder = Binder.get(environment);
+        String url = value(binder, DATASOURCE_URL.property());
         if (url.isBlank()) {
-            missing.add("spring.datasource.url (SPRING_DATASOURCE_URL)");
-        } else if (!url.contains(SECRETS_MANAGER_PARAM) && !hasCredentials(environment)) {
-            missing.add("DB 자격 증명 - URL의 " + SECRETS_MANAGER_PARAM + " 또는 spring.datasource.username/password"
-                    + " (SPRING_DATASOURCE_USERNAME, SPRING_DATASOURCE_PASSWORD)");
+            missing.add(DATASOURCE_URL.label());
+        } else if (!SECRETS_MANAGER_PARAM.matcher(url).find() && !hasCredentials(binder)) {
+            missing.add("DB 자격 증명 - URL의 secretsManagerSecretId 값 또는 "
+                    + DATASOURCE_USERNAME.label() + "와 " + DATASOURCE_PASSWORD.label());
         }
-        if (isBlank(environment, "accentury.analysis.ai-base-url")) {
-            missing.add("accentury.analysis.ai-base-url (ACCENTURY_ANALYSIS_AIBASEURL)");
+        if (isBlank(binder, AI_BASE_URL.property())) {
+            missing.add(AI_BASE_URL.label());
         }
         // 목록이라 단순 getProperty로는 못 읽는다 - yml의 배열과 환경 변수의 쉼표 한 줄을 똑같이 받는다.
-        List<String> trustedProxies = Binder.get(environment)
-                .bind("accentury.trusted-proxies", Bindable.listOf(String.class))
+        List<String> trustedProxies = binder
+                .bind(TRUSTED_PROXIES.property(), Bindable.listOf(String.class))
                 .orElse(List.of());
         if (trustedProxies.stream().allMatch(String::isBlank)) {
-            missing.add("accentury.trusted-proxies (ACCENTURY_TRUSTEDPROXIES)");
+            missing.add(TRUSTED_PROXIES.label());
         }
-        if (isBlank(environment, "accentury.admin.token")) {
-            missing.add("accentury.admin.token (ACCENTURY_ADMIN_TOKEN)");
+        if (isBlank(binder, ADMIN_TOKEN.property())) {
+            missing.add(ADMIN_TOKEN.label());
         }
-        if (isBlank(environment, "accentury.result.web-test-url")) {
-            missing.add("accentury.result.web-test-url (ACCENTURY_RESULT_WEBTESTURL)");
+        if (isBlank(binder, WEB_TEST_URL.property())) {
+            missing.add(WEB_TEST_URL.label());
         }
         return missing;
     }
 
-    private static boolean hasCredentials(Environment environment) {
-        return !isBlank(environment, "spring.datasource.username")
-                && !isBlank(environment, "spring.datasource.password");
+    private static boolean hasCredentials(Binder binder) {
+        return !isBlank(binder, DATASOURCE_USERNAME.property())
+                && !isBlank(binder, DATASOURCE_PASSWORD.property());
     }
 
-    private static boolean isBlank(Environment environment, String key) {
-        return environment.getProperty(key, "").isBlank();
+    private static boolean isBlank(Binder binder, String key) {
+        return value(binder, key).isBlank();
+    }
+
+    private static String value(Binder binder, String key) {
+        return binder.bind(key, String.class).orElse("");
     }
 }

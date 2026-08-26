@@ -55,7 +55,14 @@ variable "db_instance_class" {
 
 variable "ssm_prefix" {
   type        = string
-  description = "SSM Parameter Store 경로 접두사 (KAN-129)"
+  description = "SSM Parameter Store 경로 접두사 (KAN-129). /accentury/{env}와 정확히 같아야 한다."
+
+  # 접두사가 환경 이름과 어긋나면(prod tfvars에 /accentury/staging 오타) prod EC2 역할이 staging
+  # 경로를 읽는다. "staging 설정으로 prod에 닿지 않는다"는 AC가 여기서 깨지므로 plan에서 세운다.
+  validation {
+    condition     = var.ssm_prefix == "/accentury/${var.env}"
+    error_message = "ssm_prefix는 /accentury/${var.env}이어야 합니다 (env와 결합, KAN-129)."
+  }
 }
 
 variable "db_deletion_protection" {
