@@ -239,25 +239,45 @@ export const webAudioCapture: CaptureFactory = async (onChunk) => {
       stop(): Promise<void> {
         if (stopping !== undefined) return stopping
         stopping = (async () => {
-          // 잔여분 회수. 워클릿이 죽어 회신이 오지 않는 경우를 대비해 상한을 둔다 —
-          // 여기서 영원히 기다리면 [다음] 버튼이 영영 나타나지 않는다.
-          await new Promise<void>((resolve) => {
-            const timer = setTimeout(resolve, FLUSH_TIMEOUT_MS)
-            flushed = () => {
-              clearTimeout(timer)
-              resolve()
+          /*
+           * 정리는 무슨 일이 있어도 끝까지 간다 (Codex 검증 지적). flush 요청이나 노드 해제가
+           * 던지더라도 트랙 정지와 컨텍스트 종료까지 도달해야 한다 — 하나라도 건너뛰면 마이크
+           * 표시등이 켜진 채 남거나(사용자에게는 "계속 듣는 중") 컨텍스트가 하드웨어를 붙든다.
+           * 그래서 단계마다 따로 삼키고, 어느 단계가 실패했는지는 콘솔에만 남긴다.
+           */
+          try {
+            // 잔여분 회수. 워클릿이 죽어 회신이 오지 않는 경우를 대비해 상한을 둔다 —
+            // 여기서 영원히 기다리면 [다음] 버튼이 영영 나타나지 않는다.
+            await new Promise<void>((resolve) => {
+              const timer = setTimeout(resolve, FLUSH_TIMEOUT_MS)
+              flushed = () => {
+                clearTimeout(timer)
+                resolve()
+              }
+              worklet.port.postMessage('flush')
+            })
+          } catch (error) {
+            console.warn('[capture] 잔여분 회수 실패 — 마지막 조각 없이 마무리한다', error)
+          } finally {
+            worklet.port.onmessage = null
+            for (const node of [source, worklet, silentSink]) {
+              try {
+                node.disconnect()
+              } catch (error) {
+                console.warn('[capture] 노드 해제 실패', error)
+              }
             }
-            worklet.port.postMessage('flush')
-          })
-
-          worklet.port.onmessage = null
-          source.disconnect()
-          worklet.disconnect()
-          silentSink.disconnect()
-          for (const track of stream.getTracks()) track.stop()
-          // 컨텍스트 종료 실패는 삼킨다. 이미 닫혔거나 페이지가 사라지는 중일 뿐이고,
-          // 사용자가 할 수 있는 일도 볼 필요도 없는 오류다.
-          await context.close().catch(() => {})
+            for (const track of stream.getTracks()) {
+              try {
+                track.stop()
+              } catch (error) {
+                console.warn('[capture] 트랙 정지 실패', error)
+              }
+            }
+            // 컨텍스트 종료 실패는 삼킨다. 이미 닫혔거나 페이지가 사라지는 중일 뿐이고,
+            // 사용자가 할 수 있는 일도 볼 필요도 없는 오류다.
+            await context.close().catch(() => {})
+          }
         })()
         return stopping
       },
