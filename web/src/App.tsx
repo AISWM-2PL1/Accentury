@@ -6,10 +6,13 @@ import { useRetest } from './result/useRetest'
 import type { TestResultView } from './result/testResult'
 
 /**
- * 백엔드 오리진. 에뮬레이터에서 호스트의 백엔드를 가리키는 주소를 개발 기본값으로 둔다
- * (앱의 `DEV_BASE_URL`과 같은 값). 배포 도메인은 환경변수로 주입한다.
+ * 백엔드 오리진. 배포에서는 화면과 API가 같은 도메인이라(CloudFront 단일 출처, KAN-126) 빈
+ * 문자열, 즉 상대 경로다. 빌드 산출물이 환경(staging, prod)을 몰라도 되는 근거다 (KAN-127).
+ * 개발 서버(vite dev)에서만 에뮬레이터가 호스트의 백엔드를 가리키는 주소를 기본값으로 둔다
+ * (앱의 `DEV_BASE_URL`과 같은 값). `VITE_API_BASE`가 있으면 어느 쪽이든 그 값이 이긴다.
  */
-const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://10.0.2.2:8080'
+const API_BASE =
+  (import.meta.env.VITE_API_BASE as string | undefined) ?? (import.meta.env.DEV ? 'http://10.0.2.2:8080' : '')
 
 /**
  * 진입 분기 — 화면을 그리기 전에 브리지 버전 스큐부터 판정한다 (webview-layer.md §5).

@@ -7,13 +7,14 @@ AWS 스택 2벌(staging, prod)을 같은 모듈에서 tfvars만 바꿔 짓는다
 
 ```
 infra/
-  bootstrap/          state 백엔드(S3 버킷)와 ECR 리포지토리 등 계정 공유 리소스. 여기만 로컬 state.
+  bootstrap/          state 백엔드(S3 버킷), ECR 리포지토리, GitHub OIDC 공급자 등 계정 공유 리소스. 여기만 로컬 state.
   modules/
     network/          VPC, 서브넷, 보안 그룹 3종 (KAN-121)
     data/             RDS PostgreSQL (KAN-122)
     compute/          EC2, 운영 compose 파일, 기동 스크립트, systemd 유닛 (KAN-124)
     config/           backend 환경 변수의 정본인 SSM 파라미터와 관리자 토큰 (KAN-129)
     edge/             internal ALB, VPC 오리진, CloudFront, S3 (KAN-125, KAN-126)
+    deploy/           GitHub Actions가 OIDC로 맡는 환경별 배포 역할 (KAN-127)
   envs/
     staging/          main.tf + terraform.tfvars
     prod/             main.tf + terraform.tfvars
@@ -112,8 +113,9 @@ diff -r infra/envs/staging infra/envs/prod
 
 - Terraform >= 1.10 (S3 네이티브 잠금 `use_lockfile` 필요. 2026-08-24 기준
   로컬 설치 1.15.8에서 확인했고, DynamoDB 잠금 테이블은 필요 없다.)
-- AWS CLI 프로파일(accentury-cli, ap-northeast-2). CI OIDC 연동은 범위 밖이다
-  (2026-08-20 결정, 추후 별도 티켓).
+- AWS CLI 프로파일(accentury-cli, ap-northeast-2). Terraform 실행용이다. 배포
+  파이프라인은 이 프로파일이 아니라 GitHub OIDC 역할을 쓴다 (KAN-127, 아래
+  "GitHub 설정").
 - 선행 완료 상태: Route 53 호스팅 영역과 ACM 인증서 2장 (KAN-119). us-east-1
   인증서는 CloudFront 뷰어 구간, 서울 인증서는 ALB 오리진 구간(KAN-125)에 쓴다.
   셋 다 Terraform이 소유하지 않고 data 소스로 조회만 한다. destroy에도 지워지지
@@ -147,7 +149,9 @@ terraform apply
 
 생성물: `accentury-tfstate-<account_id>` 버킷 (버전 관리, 암호화, 퍼블릭 차단),
 ECR 리포지토리 `accentury/backend`와 `accentury/ai` (IMMUTABLE, 라이프사이클
-정책: 태그 없는 이미지 1일, 최근 50개 유지).
+정책: 태그 없는 이미지 1일, 최근 50개 유지), GitHub Actions OIDC 공급자
+(`token.actions.githubusercontent.com`, KAN-127 - 계정에 1개뿐이라 여기서 만든다.
+envs/*의 deploy 모듈이 data 소스로 조회하므로 bootstrap apply가 먼저다).
 로컬에 남는 `terraform.tfstate`는 커밋하지 않는다 (.gitignore 처리 완료).
 
 ECR 리포지토리는 KAN-120이 콘솔에서 먼저 만들었다. `ecr.tf`의 import 블록이
@@ -194,7 +198,44 @@ terraform apply
 - 이미지 태그 반영: `/accentury/{env}/IMAGE_TAG`에 ECR의 commit SHA 태그를 넣고
   `systemctl start accentury` (첫 기동) 또는 `systemctl reload accentury`
   (교체). 파이프라인(KAN-128)이 이 두 단계를 자동화한다.
-- 웹 번들과 등급 이미지 S3 업로드 (KAN-127).
+- GitHub environment 변수 3개를 apply 출력으로 채운다 (아래 "GitHub 설정"). 그
+  뒤 웹 번들은 Web Deploy 워크플로가 올린다 (KAN-127). 등급 이미지 업로드는
+  KAN-132.
+
+## GitHub 설정 (KAN-127)
+
+배포 워크플로(`.github/workflows/web-deploy.yml`)는 GitHub environment `staging`,
+`prod`를 지정해 실행되고, 그 environment의 변수에서 대상을 읽는다. 역할의 신뢰
+정책이 `repo:AISWM-2PL1/Accentury:environment:{env}`로 묶여 있어 environment
+이름은 Terraform의 `env`와 같아야 한다.
+
+어느 브랜치가 어느 environment로 배포하는지는 deployment branch policy로 고정한다
+(staging = Dev, prod = Release). 이것이 없으면 아무 브랜치의 워크플로가 environment를
+지정해 역할을 맡을 수 있다.
+
+```
+for env in staging prod; do
+  branch=$([ "$env" = prod ] && echo Release || echo Dev)
+  gh api -X PUT "repos/AISWM-2PL1/Accentury/environments/$env" --input - <<'JSON'
+{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}
+JSON
+  gh api -X POST "repos/AISWM-2PL1/Accentury/environments/$env/deployment-branch-policies" \
+    -f name="$branch" -f type=branch
+done
+```
+
+변수 3개는 환경 apply 출력에서 채운다 (재구축으로 배포 ID나 역할 ARN이 바뀌면 다시).
+
+```
+cd infra/envs/staging   # 또는 prod
+env=$(terraform output -raw domain | grep -q '^staging' && echo staging || echo prod)
+gh variable set AWS_DEPLOY_ROLE_ARN        -e "$env" --body "$(terraform output -raw github_deploy_role_arn)"
+gh variable set WEB_BUCKET                 -e "$env" --body "$(terraform output -raw web_bucket)"
+gh variable set CLOUDFRONT_DISTRIBUTION_ID -e "$env" --body "$(terraform output -raw cloudfront_distribution_id)"
+```
+
+prod의 승인 게이트(required reviewers)는 KAN-128이 정한다. 켜면 웹 배포도 같은
+environment라 함께 승인을 기다린다.
 
 ## EC2 컨테이너 기동 (KAN-124)
 

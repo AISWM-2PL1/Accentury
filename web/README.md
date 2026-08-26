@@ -47,6 +47,20 @@ localStorage.setItem('accentury.devSessionToken', '<token>')
 상수와 그 값을 고른 근거는 앱 쪽 [docs/wiki/pitch-curve.md](../docs/wiki/pitch-curve.md)가 정본이고,
 한쪽을 고치면 다른 쪽도 같이 고쳐야 한다.
 
-## 배포 (미확정)
+## 배포 (KAN-127)
 
-산출물 `dist/` → CloudFront 원격 전용 서빙. 배포 주체·도메인은 미확정(webview-layer.md §10) — 확정 전까지 release 빌드의 `WEB_URL`은 placeholder다.
+`.github/workflows/web-deploy.yml`이 한다. `web/**` 변경이 Dev에 병합되면 staging
+(`staging.accentury.app`), Release에 병합되면 prod(`accentury.app`)로 올라간다. 빌드는
+`npm ci && npm run build` 그대로이고 환경별 값을 주입하지 않는다. 화면과 API가 같은 출처라
+`API_BASE`가 배포 빌드에서 빈 문자열(상대 경로)이기 때문이다 (`src/App.tsx`).
+
+- 캐시: `index.html`만 `no-cache`, 나머지 전부 `public, max-age=31536000, immutable`. 그래서
+  `public/`에 해시 없는 파일을 두지 않는다. 폰트는 `src/assets/fonts/`에서 상대 경로로 import해
+  Vite가 해시를 붙인다. 이름이 고정인 파일이 꼭 필요하면 워크플로의 캐시 규칙부터 고친다.
+- 업로드 순서: 해시 자산을 먼저, `index.html`을 마지막에. 중간에 실패하면 이전 `index.html`이
+  이전 자산을 그대로 가리킨다. 이전 자산은 지우지 않는다 (`sync --delete` 없음).
+- 환경을 새로 지은 뒤 첫 배포나 웹 변경 없는 재배포는 Actions의 "Web Deploy"를
+  workflow_dispatch로 환경을 골라 돌린다.
+- 대상 버킷, 배포 ID, IAM 역할은 GitHub environment 변수다 (infra/README.md "GitHub 설정").
+- `VITE_PLAY_STORE_URL` 같은 빌드 시점 값은 아직 주입하지 않는다 (코드 기본값). 필요해지면
+  environment 변수로 넘긴다 - 두 환경이 같은 값이면 저장소 변수로 둔다.

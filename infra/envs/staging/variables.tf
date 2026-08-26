@@ -74,3 +74,9 @@ variable "db_skip_final_snapshot" {
   type        = bool
   description = "RDS 삭제 시 최종 스냅샷 생략 (staging true)"
 }
+
+variable "github_repository" {
+  type        = string
+  description = "배포 워크플로가 도는 GitHub 저장소 (OWNER/REPO). OIDC 신뢰 정책의 sub 조건에 들어간다 (KAN-127). 두 환경이 같은 값이라 tfvars가 아니라 기본값이다."
+  default     = "AISWM-2PL1/Accentury"
+}
