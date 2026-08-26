@@ -40,6 +40,7 @@ export default function App() {
          * 문자열이 내려가고 진행 스냅샷이 세션별로 나뉘지 않는다 — 과도기의 알려진 한계다.
          */
         sessionId={params.get('sessionId') ?? ''}
+        webSessionToken={devSessionToken}
         onAnalysisReady={() => goToResult(params.get('sessionId') ?? '')}
       />
     )
@@ -60,6 +61,34 @@ export default function App() {
 
   return <IntroScreen />
 }
+
+/** 개발용 세션 토큰을 담아 두는 localStorage 키 (DEV 빌드 전용) */
+const DEV_SESSION_TOKEN_KEY = 'accentury.devSessionToken'
+
+/**
+ * 브라우저 단독 실행의 세션 토큰 — **DEV 빌드에서만** 존재한다 (KAN-56 Stage 3).
+ *
+ * 브리지가 없으면 `getSessionToken()`이 없어 녹음 업로드가 401로 막힌다. 앱 없이 브라우저에서
+ * 녹음·업로드를 실제로 확인하려면(Stage 4) 토큰을 어딘가에서 줘야 하는데, 그 "어딘가"의 정식
+ * 계약은 웹 단독 세션(KAN-31)이 정한다. 그때까지의 임시 통로다.
+ *
+ * **URL에 싣지 않는다.** 쿼리에 넣으면 세션 토큰이 브라우저 히스토리·서버 액세스 로그·
+ * Referer 헤더에 그대로 남는다 — 결과 화면이 토큰을 브리지에서만 읽는 이유와 같은 규칙이고,
+ * 그쪽 주석이 이미 그 규칙을 명시한다. `localStorage`는 같은 오리진의 이 탭 안에만 남는다.
+ *
+ * 프로덕션 빌드에서는 `undefined`를 넘겨 이 경로가 아예 없다 — 번들에도 남지 않도록
+ * `import.meta.env.DEV` 분기를 상수 위치에 둔다(빌드 시점에 접혀 사라진다).
+ */
+const devSessionToken: (() => string) | undefined = import.meta.env.DEV
+  ? () => {
+      try {
+        return localStorage.getItem(DEV_SESSION_TOKEN_KEY) ?? ''
+      } catch {
+        // 사생활 보호 모드 등에서 접근 자체가 던진다. 토큰이 없는 것과 같이 다룬다.
+        return ''
+      }
+    }
+  : undefined
 
 /**
  * 결과 화면 결선 지점 (KAN-34 3단계). 재응시 브리지 왕복을 이 자리가 소유한다.

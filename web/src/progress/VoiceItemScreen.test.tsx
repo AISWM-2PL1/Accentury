@@ -1,5 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createFakeCapture } from '../audio/testing/fakeCapture'
+import type { ItemResult } from '../bridge/itemResult'
 import { VoiceItemScreen } from './VoiceItemScreen'
 import type { VoiceItem } from './testDefinition'
 
@@ -27,9 +29,19 @@ function stubBridge() {
 }
 
 function renderScreen() {
-  const onDevSubmitted = vi.fn<() => void>()
-  render(<VoiceItemScreen item={voiceItem()} itemNumber={1} totalItems={10} onDevSubmitted={onDevSubmitted} />)
-  return { onDevSubmitted }
+  const capture = createFakeCapture()
+  const upload = vi.fn(async () => ({ analysisJobId: 'job-1' }))
+  const onWebUploaded = vi.fn<(result: ItemResult) => void>()
+  render(
+    <VoiceItemScreen
+      item={voiceItem()}
+      itemNumber={1}
+      totalItems={10}
+      webRecording={{ upload, capture: capture.factory }}
+      onWebUploaded={onWebUploaded}
+    />,
+  )
+  return { capture, upload, onWebUploaded }
 }
 
 afterEach(() => {
@@ -91,16 +103,22 @@ describe('대기 문구 단일화 (KAN-146)', () => {
     expect(startVoiceItem).toHaveBeenCalledTimes(2)
   })
 
-  it('브리지가 없으면(브라우저 단독) 대기 뷰 대신 폴백만 남는다', () => {
-    const { onDevSubmitted } = renderScreen()
+  it('브리지가 없으면(브라우저 단독) 대기 뷰 대신 녹음 패널이 선다 (KAN-56 Stage 3)', () => {
+    renderScreen()
 
-    expect(screen.getByText('녹음 화면을 열 수 없어요 (앱 밖에서 실행 중)')).toBeInTheDocument()
-    // 대기 문구와 폴백은 배타적이다 — 둘이 겹치면 앱 밖 실행이 "기다리는 중"으로 보인다
+    // 앱 밖에서는 웹이 직접 녹음한다 — 옛 개발용 제출 통로는 사라졌다
+    expect(screen.getByRole('button', { name: '녹음' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '제출 (개발용)' })).not.toBeInTheDocument()
+    expect(screen.queryByText('녹음 화면을 열 수 없어요 (앱 밖에서 실행 중)')).not.toBeInTheDocument()
+    // 녹음 패널과 대기 뷰는 배타적이다 — 둘이 겹치면 앱 밖 실행이 "기다리는 중"으로도 보인다
     expect(screen.queryByText('잠시만요…')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '녹음 화면 다시 열기' })).not.toBeInTheDocument()
+  })
 
-    fireEvent.click(screen.getByRole('button', { name: '제출 (개발용)' }))
+  it('브리지가 없어도 대사 카드는 그대로다 — 읽을 문장은 녹음 주체와 무관하다', () => {
+    renderScreen()
 
-    expect(onDevSubmitted).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('"밥 뭇나?"를 평소 말투로 읽어 주세요')).toBeInTheDocument()
+    expect(screen.getByText('이 문장을 따라 읽어주세요')).toBeInTheDocument()
   })
 })

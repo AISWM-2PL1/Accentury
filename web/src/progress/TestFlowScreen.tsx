@@ -14,7 +14,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AnalysisWaitingScreen } from '../analysis/AnalysisWaitingScreen'
+import type { CaptureFactory, Recording } from '../audio'
+import { uploadRecording } from '../audio/uploadRecording'
 import { getSessionToken, installItemResultReceiver, startVoiceItem } from '../bridge/bridge'
+import type { ItemResult } from '../bridge/itemResult'
 import { fetchTestDefinition, type FetchLike } from './fetchTestDefinition'
 import type { SnapshotStorage } from './progressSnapshot'
 import { submitVocabAnswer } from './submitVocabAnswer'
@@ -38,6 +41,17 @@ export interface TestFlowScreenProps {
    * 진입 쿼리 계약은 App이 들고 있고, 이 화면이 URL을 알 필요가 없다.
    */
   onAnalysisReady?: () => void
+  /**
+   * 브리지가 없는 환경(브라우저 단독)의 세션 토큰 출처 (KAN-56 Stage 3).
+   *
+   * 브리지가 있으면 토큰은 거기서 온다. 없을 때 웹이 어디서 토큰을 얻을지는 **KAN-31의
+   * 계약**이라 여기서 정하지 않고 함수로 주입받는다 — 지금 `localStorage`든 쿼리든 하나를
+   * 골라 박아 두면, 정식 웹 세션이 붙을 때 이 화면까지 다시 뜯어야 한다
+   * (`fetchTestDefinition`이 apiBase·testVersion 출처를 호출자에게 미룬 것과 같은 이유).
+   */
+  webSessionToken?: () => string
+  /** 주입용 캡처 (테스트용). 브라우저 녹음 경로에만 닿는다 */
+  capture?: CaptureFactory
   /** 주입용 fetch (테스트용) */
   fetchImpl?: FetchLike
 }
@@ -53,6 +67,8 @@ export function TestFlowScreen({
   sessionId = '',
   storage,
   onAnalysisReady,
+  webSessionToken,
+  capture,
   fetchImpl,
 }: TestFlowScreenProps) {
   const [load, setLoad] = useState<LoadState>({ status: 'loading' })
@@ -109,6 +125,8 @@ export function TestFlowScreen({
       sessionId={sessionId}
       storage={storage}
       onAnalysisReady={onAnalysisReady}
+      webSessionToken={webSessionToken}
+      capture={capture}
       fetchImpl={fetchImpl}
     />
   )
@@ -120,6 +138,8 @@ function TestRunner({
   sessionId,
   storage,
   onAnalysisReady,
+  webSessionToken,
+  capture,
   fetchImpl,
 }: {
   definition: TestDefinition
@@ -127,6 +147,8 @@ function TestRunner({
   sessionId: string
   storage?: SnapshotStorage
   onAnalysisReady?: () => void
+  webSessionToken?: () => string
+  capture?: CaptureFactory
   fetchImpl?: FetchLike
 }) {
   const { state, current, progress, submit } = useTestProgress(definition, storage, sessionId)
@@ -150,13 +172,42 @@ function TestRunner({
    * 채점 대상을 정하는 것은 서버이고, 두 출처가 어긋나면 화면이 서버와 다른 말을 하게 된다.
    * 여기서 쓰는 것은 "무언가 돌아왔다"는 사실뿐이다.
    */
-  useEffect(
-    () =>
-      installItemResultReceiver((result) => {
-        submit(result.itemId)
-        setResultNonce((n) => n + 1)
-      }),
+  /*
+   * 문항 결과 하나를 받는다 — 브리지(네이티브 녹음)와 브라우저 녹음 업로드가 **같은 함수로**
+   * 들어온다. 두 경로가 만드는 것이 같은 [ItemResult]라 받는 쪽을 나눌 이유가 없고, 나누면
+   * 진행을 미는 규칙이 두 벌이 되어 언젠가 어긋난다.
+   */
+  const receiveResult = useCallback(
+    (result: ItemResult) => {
+      submit(result.itemId)
+      setResultNonce((n) => n + 1)
+    },
     [submit],
+  )
+
+  useEffect(() => installItemResultReceiver(receiveResult), [receiveResult])
+
+  /**
+   * 브라우저 녹음의 업로드 통로. 토큰은 **업로드 시점마다** 읽는다 — 미리 잡아 두면 페이지
+   * 전환으로 브리지 판정이 바뀐 뒤에도 낡은 값을 쓴다 (어휘 제출이 같은 규칙을 쓴다).
+   *
+   * 브리지가 있는 앱에서도 이 함수는 만들어지지만 호출되지 않는다: 브리지가 있으면
+   * [VoiceItemScreen]이 네이티브 경로로 가고 녹음 패널 자체를 그리지 않는다.
+   */
+  const uploadWebRecording = useCallback(
+    (itemId: string, recording: Recording, attemptId: string) =>
+      uploadRecording(
+        {
+          apiBase,
+          sessionId,
+          itemId,
+          sessionToken: webSessionToken?.() ?? getSessionToken() ?? '',
+          attemptId,
+          recording,
+        },
+        fetchImpl,
+      ),
+    [apiBase, sessionId, webSessionToken, fetchImpl],
   )
 
   /*
@@ -246,7 +297,8 @@ function TestRunner({
           item={current}
           itemNumber={progress.current}
           totalItems={progress.total}
-          onDevSubmitted={() => submit(current.itemId)}
+          webRecording={{ upload: uploadWebRecording, capture }}
+          onWebUploaded={receiveResult}
         />
       ) : (
         <VocabularyItemScreen

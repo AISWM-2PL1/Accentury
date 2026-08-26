@@ -10,6 +10,10 @@
  * Stage 2에서 그 위에 캡처 계층이 올라왔다 — 게이트({@link requestMicrophonePermission}),
  * 누적({@link RecordingBuffer}), 브라우저 결선({@link webAudioCapture}), 상태 기계
  * ({@link useRecorder}). 브라우저 API를 실제로 만지는 곳은 `capture.ts` 하나뿐이다.
+ *
+ * Stage 3의 업로드(`uploadRecording.ts`)는 **여기서 재수출하지 않는다.** 그쪽은 fetch 대역과
+ * 오류 봉투를 쓰느라 `progress`·`analysis`를 참조하는데, 이 배럴이 그것을 실어 나르면 오디오
+ * 계층을 import하는 것만으로 네트워크 계층이 딸려 온다. 필요한 곳에서 직접 가져간다.
  */
 
 export { TARGET_SAMPLE_RATE, FULL_SCALE_INT16, floatToInt16 } from './pcm'
