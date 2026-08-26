@@ -5,6 +5,7 @@ import { requestMicPermission } from '../bridge/bridge'
 import { Button } from '../ui'
 import {
   ESTIMATED_MINUTES,
+  START_FAILED_MESSAGE,
   VOCABULARY_ITEM_COUNT,
   VOICE_ITEM_COUNT,
 } from './introText'
@@ -12,10 +13,14 @@ import { MicBlockedScreen } from './MicBlockedScreen'
 
 export interface IntroScreenProps {
   /**
-   * 웹에서 마이크 권한을 받은 뒤 갈 곳. **어디로 갈지는 KAN-31이 정한다** — 세션 생성과
-   * 라우팅이 그쪽 몫이라, 여기서 화면을 고르면 세션 없이 문항 화면에 들어가는 경로가 생긴다.
+   * 웹에서 마이크 권한을 받은 뒤 할 일 — 웹 단독 세션을 만들고 문항 화면으로 옮기는 것이다
+   * (KAN-31). 세션 생성과 라우팅은 여기서 하지 않고 호출자가 소유한다: 이 화면이 URL 계약을
+   * 알면 진입 쿼리 규칙이 App과 두 곳으로 갈린다.
+   *
+   * 실패는 **reject로 알린다**. 던져진 Error의 문구가 그대로 화면에 뜨므로 호출자는
+   * 사용자에게 보일 말만 담아야 한다 (서버 봉투의 한국어 `message`가 그대로 쓰인다).
    */
-  onWebStart?: () => void
+  onWebStart?: () => void | Promise<void>
   /** 주입용 권한 요청 (테스트용). jsdom에는 `getUserMedia`가 없어 실물로는 한 갈래만 볼 수 있다 */
   requestWebPermission?: () => Promise<MicPermission>
 }
@@ -47,17 +52,24 @@ export function IntroScreen({
   const [requesting, setRequesting] = useState(false)
   /** null이 아니면 게이트가 막혔다는 뜻이고, 값이 곧 막힌 이유다 */
   const [blocked, setBlocked] = useState<Exclude<MicPermission, 'granted'> | null>(null)
+  /** 권한은 통과했는데 시작이 막혔다 (세션 생성 실패). 값이 곧 사용자에게 보일 문구다 */
+  const [startFailure, setStartFailure] = useState<string | null>(null)
 
   async function startWebGate() {
     setRequesting(true)
+    setStartFailure(null)
     try {
       const permission = await requestWebPermission()
       if (permission === 'granted') {
         setBlocked(null)
-        onWebStart()
+        await onWebStart()
         return
       }
       setBlocked(permission)
+    } catch (error: unknown) {
+      // 권한 거부와 달리 이건 다시 눌러 볼 만한 실패다 — 화면을 갈아치우지 않고 문구만 붙여
+      // [시작하기]를 그대로 재시도 버튼으로 남긴다.
+      setStartFailure(startFailureMessage(error))
     } finally {
       setRequesting(false)
     }
@@ -140,6 +152,15 @@ export function IntroScreen({
       </div>
 
       <div className="screen__footer">
+        {/*
+          role="alert" — 이미 떠 있던 화면에 나중에 나타나는 실패라 스크린 리더가 스스로 읽어
+          줘야 알아챈다 (StatusBlock의 오류 톤과 같은 규칙).
+        */}
+        {startFailure !== null && (
+          <p className="type-label" role="alert" style={{ color: 'var(--color-destructive-on-surface)' }}>
+            {startFailure}
+          </p>
+        )}
         <Button onClick={handleStart} disabled={requesting} style={{ width: '100%' }}>
           {requesting ? '마이크 확인 중…' : '시작하기'}
         </Button>
@@ -152,10 +173,21 @@ export function IntroScreen({
 }
 
 /**
- * `onWebStart` 기본값. 브라우저 단독 실행에서 권한까지는 받았지만 갈 곳이 아직 없다는 뜻이다 —
- * KAN-31이 세션 생성과 라우팅을 붙이면 이 자리에 실제 이동이 들어온다. 조용히 아무 일도 하지
- * 않으면 "권한은 줬는데 화면이 그대로"라는 증상만 남아 원인을 찾기 어려우므로 흔적을 남긴다.
+ * `onWebStart` 기본값. 웹 경로로 권한까지는 받았는데 갈 곳을 받지 못한 경우다 — 웹 단독 실행이
+ * 아닌데 브리지 호출도 실패한 조합(`?bridge=`는 있는데 객체가 없는 WebView)이 여기로 온다.
+ * 조용히 아무 일도 하지 않으면 "권한은 줬는데 화면이 그대로"라는 증상만 남아 원인을 찾기
+ * 어려우므로 흔적을 남긴다.
  */
 function warnWebStartUnwired(): void {
-  console.warn('[intro] 웹 단독 진입은 KAN-31 결선 전입니다')
+  console.warn('[intro] 이 실행에는 웹 시작 경로가 연결되어 있지 않습니다')
+}
+
+/**
+ * 시작 실패 문구를 고른다. 던진 쪽이 사용자용 한국어 문구를 담아 주는 것이 계약이라
+ * (`createWebSession`은 서버 봉투의 `message`를 그대로 싣는다) 있으면 그것을 쓰고,
+ * 문구 없는 실패만 기본 안내로 덮는다.
+ */
+function startFailureMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim() !== '') return error.message
+  return START_FAILED_MESSAGE
 }

@@ -42,12 +42,12 @@ export interface TestFlowScreenProps {
    */
   onAnalysisReady?: () => void
   /**
-   * 브리지가 없는 환경(브라우저 단독)의 세션 토큰 출처 (KAN-56 Stage 3).
+   * 브리지가 없는 환경(웹 단독 실행)의 세션 토큰 출처 (KAN-56 Stage 3 → KAN-31).
    *
-   * 브리지가 있으면 토큰은 거기서 온다. 없을 때 웹이 어디서 토큰을 얻을지는 **KAN-31의
-   * 계약**이라 여기서 정하지 않고 함수로 주입받는다 — 지금 `localStorage`든 쿼리든 하나를
-   * 골라 박아 두면, 정식 웹 세션이 붙을 때 이 화면까지 다시 뜯어야 한다
-   * (`fetchTestDefinition`이 apiBase·testVersion 출처를 호출자에게 미룬 것과 같은 이유).
+   * 브리지가 있으면 토큰은 거기서 오고, 없으면 웹 단독 세션(`session/webSession`)에서 온다.
+   * 그래도 여기서 저장소를 직접 읽지 않고 함수로 주입받는 이유는 그대로다 — 토큰의 출처를
+   * 고르는 것은 진입 분기(App)의 일이고, 이 화면은 "요청할 때마다 한 번 부른다"는 규칙만
+   * 안다 (`fetchTestDefinition`이 apiBase·testVersion 출처를 호출자에게 미룬 것과 같은 이유).
    */
   webSessionToken?: () => string
   /** 주입용 캡처 (테스트용). 브라우저 녹음 경로에만 닿는다 */
@@ -188,8 +188,20 @@ function TestRunner({
   useEffect(() => installItemResultReceiver(receiveResult), [receiveResult])
 
   /**
-   * 브라우저 녹음의 업로드 통로. 토큰은 **업로드 시점마다** 읽는다 — 미리 잡아 두면 페이지
-   * 전환으로 브리지 판정이 바뀐 뒤에도 낡은 값을 쓴다 (어휘 제출이 같은 규칙을 쓴다).
+   * 이 화면이 서버로 나갈 때 쓰는 세션 토큰 — **녹음 업로드·어휘 제출·분석 폴링이 전부 이
+   * 함수를 거친다** (KAN-31).
+   *
+   * 세 곳이 각자 토큰을 읽던 시절에는 웹 단독 실행에서 업로드만 되고 나머지는 빈 토큰으로
+   * 막혔다. 출처를 고르는 규칙이 셋으로 흩어져 있었기 때문인데, 규칙이 흩어지면 실행 환경이
+   * 하나 늘 때마다 세 곳을 같이 고쳐야 하고 한 곳을 빠뜨리면 그 경로만 조용히 막힌다.
+   *
+   * 읽는 시점은 **요청할 때마다**다. 미리 잡아 두면 페이지 전환으로 브리지 판정이나 세션이
+   * 바뀐 뒤에도 낡은 값을 계속 쓴다.
+   */
+  const readToken = useCallback(() => webSessionToken?.() ?? getSessionToken() ?? '', [webSessionToken])
+
+  /**
+   * 브라우저 녹음의 업로드 통로.
    *
    * 브리지가 있는 앱에서도 이 함수는 만들어지지만 호출되지 않는다: 브리지가 있으면
    * [VoiceItemScreen]이 네이티브 경로로 가고 녹음 패널 자체를 그리지 않는다.
@@ -197,17 +209,10 @@ function TestRunner({
   const uploadWebRecording = useCallback(
     (itemId: string, recording: Recording, attemptId: string) =>
       uploadRecording(
-        {
-          apiBase,
-          sessionId,
-          itemId,
-          sessionToken: webSessionToken?.() ?? getSessionToken() ?? '',
-          attemptId,
-          recording,
-        },
+        { apiBase, sessionId, itemId, sessionToken: readToken(), attemptId, recording },
         fetchImpl,
       ),
-    [apiBase, sessionId, webSessionToken, fetchImpl],
+    [apiBase, sessionId, readToken, fetchImpl],
   )
 
   /*
@@ -262,9 +267,9 @@ function TestRunner({
         /*
          * 토큰은 렌더 시점에 읽는다 — 폴링이 도는 동안 화면이 여러 번 그려지지만, 훅은
          * 토큰 값이 바뀔 때만 루프를 다시 세운다. 미리 잡아 두면 origin 허용이 바뀐 뒤에도
-         * 낡은 판정을 계속 쓴다 (어휘 제출이 같은 규칙을 쓴다).
+         * 낡은 판정을 계속 쓴다.
          */
-        sessionToken={getSessionToken() ?? ''}
+        sessionToken={readToken()}
         voiceItems={voiceItems}
         totalItems={progress.total}
         onReady={onAnalysisReady ?? noop}
@@ -305,29 +310,25 @@ function TestRunner({
           key={current.itemId}
           item={current}
           /*
-           * 브리지가 없는 = 브라우저 단독 실행. 음성 문항의 [제출 (개발용)]과 같은 개발용 통로로,
-           * 서버 제출 없이 저장된 셈 치고 진행만 민다. 앱에서는 이 분기에 오지 않는다 —
-           * 브리지는 있는데 getSessionToken이 없는 앱(구버전)은 빈 토큰으로 제출이 실패해
-           * 오류가 보인다. 조용히 건너뛰어 채점에서 빠지는 것보다 실패가 보이는 편이 낫다.
+           * 답안은 실행 환경과 무관하게 **항상 서버로 나간다**. 브리지가 없을 때 저장된 셈
+           * 치고 진행만 밀던 개발용 통로가 있었는데, 웹 단독 실행(KAN-31)이 정식 경로가 된
+           * 지금은 그 통로가 곧 "어휘 5문항이 채점에서 통째로 빠지는" 길이다.
            *
-           * 토큰은 제출 시점마다 읽는다 — 미리 읽어 두면 페이지 전환으로 origin 허용이
-           * 바뀐 뒤에도 낡은 판정을 쓰게 된다.
+           * 토큰이 없는 실행에서는 제출이 실패하고 화면에 오류가 보인다 — 조용히 건너뛰어
+           * 채점에서 빠지는 것보다 실패가 보이는 편이 낫다.
            */
-          submitAnswer={
-            window.AccenturyBridge === undefined
-              ? async () => ({ status: 'SAVED' })
-              : (choiceId, idempotencyKey) =>
-                  submitVocabAnswer(
-                    {
-                      apiBase,
-                      sessionId,
-                      itemId: current.itemId,
-                      choiceId,
-                      sessionToken: getSessionToken() ?? '',
-                      idempotencyKey,
-                    },
-                    fetchImpl,
-                  )
+          submitAnswer={(choiceId, idempotencyKey) =>
+            submitVocabAnswer(
+              {
+                apiBase,
+                sessionId,
+                itemId: current.itemId,
+                choiceId,
+                sessionToken: readToken(),
+                idempotencyKey,
+              },
+              fetchImpl,
+            )
           }
           onSubmitted={() => submit(current.itemId)}
         />
