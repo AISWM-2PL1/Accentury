@@ -5,6 +5,7 @@ import {
   installItemResultReceiver,
   installRetestFailedReceiver,
   isBridgeCompatible,
+  isStandaloneWeb,
   REQUIRED_BRIDGE_VERSION,
   requestMicPermission,
   startRetest,
@@ -83,6 +84,30 @@ describe('isBridgeCompatible — 판단 주체는 웹 (§5)', () => {
   it('요구 버전 미만이거나 버전이 없으면 호환 불가다', () => {
     expect(isBridgeCompatible(`?bridge=${REQUIRED_BRIDGE_VERSION - 1}`)).toBe(false)
     expect(isBridgeCompatible('')).toBe(false)
+  })
+})
+
+describe('isStandaloneWeb — 앱이 아니라 그냥 브라우저인가 (KAN-31)', () => {
+  it('브리지 객체도 bridge 파라미터도 없으면 웹 단독 실행이다', () => {
+    expect(isStandaloneWeb('')).toBe(true)
+    // 공유 링크를 그대로 연 경우가 이 조합이다
+    expect(isStandaloneWeb('?c=kko_share')).toBe(true)
+  })
+
+  it('브리지 객체가 있으면 파라미터가 없어도 앱이다 — 구버전 앱을 웹으로 오해하지 않는다', () => {
+    window.AccenturyBridge = fakeBridge()
+    expect(isStandaloneWeb('')).toBe(false)
+  })
+
+  it('bridge 파라미터가 있으면 객체를 아직 못 봤어도 앱이 연 WebView로 본다', () => {
+    expect(isStandaloneWeb('?bridge=1&app=1.0')).toBe(false)
+    // 값이 비어 있어도 파라미터의 존재 자체가 "앱이 실어 보냈다"는 신호다
+    expect(isStandaloneWeb('?bridge=')).toBe(false)
+  })
+
+  it('브리지를 인자로 받아 전역 없이도 판정한다', () => {
+    expect(isStandaloneWeb('', fakeBridge())).toBe(false)
+    expect(isStandaloneWeb('', undefined)).toBe(true)
   })
 })
 

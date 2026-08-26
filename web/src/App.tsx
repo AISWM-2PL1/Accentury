@@ -1,9 +1,20 @@
+import { useCallback } from 'react'
 import { IntroScreen } from './intro/IntroScreen'
-import { getSessionToken, isBridgeCompatible } from './bridge/bridge'
+import { START_FAILED_MESSAGE } from './intro/introText'
+import { getSessionToken, isBridgeCompatible, isStandaloneWeb } from './bridge/bridge'
+import { buildIntroUrl, buildResultUrl, buildTestUrl } from './navigation/entryUrl'
 import { TestFlowScreen } from './progress/TestFlowScreen'
 import { ResultScreen } from './result/ResultScreen'
 import { useRetest } from './result/useRetest'
 import type { TestResultView } from './result/testResult'
+import { readCampaignToken } from './session/campaign'
+import {
+  createWebSession,
+  getWebSessionToken,
+  loadWebSession,
+  saveWebSession,
+  WebSessionError,
+} from './session/webSession'
 
 /**
  * 백엔드 오리진. 배포에서는 화면과 API가 같은 도메인이라(CloudFront 단일 출처, KAN-126) 빈
@@ -14,23 +25,38 @@ import type { TestResultView } from './result/testResult'
 const API_BASE =
   (import.meta.env.VITE_API_BASE as string | undefined) ?? (import.meta.env.DEV ? 'http://10.0.2.2:8080' : '')
 
+export interface AppProps {
+  /**
+   * 문서를 옮기는 지점 (테스트 주입용). 기본값은 `location.href` 대입인데, jsdom은 그 대입을
+   * 구현하지 않아 "어디로 보내려 했는지"를 확인할 수 없다. 주입 지점을 하나 두면 화면 전환을
+   * 실제 이동 없이 검사할 수 있다 (진입 쿼리 조립 자체는 `navigation/entryUrl`이 소유한다).
+   */
+  navigate?: (url: string) => void
+}
+
 /**
- * 진입 분기 — 화면을 그리기 전에 브리지 버전 스큐부터 판정한다 (webview-layer.md §5).
- * 판단 주체는 웹이다: 앱이 URL로 실어 보낸 브리지 버전이 이 빌드가 요구하는 최소 버전보다
- * 낮으면(또는 없으면) 기능 화면 대신 업데이트 안내를 렌더한다. 구버전 앱은 손대지 않아도 된다.
+ * 진입 분기 — 화면을 그리기 전에 **어떤 실행인지**부터 판정한다.
+ *
+ * 1. 웹 단독 실행(앱이 아닌 모바일 브라우저, KAN-31)이면 스큐 게이트를 건너뛴다. 브리지 버전
+ *    협상은 앱을 상대로 하는 규칙이라, 앱이 아닌 실행에 적용하면 공유 링크를 연 사람 전원이
+ *    "앱을 업데이트하세요"를 만난다.
+ * 2. 그 밖에는 지금까지와 같다 (webview-layer.md §5). 판단 주체는 웹이다: 앱이 URL로 실어
+ *    보낸 브리지 버전이 이 빌드가 요구하는 최소 버전보다 낮으면(또는 없으면) 기능 화면 대신
+ *    업데이트 안내를 렌더한다. 구버전 앱은 손대지 않아도 된다.
  */
-export default function App() {
-  if (!isBridgeCompatible(window.location.search)) {
+export default function App({ navigate = assignHref }: AppProps = {}) {
+  const standalone = isStandaloneWeb(window.location.search)
+
+  if (!standalone && !isBridgeCompatible(window.location.search)) {
     return <UpdateRequiredScreen />
   }
 
   /*
    * `?screen=test&testVersion=...&sessionId=...` — 문항 진행 화면의 **정식 진입 쿼리**다.
-   * 인트로 [시작하기] → 네이티브 마이크 권한 게이트(KAN-98)를 통과한 뒤, 네이티브가 이 쿼리를
-   * 붙여(기존 bridge·app 파라미터에 더해) WebView를 다시 로드하는 것이 정상 경로다.
-   * 그 조립은 네이티브 결선(KAN-100 Stage 4) 몫이고, 웹 쪽 계약은 여기까지다.
-   * 브라우저 단독 개발에서도 같은 URL을 손으로 열면 같은 화면에 들어간다 — 개발용 통로를
-   * 따로 두지 않는 이유다(경로가 갈리면 개발에서 통과한 것이 앱에서 통과한다는 보장이 없다).
+   * 두 실행이 같은 쿼리로 들어온다. 앱에서는 인트로 [시작하기] → 네이티브 마이크 권한
+   * 게이트(KAN-98) 뒤 네이티브가 이 쿼리를 붙여(기존 bridge·app 파라미터에 더해) WebView를
+   * 다시 로드하고(KAN-100 Stage 4), 웹 단독 실행에서는 [startStandaloneTest]가 세션을 만든 뒤
+   * 같은 쿼리를 조립한다. 경로가 갈리지 않으므로 한쪽에서 통과한 것이 다른 쪽에서도 통과한다.
    */
   const params = new URLSearchParams(window.location.search)
   if (params.get('screen') === 'test') {
@@ -43,8 +69,12 @@ export default function App() {
          * 문자열이 내려가고 진행 스냅샷이 세션별로 나뉘지 않는다 — 과도기의 알려진 한계다.
          */
         sessionId={params.get('sessionId') ?? ''}
-        webSessionToken={devSessionToken}
-        onAnalysisReady={() => goToResult(params.get('sessionId') ?? '')}
+        /*
+         * 웹 단독 실행에서만 토큰 출처를 넘긴다. 앱에서는 undefined를 줘야 진행 화면이 기존대로
+         * 브리지에서 읽는다 — 둘 다 주면 어느 쪽이 정본인지가 화면마다 갈린다.
+         */
+        webSessionToken={standalone ? getWebSessionToken : undefined}
+        onAnalysisReady={() => goToResult(params.get('sessionId') ?? '', navigate)}
       />
     )
   }
@@ -59,39 +89,66 @@ export default function App() {
    * 경로도 그대로 살아 있다: 결과 화면만 따로 확인하는 개발 통로다.
    */
   if (params.get('screen') === 'result') {
-    return <ResultRoute sessionId={params.get('sessionId') ?? ''} />
+    return (
+      <ResultRoute sessionId={params.get('sessionId') ?? ''} standalone={standalone} navigate={navigate} />
+    )
   }
 
-  return <IntroScreen />
+  /*
+   * 웹 단독 실행에서만 [시작하기]에 갈 곳이 있다. 앱 안에서는 이 자리가 비어 있어야 한다 —
+   * 네이티브가 권한 게이트부터 세션 생성까지 자기 흐름으로 진행하므로, 웹이 세션을 하나 더
+   * 만들면 같은 사용자에게 세션이 둘 생긴다.
+   */
+  return <IntroScreen onWebStart={standalone ? () => startStandaloneTest(navigate) : undefined} />
 }
 
-/** 개발용 세션 토큰을 담아 두는 localStorage 키 (DEV 빌드 전용) */
-const DEV_SESSION_TOKEN_KEY = 'accentury.devSessionToken'
+/**
+ * 웹 단독 실행의 [시작하기] — 세션을 만들고 문항 화면으로 넘긴다 (KAN-31).
+ *
+ * 이전 세션의 토큰을 함께 보낸다. 저장된 세션이 있다는 것은 이 탭에서 이미 한 번 응시했다는
+ * 뜻이고, 그때는 이 호출이 곧 재응시다 — 서버가 옛 세션을 폐기하고 새 세션을 준다 (§3.1).
+ * 만료된 토큰은 조용히 무시되므로 만료 판정을 여기서 하지 않는다.
+ *
+ * 실패는 던져서 인트로 화면에 문구로 남긴다. 화면을 옮기지 않는 것이 중요하다 — 세션이 없으면
+ * 문항 화면은 401만 잔뜩 만들고, 사용자는 시작도 못 한 채 진행 화면에 갇힌다.
+ *
+ * @throws Error 사용자에게 보일 문구를 담은 오류 ([startFailureMessage] 참고)
+ */
+async function startStandaloneTest(navigate: (url: string) => void): Promise<void> {
+  const search = window.location.search
+
+  let session
+  try {
+    session = await createWebSession(API_BASE, {
+      campaignToken: readCampaignToken(search),
+      previousToken: loadWebSession()?.sessionToken,
+    })
+  } catch (error: unknown) {
+    throw new Error(startFailureMessage(error))
+  }
+
+  saveWebSession(session)
+  // 진입 경로(`/t`)와 나머지 쿼리(`c` 등)는 그대로 두고 화면 지정만 얹는다.
+  navigate(
+    window.location.pathname +
+      buildTestUrl(search, { testVersion: session.testVersion, sessionId: session.sessionId }),
+  )
+}
 
 /**
- * 브라우저 단독 실행의 세션 토큰 — **DEV 빌드에서만** 존재한다 (KAN-56 Stage 3).
+ * 시작 실패를 사용자용 한 줄로 바꾼다.
  *
- * 브리지가 없으면 `getSessionToken()`이 없어 녹음 업로드가 401로 막힌다. 앱 없이 브라우저에서
- * 녹음·업로드를 실제로 확인하려면(Stage 4) 토큰을 어딘가에서 줘야 하는데, 그 "어딘가"의 정식
- * 계약은 웹 단독 세션(KAN-31)이 정한다. 그때까지의 임시 통로다.
- *
- * **URL에 싣지 않는다.** 쿼리에 넣으면 세션 토큰이 브라우저 히스토리·서버 액세스 로그·
- * Referer 헤더에 그대로 남는다 — 결과 화면이 토큰을 브리지에서만 읽는 이유와 같은 규칙이고,
- * 그쪽 주석이 이미 그 규칙을 명시한다. `localStorage`는 같은 오리진의 이 탭 안에만 남는다.
- *
- * 프로덕션 빌드에서는 `undefined`를 넘겨 이 경로가 아예 없다 — 번들에도 남지 않도록
- * `import.meta.env.DEV` 분기를 상수 위치에 둔다(빌드 시점에 접혀 사라진다).
+ * 429에는 남은 대기 시간을 적는다 — "잠시 후"보다 "30초 후"가 실제로 기다릴 수 있는 정보이고,
+ * 결과 화면의 재응시 대기 문구와 같은 표기를 쓴다. 그 밖에는 서버 봉투의 한국어 문구를 그대로
+ * 쓰고, 문구가 없는 실패만 기본 안내로 덮는다.
  */
-const devSessionToken: (() => string) | undefined = import.meta.env.DEV
-  ? () => {
-      try {
-        return localStorage.getItem(DEV_SESSION_TOKEN_KEY) ?? ''
-      } catch {
-        // 사생활 보호 모드 등에서 접근 자체가 던진다. 토큰이 없는 것과 같이 다룬다.
-        return ''
-      }
-    }
-  : undefined
+function startFailureMessage(error: unknown): string {
+  if (error instanceof WebSessionError && error.retryAfterMs !== null) {
+    return `${Math.max(1, Math.ceil(error.retryAfterMs / 1000))}초 후 다시 시도할 수 있어요`
+  }
+  if (error instanceof Error && error.message.trim() !== '') return error.message
+  return START_FAILED_MESSAGE
+}
 
 /**
  * 결과 화면 결선 지점 (KAN-34 3단계). 재응시 브리지 왕복을 이 자리가 소유한다.
@@ -100,23 +157,34 @@ const devSessionToken: (() => string) | undefined = import.meta.env.DEV
  * 수신자 설치와 카운트다운이라 훅인데, [App]은 스큐 판정에서 조기 반환하므로 그 뒤에 훅을
  * 놓을 수 없다. 다른 하나는 §8 지침 — 수신은 부모가 하고 화면에는 값으로 내려보낸다.
  */
-function ResultRoute({ sessionId }: { sessionId: string }) {
+function ResultRoute({
+  sessionId,
+  standalone,
+  navigate,
+}: {
+  sessionId: string
+  standalone: boolean
+  navigate: (url: string) => void
+}) {
   // 브리지로 갈 수 없는 환경에서는 예전 동작(인트로 복귀)으로 내려간다.
-  const retest = useRetest(goToIntro)
+  const backToIntro = useCallback(() => goToIntro(navigate), [navigate])
+  const retest = useRetest(backToIntro)
 
   return (
     <ResultScreen
       apiBase={API_BASE}
       sessionId={sessionId}
       /*
-       * 토큰은 쿼리가 아니라 브리지에서 읽는다 — URL에 실으면 WebView 히스토리와 로그에
-       * 세션 토큰이 남는다. 브리지가 없으면(브라우저 단독) 빈 문자열이라 조회 전에 막히고
-       * 사용자용 문구가 뜬다.
+       * 토큰은 실행에 따라 출처가 갈린다. 앱에서는 브리지, 웹 단독 실행에서는 이 탭의
+       * 세션 저장소다 (KAN-31). 공통점이 요점이다 — **어느 쪽도 URL에서 읽지 않는다.**
+       * 쿼리에 실으면 세션 토큰이 히스토리·액세스 로그·Referer에 남는다.
+       *
+       * 둘 다 없으면 빈 문자열이라 조회 전에 막히고 사용자용 문구가 뜬다.
        *
        * 렌더 시점에 읽는 이유: 결과 조회는 이 화면에 들어올 때 한 번뿐이라, 진행 화면처럼
        * 제출 때마다 다시 읽을 필요가 없다.
        */
-      sessionToken={getSessionToken() ?? ''}
+      sessionToken={standalone ? getWebSessionToken() : (getSessionToken() ?? '')}
       onShare={shareResult}
       retest={retest}
     />
@@ -158,22 +226,12 @@ function shareResult(result: TestResultView): void {
 /**
  * 분석이 끝났다 — 결과 화면으로 넘긴다 (KAN-14 → KAN-29).
  *
- * `screen`과 `sessionId`만 갈아끼우고 나머지 진입 파라미터는 남긴다. `bridge`·`app`이
- * 빠지면 스큐 판정(§5)이 구버전 앱으로 보고 업데이트 안내를 띄운다 — 방금 테스트를 끝낸
- * 사용자가 "앱을 업데이트하세요"를 만나는 셈이 된다 ([goToIntro]와 같은 이유).
- *
- * `testVersion`은 지운다. 결과 화면이 읽지 않는 값이고, 남겨 두면 이 URL을 그대로 다시 연
- * 사람이 끝난 세션의 정의 버전을 물고 다니게 된다.
- *
- * 같은 문서를 다시 로드하는 이유도 [goToIntro]와 같다 — 진행 화면이 들고 있던 상태(폴링
- * 타이머·스냅샷 참조)를 확실히 버리기 위해서다.
+ * 남기고 지우는 규칙은 [buildResultUrl]이 소유한다. 같은 문서를 다시 로드하는 이유는
+ * [goToIntro]와 같다 — 진행 화면이 들고 있던 상태(폴링 타이머·스냅샷 참조)를 확실히
+ * 버리기 위해서다.
  */
-function goToResult(sessionId: string): void {
-  const params = new URLSearchParams(window.location.search)
-  params.set('screen', 'result')
-  params.set('sessionId', sessionId)
-  params.delete('testVersion')
-  window.location.href = `${window.location.pathname}?${params.toString()}`
+function goToResult(sessionId: string, navigate: (url: string) => void): void {
+  navigate(window.location.pathname + buildResultUrl(window.location.search, sessionId))
 }
 
 /**
@@ -184,22 +242,24 @@ function goToResult(sessionId: string): void {
  * (메서드 추가는 버전을 올리지 않으므로 §5 스큐 게이트가 그 앱을 막지 않는다). 지우지 않는
  * 이유가 그것이다 — 지우면 구버전 앱에서 버튼이 아무 일도 하지 않는 버튼이 된다.
  *
- * `bridge`·`app` 파라미터는 남긴다. 그 둘이 없으면 스큐 판정(§5)이 구버전 앱으로 보고
- * 업데이트 안내를 띄운다 — 재응시를 눌렀는데 "앱을 업데이트하세요"가 뜨는 셈이 된다.
+ * 남기고 지우는 규칙은 [buildIntroUrl]이 소유한다.
  *
- * 새 익명 세션 생성은 여기서 하지 않는다. 세션은 네이티브가 만들고(KAN-9), 인트로의
- * [시작하기]가 권한 게이트를 거쳐 그 흐름을 다시 태운다 — 웹이 세션을 만들면 앱과 웹에
- * 세션 생성 경로가 둘 생긴다.
+ * 새 세션은 여기서 만들지 않는다. 이 함수는 인트로로 되돌리기만 하고, 세션은 그 화면의
+ * [시작하기]가 각 실행의 방식대로 만든다 — 앱은 네이티브가(KAN-9), 웹 단독 실행은
+ * [startStandaloneTest]가. 여기서 만들면 화면 전환과 세션 생성이 한 덩어리가 되어, 되돌아온
+ * 사용자가 시작도 누르기 전에 세션이 하나 생긴다.
  */
-function goToIntro(): void {
-  const params = new URLSearchParams(window.location.search)
-  params.delete('screen')
-  params.delete('sessionId')
-  params.delete('testVersion')
-
-  const query = params.toString()
+function goToIntro(navigate: (url: string) => void): void {
   // 같은 문서를 다시 로드한다 — 결과 화면이 들고 있던 상태를 확실히 버리기 위해서다.
-  window.location.href = query === '' ? window.location.pathname : `${window.location.pathname}?${query}`
+  navigate(window.location.pathname + buildIntroUrl(window.location.search))
+}
+
+/**
+ * [AppProps.navigate]의 기본값. 대입 한 줄을 함수로 감싸 두면 화면 전환 지점이 전부
+ * `navigate` 하나를 거치게 되어, 테스트가 갈아끼울 자리가 한 곳으로 모인다.
+ */
+function assignHref(url: string): void {
+  window.location.href = url
 }
 
 /** 신버전 웹 + 구버전 앱 조합에서만 보이는 화면. 비난 없는 카피 톤(ux-ui.md)을 지킨다. */

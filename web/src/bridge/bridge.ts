@@ -120,6 +120,28 @@ export function isBridgeCompatible(search: string): boolean {
 }
 
 /**
+ * 웹 단독 실행 판정 (KAN-31) — 앱이 아니라 그냥 모바일 브라우저에서 열렸는가.
+ *
+ * **브리지 객체의 부재가 판정의 근거다.** 네이티브는 `addJavascriptInterface`로 객체를
+ * 심는데, 그 주입은 페이지 스크립트가 돌기 전에 끝난다 — 우리 코드가 실행되는 시점에 객체가
+ * 없으면 앱이 아닌 것이 확실하다. 반대로 쿼리 파라미터만으로는 갈릴 수 없다: `?bridge=`가
+ * 없는 상황은 "브라우저"일 수도 "스큐 협상 이전의 구버전 앱"일 수도 있다.
+ *
+ * 그래서 **둘 다 없을 때만** 웹 단독이다. 나머지 조합은 지금까지의 판정을 그대로 둔다.
+ * - 객체는 있는데 버전이 낮거나 없다 → 구버전 앱. [isBridgeCompatible]이 업데이트 안내로 막는다.
+ * - `?bridge=`는 있는데 객체가 없다 → 앱이 연 WebView로 보고 스큐 판정을 그대로 태운다.
+ *
+ * User-Agent를 보지 않는 이유도 같다. 안드로이드 WebView의 UA는 크롬과 사실상 구분되지 않고,
+ * 구분되더라도 그건 "브라우저 엔진이 무엇인가"이지 "우리 앱 안인가"가 아니다.
+ */
+export function isStandaloneWeb(
+  search: string,
+  bridge: AccenturyBridge | undefined = window.AccenturyBridge,
+): boolean {
+  return bridge === undefined && !new URLSearchParams(search).has('bridge')
+}
+
+/**
  * 마이크 권한 게이트 호출. 브리지가 없거나 메서드가 아니면 false를 돌려준다
  * (§5 graceful degrade — 브라우저 단독 실행이나 계약이 어긋난 앱에서 크래시하지 않기 위함).
  */

@@ -9,7 +9,7 @@ import type { TestDefinition, TestItem } from './testDefinition'
 
 const TEST_VERSION = 'gn-2026.08.1'
 const API_BASE = 'http://localhost:8080'
-/** 브라우저 단독 실행의 세션 토큰. 실제 출처는 KAN-31이 정한다 (App.tsx의 DEV 통로) */
+/** 웹 단독 실행의 세션 토큰. 실물 출처는 `session/webSession`이고 여기서는 값만 흉내 낸다 */
 const WEB_TOKEN = 'web-token'
 /** 브라우저 녹음이 담는 길이. 품질 게이트(1초)를 넉넉히 넘긴다 */
 const VOICE_DURATION_MS = 2_000
@@ -117,7 +117,11 @@ interface RenderOptions {
   strict?: boolean
   /** 분석 대기 화면이 결과 확정을 알릴 자리 (KAN-14) */
   onAnalysisReady?: () => void
-  /** 브라우저 단독 실행의 세션 토큰. 빈 값을 주면 업로드 가드를 재현한다 */
+  /**
+   * 웹 단독 실행의 세션 토큰. 주지 않으면 App과 같은 규칙으로 정한다 — 브리지가 있으면
+   * 주입하지 않고(앱은 브리지에서 읽는다), 없으면 [WEB_TOKEN]을 준다. 빈 값을 명시하면
+   * 토큰이 아예 없는 실행(가드가 막는 경로)을 재현한다.
+   */
   webSessionToken?: () => string
 }
 
@@ -134,7 +138,9 @@ function renderScreen(
       sessionId={sessionId}
       storage={storage ?? memoryStorage()}
       onAnalysisReady={onAnalysisReady}
-      webSessionToken={webSessionToken ?? (() => WEB_TOKEN)}
+      webSessionToken={
+        webSessionToken ?? (window.AccenturyBridge === undefined ? () => WEB_TOKEN : undefined)
+      }
       capture={capture.factory}
       fetchImpl={fetchImpl}
     />,
@@ -602,19 +608,25 @@ describe('VOCABULARY 문항 — 보기 선택 (KAN-13)', () => {
     expect(JSON.parse(init?.body as string)).toEqual({ choiceId: 'c1' })
   })
 
-  it('브리지가 없으면(브라우저 단독) 어휘 답안은 서버로 나가지 않는다 — 음성 업로드와 갈리는 지점', async () => {
+  /*
+   * KAN-31 이전에는 브리지가 없으면 답안이 서버로 나가지 않고 진행만 밀었다(개발용 통로).
+   * 웹 단독 실행이 정식 경로가 된 지금 그 통로는 곧 어휘 5문항이 채점에서 통째로 빠지는
+   * 길이라 지웠다 — 그 사실을 여기서 못 박는다.
+   */
+  it('웹 단독 실행에서도 답안이 웹 세션 토큰을 싣고 서버로 제출된다 (KAN-31)', async () => {
     const fetchImpl = okFetch()
     const { capture } = renderScreen(fetchImpl)
     await findRecordButton()
-    await advance(capture) // 음성 문항 1 — 이쪽은 실제로 업로드된다
+    await advance(capture) // 음성 문항 1 — 녹음 업로드
 
     expect(screen.getByText('어휘 문항 2')).toBeInTheDocument()
     answerVocabulary()
 
     expect(await screen.findByText('음성 문항 3')).toBeInTheDocument()
-    // 어휘 제출 경로는 아직 브리지 토큰에 묶여 있어 브라우저 단독에서는 진행만 민다 (KAN-13).
-    // 녹음은 KAN-56에서 웹 토큰으로 올라가므로 요청이 정의 조회 + 업로드 둘이다.
-    expect(urls(fetchImpl).filter((url) => url.endsWith('/answer'))).toHaveLength(0)
+    const answers = fetchImpl.mock.calls.filter(([url]) => String(url).endsWith('/answer'))
+    expect(answers).toHaveLength(1)
+    expect(answers[0][0]).toBe(`${API_BASE}/v0/sessions/sess-1/vocab-items/item-2/answer`)
+    expect(answers[0][1]?.headers).toMatchObject({ Authorization: `Bearer ${WEB_TOKEN}` })
     expect(urls(fetchImpl).filter((url) => url.endsWith('/recording'))).toHaveLength(1)
   })
 })
@@ -663,13 +675,16 @@ describe('폴링 부재 — 문항 진행 중에는 요청이 없다 (KAN-14 규
       const { capture } = renderScreen(fetchImpl)
       await findRecordButton()
 
-      for (let i = 0; i < 10; i += 1) await advance(capture)
+      // 마지막 한 문항을 남긴다 — 열 번째를 제출하면 분석 대기 화면이 서고, 그 화면의 폴링은
+      // 여기서 재는 대상이 아니다 (KAN-31 이후 웹 단독 실행도 폴링이 실제로 돈다)
+      for (let i = 0; i < 9; i += 1) await advance(capture)
 
       const requested = urls(fetchImpl)
       expect(requested.filter((url) => url.endsWith(`/v0/tests/${TEST_VERSION}`))).toHaveLength(1)
-      // 음성 5문항 × 업로드 1건. 어휘는 브라우저 단독에서 서버로 나가지 않는다
+      // 음성 5문항 × 업로드 1건, 어휘 4문항 × 답안 1건. 둘 다 [다음]이 부른 일회성 요청이다
       expect(requested.filter((url) => url.endsWith('/recording'))).toHaveLength(5)
-      expect(requested).toHaveLength(6)
+      expect(requested.filter((url) => url.endsWith('/answer'))).toHaveLength(4)
+      expect(requested).toHaveLength(10)
       expect(globalFetch).not.toHaveBeenCalled()
     } finally {
       vi.unstubAllGlobals()
@@ -726,21 +741,27 @@ describe('분석 대기 결선 (KAN-14)', () => {
   })
 
   /*
-   * 대기 화면의 토큰은 여전히 **브리지**에서만 온다 (`getSessionToken`). KAN-56이 더한
-   * `webSessionToken`은 녹음 업로드 전용이라, 브라우저 단독 실행은 문항은 다 밀어도 폴링
-   * 앞에서 막힌다 — 웹 단독 세션(KAN-31)이 붙기 전까지 남는 알려진 경계다.
+   * KAN-31 전까지 대기 화면의 토큰은 브리지에서만 왔고, 그래서 브라우저 단독 실행은 문항을
+   * 다 밀어도 폴링 앞에서 막혔다. 이제 세 요청(업로드·답안·폴링)이 같은 토큰 읽기를 거치므로
+   * 웹 단독 실행도 끝까지 간다.
    */
-  it('브리지 없는 실행은 폴링 전에 막힌다 — 세션 토큰이 없다 (결과 화면과 같은 규칙)', async () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const { capture } = renderScreen(waitingFetch({}), { sessionId: 'sess-1' })
+  it('웹 단독 실행도 웹 세션 토큰으로 폴링한다 (KAN-31)', async () => {
+    const fetchImpl = waitingFetch({})
+    const { capture } = renderScreen(fetchImpl, { sessionId: 'sess-1' })
     await findRecordButton()
 
     await finishAllItems(capture)
 
-    // 사용자가 할 수 있는 게 없는 실패라 비난 없는 문구만 남긴다. 진단은 콘솔로 간다
-    expect(screen.getByText('분석 상태를 확인할 수 없어요. 앱을 다시 시작해 주세요')).toBeInTheDocument()
-    error.mockRestore()
+    const analyses = fetchImpl.mock.calls.filter(([url]) => String(url).endsWith('/analyses'))
+    expect(analyses.length).toBeGreaterThan(0)
+    expect(analyses[0][1]?.headers).toMatchObject({ Authorization: `Bearer ${WEB_TOKEN}` })
   })
+
+  /*
+   * 토큰이 아예 없는 실행은 여기서 재현하지 않는다. 이제 업로드·답안·폴링이 같은 토큰을 쓰므로
+   * 토큰을 비우면 첫 음성 문항의 업로드부터 막혀 대기 화면까지 가지도 못한다 — 빈 토큰 가드
+   * 자체는 `fetchAnalysisStatuses.test.ts`가 요청 층위에서 덮는다.
+   */
 
   it('재녹음을 누르면 그 문항으로 녹음 화면을 다시 연다 — 브리지 계약은 그대로다', async () => {
     const startVoiceItem = stubBridge()

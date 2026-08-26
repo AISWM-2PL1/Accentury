@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import { REQUIRED_BRIDGE_VERSION } from './bridge/bridge'
 import { snapshotKey } from './progress/progressSnapshot'
+import { clearWebSession, saveWebSession } from './session/webSession'
 
 function setSearch(search: string) {
   window.history.replaceState(null, '', `/${search}`)
@@ -73,10 +74,40 @@ function stubLocalStorage(): Map<string, string> {
   return map
 }
 
+/**
+ * 토큰을 주는 브리지 대역 (앱 안 실행). 진행 화면의 어휘 제출이 실제로 서버로 나가므로
+ * (KAN-31에서 개발용 통로를 지웠다) 토큰 없이는 문항이 한 칸도 밀리지 않는다.
+ */
+function stubBridge(token = 'bridge-token') {
+  window.AccenturyBridge = {
+    requestMicPermission: vi.fn(),
+    startVoiceItem: vi.fn(),
+    getContractVersion: () => REQUIRED_BRIDGE_VERSION,
+    getSessionToken: () => token,
+  }
+}
+
+/**
+ * 웹 마이크 게이트가 통과하는 환경을 만든다 (KAN-56). jsdom에는 셋 다 없어서 그냥 두면
+ * 인트로 [시작하기]가 "지원 안 됨" 안내로 빠지고 세션 생성까지 가지 못한다.
+ */
+function stubMicrophone() {
+  vi.stubGlobal('isSecureContext', true)
+  vi.stubGlobal('AudioContext', class {})
+  vi.stubGlobal('AudioWorkletNode', class {})
+  Object.defineProperty(navigator, 'mediaDevices', {
+    configurable: true,
+    value: { getUserMedia: async () => ({ getTracks: () => [] }) as unknown as MediaStream },
+  })
+}
+
 afterEach(() => {
   delete window.AccenturyBridge
   delete window.AccenturyWeb
   setSearch('')
+  // 웹 단독 세션은 실물 sessionStorage에 남는다 — 다음 테스트로 토큰이 새지 않게 지운다
+  clearWebSession()
+  delete (navigator as { mediaDevices?: unknown }).mediaDevices
   // 진행 화면 분기 테스트가 fetch·localStorage를 스텁한다. 실패로 중단돼도 다음 테스트에
   // 새지 않게 여기서 되돌린다
   vi.unstubAllGlobals()
@@ -95,11 +126,25 @@ describe('App — 스큐 판정 분기', () => {
     expect(screen.getByRole('button', { name: '시작하기' })).toBeInTheDocument()
   })
 
-  it('브리지 버전이 없으면(구버전 앱) 업데이트 안내를 렌더한다 (§5)', () => {
+  /*
+   * 구버전 앱 판정의 근거가 KAN-31에서 바뀌었다. 예전에는 "`?bridge=`가 없으면 구버전 앱"
+   * 이었는데, 그 조합은 앱 없이 공유 링크를 연 브라우저와 구분되지 않는다. 지금은 **브리지
+   * 객체**를 본다 — 네이티브가 페이지 스크립트보다 먼저 심어 두는 값이라 있으면 앱이 확실하다.
+   */
+  it('브리지 객체는 있는데 버전이 없으면(구버전 앱) 업데이트 안내를 렌더한다 (§5)', () => {
     setSearch('')
+    stubBridge()
     render(<App />)
     expect(screen.getByText('앱 업데이트가 필요해요')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '시작하기' })).not.toBeInTheDocument()
+  })
+
+  it('브리지 객체도 쿼리도 없으면(웹 단독 실행) 인트로가 뜬다 (KAN-31)', () => {
+    // 공유 링크를 앱 없이 그대로 연 사람이 이 경로다
+    setSearch('?c=kko_share')
+    render(<App />)
+    expect(screen.getByRole('button', { name: '시작하기' })).toBeInTheDocument()
+    expect(screen.queryByText('앱 업데이트가 필요해요')).not.toBeInTheDocument()
   })
 })
 
@@ -118,6 +163,7 @@ describe('App — 문항 진행 화면 진입 쿼리 (KAN-100: 네이티브가 �
     setSearch(
       `?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0&screen=test&testVersion=gn-2026.08.1&sessionId=sess-1`,
     )
+    stubBridge()
     stubDefinitionFetch(VOCAB_ITEM)
     const stored = stubLocalStorage()
 
@@ -127,21 +173,135 @@ describe('App — 문항 진행 화면 진입 쿼리 (KAN-100: 네이티브가 �
     expect([...stored.keys()]).toEqual([snapshotKey('sess-1')])
   })
 
-  it('sessionId가 없으면 세션 없는 키로 떨어진다 (KAN-9 결선 전 과도기)', async () => {
+  /*
+   * sessionId 없이 들어오면 어디까지 가는가. KAN-31에서 어휘 제출의 개발용 통로를 지웠기
+   * 때문에 이제 답안이 실제로 나가려 하고, 세션 없는 요청은 네트워크를 타기 전에 가드가
+   * 막는다 — 진행이 멈추므로 스냅샷도 남지 않는다. 세션 없는 스냅샷 키 자체는
+   * `progressSnapshot.test.ts`가 덮는다.
+   */
+  it('sessionId가 없으면 답안이 가드에 막혀 진행이 멈춘다', async () => {
     setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0&screen=test&testVersion=gn-2026.08.1`)
+    stubBridge()
     stubDefinitionFetch(VOCAB_ITEM)
     const stored = stubLocalStorage()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
 
     render(<App />)
     await answerVocabulary()
 
-    expect([...stored.keys()]).toEqual([snapshotKey()])
+    expect(screen.getByText('답안을 보낼 수 없어요. 앱을 다시 시작해 주세요')).toBeInTheDocument()
+    expect([...stored.keys()]).toEqual([])
+    consoleError.mockRestore()
   })
 
   it('screen 파라미터가 없으면 기존대로 인트로다', () => {
     setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0`)
     render(<App />)
     expect(screen.getByRole('button', { name: '시작하기' })).toBeInTheDocument()
+  })
+})
+
+describe('App — 웹 단독 실행 (KAN-31)', () => {
+  /** §3.1 201 응답을 돌려주는 fetch 스텁 */
+  function stubSessionFetch(body: Record<string, unknown> = {}) {
+    const fetchStub = vi.fn(async () => ({
+      ok: true,
+      status: 201,
+      headers: { get: () => null },
+      json: async () => ({
+        sessionId: 's_web',
+        sessionToken: 'st_web',
+        testVersion: 'gn-2026.08.1',
+        scoreVersion: 'sv-0.3',
+        expiresAt: '2026-08-26T03:30:00Z',
+        ...body,
+      }),
+    }))
+    vi.stubGlobal('fetch', fetchStub)
+    return fetchStub
+  }
+
+  /** 인트로 [시작하기] — 웹 마이크 게이트가 비동기라 microtask를 비운다 */
+  async function tapStart() {
+    fireEvent.click(screen.getByRole('button', { name: '시작하기' }))
+    await act(async () => {})
+    await act(async () => {})
+  }
+
+  it('[시작하기]가 공유 링크의 유입 코드를 실어 세션을 만들고 문항 화면으로 넘긴다', async () => {
+    setSearch('?c=kko_share')
+    stubMicrophone()
+    const fetchStub = stubSessionFetch()
+    const navigate = vi.fn()
+
+    render(<App navigate={navigate} />)
+    await tapStart()
+
+    const [url, init] = fetchStub.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toMatch(/\/v0\/sessions$/)
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      campaignToken: 'kko_share',
+      client: { platform: 'WEB' },
+    })
+
+    // 진입 경로(pathname)와 나머지 쿼리는 그대로 두고 화면 지정만 얹는다
+    expect(navigate).toHaveBeenCalledTimes(1)
+    const next = new URLSearchParams(navigate.mock.calls[0][0].split('?')[1] ?? '')
+    expect(next.get('screen')).toBe('test')
+    expect(next.get('testVersion')).toBe('gn-2026.08.1')
+    expect(next.get('sessionId')).toBe('s_web')
+    // 유입 계측이 화면 전환 한 번에 끊기지 않는다
+    expect(next.get('c')).toBe('kko_share')
+  })
+
+  it('세션 생성이 429로 막히면 화면을 옮기지 않고 대기 안내를 띄운다', async () => {
+    setSearch('')
+    stubMicrophone()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: false,
+        status: 429,
+        headers: { get: () => null },
+        json: async () => ({
+          code: 'RATE_LIMITED',
+          message: '요청이 많아요. 잠시 후 다시 시도해 주세요.',
+          retryable: true,
+          retryAfterMs: 30_000,
+        }),
+      })),
+    )
+    const navigate = vi.fn()
+
+    render(<App navigate={navigate} />)
+    await tapStart()
+
+    expect(screen.getByRole('alert')).toHaveTextContent('30초 후 다시 시도할 수 있어요')
+    // 세션 없이 문항 화면에 들어가면 이후 요청이 전부 401로 막힌다
+    expect(navigate).not.toHaveBeenCalled()
+    // [시작하기]가 그대로 재시도 버튼으로 남는다
+    expect(screen.getByRole('button', { name: '시작하기' })).toBeEnabled()
+  })
+
+  it('문항 화면은 저장된 웹 세션 토큰으로 답안을 제출한다 — URL에는 토큰이 없다', async () => {
+    setSearch('?c=kko_share&screen=test&testVersion=gn-2026.08.1&sessionId=s_web')
+    saveWebSession({
+      sessionId: 's_web',
+      sessionToken: 'st_web',
+      testVersion: 'gn-2026.08.1',
+      expiresAt: '2026-08-26T03:30:00Z',
+    })
+    stubDefinitionFetch(VOCAB_ITEM)
+
+    render(<App />)
+    await answerVocabulary()
+
+    // 정의 조회(1) + 답안 제출(2)
+    const [url, init] = vi.mocked(globalThis.fetch).mock.calls[1] as unknown as [string, RequestInit]
+    expect(url).toMatch(/\/vocab-items\/item-1\/answer$/)
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer st_web' })
+    expect(window.location.search).not.toContain('st_web')
   })
 })
 
