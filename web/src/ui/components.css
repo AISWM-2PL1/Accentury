@@ -631,3 +631,11 @@
   color: var(--color-muted-foreground);
   white-space: nowrap;
 }
+
+/*
+ * 링크로 만든 버튼 (KAN-56 마이크 안내 화면의 스토어 이동). `.btn`은 <button> 기준이라
+ * 밑줄을 지울 일이 없었는데, <a>에는 브라우저 기본 밑줄과 방문 색이 붙는다.
+ */
+a.btn {
+  text-decoration: none;
+}

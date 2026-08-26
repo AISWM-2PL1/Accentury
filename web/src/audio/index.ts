@@ -6,6 +6,10 @@
  *
  * 흐름: 캡처된 Float32 → {@link resampleTo16k} → {@link floatToInt16} →
  * {@link encodeWav16kMono}(업로드 본문) + {@link measure}·{@link judge}(meta·화면 안내).
+ *
+ * Stage 2에서 그 위에 캡처 계층이 올라왔다 — 게이트({@link requestMicrophonePermission}),
+ * 누적({@link RecordingBuffer}), 브라우저 결선({@link webAudioCapture}), 상태 기계
+ * ({@link useRecorder}). 브라우저 API를 실제로 만지는 곳은 `capture.ts` 하나뿐이다.
  */
 
 export { TARGET_SAMPLE_RATE, FULL_SCALE_INT16, floatToInt16 } from './pcm'
@@ -23,3 +27,33 @@ export {
   type ClientQuality,
   type QualityStatus,
 } from './quality'
+export {
+  browserEnvironment,
+  classifyMediaError,
+  microphoneSupport,
+  requestMicrophonePermission,
+  type MicEnvironment,
+  type MicPermission,
+  type MicSupport,
+} from './microphone'
+export {
+  DEFAULT_APP_STORE_URL,
+  DEFAULT_PLAY_STORE_URL,
+  detectStorePlatform,
+  storeUrlFor,
+  type StorePlatform,
+} from './storeLink'
+export { RecordingBuffer, type Recording } from './recordingBuffer'
+export {
+  CaptureError,
+  webAudioCapture,
+  type Capture,
+  type CaptureFactory,
+  type CaptureFailure,
+} from './capture'
+export {
+  useRecorder,
+  type RecorderState,
+  type UseRecorderOptions,
+  type UseRecorderResult,
+} from './useRecorder'
