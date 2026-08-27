@@ -96,8 +96,6 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-// 에뮬레이터에서 호스트 머신을 가리키는 주소. 실기기 테스트는 이 값만 바꾸면 된다.
-private const val DEV_BASE_URL = "http://10.0.2.2:8080"
 
 /*
  * 업로드가 뒷받침하지 않는 붙들기를 걷는 상한 (KAN-146).
@@ -181,7 +179,7 @@ private fun TestFlow(modifier: Modifier = Modifier) {
     var micPassed by rememberSaveable { mutableStateOf(false) }
     var voiceCenterHz by rememberSaveable { mutableStateOf<Float?>(null) }
     val sessionGate = rememberSaveable(saver = SessionGateController.saver()) { SessionGateController() }
-    val sessionClient = remember { OkHttpSessionClient(DEV_BASE_URL) }
+    val sessionClient = remember { OkHttpSessionClient(BuildConfig.API_BASE_URL) }
     val session = sessionGate.session
 
     val flow = rememberSaveable(saver = TestFlowController.saver()) { TestFlowController() }
@@ -201,7 +199,7 @@ private fun TestFlow(modifier: Modifier = Modifier) {
     } else {
         viewModel<UploadViewModel>(
             key = session.sessionId,
-            factory = UploadViewModel.factory(DEV_BASE_URL, session.sessionId, session.sessionToken),
+            factory = UploadViewModel.factory(BuildConfig.API_BASE_URL, session.sessionId, session.sessionToken),
         )
     }
     // 세션 전에는 올라간 것이 없으니 빈 목록이 정확한 답이다 — 아래 이펙트·상태 바가 전부
