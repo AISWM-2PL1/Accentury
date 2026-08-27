@@ -64,7 +64,7 @@ fun SessionGateScreen(
     }
 
     // 색을 명시한다 — Surface 기본값은 surface(카드 흰색)라, 그대로 두면 이 화면만 흰 배경이 되어
-    // 바로 앞뒤 WebView 화면(background #eff6ff)과 어긋난다 (녹음 오버레이와 같은 이유).
+    // 바로 앞뒤 WebView 화면(background #f3ecd9)과 어긋난다 (녹음 오버레이와 같은 이유).
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         when (val state = gate.state) {
             is SessionGateState.Failed -> FailureScreen(state, onRetry = gate::restart, onBackToIntro = onBackToIntro)

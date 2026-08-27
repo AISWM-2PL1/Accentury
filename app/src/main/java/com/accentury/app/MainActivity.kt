@@ -584,7 +584,7 @@ private fun RecordingOverlay(
     onSubmit: (attemptId: String, durationMs: Long, quality: QualityStatus) -> Unit,
 ) {
     // 색을 명시한다 - Surface 기본값은 surface(카드 흰색)라, 그대로 두면 이 오버레이만
-    // 흰 배경이 되어 바로 앞뒤 WebView 화면(background #eff6ff)과 어긋난다.
+    // 흰 배경이 되어 바로 앞뒤 WebView 화면(background #f3ecd9)과 어긋난다.
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         RecordingScreen(
             questionText = start.prompt,
