@@ -331,8 +331,8 @@ describe('문항 진행', () => {
     await screen.findByText('음성 문항 1')
 
     const bar = screen.getByRole('progressbar', { name: '문항 진행률' })
-    expect(bar).toHaveAttribute('value', '1')
-    expect(bar).toHaveAttribute('max', '10')
+    expect(bar).toHaveAttribute('aria-valuenow', '1')
+    expect(bar).toHaveAttribute('aria-valuemax', '10')
     expect(screen.getByText('1 / 10')).toBeInTheDocument()
   })
 
@@ -355,7 +355,7 @@ describe('문항 진행', () => {
 
     expect(screen.getByText('어휘 문항 2')).toBeInTheDocument()
     expect(screen.getByText('2 / 10')).toBeInTheDocument()
-    expect(screen.getByRole('progressbar', { name: '문항 진행률' })).toHaveAttribute('value', '2')
+    expect(screen.getByRole('progressbar', { name: '문항 진행률' })).toHaveAttribute('aria-valuenow', '2')
   })
 
   it('마지막 문항을 제출하면 분석 대기 화면으로 넘어간다 (KAN-14)', async () => {

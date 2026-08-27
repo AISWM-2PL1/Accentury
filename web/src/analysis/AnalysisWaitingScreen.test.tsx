@@ -103,9 +103,9 @@ describe('진행률 — 분모는 10이다', () => {
     })
 
     const bar = screen.getByRole('progressbar', { name: '분석 진행률' })
-    expect(bar).toHaveAttribute('max', '10')
+    expect(bar).toHaveAttribute('aria-valuemax', '10')
     // 어휘 5 + 음성 완료 2
-    expect(bar).toHaveAttribute('value', '7')
+    expect(bar).toHaveAttribute('aria-valuenow', '7')
     expect(screen.getByText('7 / 10')).toBeInTheDocument()
   })
 
@@ -115,8 +115,8 @@ describe('진행률 — 분모는 10이다', () => {
     })
 
     const bar = screen.getByRole('progressbar', { name: '분석 진행률' })
-    expect(bar).toHaveAttribute('max', '10')
-    expect(bar).toHaveAttribute('value', '5')
+    expect(bar).toHaveAttribute('aria-valuemax', '10')
+    expect(bar).toHaveAttribute('aria-valuenow', '5')
   })
 })
 

@@ -81,8 +81,15 @@ val LightGuideCurve = Color(0xFF1C1A17)
  */
 val LightUserCurve = Color(0xFF1C1A17)
 val LightCurveLaneSurface = Color(0xFFF3ECD9)
-val LightHeroStart = Color(0xFF1C1A17)
-val LightHeroEnd = Color(0xFF1C1A17)
+
+/**
+ * 히어로 아이콘 면 (KAN-161 2단계). 잉크로 꽉 찬 원이었는데 크림으로 뒤집었다 —
+ * 오려 낸 종이 동그라미에 잉크 테두리를 두른 모양이 시안의 컷아웃 규칙이고, 잉크 원은
+ * 화면에서 주 버튼과 무게가 같아져 어느 쪽을 눌러야 하는지가 흐려졌다.
+ * 그라디언트가 아니라 단색이라 start·end가 같다.
+ */
+val LightHeroStart = Color(0xFFF3ECD9)
+val LightHeroEnd = Color(0xFFF3ECD9)
 val LightCurveLaneBorder = Color(0xFF1C1A17)
 
 // ─── 다크 ───────────────────────────────────────────────────
@@ -128,6 +135,6 @@ val DarkPromptCardBadge = Color(0xFFF3ECD9)
 val DarkGuideCurve = Color(0xFF1C1A17)
 val DarkUserCurve = Color(0xFF1C1A17)
 val DarkCurveLaneSurface = Color(0xFFF3ECD9)
-val DarkHeroStart = Color(0xFF1C1A17)
-val DarkHeroEnd = Color(0xFF1C1A17)
+val DarkHeroStart = Color(0xFFF3ECD9)
+val DarkHeroEnd = Color(0xFFF3ECD9)
 val DarkCurveLaneBorder = Color(0xFF1C1A17)

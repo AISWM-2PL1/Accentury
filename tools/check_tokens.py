@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """정본 ↔ 사본 토큰 대조 (KAN-148, Papercut 팔레트 KAN-161).
 
-`docs/wiki/design-tokens.md`의 §2 색 표와 §3 타이포 표를 정본으로 삼아, 네이티브
+`docs/wiki/design-tokens.md`의 §2 색 표와 §3 타이포 표(크기·굵기)를 정본으로 삼아, 네이티브
 (`Color.kt`·`Type.kt`)와 웹(`tokens.css`)이 같은 값을 들고 있는지 확인한다.
 
     python3 tools/check_tokens.py
@@ -112,59 +112,104 @@ TYPE_SLOTS = {
 }
 
 
-def parse_doc_type_sizes():
-    """§3 표에서 스타일별 크기(px/sp 숫자)를 읽는다."""
+def parse_doc_type_rows():
+    """§3 표에서 스타일별 (크기, 굵기)를 읽는다."""
     text = DOC.read_text(encoding="utf-8")
     section = text.split("## 3. 타이포", 1)[1].split("## 4.", 1)[0]
-    row = re.compile(r"^\|\s*`(\w+)`\s*\|\s*(\d+)sp\s*\|")
+    row = re.compile(r"^\|\s*`(\w+)`\s*\|\s*(\d+)sp\s*\|\s*(\d+)\s*\|")
     out = {}
     for line in section.splitlines():
         m = row.match(line.strip())
         if m:
-            out[m.group(1)] = int(m.group(2))
+            out[m.group(1)] = (int(m.group(2)), int(m.group(3)))
     return out
 
 
-def parse_kotlin_type_sizes():
-    """Type.kt의 슬롯별 fontSize."""
+# Compose의 이름 있는 굵기 → 숫자. Jua는 400 하나뿐이라 그 위를 요청하면 합성 볼드가 된다
+FONT_WEIGHTS = {
+    "Thin": 100,
+    "ExtraLight": 200,
+    "Light": 300,
+    "Normal": 400,
+    "Medium": 500,
+    "SemiBold": 600,
+    "Bold": 700,
+    "ExtraBold": 800,
+    "Black": 900,
+}
+
+
+def parse_kotlin_type_rows():
+    """Type.kt의 슬롯별 (fontSize, fontWeight)."""
     text = KOTLIN_TYPE.read_text(encoding="utf-8")
     out = {}
     for slot, body in re.findall(r"(\w+) = TextStyle\((.*?)\n    \)", text, re.S):
-        m = re.search(r"fontSize = (\d+)\.sp", body)
-        if m:
-            out[slot] = int(m.group(1))
+        size = re.search(r"fontSize = (\d+)\.sp", body)
+        weight = re.search(r"fontWeight = FontWeight\.(\w+)", body)
+        if size and weight:
+            out[slot] = (int(size.group(1)), FONT_WEIGHTS.get(weight.group(1), 0))
     return out
 
 
-def parse_css_type_sizes():
+def parse_css_type_rows():
+    """tokens.css의 `--text-*` 값과 `.type-*` 클래스가 고른 굵기.
+
+    굵기는 두 단계를 거친다 - 클래스가 `var(--weight-medium)`을 고르고 그 변수가 숫자를
+    갖는다. 클래스만 보면 이름이, 변수만 보면 숫자가 어느 스타일 것인지 알 수 없어
+    둘을 이어 붙여야 정본의 굵기 열과 비교할 수 있다.
+    """
     text = CSS.read_text(encoding="utf-8")
-    return {
+    sizes = {
         name: int(value)
         for name, value in re.findall(r"--text-([a-z-]+)\s*:\s*(\d+)px;", text)
     }
+    scale = {
+        name: int(value)
+        for name, value in re.findall(r"--weight-([a-z-]+)\s*:\s*(\d+);", text)
+    }
+    weights = {}
+    rule = re.compile(
+        r"\.type-([a-z-]+)\s*\{[^}]*?font-weight:\s*var\(--weight-([a-z-]+)\)",
+        re.S,
+    )
+    for name, weight_name in rule.findall(text):
+        weights[name] = scale.get(weight_name, 0)
+    return sizes, weights
+
+
+# Jua를 쓰는 스타일. 번들 폰트에 굵기가 400 하나뿐이라 그 위를 요청하면 합성 볼드가 된다
+JUA_STYLES = {"display", "headline", "title", "titleSmall"}
+JUA_WEIGHT = 400
 
 
 def check_typography():
-    """정본 §3 · Type.kt · tokens.css의 글자 크기가 같은지."""
-    doc = parse_doc_type_sizes()
-    kotlin = parse_kotlin_type_sizes()
-    css = parse_css_type_sizes()
+    """정본 §3 · Type.kt · tokens.css의 글자 크기와 굵기가 같은지."""
+    doc = parse_doc_type_rows()
+    kotlin = parse_kotlin_type_rows()
+    css_sizes, css_weights = parse_css_type_rows()
 
     problems = []
     if set(doc) != set(TYPE_SLOTS):
         problems.append(f"정본 §3의 스타일 목록이 스크립트의 TYPE_SLOTS와 다르다: {sorted(set(doc) ^ set(TYPE_SLOTS))}")
         return problems, 0
 
-    for style, want in sorted(doc.items()):
+    for style, (size, weight) in sorted(doc.items()):
         slot, css_name = TYPE_SLOTS[style]
-        if kotlin.get(slot) != want:
-            problems.append(f"타이포/{style}: Type.kt {slot}={kotlin.get(slot)} ≠ 정본={want}")
-        if css.get(css_name) != want:
-            problems.append(f"타이포/{style}: tokens.css --text-{css_name}={css.get(css_name)} ≠ 정본={want}")
+        if kotlin.get(slot) != (size, weight):
+            problems.append(f"타이포/{style}: Type.kt {slot}={kotlin.get(slot)} ≠ 정본={(size, weight)}")
+        if css_sizes.get(css_name) != size:
+            problems.append(f"타이포/{style}: tokens.css --text-{css_name}={css_sizes.get(css_name)} ≠ 정본={size}")
+        if css_weights.get(css_name) != weight:
+            problems.append(f"타이포/{style}: tokens.css .type-{css_name} 굵기={css_weights.get(css_name)} ≠ 정본={weight}")
+        if style in JUA_STYLES and weight != JUA_WEIGHT:
+            problems.append(
+                f"타이포/{style}: Jua 슬롯이 {weight} - 번들 폰트는 400뿐이라 합성 볼드가 된다 (정본 §3)"
+            )
 
     # 대사 카드는 ux-ui.md §5가 24 이상을 요구한다 - 값이 바뀌어도 이 선은 지켜야 한다
-    if doc.get("headline", 0) < 24:
-        problems.append(f"타이포/headline: 대사 카드가 {doc.get('headline')}sp - ux-ui.md §5의 24sp 최소선 미달")
+    headline = doc.get("headline", (0, 0))[0]
+    if headline < 24:
+        problems.append(f"타이포/headline: 대사 카드가 {headline}sp - ux-ui.md §5의 24sp 최소선 미달")
 
     return problems, len(doc)
 
@@ -204,7 +249,7 @@ def main() -> int:
 
     total = len(doc["light"]) + len(doc["dark"])
     print(f"색 토큰 {total}개가 정본·Color.kt·tokens.css 세 곳에서 일치한다.")
-    print(f"타이포 {type_count}개가 정본·Type.kt·tokens.css 세 곳에서 일치한다 (대사 카드 24sp 이상).")
+    print(f"타이포 {type_count}개의 크기·굵기가 정본·Type.kt·tokens.css 세 곳에서 일치한다 (대사 카드 24sp 이상, Jua 400).")
     return 0
 
 

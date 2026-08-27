@@ -194,13 +194,15 @@ export function VoiceCheckScreen({ onDone, startFailure = null, capture, now }: 
           중심이 잠기기 전에는 빈 레인이 정상이다 — 임시 축으로 그려 두면 축이 잠기는 순간
           곡선 전체가 한 번 점프한다 (`userCurve.ts`).
         */}
-        <CurveLane
-          label="내 억양"
-          ariaLabel="내 억양 곡선"
-          segments={userCurveDisplayPoints(frames, VOICE_CHECK_WINDOW_MS, centerHz)}
-          color="var(--color-user-curve)"
-          dashed={false}
-        />
+        {/* 레인 하나여도 상자는 문항 화면과 같다 — 테두리·모서리는 상자가 갖는다 */}
+        <div className="curve-card">
+          <CurveLane
+            label="내 억양"
+            ariaLabel="내 억양 곡선"
+            segments={userCurveDisplayPoints(frames, VOICE_CHECK_WINDOW_MS, centerHz)}
+            variant="user"
+          />
+        </div>
         <InputLevelBar level={state.phase === 'listening' ? state.level : 0} />
         <StatusBlock
           /*

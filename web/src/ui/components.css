@@ -7,8 +7,13 @@
  */
 
 /*
- * Chunky 3D 버튼 — 시안(prototype/src/app/App.tsx ChunkyBtn)의 시각 정체성이다.
- * 밑변에 그림자를 깔아 두께를 만들고, 누르면 그림자가 줄면서 본체가 내려간다.
+ * 오려 낸 종이 버튼 (KAN-161 2단계). 시각 정체성은 오프셋 종이 그림자다 — 오른쪽·아래로
+ * 어긋난 자리에 단색 면 한 겹이 깔려 종이 한 장이 떠 있는 것처럼 보이고, 누르면 그림자가
+ * 사라지면서 본체가 정확히 그만큼 내려가 바닥에 닿는다.
+ *
+ * 눌림을 `transform`으로 그리는 이유는 높이다. margin·padding으로 내리면 옆 요소가 밀려
+ * 화면이 들썩이는데, transform과 box-shadow는 둘 다 레이아웃을 건드리지 않아 버튼이
+ * 차지하는 자리가 눌림 전후로 같다.
  */
 .btn {
   display: inline-flex;
@@ -24,7 +29,7 @@
 
   font-family: var(--font-body);
   font-size: var(--text-body);
-  font-weight: var(--weight-bold);
+  font-weight: var(--weight-medium);
   line-height: 1;
 
   cursor: pointer;
@@ -33,43 +38,57 @@
     transform var(--duration-press) var(--ease-out);
 }
 
+/*
+ * 주동작. 화면에서 유일하게 잉크로 꽉 찬 면이라 눈이 먼저 닿는다. 테두리를 면과 같은 색으로
+ * 2px 두르는 것은 낭비가 아니다 - 크림 배경 위에서 잉크 면의 가장자리가 종이를 오린 자리처럼
+ * 또렷해진다. 라벨은 Jua 20px(`titleSmall`)로, 이 화면에서 CTA가 제목만큼 크다.
+ */
 .btn--primary {
+  min-height: var(--control-height-lg);
+  border: 2px solid var(--color-primary);
   background: var(--color-primary);
   color: var(--color-primary-foreground);
-  box-shadow: 0 var(--button-rest-depth) 0 var(--color-primary-dim);
+  box-shadow: var(--shadow-card);
+
+  font-family: var(--font-display);
+  font-size: var(--text-title-sm);
+  font-weight: var(--weight-normal);
+  letter-spacing: 0.02em;
 }
 
-/* 보조 동작. 면을 채우지 않고 테두리만 둬서 주버튼과 무게를 가른다 */
+/*
+ * 보조 동작. 테두리만 두르고 그림자를 두지 않는다 - 그림자는 "떠 있다"는 뜻이라 화면에
+ * 떠 있는 종이가 둘이면 어느 쪽을 눌러야 하는지가 흐려진다. 텍스트 버튼보다는 어포던스가
+ * 분명하고 주 버튼보다는 가볍다는 자리를 테두리 하나가 잡는다.
+ */
 .btn--secondary {
+  border: 1.5px solid var(--color-control-border);
   background: var(--color-card);
   color: var(--color-secondary-foreground);
-  box-shadow:
-    0 0 0 1px var(--color-control-border) inset,
-    0 var(--button-rest-depth) 0 var(--color-control-border);
+  font-size: var(--text-body-sm);
 }
 
-/* 이탈·종료처럼 눌리면 안 되는 쪽으로 무게를 더 뺀다 — 그림자도 두지 않는다 */
+/* 이탈·종료처럼 눌리면 안 되는 쪽. 잉크 글자만 남기고 터치 타겟 48dp는 지킨다 */
 .btn--text {
   background: none;
-  color: var(--color-muted-foreground);
-  font-weight: var(--weight-medium);
+  color: var(--color-foreground);
   padding: 0 var(--space-3);
 }
 
-.btn:active:not(:disabled) {
-  transform: translateY(calc(var(--button-rest-depth) - var(--button-pressed-depth)));
+/*
+ * 눌림. 종이가 바닥에 닿는 거리는 그림자가 어긋난 거리와 같아야 한다 - 두 값이 갈리면
+ * 본체가 그림자 자리를 덮지 못하고 어긋난 채로 멈춘다.
+ */
+.btn--primary:active:not(:disabled),
+.btn--secondary:active:not(:disabled) {
+  transform: translate(var(--paper-shadow-x), var(--paper-shadow-y));
 }
 
 .btn--primary:active:not(:disabled) {
-  box-shadow: 0 var(--button-pressed-depth) 0 var(--color-primary-dim);
+  box-shadow: none;
 }
 
-.btn--secondary:active:not(:disabled) {
-  box-shadow:
-    0 0 0 1px var(--color-control-border) inset,
-    0 var(--button-pressed-depth) 0 var(--color-control-border);
-}
-
+/* 글자만 있는 버튼은 움직이지 않는다 - 종이가 아니라 글씨라 내려갈 바닥이 없다 */
 .btn--text:active:not(:disabled) {
   transform: none;
 }
@@ -86,52 +105,60 @@
 /* ── 진척도 ── */
 
 /*
- * 시안은 진행바를 화면 맨 위 한 줄에 둔다 — 막대가 가로를 채우고 "1 / 10"이 오른쪽에 붙는다.
- * 숫자를 막대 아래가 아니라 옆에 두는 이유는 세로 공간을 문항 카드에 주기 위해서다.
+ * 진행 도트 (KAN-161 2단계). 막대 하나가 아니라 문항 수만큼의 캡슐이다 — 남은 문항이
+ * 몇 개인지 세어 볼 수 있고, 채워진 칸이 늘어나는 것이 막대가 자라는 것보다 "한 문항 넘어갔다"로
+ * 읽힌다 (ux-ui.md §3 Goal-Gradient).
+ *
+ * 세 상태를 색이 아니라 **형태**로 가른다: 완료는 잉크로 찬 캡슐, 현재는 테두리가 2px로
+ * 두꺼워지고 왼쪽 절반만 찬 캡슐, 미완료는 빈 캡슐이다. `primary-dim`(#cfc5aa)으로
+ * 남은 칸을 칠하지 않는 이유는 크림 위 1.46:1이라 아무것도 안 보이기 때문이다 (정본 §7).
  */
 .progress-indicator {
   display: flex;
-  align-items: center;
-  gap: var(--space-3);
+  flex-direction: column;
+  gap: var(--space-2);
   width: 100%;
 }
 
+.progress-indicator__dots {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.progress-indicator__dot {
+  flex: 1 1 0;
+  height: var(--progress-dot-height);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-full);
+  background: var(--color-card);
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+
+.progress-indicator__dot[data-state='done'] {
+  background: var(--color-primary);
+}
+
 /*
- * `<progress>`의 내장 의미론(role=progressbar + value/max)을 그대로 쓴다. 브라우저 기본
- * 모양은 플랫폼마다 다르므로 트랙·바 색만 토큰으로 덮는다.
+ * 현재 칸만 절반이 차 있다. 그라디언트를 쓰지만 번지는 면이 아니라 50%에서 딱 끊기는
+ * 두 색이라 결과는 잉크와 크림이 맞닿은 경계 하나다 - Papercut에서 유일하게 허용한
+ * `linear-gradient`이고, 이 자리 말고는 쓰지 않는다.
  */
-.progress-indicator__bar {
-  flex: 1;
-  height: var(--progress-bar-height);
-  border: none;
-  border-radius: var(--radius-full);
-  background: var(--color-muted);
-  /* Firefox */
-  accent-color: var(--color-primary);
+.progress-indicator__dot[data-state='current'] {
+  border-width: 2px;
+  background: linear-gradient(90deg, var(--color-primary) 50%, var(--color-card) 50%);
 }
 
-.progress-indicator__bar::-webkit-progress-bar {
-  background: var(--color-muted);
-  border-radius: var(--radius-full);
-}
-
-.progress-indicator__bar::-webkit-progress-value {
-  background: var(--color-primary);
-  border-radius: var(--radius-full);
-  transition: width var(--duration-base) var(--ease-out);
-}
-
-.progress-indicator__bar::-moz-progress-bar {
-  background: var(--color-primary);
-  border-radius: var(--radius-full);
+/*
+ * 숫자 표기. 오른쪽 아래에 붙는다 - 왼쪽에서 차오르는 도트의 끝과 같은 쪽이라 눈이
+ * 도트를 훑고 나온 자리에서 숫자를 만난다.
+ */
+.progress-indicator__count {
+  text-align: right;
+  color: var(--color-muted-foreground);
 }
 
 /* ── 대기·오류 블록 ── */
-
-.progress-indicator__count {
-  flex-shrink: 0;
-  color: var(--color-muted-foreground);
-}
 
 .status-block {
   display: flex;
@@ -141,12 +168,13 @@
   text-align: center;
 }
 
+/*
+ * 부연은 대기든 오류든 흐린 잉크다 (KAN-161 2단계). 오류를 색으로 알리던 규칙이 사라졌으니
+ * 두 톤에 다른 색을 줄 이유도 없다 - 무엇이 잘못됐는지는 문구가 말하고, 스크린 리더에는
+ * `role="alert"`가 말한다. 색 면은 두지 않는다.
+ */
 .status-block__detail {
   color: var(--color-muted-foreground);
-}
-
-.status-block--error .status-block__detail {
-  color: var(--color-destructive-on-surface);
 }
 
 /* ── 화면 셸 ── */
@@ -193,7 +221,10 @@
 
 /*
  * 화면을 여는 원형 아이콘. 시안이 인트로·권한 화면에서 같은 규격으로 쓴다 —
- * 이모지 하나를 파랑 원에 얹고 테두리와 그림자로 띄운다.
+ * 오려 낸 크림 동그라미에 잉크 테두리를 두르고 오프셋 그림자로 띄운다 (KAN-161 2단계).
+ *
+ * 잉크로 꽉 찬 원이었는데 뒤집었다: 잉크 면은 화면에서 주 버튼과 무게가 같아져
+ * 어느 쪽을 눌러야 하는지가 흐려진다. 아이콘은 누르는 것이 아니다.
  */
 .hero-icon {
   position: relative;
@@ -203,8 +234,8 @@
   width: var(--hero-icon-size);
   height: var(--hero-icon-size);
   border-radius: var(--radius-full);
-  background: linear-gradient(135deg, var(--color-hero-start), var(--color-hero-end));
-  border: 4px solid var(--color-secondary);
+  background: var(--color-hero-start);
+  border: 1.5px solid var(--color-border);
   box-shadow: var(--shadow-hero);
   font-size: 56px;
   line-height: 1;
@@ -311,21 +342,24 @@
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
   min-height: var(--prompt-card-min-height);
   padding: var(--prompt-card-padding);
+  border: 1.5px solid var(--color-border);
   border-radius: var(--radius-xl);
-  background: linear-gradient(135deg, var(--color-prompt-card-start), var(--color-prompt-card-end));
+  background: var(--color-prompt-card-start);
   color: var(--color-prompt-card-foreground);
   box-shadow: var(--shadow-prompt);
   text-align: left;
 }
 
+/*
+ * 카드 맨 위 한 줄. 알약 배지였는데 캡션으로 낮췄다 (KAN-161 2단계) — 배지는 면을 하나 더
+ * 만드는데, 카드가 이미 배경과 같은 크림이라 그 면이 카드 안에 또 카드를 그린 것처럼 보였다.
+ * "3 / 10 · 이 문장을 읽어주세요"처럼 자리와 할 일을 알리는 줄이라 흐린 잉크로 충분하다.
+ */
 .prompt-card__badge {
   align-self: flex-start;
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-full);
-  background: var(--color-prompt-card-badge);
   color: var(--color-prompt-card-muted);
 }
 
@@ -342,47 +376,42 @@
 }
 
 /*
- * 버튼과 같은 입체 언어를 얕게 쓴다(3dp). 선택지는 여러 개가 세로로 쌓이므로 버튼만큼
- * 두꺼우면 화면이 계단처럼 보인다.
+ * 오려 낸 종이 선택지 (KAN-161 2단계). 고르지 않은 것은 테두리만 두른 빈 칸이고,
+ * 고른 것만 테두리가 2px로 두꺼워지며 그림자를 얻어 종이 한 장이 떠오른다.
+ *
+ * 잉크 한 색이라 "고른 것"을 색으로 말할 수 없다 - 두께·그림자·✓ 표시 셋이 함께 말한다.
+ * 셋 중 어느 하나만으로도 읽히므로 색각 이상이나 대비 낮은 화면에서도 남는다 (WCAG 1.4.1).
  */
 .choice {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  min-height: var(--touch-target-min);
-  padding: var(--space-4) 18px;
-  border: 2px solid var(--color-control-border);
+  min-height: var(--control-height-lg);
+  padding: var(--space-3) var(--space-4);
+  border: 1.5px solid var(--color-control-border);
   border-radius: var(--radius-md);
   background: var(--color-card);
-  box-shadow: var(--shadow-choice);
   color: var(--color-foreground);
   font-family: var(--font-body);
   font-size: var(--text-body);
-  font-weight: var(--weight-bold);
+  font-weight: var(--weight-normal);
   text-align: left;
   cursor: pointer;
   transition:
     box-shadow var(--duration-press) var(--ease-out),
-    transform var(--duration-press) var(--ease-out),
-    border-color var(--duration-fast) var(--ease-out),
-    background-color var(--duration-fast) var(--ease-out);
+    transform var(--duration-press) var(--ease-out);
 }
 
-/*
- * 선택 상태는 테두리 색과 그림자 색을 같이 바꾼다. 색만으로 구분하면 색각 이상에서
- * 어느 것을 골랐는지 알 수 없어서, 라디오 표식(input)이 함께 켜지는 것이 본래 신호다
- * (WCAG 1.4.1).
- */
 .choice--selected {
-  border-color: var(--color-primary);
-  background: var(--color-secondary);
-  color: var(--color-secondary-foreground);
-  box-shadow: 0 var(--choice-depth) 0 var(--color-primary);
+  border-width: 2px;
+  box-shadow: var(--shadow-choice);
+  font-weight: var(--weight-medium);
 }
 
+/* 누르면 종이가 바닥에 닿는다 - 버튼과 같은 거리, 같은 규칙이다 */
 .choice:active:not(.choice--locked) {
-  transform: translateY(2px);
+  transform: translate(var(--paper-shadow-x), var(--paper-shadow-y));
   box-shadow: none;
 }
 
@@ -391,11 +420,10 @@
   opacity: var(--opacity-disabled);
 }
 
-/* 고른 것의 표시. 색과 함께 움직여 두 신호가 겹치게 한다 */
+/* 고른 것의 표시. 테두리 두께·그림자와 함께 움직여 세 신호가 겹치게 한다 */
 .choice__check {
   flex-shrink: 0;
   color: var(--color-primary);
-  font-weight: var(--weight-bold);
 }
 
 /* 표식을 숨겼으므로 포커스 링은 선택지 전체가 받는다 */
@@ -554,9 +582,9 @@
 }
 
 /*
- * 점수 막대. 진행바(.progress-indicator__bar)와 같은 규격을 쓰지만 별도 클래스인 이유는
- * 뜻이 다르기 때문이다 - 저쪽은 "몇 개 남았나", 이쪽은 "몇 점인가"라 언젠가 한쪽만
- * 바뀐다. 브라우저마다 <progress> 의사 요소가 갈려 셋을 다 적는다.
+ * 점수 막대. 진행 도트(.progress-indicator)와 달리 막대인 이유는 뜻이 다르기 때문이다 -
+ * 저쪽은 "몇 개 남았나"라 셀 수 있는 칸이 맞고, 이쪽은 "몇 점인가"라 연속한 양이다.
+ * 브라우저마다 <progress> 의사 요소가 갈려 셋을 다 적는다.
  */
 .score-row__bar {
   width: 100%;
@@ -701,22 +729,18 @@ a.btn {
 /* ── 억양 곡선 카드 (KAN-56 Stage 5) ── */
 
 /*
- * 가이드·내 억양 두 레인을 담는 카드. 앱 녹음 화면의 CurveCard와 같은 구성이다 — 같은 규격을
- * 지키는 이유는 대사 카드와 같다: 문항이 두 런타임을 오가는데 카드가 다르게 생기면 사용자가
- * 곡선이 무엇을 뜻하는지 두 번 배워야 한다.
+ * 곡선 레인 컨테이너 (KAN-56 Stage 5, 형태는 KAN-161 2단계). 레인 하나든 둘이든 이 상자가
+ * 테두리와 모서리를 갖고, 레인 자신은 테두리를 갖지 않는다 — 레인마다 테두리를 두르면
+ * 상자 안에 상자가 겹쳐 선이 두 겹으로 보인다. 레인 사이는 1px 흐린 잉크 한 줄이 가른다.
+ *
+ * 앱 녹음 화면의 CurveCard와 같은 규격을 지키는 이유는 대사 카드와 같다: 문항이 두 런타임을
+ * 오가는데 상자가 다르게 생기면 사용자가 곡선이 무엇을 뜻하는지 두 번 배워야 한다.
  */
 .curve-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-4);
-  border: 1px solid var(--color-curve-lane-border);
-  border-radius: var(--radius-xl);
-  background: var(--color-card);
-}
-
-.curve-card__title {
-  color: var(--color-foreground);
+  border: 1.5px solid var(--color-curve-lane-border);
+  border-radius: var(--radius-md);
+  background: var(--color-curve-lane-surface);
+  overflow: hidden;
 }
 
 /*
@@ -726,10 +750,12 @@ a.btn {
 .curve-lane {
   position: relative;
   height: var(--curve-lane-height);
-  border: 1px solid var(--color-curve-lane-border);
-  border-radius: var(--radius-md);
-  background: var(--color-curve-lane-surface);
-  overflow: hidden;
+}
+
+/* 레인 사이 구분선. 컨테이너 테두리보다 얇고 흐리다 - 상자를 나누는 선이 상자를 두르는
+   선만큼 진하면 레인 둘이 따로 놓인 상자로 보인다 */
+.curve-lane + .curve-lane {
+  border-top: 1px solid var(--color-muted-foreground);
 }
 
 /* 라벨은 레인 좌상단에 얹는다(시안). 곡선 그리기 영역 위쪽 여백 안이라 겹치지 않는다 */
