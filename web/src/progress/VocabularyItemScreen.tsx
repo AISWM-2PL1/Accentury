@@ -23,17 +23,33 @@ import { useRef, useState } from 'react'
 import type { VocabularyItem } from './testDefinition'
 import { newIdempotencyKey, type VocabSubmitResult } from './submitVocabAnswer'
 import { Button } from '../ui'
-import { TYPE_BADGE } from './itemBadge'
+import { CheckIcon } from '../ui/icons'
+import { itemCaption } from './itemBadge'
 
 export interface VocabularyItemScreenProps {
   item: VocabularyItem
+  /**
+   * 카드 캡션에 그릴 1-기반 순번. **전체 문항 기준**이다 (음성 문항 화면과 같은 규칙) —
+   * 어휘 안에서의 1~5로 부르면 음성과 어휘를 오갈 때 번호가 뒤로 돌아간 것처럼 보인다.
+   *
+   * 세지 않고 받는 이유는 이 화면이 진행을 모르기 때문이다. 진행을 움직이는 것도, 지금이
+   * 몇 번째인지 아는 것도 상태 머신을 든 호출자다.
+   */
+  itemNumber: number
+  totalItems: number
   /** 답안 제출. 결과가 SAVED든 ALREADY_ANSWERED든 "서버에 답이 있다"는 뜻이다 */
   submitAnswer: (choiceId: string, idempotencyKey: string) => Promise<VocabSubmitResult>
   /** 제출이 성공한 뒤의 진행 통지. 진행을 움직이는 건 호출자(상태 머신)다 */
   onSubmitted: () => void
 }
 
-export function VocabularyItemScreen({ item, submitAnswer, onSubmitted }: VocabularyItemScreenProps) {
+export function VocabularyItemScreen({
+  item,
+  itemNumber,
+  totalItems,
+  submitAnswer,
+  onSubmitted,
+}: VocabularyItemScreenProps) {
   // 고른 선택지. 제출 중이 아니라면 자유롭게 바꿀 수 있다 — 실패 후에도 바꿔서 다시 낼 수 있다.
   const [selected, setSelected] = useState<string | null>(null)
   // 제출 진행 중 = 화면 잠금. 성공하면 풀지 않는다 — 호출자가 다음 문항으로 넘겨 이 컴포넌트가
@@ -72,7 +88,10 @@ export function VocabularyItemScreen({ item, submitAnswer, onSubmitted }: Vocabu
         나오는데 카드 크기가 다르면 전환마다 화면이 들썩인다.
       */}
       <div className="prompt-card">
-        <span className="type-caption prompt-card__badge">{TYPE_BADGE.VOCABULARY}</span>
+        {/* "7 / 10 · 이 말은 무슨 뜻일까요?" — 자리와 할 일을 한 줄로 (아트보드 `Vocab.dc.html`) */}
+        <span className="type-caption prompt-card__badge">
+          {itemCaption('VOCABULARY', itemNumber, totalItems)}
+        </span>
         <h1 id="vocab-prompt" className="type-title">
           {item.prompt}
         </h1>
@@ -110,8 +129,8 @@ export function VocabularyItemScreen({ item, submitAnswer, onSubmitted }: Vocabu
                 정답이 아니라 "내가 고른 것" 표시라 정오 미노출(KAN-13)과는 무관하다.
               */}
               {checked && (
-                <span className="choice__check" aria-hidden="true">
-                  ✓
+                <span className="choice__check">
+                  <CheckIcon />
                 </span>
               )}
             </label>

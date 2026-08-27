@@ -23,8 +23,11 @@
  * [다시 시도]만 준다. 이 화면의 이탈 경로는 KAN-39에서 다른 화면들과 함께 붙는다.
  */
 
-import { useEffect, useRef } from 'react'
-import { Button, ProgressIndicator, StatusBlock } from '../ui'
+import { Fragment, useEffect, useRef } from 'react'
+import { Button, StatusBlock } from '../ui'
+import { CheckSmallIcon } from '../ui/icons'
+import { WaitingHero } from '../ui/illustrations/WaitingHero'
+import { ANALYSIS_STAGES, analysisStage } from './analysisStage'
 import type { VoiceItem } from '../progress/testDefinition'
 import type { FetchLike } from '../progress/fetchTestDefinition'
 import type { AnalysisItem, AnalysisItemStatus } from './fetchAnalysisStatuses'
@@ -180,68 +183,161 @@ export function AnalysisWaitingScreen({
     })
   }, [deadEnd, status, onRetake])
 
+  /*
+   * 시안의 세 칸(곡선 추출 / 분포 비교 / 등급 계산). 값은 폴링이 이미 들고 있는 상태에서
+   * 파생한다 — 폴링에 단계라는 개념을 새로 심지 않는다 (`analysisStage.ts` 헤더).
+   */
+  const stage = analysisStage({
+    ready: status.kind === 'READY',
+    completedVoice,
+    totalVoice: voiceItems.length,
+  })
+  /*
+   * 기다리는 중인가. 오류·행동 요구 상태에서는 그림과 단계 대신 무엇을 해야 하는지가 화면을
+   * 차지해야 하므로, 이 값이 거짓이면 히어로 블록을 통째로 그리지 않는다.
+   */
+  const waiting = status.kind === 'POLLING' || status.kind === 'READY'
+
   return (
     <main className="screen">
-      <ProgressIndicator current={completed} total={totalItems} label="분석 진행률" />
+      {/*
+        화면 맨 위 진행 막대 (아트보드 `Waiting.dc.html`). 문항 진행(`.progress-indicator`)의
+        도트가 아니라 막대인 이유는 세는 것이 다르기 때문이다 — 저쪽은 "내가 몇 문항 풀었나"라
+        셀 수 있는 칸이고, 이쪽은 "서버가 얼마나 처리했나"라 내가 셀 수 있는 단위가 아니다.
 
-      {status.kind === 'POLLING' && (
-        <StatusBlock
-          tone="waiting"
-          message="결과를 만들고 있어요"
-          detail={lastError ?? '잠시만 기다려 주세요'}
-        />
-      )}
-
-      {status.kind === 'READY' && <StatusBlock tone="waiting" message="결과 화면으로 이동합니다" />}
-
-      {status.kind === 'EXHAUSTED' && (
-        <StatusBlock
-          tone="error"
-          message="분석이 예상보다 오래 걸리고 있어요"
-          detail="잠시 후 다시 확인해 주세요"
-          action={<Button onClick={restart}>다시 시도</Button>}
-        />
-      )}
-
-      {actionRequired &&
-        (deadEnd ? (
-          <StatusBlock
-            tone="error"
-            message="여기서는 더 진행할 수 없어요"
-            detail="앱을 다시 시작해 테스트를 처음부터 진행해 주세요"
+        의미론은 예전 그대로다: `role="progressbar"` 한 줄이 값을 말하고 옆의 숫자는 시각
+        전용이다. 분모가 10인 근거는 이 파일 헤더에 있다 (어휘 5문항도 완료로 센다).
+      */}
+      <div className="analysis-progress">
+        <div
+          className="analysis-progress__bar"
+          role="progressbar"
+          aria-label="분석 진행률"
+          aria-valuemin={0}
+          aria-valuemax={totalItems}
+          aria-valuenow={completed}
+        >
+          <div
+            className="analysis-progress__fill"
+            style={{ width: `${totalItems > 0 ? (completed / totalItems) * 100 : 0}%` }}
           />
-        ) : (
-          <StatusBlock
-            tone="error"
-            message={
-              status.kind === 'ACTION_REQUIRED' && status.reason === 'RETAKE'
-                ? '일부 문항을 다시 녹음해야 해요'
-                : '아직 보내지 않은 문항이 있어요'
-            }
-            detail="아래 목록에서 해당 문항을 다시 녹음해 주세요"
-          />
-        ))}
+        </div>
+        <p className="type-caption analysis-progress__count" aria-hidden="true">
+          분석 중 {completed} / {totalItems}
+        </p>
+      </div>
 
-      {status.kind === 'FAILED' && <StatusBlock tone="error" message={status.message} />}
+      {/*
+        진행 막대 아래의 모든 것 (KAN-161 3단계 리뷰). 상자를 하나 두는 이유는 정렬이 갈리기
+        때문이다: `.screen`은 본문 하나짜리 화면(로딩·오류)을 세로 가운데 세우려고
+        `justify-content: center`인데, 그 정렬이 진행 막대까지 함께 내려 화면 위쪽 절반이 비고
+        막대가 한가운데 떴다. 이 상자가 `flex: 1`로 남는 높이를 전부 가져가면 바깥의 가운데
+        정렬은 할 일이 없어지고(늘어나는 자식이 있으면 자유 공간이 0이다) 막대는 패딩 바로
+        아래, 즉 상단에 남는다 — 아트보드 ④의 배치다.
 
-      <ul className="analysis-list">
-        {rows.map(({ item, itemNumber, status: analysis }) => (
-          <li key={item.itemId} className="analysis-row">
-            <span className="type-label analysis-row__name">{itemNumber}번 문항</span>
-            <span className="type-caption analysis-row__status">
-              {analysis === null ? '확인 중' : STATUS_LABEL[analysis.status]}
-              {analysis?.quality !== null && analysis?.quality !== undefined && analysis.quality !== QUALITY_OK
-                ? ` · ${analysis.quality}`
-                : ''}
-            </span>
-            {onRetake !== undefined && analysis !== null && RETAKEABLE.includes(analysis.status) && (
-              <Button variant="secondary" onClick={() => onRetake(item.itemId)}>
-                다시 녹음
-              </Button>
+        가운데 정렬은 이 상자 **안에서만** 한다. 기다리는 중에는 그림과 단계가 화면 가운데
+        앉아야 하지만, 재녹음 분기는 제목과 목록이 위에서부터 흘러야 눈이 목록을 훑는다.
+      */}
+      <div className={waiting ? 'analysis-body analysis-body--centered' : 'analysis-body'}>
+        {waiting && (
+          <div className="analysis-waiting">
+            <div className="illustration illustration--waiting">
+              <WaitingHero />
+            </div>
+            {/*
+              대기 문구가 StatusBlock의 본문에서 제목(h1)으로 올라왔다. 이 화면에는 다른 제목이
+              없어 이 문장이 곧 화면의 이름이고, 시안도 히어로 아래 가장 큰 글자로 둔다.
+              문구 자체는 그대로라 대기 화면을 기다리는 테스트가 그대로 통과한다.
+            */}
+            <h1 className="type-headline">
+              {status.kind === 'READY' ? '결과 화면으로 이동합니다' : '결과를 만들고 있어요'}
+            </h1>
+            {/* 일시적 오류는 여기 부연으로만 알린다 — 문항 목록을 지우지 않는다 */}
+            {status.kind === 'POLLING' && (
+              <p className="type-caption status-block__detail">{lastError ?? '잠시만 기다려 주세요'}</p>
             )}
-          </li>
-        ))}
-      </ul>
+            <div className="analysis-steps">
+              {ANALYSIS_STAGES.map((label, index) => {
+                const step = index + 1
+                const state = step < stage ? 'done' : step === stage ? 'current' : 'todo'
+                return (
+                  <Fragment key={label}>
+                    {step > 1 && (
+                      /* 칸 사이를 잇는 선. 지나온 구간만 잉크다 — 선 하나가 "여기까지 왔다"를 잇는다 */
+                      <div
+                        className="analysis-step-line"
+                        data-state={step <= stage ? 'done' : 'todo'}
+                        aria-hidden="true"
+                      />
+                    )}
+                    {/*
+                      단계는 눈으로만 읽는다 (`aria-hidden`). 값을 말하는 것은 위 progressbar 한
+                      줄이고, 세 칸까지 읽히면 같은 진행을 두 벌로 듣게 된다 — 진행 도트에서 도트
+                      하나하나를 의미론에서 뺀 것과 같은 판정이다. 상태는 `data-state`로 드러나
+                      테스트가 색을 보지 않고 확인한다.
+                    */}
+                    <div className="analysis-step" data-state={state} aria-hidden="true">
+                      <span className="analysis-step__dot">
+                        {state === 'done' ? <CheckSmallIcon /> : step}
+                      </span>
+                      <span className="type-caption analysis-step__label">{label}</span>
+                    </div>
+                  </Fragment>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        {status.kind === 'EXHAUSTED' && (
+          <StatusBlock
+            tone="error"
+            message="분석이 예상보다 오래 걸리고 있어요"
+            detail="잠시 후 다시 확인해 주세요"
+            action={<Button onClick={restart}>다시 시도</Button>}
+          />
+        )}
+
+        {actionRequired &&
+          (deadEnd ? (
+            <StatusBlock
+              tone="error"
+              message="여기서는 더 진행할 수 없어요"
+              detail="앱을 다시 시작해 테스트를 처음부터 진행해 주세요"
+            />
+          ) : (
+            <StatusBlock
+              tone="error"
+              message={
+                status.kind === 'ACTION_REQUIRED' && status.reason === 'RETAKE'
+                  ? '일부 문항을 다시 녹음해야 해요'
+                  : '아직 보내지 않은 문항이 있어요'
+              }
+              detail="아래 목록에서 해당 문항을 다시 녹음해 주세요"
+            />
+          ))}
+
+        {status.kind === 'FAILED' && <StatusBlock tone="error" message={status.message} />}
+
+        <ul className="analysis-list">
+          {rows.map(({ item, itemNumber, status: analysis }) => (
+            <li key={item.itemId} className="analysis-row">
+              <span className="type-label analysis-row__name">{itemNumber}번 문항</span>
+              <span className="type-caption analysis-row__status">
+                {analysis === null ? '확인 중' : STATUS_LABEL[analysis.status]}
+                {analysis?.quality !== null && analysis?.quality !== undefined && analysis.quality !== QUALITY_OK
+                  ? ` · ${analysis.quality}`
+                  : ''}
+              </span>
+              {onRetake !== undefined && analysis !== null && RETAKEABLE.includes(analysis.status) && (
+                <Button variant="secondary" onClick={() => onRetake(item.itemId)}>
+                  다시 녹음
+                </Button>
+              )}
+            </li>
+          ))}
+        </ul>
+      </div>
     </main>
   )
 }

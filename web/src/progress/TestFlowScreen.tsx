@@ -303,7 +303,16 @@ function TestRunner({
         진행바와 "3 / 10" 표기. 값이 1부터 시작하는 건 의도다 — 첫 문항을 0/10으로 보이면
         아직 시작도 안 한 느낌이라 이탈이 는다 (ux-ui.md §3 Goal-Gradient, endowed progress).
       */}
-      <ProgressIndicator current={progress.current} total={progress.total} />
+      <ProgressIndicator
+        current={progress.current}
+        total={progress.total}
+        /*
+         * 숫자 옆의 한 마디 — "3 / 10 · 음성" (KAN-161 3단계, 아트보드). 지금 문항이 어느
+         * 종류인지가 진행 표기에 붙으면, 음성과 어휘가 번갈아 나오는 동안 "방금 것과 다른
+         * 종류로 넘어왔다"가 화면 맨 위에서 읽힌다. 시각 전용이라 스크린 리더에는 빠진다.
+         */
+        note={current.type === 'VOICE' ? '음성' : '단어'}
+      />
       {/*
         본문은 유형이 정한다. 두 화면 모두 문항이 바뀔 때 새로 마운트되도록 itemId를 key로 준다 —
         음성 화면은 그 마운트가 곧 "네이티브에 전환을 알리는" 시점이다.
@@ -321,6 +330,9 @@ function TestRunner({
         <VocabularyItemScreen
           key={current.itemId}
           item={current}
+          /* 번호는 전체 문항 기준이다 — 음성 문항 화면·네이티브 녹음 화면이 쓰는 값과 같다 */
+          itemNumber={progress.current}
+          totalItems={progress.total}
           /*
            * 답안은 실행 환경과 무관하게 **항상 서버로 나간다**. 브리지가 없을 때 저장된 셈
            * 치고 진행만 밀던 개발용 통로가 있었는데, 웹 단독 실행(KAN-31)이 정식 경로가 된

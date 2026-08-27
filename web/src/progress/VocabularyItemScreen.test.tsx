@@ -25,7 +25,16 @@ type SubmitFn = (choiceId: string, idempotencyKey: string) => Promise<VocabSubmi
 function renderScreen(submitAnswer: SubmitFn = async () => ({ status: 'SAVED' })) {
   const submitSpy = vi.fn<SubmitFn>(submitAnswer)
   const onSubmitted = vi.fn<() => void>()
-  render(<VocabularyItemScreen item={vocabularyItem()} submitAnswer={submitSpy} onSubmitted={onSubmitted} />)
+  // 7 / 10 — 어휘 문항의 순번은 전체 문항 기준이다 (정의가 음성·어휘를 번갈아 둔다)
+  render(
+    <VocabularyItemScreen
+      item={vocabularyItem()}
+      itemNumber={7}
+      totalItems={10}
+      submitAnswer={submitSpy}
+      onSubmitted={onSubmitted}
+    />,
+  )
   return { submitSpy, onSubmitted }
 }
 
@@ -49,7 +58,7 @@ describe('표시', () => {
     expect(labels).toEqual(['부추', '미나리', '쑥갓', '시금치'])
   })
 
-  it('정오를 유추할 만한 표시가 없다 — 유형 배지·문제·선택지·[다음]이 전부다', () => {
+  it('정오를 유추할 만한 표시가 없다 — 캡션·문제·선택지·[다음]이 전부다', () => {
     renderScreen()
     choose('부추')
 
@@ -58,9 +67,14 @@ describe('표시', () => {
      * 전체 텍스트를 통째로 대조하는 이유: "무엇이 없는가"는 개별 단어를 찾아서는 증명할 수
      * 없다. 화면에 뭔가 새로 붙으면 그게 정오 정보든 아니든 여기서 걸리고, 걸린 사람이
      * 그게 정오 유추 경로인지 판단하게 된다.
-     * 배지("📝 단어 문항")는 KAN-148에서 카드 안으로 들어왔다 - 유형 표시라 정답과 무관하다.
+     *
+     * 카드 캡션은 KAN-161 3단계에서 유형 배지("📝 단어 문항")에서 "7 / 10 · 이 말은 무슨
+     * 뜻일까요?"로 바뀌었다 - 자리와 할 일을 말하는 줄이라 정답과 무관한 것은 그대로다.
+     * 고른 것의 ✓도 같은 단계에서 글자에서 SVG로 바뀌어 텍스트에 남지 않는다.
      */
-    expect(document.body.textContent).toBe("📝 단어 문항'정구지'는 표준어로?부추✓미나리쑥갓시금치다음")
+    expect(document.body.textContent).toBe(
+      "7 / 10 · 이 말은 무슨 뜻일까요?'정구지'는 표준어로?부추미나리쑥갓시금치다음",
+    )
   })
 })
 

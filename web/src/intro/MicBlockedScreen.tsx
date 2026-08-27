@@ -12,6 +12,7 @@
 
 import { storeLabelFor, storeUrlFor, type StorePlatform } from '../audio/storeLink'
 import { Button } from '../ui'
+import { MicIcon } from '../ui/icons'
 
 export interface MicBlockedScreenProps {
   reason: 'denied' | 'unavailable' | 'unsupported'
@@ -43,7 +44,15 @@ export function MicBlockedScreen({ reason, platform, onRetry }: MicBlockedScreen
   return (
     <main className="screen">
       <div className="screen__body">
-        <div className="hero-icon">🎤</div>
+        {/*
+          이모지 🎤를 잉크 선화로 갈았다 (KAN-161 3단계). 이모지는 시스템이 자기 색으로 그려
+          잉크 한 색 화면에 유일한 색조로 남았다 — 이 화면은 인트로를 대신해 서는 자리라
+          같은 그림 언어를 써야 한다. 선화인 이유는 정본 §8의 녹음 버튼과 같다: 크림 위의
+          잉크 면은 주 버튼과 무게가 같아져 "눌러야 하는 것"으로 읽힌다.
+        */}
+        <div className="hero-icon">
+          <MicIcon />
+        </div>
 
         <div>
           <h1 className="type-title-sm">{copy.title}</h1>

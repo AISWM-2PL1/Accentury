@@ -72,6 +72,30 @@ type UploadState =
  */
 const CURVE_UPDATE_INTERVAL_MS = 33
 
+/**
+ * 남은 시간이 이 아래로 내려가면 경고 표시로 바꾼다 (KAN-161 3단계, 시안 2b).
+ *
+ * 10초 상한에서 8초부터라는 뜻이다. 값을 상한의 비율이 아니라 **남은 시간**으로 잡은 이유는
+ * 문항마다 상한이 달라질 수 있기 때문이다(`item.maxDurationMs`) — 비율로 두면 상한이 짧은
+ * 문항에서 경고가 시작하자마자 녹음이 끝난다. 사람이 문장을 맺는 데 필요한 시간은 상한과
+ * 무관하게 2초쯤이다.
+ */
+const WARN_REMAINING_MS = 2_000
+
+/**
+ * 경과 시간 표기 `00:04` (시안). 초만 적던 것(`4.0초`)을 시계꼴로 바꿨다 — 옆에 붙는 상한이
+ * "10초"라 같은 줄에 "초"가 두 번 나오면 어느 쪽이 지금인지 한눈에 안 갈린다.
+ *
+ * 반올림이 아니라 버림(`floor`)이다. 0.9초에서 `00:01`이 뜨면 아직 1초가 안 됐는데 1초로
+ * 보이고, 품질 게이트가 1초 미만을 거절하므로(FR-AD-08) 화면과 판정이 어긋난 것처럼 읽힌다.
+ */
+function formatElapsed(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000))
+  const minutes = Math.floor(total / 60)
+  const seconds = total % 60
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+}
+
 const QUALITY_MESSAGE: Record<Exclude<QualityStatus, 'NORMAL'>, string> = {
   TOO_SHORT: '녹음이 너무 짧아요. 1초 이상 읽어 주세요',
   TOO_QUIET: '목소리가 잘 들리지 않아요. 조금 더 크게 읽어 주세요',
@@ -275,19 +299,37 @@ export function WebVoiceRecorder({
 
     if (state.phase === 'recording') {
       const ratio = Math.min(1, state.elapsedMs / item.maxDurationMs)
+      const limitSec = Math.round(item.maxDurationMs / 1000)
+      const remainingMs = Math.max(0, item.maxDurationMs - state.elapsedMs)
+      const warning = remainingMs <= WARN_REMAINING_MS
       return (
         <>
           {/*
             경과 시간은 벽시계가 아니라 담긴 샘플 수에서 온다 (RecordingBuffer.durationMs) —
             사용자가 보는 숫자와 서버가 파일에서 재는 길이가 같아야 한다.
             상한에 닿으면 훅이 스스로 멈추므로 [정지]를 못 눌러도 녹음이 잘리지 않는다 (FR-RC-02).
+
+            마지막 2초에는 남은 시간을 잉크 캡슐로 바꿔 단다 (KAN-161 3단계, 시안 2b). 같은
+            숫자를 다르게 그리는 것이 아니라 **다른 것을 말한다** — 위 표기는 "얼마나 읽었나",
+            캡슐은 "곧 끊긴다"라서, 문장을 맺어야 하는 순간에만 나타나는 편이 읽힌다.
+
+            `role="status"`로 읽히게 두되 `aria-live="polite"`인 이유: 매초 바뀌는 값이라
+            assertive면 사용자가 읽던 대사 문장을 스크린 리더가 가로챈다.
           */}
-          <p className="type-label record-elapsed">
-            {(state.elapsedMs / 1000).toFixed(1)}초 / {Math.round(item.maxDurationMs / 1000)}초
-          </p>
+          {warning ? (
+            <p className="type-label record-countdown" role="status" aria-live="polite">
+              {Math.ceil(remainingMs / 1000)}초 남음
+            </p>
+          ) : (
+            <p className="type-label record-elapsed">
+              {formatElapsed(state.elapsedMs)} / {limitSec}초
+            </p>
+          )}
           <div className="record-meter" aria-hidden="true">
             <div className="record-meter__fill" style={{ width: `${ratio * 100}%` }} />
           </div>
+          {/* 자동 종료를 미리 알린다 — 갑자기 멈추면 사용자는 자기가 뭘 잘못 눌렀다고 생각한다 */}
+          <p className="type-caption record-hint">{limitSec}초가 되면 자동으로 멈춰요</p>
           <Button onClick={() => void stop()} style={{ width: '100%' }}>
             정지
           </Button>

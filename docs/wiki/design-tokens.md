@@ -167,6 +167,7 @@ Accentury 네이티브(Compose)와 웹(WebView)이 공유하는 색·타이포·
 | `touch-target-min` | **48dp** | 모든 탭 가능 요소의 최소 높이·너비 |
 | `control-height-lg` | 56dp | 주 버튼·선택지의 높이. 보조 버튼은 `touch-target-min` 그대로다 |
 | `prompt-card-min-height` | 152dp | 대사 카드 (문항 길이가 달라도 카드 크기 고정) |
+| `screen-padding-top` | 64dp | 화면 위쪽 여백. 좌우 24·아래 32와 다른 값이고, 첫 요소를 내려 그림·제목이 세로 가운데에 앉게 한다 (웹 4화면부터. 네이티브 반영은 녹음 화면 이식 단계) |
 | `content-max-width` | 320dp | 본문 최대 폭. 넓은 화면에서 한 줄이 길어져 읽기 힘들어지는 것을 막는다 |
 | `opacity-disabled` | 0.6 | 비활성·제출 중 요소 |
 | `prompt-card-padding` | 24dp | 대사·질문 카드 안쪽 여백 |
