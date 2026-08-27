@@ -16,6 +16,12 @@
 #
 # test.yml과 중복 실행하지 않는다: 저쪽은 pull_request, 여기는 push(병합 결과)다. 테스트 게이트는
 # PR의 web-test required check(Dev Ruleset)가 맡고, 여기서는 tsc + vite build만 다시 돈다.
+#
+# 환경이 철거된 상태(staging은 미사용 시 destroy, KAN-140)에서는 역할도 버킷도 없어 자격 증명
+# 단계가 "Not authorized to perform sts:AssumeRoleWithWebIdentity"로 실패한다 - 신뢰 정책 결함과
+# 구분이 안 되는 메시지다 (2026-08-27 PR #55 리뷰). 철거할 때 environment 변수 DEPLOY_PAUSED=true를
+# 두면 이 워크플로는 빌드까지만 하고 배포 단계를 건너뛴 채 성공으로 끝나며, 요약에 그 사실을 남긴다.
+# 재구축 뒤 변수를 지우면 다시 배포한다 (infra/README.md "teardown 절차", "GitHub 설정").
 
 name: Web Deploy
 
@@ -67,7 +73,26 @@ jobs:
       # tsc --noEmit + vite build. 환경 변수를 주지 않는다 - 산출물이 환경을 몰라야 한다.
       - run: npm run build
 
+      - name: 환경 철거 상태 확인
+        id: gate
+        env:
+          DEPLOY_PAUSED: ${{ vars.DEPLOY_PAUSED }}
+          TARGET: ${{ inputs.environment || (github.ref_name == 'Release' && 'prod' || 'staging') }}
+        run: |
+          if [ "$DEPLOY_PAUSED" = "true" ]; then
+            echo "::notice title=배포 건너뜀::$TARGET 환경이 철거된 상태(DEPLOY_PAUSED=true)라 빌드만 하고 배포하지 않습니다. 재구축 뒤 environment 변수 DEPLOY_PAUSED를 지우면 다시 배포합니다."
+            {
+              echo "| 환경 | 커밋 | 결과 |"
+              echo "| --- | --- | --- |"
+              echo "| $TARGET | ${GITHUB_SHA} | 건너뜀 (환경 철거 중, DEPLOY_PAUSED=true) |"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "paused=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "paused=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: environment 변수 확인
+        if: steps.gate.outputs.paused != 'true'
         env:
           AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           WEB_BUCKET: ${{ vars.WEB_BUCKET }}
@@ -83,11 +108,13 @@ jobs:
           exit "$missing"
 
       - uses: aws-actions/configure-aws-credentials@v6
+        if: steps.gate.outputs.paused != 'true'
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: 해시 자산 업로드 (immutable)
+        if: steps.gate.outputs.paused != 'true'
         env:
           WEB_BUCKET: ${{ vars.WEB_BUCKET }}
         run: |
@@ -97,6 +124,7 @@ jobs:
             --no-progress
 
       - name: index.html 교체 (no-cache)
+        if: steps.gate.outputs.paused != 'true'
         env:
           WEB_BUCKET: ${{ vars.WEB_BUCKET }}
         run: |
@@ -105,6 +133,7 @@ jobs:
             --content-type 'text/html; charset=utf-8'
 
       - name: CloudFront 무효화
+        if: steps.gate.outputs.paused != 'true'
         env:
           CLOUDFRONT_DISTRIBUTION_ID: ${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}
         run: |
@@ -122,6 +151,7 @@ jobs:
       # 어느 환경에 어느 커밋이 올라갔는지는 GitHub environment의 deployments 목록에도 남지만,
       # 실행 요약에 한 줄 적어 두면 목록을 열지 않고도 보인다.
       - name: 배포 기록
+        if: steps.gate.outputs.paused != 'true'
         env:
           WEB_BUCKET: ${{ vars.WEB_BUCKET }}
         run: |
