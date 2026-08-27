@@ -5,7 +5,22 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!--
+      Android 11+ 패키지 가시성 (KAN-30). 이 선언이 없으면 카톡이 깔려 있어도 조회 자체가 막혀
+      ShareClient.isKakaoTalkSharingAvailable이 언제나 false가 되고, 공유가 늘 OS 시트로만 간다.
+      설치 여부를 묻는 것뿐이라 QUERY_ALL_PACKAGES(민감 권한)를 쓰지 않는다.
+
+      v2-common의 매니페스트가 같은 선언을 들고 있어(alpha·sandbox 패키지까지) 병합 결과만 보면
+      중복이다. 그래도 여기 남기는 이유: 우리 앱이 카톡 설치 여부에 기대어 동작이 갈린다는 사실은
+      의존성의 사정이 아니라 우리 기능의 전제다 - SDK 매니페스트가 조용히 바뀌면 폴백이 늘 켜지는
+      쪽으로 증상 없이 넘어간다.
+    -->
+    <queries>
+        <package android:name="com.kakao.talk" />
+    </queries>
+
     <application
+        android:name=".AccenturyApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"

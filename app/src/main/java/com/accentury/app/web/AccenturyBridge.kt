@@ -1,14 +1,16 @@
 package com.accentury.app.web
 
 import android.webkit.JavascriptInterface
+import com.accentury.app.bridge.SharePayload
 import com.accentury.app.bridge.VoiceItemStart
+import com.accentury.app.bridge.parseSharePayload
 import com.accentury.app.bridge.parseVoiceItemStart
 
 /**
  * 웹 → 네이티브 브리지 (webview-layer.md §8). `window.AccenturyBridge`로 주입된다.
  *
- * 최소 표면 원칙 — 화면 전환(KAN-100)·답안 제출 인증(KAN-13)·재응시(KAN-34)까지 필요한 다섯
- * 메서드만 둔다. 늘리기 전에 웹에서 해결 가능한지 먼저 볼 것.
+ * 최소 표면 원칙 — 화면 전환(KAN-100)·답안 제출 인증(KAN-13)·재응시(KAN-34)·결과 공유(KAN-30)까지
+ * 필요한 여섯 메서드만 둔다. 늘리기 전에 웹에서 해결 가능한지 먼저 볼 것.
  *
  * 메서드 추가는 하위호환이라 [BRIDGE_CONTRACT_VERSION]을 올리지 않는다 (§5).
  *
@@ -24,6 +26,8 @@ import com.accentury.app.bridge.parseVoiceItemStart
  * @param sessionToken 세션 토큰 공급자 (KAN-13)
  * @param onStartRetest 결과 화면의 [다시 테스트하기] (KAN-34). 중복 호출 무시는 이 콜백 너머의
  *   상태 머신이 맡는다 — 진행 중이라는 사실의 주인이 둘이면 어긋난다 (SessionGateController.retestInFlight)
+ * @param onShareResult 결과 화면의 [친구에게 공유하기] (KAN-30). 카드 자산은 웹이 실어 보내고
+ *   (서버가 정한 값이다) 어느 통로로 나갈지는 네이티브가 정한다 (ResultSharer)
  */
 class AccenturyBridge(
     private val postToMain: (() -> Unit) -> Unit,
@@ -33,6 +37,7 @@ class AccenturyBridge(
     private val onRequestMicPermission: () -> Unit,
     private val onStartVoiceItem: (VoiceItemStart) -> Unit,
     private val onStartRetest: () -> Unit,
+    private val onShareResult: (SharePayload) -> Unit,
 ) {
     /** §5 스큐 협상 — 웹이 앱의 계약 버전을 런타임에 재확인할 때 쓴다. 상태 변경이 없어 스레드 무관. */
     @JavascriptInterface
@@ -89,6 +94,29 @@ class AccenturyBridge(
             if (!isCurrentUrlAllowed()) return@postToMain
             val start = parseVoiceItemStart(payloadJson) ?: return@postToMain
             onStartVoiceItem(start)
+        }
+    }
+
+    /**
+     * 결과 화면의 [친구에게 공유하기] → 네이티브 카카오톡 공유 (KAN-30).
+     *
+     * [startVoiceItem]과 같은 순서다 — origin 검증을 통과한 payload만 파싱한다. 여기서는 그 순서가
+     * 한 겹 더 중요한데, 이 payload의 값들은 화면에 그려지고 마는 게 아니라 카카오 템플릿과 공유
+     * 인텐트를 타고 **앱 밖으로 나간다** (parseSharePayload의 https 검증).
+     *
+     * **공유 결말을 웹에 회신하지 않는다.** 결과 화면은 공유가 되든 취소되든 달라질 게 없고
+     * (ItemResultDelivery처럼 다음 단계를 여는 신호가 아니다), 카톡으로 넘어간 뒤 사용자가 실제로
+     * 보냈는지는 우리가 알 수 있는 사실도 아니다. 알 수 없는 값을 회신 계약으로 만들면 웹이 그 값에
+     * 기대어 화면을 바꾸게 된다.
+     *
+     * 메서드 추가는 하위호환이라 [BRIDGE_CONTRACT_VERSION] 1을 유지한다 (§5).
+     */
+    @JavascriptInterface
+    fun shareResult(payloadJson: String) {
+        postToMain {
+            if (!isCurrentUrlAllowed()) return@postToMain
+            val payload = parseSharePayload(payloadJson) ?: return@postToMain
+            onShareResult(payload)
         }
     }
 }
