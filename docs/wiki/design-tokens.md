@@ -3,9 +3,11 @@
 Accentury 네이티브(Compose)와 웹(WebView)이 공유하는 색·타이포·간격·모션·반경의 **단일 정본**이다.
 이 문서의 표가 원본이고, `Color.kt`·`Type.kt`·`tokens.css`는 그 값을 각 런타임 형태로 옮겨 적은 사본이다.
 
-- 티켓: KAN-148
+- 티켓: KAN-148(구조) · **KAN-161**(Papercut 팔레트 교체)
 - 설계 근거: `ux-ui.md` §2(설계 원칙)·§5(비주얼·모션·접근성 최소선)
-- 시안 출처: Figma Make 코드 번들 (로컬 `prototype/`, `src/styles/theme.css` + `src/app/App.tsx`)
+- 시안 출처
+  - **Papercut** (현행) — Claude Code 아티팩트 「Accentury Papercut」, 정본은 그 안의 `build.mjs`
+  - Figma Make 코드 번들 (KAN-148 당시, 로컬 `prototype/`) — 배치·간격·타이포는 아직 여기서 온다
 
 ## 1. 정본과 사본의 관계
 
@@ -25,92 +27,105 @@ Accentury 네이티브(Compose)와 웹(WebView)이 공유하는 색·타이포·
 2. 같은 커밋에서 `Color.kt`·`Type.kt`·`Dimens.kt`·`tokens.css`를 함께 고친다. **한쪽만 고친 커밋은 리뷰에서 반려한다** — 네이티브와 웹이 한 테스트 안에서 번갈아 나오므로 값이 갈라지면 화면 경계에서 색이 튄다.
 3. `python3 tools/check_tokens.py`로 정본과 두 사본의 색 값이 일치하는지 확인한다. 한쪽만 고쳤으면 여기서 걸린다.
 4. 색을 새로 추가하거나 바꿨으면 `tools/check_contrast.py`의 `PAIRS`를 같이 고치고 `python3 tools/check_contrast.py --write`를 돌린다. **§6 표는 손으로 고치지 않는다** — 스크립트가 쓰고, 인자 없이 돌리면 문서가 낡았는지까지 검사해 종료 코드 1로 떨어진다.
-5. 시안(`prototype/`)과 값이 달라졌으면 §7 "시안과 다른 값" 표에 이유를 남긴다.
+5. 팔레트를 다시 손봤으면 §7 "결정 기록"에 근거를 남긴다.
 
 ## 2. 색
 
-시그니처 색은 파랑 하나(`primary`)이고 나머지는 중립이다 — `ux-ui.md` §5의 "곡선이 주인공" 원칙.
-모든 조합은 §6에서 WCAG 4.5:1 이상을 확인했다.
+**Papercut** — 크림 종이 위에 잉크 한 색으로 그린 그림이다. 색조는 하나도 없다.
+쓰는 값이 넷뿐이라 semantic 토큰 서른다섯 개가 전부 이 넷 중 하나로 접힌다.
+
+| 역할 | 값 | 하는 일 |
+|---|---|---|
+| INK | `#1c1a17` | 텍스트·선·버튼 면·곡선. 화면에서 "그려진 것"은 전부 이 색이다 |
+| CREAM | `#f3ecd9` | 배경·카드·잉크 위 글자. 종이 자체 |
+| PAPER_SHADOW | `#cfc5aa` | 오프셋 그림자(`3px 4px 0`)와 장식 면. 종이 그늘 |
+| MUTED | `#6b6459` | 흐린 텍스트. 잉크를 옅게 쓴 것이지 회색이 아니다 |
+
+일러스트는 테마와 무관하게 종이 `#f3ecd9` / 잉크 `#1c1a17` 고정값을 직접 쓴다 (§7의 `ILLO`).
+모든 조합은 §6에서 확인했고, KAN-148에서 감수했던 여덟 자리는 이 팔레트로 전부 해소됐다.
 
 ### 라이트
 
 | 토큰 | 값 | 용도 |
 |---|---|---|
-| `primary` | `#2563eb` | 시그니처 파랑. 주버튼, F0 곡선, 선택 상태 |
-| `primary-foreground` | `#ffffff` | primary 위 텍스트 |
-| `primary-dim` | `#1d4ed8` | 주버튼 3D 그림자, 대사 카드 그라디언트 끝 |
-| `background` | `#eff6ff` | 화면 배경 |
-| `foreground` | `#1e3a5f` | 본문 텍스트 |
-| `card` | `#ffffff` | 카드·선택지 표면 |
-| `card-foreground` | `#1e3a5f` | 카드 위 텍스트 |
-| `secondary` | `#dbeafe` | 보조 면 |
-| `secondary-foreground` | `#1d4ed8` | 보조 면 위 텍스트 |
-| `muted` | `#bfdbfe` | 비활성 면, 진척도 트랙 |
-| `muted-foreground` | `#4d6f96` | 보조 텍스트 |
-| `accent` | `#fcd34d` | 강조 노랑 (보상·강조 배지) |
-| `accent-foreground` | `#78350f` | accent 위 텍스트 |
-| `success` | `#047857` | 정답 표시 |
-| `success-foreground` | `#ffffff` | success 위 텍스트 |
-| `success-surface` | `#ecfdf5` | 정답 선택지 배경 |
-| `success-on-surface` | `#047857` | 정답 선택지 텍스트 |
-| `destructive` | `#dc2626` | 오답·오류 |
-| `destructive-foreground` | `#ffffff` | destructive 위 텍스트 |
-| `destructive-surface` | `#fef2f2` | 오답 선택지 배경 |
-| `destructive-on-surface` | `#b91c1c` | 오답 선택지 텍스트 |
-| `border` | `rgba(37, 99, 235, 0.13)` | 장식용 구분선 (대비 기준 대상 아님) |
-| `control-border` | `rgba(37, 99, 235, 0.13)` | 선택 가능한 컨트롤 경계 (선택지·입력) |
-| `ring` | `#3b82f6` | 포커스 링 |
-| `prompt-card-start` | `#3b82f6` | 대사 카드 그라디언트 시작 |
-| `prompt-card-end` | `#1d4ed8` | 대사 카드 그라디언트 끝 |
-| `prompt-card-foreground` | `#ffffff` | 대사 본문 |
-| `prompt-card-muted` | `#eff6ff` | 대사 카드 보조 텍스트(뜻·안내) |
-| `prompt-card-badge` | `rgba(255, 255, 255, 0.15)` | 대사 카드 위 배지 면 |
-| `guide-curve` | `#93c5fd` | 가이드 F0 곡선 (점선, 힌트 — 주인공 아님) |
-| `user-curve` | `#fb923c` | 사용자 F0 곡선 (실선, 주인공) |
-| `curve-lane-surface` | `#ecf4ff` | 곡선 레인 안쪽 면 |
-| `hero-start` | `#60a5fa` | 히어로 아이콘 그라디언트 시작 |
-| `hero-end` | `#2563eb` | 히어로 아이콘 그라디언트 끝 |
-| `curve-lane-border` | `rgba(37, 99, 235, 0.13)` | 곡선 레인 테두리 |
+| `primary` | `#1c1a17` | 잉크. 주버튼, F0 곡선, 선택 상태 |
+| `primary-foreground` | `#f3ecd9` | primary 위 텍스트 |
+| `primary-dim` | `#cfc5aa` | 오프셋 종이 그림자 |
+| `background` | `#f3ecd9` | 화면 배경 |
+| `foreground` | `#1c1a17` | 본문 텍스트 |
+| `card` | `#f3ecd9` | 카드·선택지 표면. 배경과 같은 색이고 테두리·그림자로 갈린다 |
+| `card-foreground` | `#1c1a17` | 카드 위 텍스트 |
+| `secondary` | `#f3ecd9` | 보조 면 |
+| `secondary-foreground` | `#1c1a17` | 보조 면 위 텍스트 |
+| `muted` | `#cfc5aa` | 장식·비활성 면 **전용**. 상태 표시에는 쓰지 않는다 — 크림 위 1.46:1 (§7) |
+| `muted-foreground` | `#6b6459` | 보조 텍스트 |
+| `accent` | `#1c1a17` | 강조 배지 면 |
+| `accent-foreground` | `#f3ecd9` | accent 위 텍스트 |
+| `success` | `#1c1a17` | 정답 표시. 색이 아니라 문구·아이콘이 정답을 알린다 (§7) |
+| `success-foreground` | `#f3ecd9` | success 위 텍스트 |
+| `success-surface` | `#f3ecd9` | 정답 선택지 배경 |
+| `success-on-surface` | `#1c1a17` | 정답 선택지 텍스트 |
+| `destructive` | `#1c1a17` | 오답·오류 |
+| `destructive-foreground` | `#f3ecd9` | destructive 위 텍스트 |
+| `destructive-surface` | `#f3ecd9` | 오답 선택지 배경 |
+| `destructive-on-surface` | `#1c1a17` | 오답 선택지 텍스트 |
+| `border` | `#1c1a17` | 구분선 |
+| `control-border` | `#1c1a17` | 선택 가능한 컨트롤 경계 (선택지·입력) |
+| `ring` | `#1c1a17` | 포커스 링 |
+| `prompt-card-start` | `#f3ecd9` | 대사 카드 면. 그라디언트가 아니라 단색이라 start·end가 같다 |
+| `prompt-card-end` | `#f3ecd9` | 대사 카드 면 |
+| `prompt-card-foreground` | `#1c1a17` | 대사 본문 |
+| `prompt-card-muted` | `#6b6459` | 대사 카드 보조 텍스트(뜻·안내) |
+| `prompt-card-badge` | `#f3ecd9` | 대사 카드 위 배지 면 |
+| `guide-curve` | `#1c1a17` | 가이드 F0 곡선 (점선) |
+| `user-curve` | `#1c1a17` | 사용자 F0 곡선 (실선) |
+| `curve-lane-surface` | `#f3ecd9` | 곡선 레인 안쪽 면 |
+| `hero-start` | `#1c1a17` | 히어로 아이콘 면 |
+| `hero-end` | `#1c1a17` | 히어로 아이콘 면 |
+| `curve-lane-border` | `#1c1a17` | 곡선 레인 테두리 |
 
 ### 다크
 
+**이번 티켓(KAN-161)은 다크 분기를 라이트로 고정했다. 다크 전용 팔레트는 후속 티켓이다** —
+아래 표는 라이트와 값이 같고, 런타임에서 이 표를 고르는 코드는 없다 (§7).
+
 | 토큰 | 값 |
 |---|---|
-| `primary` | `#3b82f6` |
-| `primary-foreground` | `#0f172a` |
-| `primary-dim` | `#1d4ed8` |
-| `background` | `#0f172a` |
-| `foreground` | `#e2f0ff` |
-| `card` | `#1e293b` |
-| `card-foreground` | `#e2f0ff` |
-| `secondary` | `#1e3a5f` |
-| `secondary-foreground` | `#93c5fd` |
-| `muted` | `#1e293b` |
-| `muted-foreground` | `#7ea8d0` |
-| `accent` | `#f59e0b` |
-| `accent-foreground` | `#451a03` |
-| `success` | `#047857` |
-| `success-foreground` | `#ffffff` |
-| `success-surface` | `#052e23` |
-| `success-on-surface` | `#6ee7b7` |
-| `destructive` | `#dc2626` |
-| `destructive-foreground` | `#ffffff` |
-| `destructive-surface` | `#3f1414` |
-| `destructive-on-surface` | `#fca5a5` |
-| `border` | `rgba(147, 197, 253, 0.12)` |
-| `control-border` | `rgba(147, 197, 253, 0.12)` |
-| `ring` | `#60a5fa` |
-| `prompt-card-start` | `#2563eb` |
-| `prompt-card-end` | `#1e3a8a` |
-| `prompt-card-foreground` | `#ffffff` |
-| `prompt-card-muted` | `#eff6ff` |
-| `prompt-card-badge` | `rgba(255, 255, 255, 0.15)` |
-| `guide-curve` | `#93c5fd` |
-| `user-curve` | `#fb923c` |
-| `curve-lane-surface` | `#182338` |
-| `hero-start` | `#3b82f6` |
-| `hero-end` | `#1d4ed8` |
-| `curve-lane-border` | `rgba(147, 197, 253, 0.12)` |
+| `primary` | `#1c1a17` |
+| `primary-foreground` | `#f3ecd9` |
+| `primary-dim` | `#cfc5aa` |
+| `background` | `#f3ecd9` |
+| `foreground` | `#1c1a17` |
+| `card` | `#f3ecd9` |
+| `card-foreground` | `#1c1a17` |
+| `secondary` | `#f3ecd9` |
+| `secondary-foreground` | `#1c1a17` |
+| `muted` | `#cfc5aa` |
+| `muted-foreground` | `#6b6459` |
+| `accent` | `#1c1a17` |
+| `accent-foreground` | `#f3ecd9` |
+| `success` | `#1c1a17` |
+| `success-foreground` | `#f3ecd9` |
+| `success-surface` | `#f3ecd9` |
+| `success-on-surface` | `#1c1a17` |
+| `destructive` | `#1c1a17` |
+| `destructive-foreground` | `#f3ecd9` |
+| `destructive-surface` | `#f3ecd9` |
+| `destructive-on-surface` | `#1c1a17` |
+| `border` | `#1c1a17` |
+| `control-border` | `#1c1a17` |
+| `ring` | `#1c1a17` |
+| `prompt-card-start` | `#f3ecd9` |
+| `prompt-card-end` | `#f3ecd9` |
+| `prompt-card-foreground` | `#1c1a17` |
+| `prompt-card-muted` | `#6b6459` |
+| `prompt-card-badge` | `#f3ecd9` |
+| `guide-curve` | `#1c1a17` |
+| `user-curve` | `#1c1a17` |
+| `curve-lane-surface` | `#f3ecd9` |
+| `hero-start` | `#1c1a17` |
+| `hero-end` | `#1c1a17` |
+| `curve-lane-border` | `#1c1a17` |
 
 ## 3. 타이포
 
@@ -164,56 +179,59 @@ Accentury 네이티브(Compose)와 웹(WebView)이 공유하는 색·타이포·
 | `duration-base` | 300ms | 화면 전환 |
 | `duration-reveal` | 600ms | 결과 리빌 (§5가 허용한 예외) |
 
-**Chunky 3D 버튼** — 이 앱의 시각 정체성. 기본 상태에서 `0 4dp 0 <primary-dim>` 그림자, 눌리면 그림자 `0 1dp 0`으로 줄고 본체가 3dp 내려간다. 전환은 `duration-press`.
+**오프셋 종이 그림자** — 이 앱의 시각 정체성 (KAN-161). 기본 상태에서 오른쪽·아래로 `3dp 4dp` 어긋난 자리에 `primary-dim` 단색 면이 깔려 종이 한 장이 떠 있는 것처럼 보이고, 누르면 그림자가 사라지면서 본체가 그만큼 내려가 종이가 바닥에 닿는다. 전환은 `duration-press`. 컴포넌트 실구현은 KAN-161 2단계다 — 지금 코드는 아직 아래로만 떨어지는 KAN-148의 그림자를 그린다.
 
 **모션 축소 대응**: 웹은 `@media (prefers-reduced-motion: reduce)`에서 모든 duration을 `0.01ms`로 덮는다. 네이티브는 `Settings.Global.ANIMATOR_DURATION_SCALE`이 0이면 애니메이션을 건너뛴다. 축소 상태에서도 **최종 상태는 동일** — 사라지는 정보가 없어야 한다.
 
 ### 그림자
 
-시안의 입체감을 만드는 값이다. 전부 시그니처 파랑에 알파를 준 것이라 회색 그림자와 달리
-화면 전체가 한 색조로 묶인다.
+번지지도, 흐려지지도, 비쳐 보이지도 않는다. 어긋난 자리에 `PAPER_SHADOW` 단색 면이
+그대로 깔릴 뿐이다 — 오려 낸 종이가 바닥에 드리우는 그늘이다.
 
 | 토큰 | 값 | 쓰는 곳 |
 |---|---|---|
-| `shadow-card` | `0 4px 20px rgba(37, 99, 235, 0.10)` | 일반 카드 |
-| `shadow-prompt` | `0 8px 28px rgba(37, 99, 235, 0.28)` | 대사·질문 카드 (화면의 주인공) |
-| `shadow-hero` | `0 12px 32px rgba(37, 99, 235, 0.35)` | 원형 히어로 아이콘 |
-| `shadow-choice` | `0 3px 0 rgba(37, 99, 235, 0.15)` | 선택지 밑변 (버튼과 같은 언어, 더 얕게) |
+| `shadow-card` | `3px 4px 0 #cfc5aa` | 일반 카드 |
+| `shadow-prompt` | `3px 4px 0 #cfc5aa` | 대사·질문 카드 |
+| `shadow-hero` | `3px 4px 0 #cfc5aa` | 원형 히어로 아이콘 |
+| `shadow-choice` | `3px 4px 0 #cfc5aa` | 선택지 |
+
+넷이 같은 값인 것은 미처리가 아니라 규칙이다. 종이 한 장의 두께는 카드든 버튼이든 같고,
+깊이로 위계를 만들려면 그림자가 아니라 크기·잉크 굵기를 쓴다.
 
 ## 6. 대비 검증 결과
 
 <!-- check_contrast:begin -->
 WCAG 2.1 AA 일반 텍스트 기준 4.5:1. `python3 tools/check_contrast.py --write`가 쓴 표이고,
-26건이 기준을 넘고 8건은 시안 채택으로 감수한다 (§7).
+34건 전부 기준을 넘는다 — 감수한 자리는 없다.
 
 | 조합 | 비율 | |
 |---|---|---|
-| `foreground` / `background` (라이트) | 10.57 |  |
-| `foreground` / `card` (라이트) | 11.50 |  |
-| `muted-foreground` / `background` (라이트) | 4.79 |  |
-| `muted-foreground` / `card` (라이트) | 5.21 |  |
-| `primary-foreground` / `primary` (라이트) | 5.17 |  |
-| `secondary-foreground` / `secondary` (라이트) | 5.49 |  |
-| `accent-foreground` / `accent` (라이트) | 6.29 |  |
-| `destructive-foreground` / `destructive` | 4.83 |  |
-| `destructive-on-surface` / `destructive-surface` (라이트) | 5.91 |  |
-| `success-foreground` / `success` | 5.48 |  |
-| `success-on-surface` / `success-surface` (라이트) | 5.21 |  |
-| `prompt-card-foreground` / `prompt-card-start` | 3.68 | 기준 4.5 미달 — 시안 채택으로 감수 |
-| `prompt-card-muted` / `prompt-card-start` | 3.38 | 기준 4.5 미달 — 시안 채택으로 감수 |
-| `prompt-card-foreground` / `prompt-card-end` | 6.70 |  |
-| `prompt-card-muted` / `prompt-card-end` | 6.16 |  |
-| `foreground` / `background` (다크) | 15.42 |  |
-| `foreground` / `card` (다크) | 12.64 |  |
-| `muted-foreground` / `background` (다크) | 7.14 |  |
-| `muted-foreground` / `card` (다크) | 5.85 |  |
-| `primary-foreground` / `primary` (다크) | 4.85 |  |
-| `secondary-foreground` / `secondary` (다크) | 6.38 |  |
-| `accent-foreground` / `accent` (다크) | 6.97 |  |
-| `success-on-surface` / `success-surface` (다크) | 9.69 |  |
-| `destructive-on-surface` / `destructive-surface` (다크) | 8.37 |  |
-| `prompt-card-muted` / `prompt-card-start` (다크) | 4.75 |  |
-| `prompt-card-muted` / `prompt-card-end` (다크) | 9.52 |  |
+| `foreground` / `background` (라이트) | 14.73 |  |
+| `foreground` / `card` (라이트) | 14.73 |  |
+| `muted-foreground` / `background` (라이트) | 4.96 |  |
+| `muted-foreground` / `card` (라이트) | 4.96 |  |
+| `primary-foreground` / `primary` (라이트) | 14.73 |  |
+| `secondary-foreground` / `secondary` (라이트) | 14.73 |  |
+| `accent-foreground` / `accent` (라이트) | 14.73 |  |
+| `destructive-foreground` / `destructive` | 14.73 |  |
+| `destructive-on-surface` / `destructive-surface` (라이트) | 14.73 |  |
+| `success-foreground` / `success` | 14.73 |  |
+| `success-on-surface` / `success-surface` (라이트) | 14.73 |  |
+| `prompt-card-foreground` / `prompt-card-start` | 14.73 |  |
+| `prompt-card-muted` / `prompt-card-start` | 4.96 |  |
+| `prompt-card-foreground` / `prompt-card-end` | 14.73 |  |
+| `prompt-card-muted` / `prompt-card-end` | 4.96 |  |
+| `foreground` / `background` (다크) | 14.73 |  |
+| `foreground` / `card` (다크) | 14.73 |  |
+| `muted-foreground` / `background` (다크) | 4.96 |  |
+| `muted-foreground` / `card` (다크) | 4.96 |  |
+| `primary-foreground` / `primary` (다크) | 14.73 |  |
+| `secondary-foreground` / `secondary` (다크) | 14.73 |  |
+| `accent-foreground` / `accent` (다크) | 14.73 |  |
+| `success-on-surface` / `success-surface` (다크) | 14.73 |  |
+| `destructive-on-surface` / `destructive-surface` (다크) | 14.73 |  |
+| `prompt-card-muted` / `prompt-card-start` (다크) | 4.96 |  |
+| `prompt-card-muted` / `prompt-card-end` (다크) | 4.96 |  |
 
 ### 그래픽 오브젝트 (3:1)
 
@@ -221,60 +239,91 @@ F0 곡선·컨트롤 경계는 텍스트가 아니라 WCAG 2.1 **1.4.11 비텍�
 
 | 조합 | 비율 | |
 |---|---|---|
-| `guide-curve` / `curve-lane-surface` (라이트) | 1.63 | 기준 3.0 미달 — 시안 채택으로 감수 |
-| `user-curve` / `curve-lane-surface` (라이트) | 2.04 | 기준 3.0 미달 — 시안 채택으로 감수 |
-| `guide-curve` / `curve-lane-surface` (다크) | 6.28 |  |
-| `user-curve` / `curve-lane-surface` (다크) | 6.94 |  |
-| `control-border` / `background` (라이트) | 1.19 | 기준 3.0 미달 — 시안 채택으로 감수 |
-| `control-border` / `card` (라이트) | 1.20 | 기준 3.0 미달 — 시안 채택으로 감수 |
-| `control-border` / `background` (다크) | 1.15 | 기준 3.0 미달 — 시안 채택으로 감수 |
-| `control-border` / `card` (다크) | 1.18 | 기준 3.0 미달 — 시안 채택으로 감수 |
+| `guide-curve` / `curve-lane-surface` (라이트) | 14.73 |  |
+| `user-curve` / `curve-lane-surface` (라이트) | 14.73 |  |
+| `guide-curve` / `curve-lane-surface` (다크) | 14.73 |  |
+| `user-curve` / `curve-lane-surface` (다크) | 14.73 |  |
+| `control-border` / `background` (라이트) | 14.73 |  |
+| `control-border` / `card` (라이트) | 14.73 |  |
+| `control-border` / `background` (다크) | 14.73 |  |
+| `control-border` / `card` (다크) | 14.73 |  |
+
+### 기준 대상이 아닌 장식 면
+
+`muted`는 진척도의 남은 구간처럼 "없는 것"을 그리는 면이다. 여기에 상태를 실으면
+아래 비율 그대로 안 보이게 되므로, 상태는 잉크로만 알린다 (정본 §7).
+
+| 조합 | 비율 | |
+|---|---|---|
+| `muted` / `background` | 1.46 |  |
 <!-- check_contrast:end -->
 
-## 7. 시안과 다른 값
+## 7. 결정 기록
 
-시안(`prototype/`)을 그대로 옮기면 `ux-ui.md` §5 최소선을 못 넘기는 지점이 있어 아래만 조정했다. 나머지는 시안 값 그대로다.
+### KAN-161 — Papercut 팔레트
+
+시그니처 파랑(`#2563eb`)을 버리고 크림 종이 + 잉크 단색으로 갈았다. 값 넷은 §2에 있다.
+
+**왜 넷인가.** KAN-148 팔레트는 파랑 계열 열 몇 개에 초록·빨강·노랑·주황을 더해 쓰고 있었고,
+그중 여덟 조합이 최소선을 못 넘겨 "시안 채택으로 감수"라는 이름으로 남아 있었다. 잉크 하나로
+접으면 그 여덟이 한꺼번에 사라진다 — 크림 위 잉크는 14.73:1이라 어디에 놓든 기준을 넘는다.
+남는 문제는 "색이 하던 구분을 무엇이 대신하는가"뿐이고, 아래 셋이 그 답이다.
+
+**일러스트 고정색 (`ILLO`).** 종이 `#f3ecd9` / 잉크 `#1c1a17`. 테마 토큰을 참조하지 않고
+값을 직접 박는다. 일러스트는 그림 한 장이라 부분만 테마를 따라 바뀌면 선과 면이 어긋나고,
+`ILLO`를 §2 표에 넣으면 화면 코드가 `--color-illo-paper` 같은 이름으로 끌어다 쓰기 시작해
+"일러스트 전용"이라는 경계가 무너진다. 그래서 토큰이 아니라 상수다.
+
+**다크 분기를 라이트로 고정.** `Theme.kt`는 `isSystemInDarkTheme()`을 보지 않고,
+`tokens.css`에는 `prefers-color-scheme` 블록이 없다. 이유는 둘이다. 한 세션 안에서
+네이티브와 WebView 화면이 번갈아 나오는데 한쪽만 뒤집히면 화면 경계에서 색이 튄다.
+그리고 Papercut은 크림 종이에 잉크를 얹은 그림이라 명암을 뒤집으면 같은 디자인의 어두운
+판이 아니라 다른 물건이 된다 — 검은 종이에 크림 잉크는 종이가 아니라 칠판이다.
+정본 §2의 다크 표와 `Color.kt`의 `Dark*` 상수는 라이트와 같은 값으로 남겨 뒀다:
+`tools/check_tokens.py`가 그 짝으로 대조하고, 다크 전용 팔레트를 만드는 후속 티켓이
+채워 넣을 자리이기도 하다.
+
+**`success`·`destructive`를 잉크로 접었다.** 정답 초록·오답 빨강이 사라졌다. 단일 잉크
+팔레트에서 두 색만 되살리면 그 둘이 화면에서 유일한 색조가 되어 그림이 깨진다.
+정오답과 오류는 색이 아니라 **문구와 아이콘**으로 가른다 — WCAG 1.4.1이 원래 요구하는 것도
+"색만으로 알리지 않기"이므로 색을 빼는 쪽이 기준에는 오히려 가깝다. 정답 선택지는
+✓ 표시와 문구가, 오류 블록은 `role="alert"`로 읽히는 문장이 상태를 나른다.
+같은 이유로 곡선 둘도 잉크 하나이고, 가이드는 점선·사용자는 실선으로 갈린다.
+
+**`#cfc5aa`(`muted`)는 상태를 나르지 않는다.** 크림 위 1.46:1이다. 진척도의 남은 구간,
+비활성 면처럼 "아직 없는 것·지금 못 누르는 것"을 그리는 자리에만 쓴다. 비활성은 이 색과
+`opacity-disabled`가 함께 알리고, 진척은 채워진 잉크 쪽이 알린다. 이 값으로 무언가를
+"표시"하면 그 표시는 보이지 않는다.
+
+### 시안에서 조정한 값
+
+배치·간격·타이포는 아직 KAN-148 시안(`prototype/`)에서 오고, 아래 둘만 조정한 채로 유지된다.
 
 | 항목 | 시안 | 정본 | 이유 |
 |---|---|---|---|
 | 주버튼 높이 | 40px (`h-10`, App.tsx:115·199·390·443·474·535) | **48dp** | §5 터치 타겟 최소선 미달 |
-| `muted-foreground` | `#5b7fa8` | `#4d6f96` | 배경 위 3.82:1 → 4.79:1 |
-| `destructive` | `#f87171` | `#dc2626` | 흰 텍스트 대비 2.77:1 → 4.83:1 |
-| `success` | `#34d399` (emerald-400) | `#047857` | 흰 텍스트 대비 1.92:1 → 5.48:1 |
-| 대사 카드 그라디언트 시작 | `#3b82f6` (blue-500) | `#2563eb` | 카드 보조 텍스트 대비 확보 |
-| 대사 카드 보조 텍스트 | `#bfdbfe` (blue-200) | `#eff6ff` | 그라디언트 시작색 위 2.59:1 → 4.75:1 |
-| 다크 `primary-foreground` | `#ffffff` | `#0f172a` | 흰 텍스트 대비 3.68:1 → 4.85:1 (파랑은 밝게 유지) |
-| 다크 `accent-foreground` | `#fffbeb` | `#451a03` | 대비 2.07:1 → 6.97:1 |
-| 웹 보조 텍스트 | `#666` (TestFlowScreen·VoiceItemScreen) | `#4d6f96` | 대비는 통과했으나 회색이 팔레트 밖이라 토큰으로 흡수 |
-| 웹 오류 텍스트 | `#b3261e` (VocabularyItemScreen) | `#b91c1c` | 팔레트 밖 빨강을 `destructive-on-surface`로 흡수 |
 | 웹 음성 문항 대사 | 20px | 26px | §5 "대사 카드 24sp 이상" 미달. 네이티브 대사 카드와 같은 크기로 맞춘다 |
 
-시안은 semantic 토큰(`bg-primary`)과 Tailwind 원시색(`bg-blue-500`, `emerald-400`, `red-400`)을 섞어 쓴다. 정본은 semantic 이름 한 벌로만 정의한다 — 그래야 "같은 의미의 색이 네이티브와 웹에서 같은 값"이 성립한다.
+정본은 semantic 토큰 이름 한 벌로만 정의한다 — 그래야 "같은 의미의 색이 네이티브와 웹에서
+같은 값"이 성립한다. 화면 코드가 원시 색값을 직접 적으면 그 순간 두 런타임이 갈라진다.
 
-### 시안 값을 그대로 쓰기로 하고 기준 미달을 감수한 것
+### 기준 미달을 감수한 것 — KAN-161로 전부 해소
 
-아래 넷은 시안 색이 최소선을 넘지 못하지만 시안 그대로 간다. `tools/check_contrast.py`가
-통과로 세지 않고 "감수"로 따로 찍으므로, 색을 다시 손볼 때 그 목록(`WAIVED`)부터 지우면 된다.
+KAN-148은 시안 색을 그대로 쓰기로 하고 여덟 자리에서 최소선을 감수했다.
+Papercut 팔레트가 그 여덟을 전부 없앴다.
 
-| 항목 | 값 | 대비 | 기준 |
-|---|---|---|---|
-| 대사 카드 본문 | `#ffffff` on `#3b82f6` | 3.68 | 4.5:1 |
-| 대사 카드 보조·배지 | `#eff6ff` on `#3b82f6` | 3.38 | 4.5:1 |
-| 가이드 곡선 | `#93c5fd` on `#ecf4ff` | 1.63 | 3:1 |
-| 사용자 곡선 | `#fb923c` on `#ecf4ff` | 2.04 | 3:1 |
-| 선택지 테두리(미선택) | `rgba(37,99,235,.13)` on `#ffffff` | 1.20 | 3:1 |
+| 감수했던 항목 | KAN-148 값 | 당시 대비 | 지금 | 지금 대비 |
+|---|---|---|---|---|
+| 대사 카드 본문 | `#ffffff` on `#3b82f6` | 3.68 | `#1c1a17` on `#f3ecd9` | 14.73 |
+| 대사 카드 보조·배지 | `#eff6ff` on `#3b82f6` | 3.38 | `#6b6459` on `#f3ecd9` | 4.96 |
+| 가이드 곡선 | `#93c5fd` on `#ecf4ff` | 1.63 | `#1c1a17` on `#f3ecd9` | 14.73 |
+| 사용자 곡선 | `#fb923c` on `#ecf4ff` | 2.04 | `#1c1a17` on `#f3ecd9` | 14.73 |
+| 선택지 테두리(미선택) | `rgba(37,99,235,.13)` on `#ffffff` | 1.20 | `#1c1a17` on `#f3ecd9` | 14.73 |
+| 컨트롤 경계 3종 (배경·카드·다크) | 같은 반투명 파랑 | 1.15~1.19 | `#1c1a17` on `#f3ecd9` | 14.73 |
 
-대사 카드는 그라디언트라 **왼쪽 끝에서만** 미달이고 오른쪽(`#1d4ed8`)은 6.70:1이다 —
-글자가 카드 폭을 가로지르므로 실제로 읽는 동안 대비가 3.68에서 6.70 사이를 오간다.
-곡선 둘은 색 말고도 선 모양(점선/실선)이 다르므로 서로 구분하는 데에는 문제가 없고,
-배경에서 떠오르는 정도가 기준에 못 미친다.
-
-선택지 테두리는 시안이 아주 연한 반투명 파랑을 쓴다 — 선택지 자체는 흰 면과 그림자로
-떠 있고 테두리는 윤곽만 잡는 역할이다. 고른 선택지가 무엇인지는 테두리 색·배경·그림자·
-✓ 표시 넷이 함께 알리므로, 이 값이 연한 것이 곧 "고른 것을 모른다"로 이어지지는 않는다.
-
-이 넷은 KAN-148의 AC "텍스트 대비 4.5:1"과 어긋난다. 색을 조정하려면 §6의 보정값
-(`#2563eb`·`#5b7fa8`·`#ea580c`)이 각각 4.75·3.76·3.21을 내고, 선택지 테두리는 `#5b7fa8`이 4.16을 낸다.
+`tools/check_contrast.py`의 `WAIVED`는 비어 있다. 비운 채로 유지한다 — 거기에 이름을 하나
+넣는 것은 그 화면을 검사에서 빼는 것과 같고, 한 번 비어 본 목록은 다시 채우기 어렵다.
+KAN-148의 AC "텍스트 대비 4.5:1"은 이제 예외 없이 지켜진다.
 
 ## 8. 공통 컴포넌트
 
@@ -286,7 +335,7 @@ F0 곡선·컨트롤 경계는 텍스트가 아니라 WCAG 2.1 **1.4.11 비텍�
 | 진척도 | `ui/components/ProgressIndicator.kt` | `web/src/ui/ProgressIndicator.tsx` |
 | 대기·오류 블록 | `ui/components/StatusBlock.kt` | `web/src/ui/StatusBlock.tsx` |
 
-**버튼** — 무게 세 가지(`Primary`·`Secondary`·`Text`). 시안의 Chunky 3D 두께감을 옮겼다:
+**버튼** — 무게 세 가지(`Primary`·`Secondary`·`Text`). 현재 구현은 KAN-148의 아래로 떨어지는 두께감이고, KAN-161 2단계에서 §5의 오프셋 종이 그림자로 바꾼다:
 밑변에 `primary-dim` 그림자를 깔고, 누르면 그림자가 줄면서 본체가 그만큼 내려간다.
 본체가 내려간 만큼 그림자가 줄어 총 높이가 유지된다 — 높이가 같이 변하면 옆 요소가 밀려
 화면이 들썩인다. Material `elevation`은 사방으로 번지는 그림자라 이 모양이 나오지 않는다.
@@ -303,11 +352,11 @@ F0 곡선·컨트롤 경계는 텍스트가 아니라 WCAG 2.1 **1.4.11 비텍�
 | 항목 | 어떻게 보장하나 |
 |---|---|
 | 터치 타겟 48dp | 버튼 컴포넌트의 최소 높이가 `touch-target-min`이다. 화면이 버튼을 직접 그리지 않으므로 개별 화면에서 빠뜨릴 수 없다 |
-| 텍스트 대비 4.5:1 | `tools/check_contrast.py`가 팔레트 조합 전부를 검사한다. 시안 채택으로 감수한 넷은 §7에 있다 |
+| 텍스트 대비 4.5:1 | `tools/check_contrast.py`가 팔레트 조합 전부를 검사한다. 감수(`WAIVED`) 항목은 KAN-161로 전부 사라져 목록이 비어 있다 (§7) |
 | 그래픽 대비 3:1 | 같은 스크립트의 그래픽 그룹 — F0 곡선·컨트롤 경계 |
 | 대사 24sp 이상 | `tools/check_tokens.py`가 정본 §3의 `headline` 값이 24 미만이면 실패한다 |
 | 모션 축소 | 웹 `prefers-reduced-motion`, 네이티브 `isReducedMotionEnabled()`. 축소 상태에서도 최종 상태는 같다 |
-| 색에 의존하지 않기 | 선택지는 고른 순간 ✓ 표시가 함께 켜진다. 곡선 둘은 점선/실선으로 갈린다 (WCAG 1.4.1) |
+| 색에 의존하지 않기 | 팔레트가 잉크 한 색이라 색으로는 아무것도 구분하지 않는다. 선택지는 ✓ 표시, 정오답·오류는 문구와 아이콘, 곡선 둘은 점선/실선으로 갈린다 (WCAG 1.4.1) |
 
 ## 10. 범위 밖
 

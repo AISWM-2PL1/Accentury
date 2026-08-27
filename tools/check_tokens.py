@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""정본 ↔ 사본 토큰 대조 (KAN-148).
+"""정본 ↔ 사본 토큰 대조 (KAN-148, Papercut 팔레트 KAN-161).
 
 `docs/wiki/design-tokens.md`의 §2 색 표와 §3 타이포 표를 정본으로 삼아, 네이티브
 (`Color.kt`·`Type.kt`)와 웹(`tokens.css`)이 같은 값을 들고 있는지 확인한다.
@@ -77,17 +77,26 @@ def parse_kotlin():
 
 
 def parse_css():
-    text = CSS.read_text(encoding="utf-8")
-    # 다크는 @media (prefers-color-scheme: dark) 블록 안에만 있다
-    dark_start = text.index("prefers-color-scheme: dark")
-    light_text, dark_text = text[:dark_start], text[dark_start:]
+    """웹 색 토큰을 라이트·다크로 나눠 읽는다.
 
+    KAN-161에서 웹의 `@media (prefers-color-scheme: dark)` 블록이 사라졌다 - 시스템이
+    다크여도 크림 화면 그대로 간다. 블록이 없으면 `:root` 값이 곧 다크에서 쓰이는 값이므로
+    라이트와 같은 사전을 다크로도 돌려준다. 정본 §2의 다크 표가 라이트와 같은 값을 들고
+    있는지가 이 대조로 확인된다 - 나중에 한쪽만 되살려 두 런타임이 갈라지는 것을 막는다.
+    """
+    text = CSS.read_text(encoding="utf-8")
     decl = re.compile(r"--color-([a-z0-9-]+)\s*:\s*([^;]+);")
 
     def rows(chunk):
         return {name: normalize(value) for name, value in decl.findall(chunk)}
 
-    return {"light": rows(light_text), "dark": rows(dark_text)}
+    marker = "prefers-color-scheme: dark"
+    if marker not in text:
+        light = rows(text)
+        return {"light": light, "dark": dict(light)}
+
+    dark_start = text.index(marker)
+    return {"light": rows(text[:dark_start]), "dark": rows(text[dark_start:])}
 
 
 # 정본 §3의 스타일 이름 → (Type.kt의 M3 슬롯, tokens.css의 변수 접미사)

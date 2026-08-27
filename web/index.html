@@ -9,17 +9,14 @@
       토큰과 별개로 움직이는 두 번째 출처가 생긴다.
 
       배경색만 먼저 칠해 두는 이유: 번들이 로드되기 전 한 프레임 동안 흰 바탕이 비치는데,
-      다크 모드에서는 그 한 프레임이 눈에 띄게 번쩍인다. 값은 --color-background와 같다.
+      크림 화면에서는 그 한 프레임이 눈에 띄게 번쩍인다. 값은 --color-background와 같다.
+
+      다크 분기는 없다 (KAN-161) - tokens.css·Theme.kt와 같은 결정이라 시스템 다크에서도
+      이 크림 한 색으로 시작한다.
     -->
     <style>
       html {
-        background: #eff6ff;
-      }
-
-      @media (prefers-color-scheme: dark) {
-        html {
-          background: #0f172a;
-        }
+        background: #f3ecd9;
       }
     </style>
   </head>
