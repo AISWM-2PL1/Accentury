@@ -91,3 +91,108 @@ resource "aws_iam_role_policy" "web_deploy" {
   role   = aws_iam_role.github_deploy.id
   policy = data.aws_iam_policy_document.web_deploy.json
 }
+
+# ---- 이미지 배포 (KAN-128) ----
+#
+# 파이프라인(.github/workflows/deploy.yml)이 하는 일과 1:1로 대응한다. 태그 조회와 SSM IMAGE_TAG
+# 갱신, Run Command로 EC2에 reload 지시, 결과 조회, 스모크용 관리자 토큰 읽기. ECR push는
+# staging 역할만 갖는다(승격 모델) - prod 역할로는 새 이미지를 만들 수 없고 staging이 검증한
+# SHA를 고를 수만 있다.
+#
+# Run Command 대상은 인스턴스 ID가 아니라 tag:Name=accentury-{env}다. user_data가 바뀌면 인스턴스가
+# 교체되는데(compute 모듈), ID를 변수로 따라가면 그때마다 GitHub 변수를 고쳐야 한다. 신뢰 정책과
+# 마찬가지로 이 환경 이름이 붙은 인스턴스에만 보낼 수 있다.
+
+data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
+
+locals {
+  ecr_repository_arns = [
+    for repo in ["accentury/backend", "accentury/ai"] :
+    "arn:aws:ecr:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:repository/${repo}"
+  ]
+  parameter_arn_prefix = "arn:aws:ssm:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:parameter${var.ssm_prefix}"
+}
+
+data "aws_iam_policy_document" "image_deploy" {
+  # 배포마다 바뀌는 유일한 파라미터. Terraform 소유가 아니라 파이프라인이 쓴다 (KAN-129 결정).
+  statement {
+    sid       = "ReadWriteImageTag"
+    actions   = ["ssm:GetParameter", "ssm:PutParameter"]
+    resources = ["${local.parameter_arn_prefix}/IMAGE_TAG"]
+  }
+
+  # E2E 스모크(KAN-138)가 합성 트래픽 표시에 쓰는 토큰. SecureString의 AWS 관리 키(aws/ssm)는
+  # SSM 경유 호출에 계정 내 주체를 허용하므로 별도 kms 권한이 없다 (compute 모듈과 같은 근거).
+  statement {
+    sid       = "ReadAdminToken"
+    actions   = ["ssm:GetParameter"]
+    resources = ["${local.parameter_arn_prefix}/ACCENTURY_ADMIN_TOKEN"]
+  }
+
+  statement {
+    sid       = "RunDeployOnOwnInstances"
+    actions   = ["ssm:SendCommand"]
+    resources = ["arn:aws:ec2:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:instance/*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "ssm:resourceTag/Name"
+      values   = [local.name]
+    }
+  }
+
+  statement {
+    sid       = "RunShellScriptDocument"
+    actions   = ["ssm:SendCommand"]
+    resources = ["arn:aws:ssm:${data.aws_region.current.region}::document/AWS-RunShellScript"]
+  }
+
+  # 명령 결과 조회는 리소스 수준 제한이 없는 API다.
+  statement {
+    sid       = "ReadCommandResult"
+    actions   = ["ssm:ListCommandInvocations", "ssm:GetCommandInvocation"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "EcrAuth"
+    actions   = ["ecr:GetAuthorizationToken"]
+    resources = ["*"]
+  }
+
+  # 태그 실재 확인(describe-images)과 pull. 두 환경 공통.
+  statement {
+    sid = "EcrRead"
+    actions = [
+      "ecr:DescribeImages",
+      "ecr:BatchGetImage",
+      "ecr:GetDownloadUrlForLayer",
+      "ecr:BatchCheckLayerAvailability",
+    ]
+    resources = local.ecr_repository_arns
+  }
+
+  # push는 staging만 (ci_image_push). 삭제 권한은 어디에도 없다 - IMMUTABLE 태그를 지워 다시 올리는
+  # 일은 사람이 콘솔에서 의도적으로만 한다.
+  dynamic "statement" {
+    for_each = var.ci_image_push ? [1] : []
+
+    content {
+      sid = "EcrPush"
+      actions = [
+        "ecr:InitiateLayerUpload",
+        "ecr:UploadLayerPart",
+        "ecr:CompleteLayerUpload",
+        "ecr:PutImage",
+      ]
+      resources = local.ecr_repository_arns
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "image_deploy" {
+  name   = "image-deploy"
+  role   = aws_iam_role.github_deploy.id
+  policy = data.aws_iam_policy_document.image_deploy.json
+}

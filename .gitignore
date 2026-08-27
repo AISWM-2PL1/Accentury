@@ -30,3 +30,6 @@ scripts/__pycache__/
 *.tfstate
 *.tfstate.backup
 .terraform/
+# terraform plan -out 산출물. state처럼 리소스 값이 들어 있다.
+*.tfplan
+tfplan

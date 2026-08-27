@@ -1,0 +1,446 @@
+# BE, AI 이미지 배포 파이프라인 (KAN-128)
+#
+# 승격 모델 (2026-08-17 확정): 이미지는 한 번만 빌드하고 staging에서 검증된 바로 그 SHA를 prod로
+# 올린다. prod에서 재빌드하면 staging 검증이 무의미해진다.
+#
+#   Dev 푸시     -> build(현재 커밋 SHA로 두 이미지를 ECR에 push) -> deploy(staging) -> smoke
+#   Release 푸시 -> deploy(prod): 재빌드 없이 Dev 이력에서 ECR에 실재하는 최신 SHA를 승격
+#   수동 실행    -> environment와 image_tag를 고른다. 롤백 = 이전 SHA를 image_tag에 넣고 같은 절차
+#
+# 반영 절차는 EC2 기동 스크립트(infra/modules/compute/accentury-up.sh)와 짝이다: SSM
+# /accentury/{env}/IMAGE_TAG를 새 SHA로 바꾸고 SSM Run Command로 `systemctl reload accentury`를
+# 부른 뒤, 두 컨테이너가 healthy가 될 때까지 기다린다. healthy에 못 미치면 IMAGE_TAG를 직전 값으로
+# 되돌려 다시 reload한다 (AC "반영 실패 시 기존 컨테이너 유지"를 자동 롤백으로 만족). 컨테이너 자체는
+# compose가 교체하므로 "기존 컨테이너"가 아니라 "기존 이미지"가 유지되는 것이다.
+#
+# staging 검증 표시 (Codex P1 반영): staging 반영과 E2E 스모크가 모두 통과한 SHA에만 ECR에서 같은
+# 이미지에 verified-<sha> 태그를 하나 더 붙인다 (IMMUTABLE은 기존 태그 덮어쓰기만 막고 새 태그 추가는
+# 허용). prod는 verified 태그가 있는 SHA만 고른다 - 빌드만 되고 staging에서 실패한 이미지는 승격되지
+# 않는다. 이 표시는 환경 간 SSM 교차 읽기 없이 prod 역할의 ECR 조회 권한만으로 확인된다.
+#
+# 자격 증명은 GitHub OIDC 환경별 역할(infra/modules/deploy). staging 역할만 ECR push 권한이 있고
+# prod 역할은 조회뿐이다 - prod로 가는 이미지는 언제나 staging을 거친 것이어야 하기 때문이다.
+# 테스트는 여기서 다시 돌리지 않는다: PR의 backend-test, ai-test required check가 게이트다.
+# prod 승인 게이트는 GitHub environment prod의 required reviewers로 건다 (infra/README.md "GitHub 설정").
+# 환경 철거 중(DEPLOY_PAUSED=true)이면 web-deploy.yml과 같이 건너뛴다.
+
+name: Image Deploy
+
+on:
+  push:
+    branches: [Dev, Release]
+    paths:
+      - 'backend/**'
+      - 'ai/**'
+      - 'scripts/push-images.sh'
+      - 'scripts/e2e_smoke.py'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 대상 환경
+        required: true
+        type: choice
+        options: [staging, prod]
+        default: staging
+      image_tag:
+        description: 반영할 이미지 태그 (commit SHA 7자리). 비우면 staging은 현재 커밋을 빌드, prod는 Dev 이력의 최신 빌드를 승격. 롤백은 이전 SHA.
+        required: false
+        type: string
+        default: ''
+
+concurrency:
+  group: image-deploy-${{ inputs.environment || (github.ref_name == 'Release' && 'prod' || 'staging') }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ap-northeast-2
+
+jobs:
+  # ---- 빌드: Dev 푸시나 image_tag 없는 staging 수동 실행에서만 ----
+  build:
+    if: >-
+      (github.event_name == 'push' && github.ref_name == 'Dev') ||
+      (github.event_name == 'workflow_dispatch' && inputs.environment == 'staging' && inputs.image_tag == '')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: staging
+    outputs:
+      image_tag: ${{ steps.tag.outputs.image_tag }}
+      paused: ${{ steps.gate.outputs.paused }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 환경 철거 상태 확인
+        id: gate
+        env:
+          DEPLOY_PAUSED: ${{ vars.DEPLOY_PAUSED }}
+        run: |
+          if [ "$DEPLOY_PAUSED" = "true" ]; then
+            echo "::notice title=배포 건너뜀::staging이 철거된 상태(DEPLOY_PAUSED=true)라 빌드와 배포를 건너뜁니다."
+            echo "paused=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "paused=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        if: steps.gate.outputs.paused != 'true'
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # 태그는 언제나 commit SHA 7자리다 (scripts/push-images.sh가 정본). 재실행으로 같은 SHA를 다시
+      # 만나면 IMMUTABLE 리포지토리가 push를 거부하므로, 두 이미지가 이미 있으면 빌드를 건너뛴다.
+      - name: 이미지 빌드와 ECR push
+        id: tag
+        if: steps.gate.outputs.paused != 'true'
+        run: |
+          sha=$(git rev-parse --short=7 HEAD)
+          echo "image_tag=$sha" >> "$GITHUB_OUTPUT"
+          have=0
+          for repo in accentury/backend accentury/ai; do
+            if aws ecr describe-images --repository-name "$repo" --image-ids imageTag="$sha" >/dev/null 2>&1; then
+              have=$((have + 1))
+            fi
+          done
+          if [ "$have" = 2 ]; then
+            echo "::notice::ECR에 $sha 이미지 2개가 이미 있어 빌드를 건너뜁니다."
+            exit 0
+          fi
+          if [ "$have" = 1 ]; then
+            echo "::error::ECR에 $sha 이미지가 하나만 있습니다 (이전 실행이 중간에 끊김). 태그가 IMMUTABLE이라 다시 올릴 수 없으니 콘솔에서 그 태그를 지우고 재실행하세요." >&2
+            exit 1
+          fi
+          scripts/push-images.sh
+
+  # ---- 반영: SSM IMAGE_TAG 갱신 + Run Command reload + healthy 대기, 실패 시 자동 롤백 ----
+  deploy:
+    needs: [build]
+    # build가 skipped(Release 푸시, prod 수동, 태그 지정 수동)여도 돈다. build 실패나 철거 중이면 멈춘다.
+    if: >-
+      !cancelled() && needs.build.result != 'failure' && needs.build.outputs.paused != 'true'
+    runs-on: ubuntu-latest
+    # 반영 최대 15분 + 롤백 최대 15분 + 스모크.
+    timeout-minutes: 45
+    environment: ${{ inputs.environment || (github.ref_name == 'Release' && 'prod' || 'staging') }}
+    env:
+      TARGET_ENV: ${{ inputs.environment || (github.ref_name == 'Release' && 'prod' || 'staging') }}
+      SSM_PREFIX: /accentury/${{ inputs.environment || (github.ref_name == 'Release' && 'prod' || 'staging') }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Release 승격 때 Dev 이력을 거슬러 ECR에 있는 SHA를 찾는다.
+          fetch-depth: 0
+
+      - name: 환경 철거 상태 확인
+        id: gate
+        env:
+          DEPLOY_PAUSED: ${{ vars.DEPLOY_PAUSED }}
+        run: |
+          if [ "$DEPLOY_PAUSED" = "true" ]; then
+            echo "::notice title=배포 건너뜀::$TARGET_ENV 환경이 철거된 상태(DEPLOY_PAUSED=true)라 배포하지 않습니다."
+            {
+              echo "| 환경 | 결과 |"; echo "| --- | --- |"; echo "| $TARGET_ENV | 건너뜀 (환경 철거 중) |"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "paused=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "paused=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: environment 변수 확인
+        if: steps.gate.outputs.paused != 'true'
+        env:
+          AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          APP_DOMAIN: ${{ vars.APP_DOMAIN }}
+        run: |
+          missing=0
+          for name in AWS_DEPLOY_ROLE_ARN APP_DOMAIN; do
+            if [ -z "${!name}" ]; then
+              echo "GitHub environment 변수가 비어 있습니다: $name (infra/README.md 'GitHub 설정')" >&2
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        if: steps.gate.outputs.paused != 'true'
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # 우선순위: 수동 입력 > 방금 빌드한 태그 > (Release) Dev 이력에서 가장 최근에 빌드된 SHA.
+      # 승격 규칙 (Codex 2차 P1 반영): 이력을 거슬러 처음 만나는 "빌드된 SHA"가 유일한 후보다. 그 SHA에
+      # verified 표시가 없으면(staging 반영이나 스모크 실패) 더 오래된 verified SHA로 건너뛰지 않고 실패한다 -
+      # 건너뛰면 Release에 든 서버 변경이 prod에서 조용히 빠진 채 성공으로 보인다. ECR 태그 목록은 한 번만
+      # 받아 로컬에서 대조하므로 이력 길이에 API 호출이 비례하지 않는다 (Codex 2차 P2).
+      - name: 반영할 태그 결정
+        id: resolve
+        if: steps.gate.outputs.paused != 'true'
+        env:
+          INPUT_TAG: ${{ inputs.image_tag }}
+          BUILT_TAG: ${{ needs.build.outputs.image_tag }}
+        run: |
+          tags_backend=$(aws ecr describe-images --repository-name accentury/backend --query 'imageDetails[].imageTags[]' --output text | tr '\t' '\n')
+          tags_ai=$(aws ecr describe-images --repository-name accentury/ai --query 'imageDetails[].imageTags[]' --output text | tr '\t' '\n')
+          in_ecr() { grep -qx -- "$1" <<<"$tags_backend" && grep -qx -- "$1" <<<"$tags_ai"; }
+          verified() { in_ecr "verified-$1"; }
+          tag=""
+          if [ -n "$INPUT_TAG" ]; then
+            tag="$INPUT_TAG"; how="수동 입력"
+          elif [ -n "$BUILT_TAG" ]; then
+            tag="$BUILT_TAG"; how="이번 실행에서 빌드"
+          else
+            # merge commit이면 2번째 부모(Dev 끝)부터, 아니면 HEAD부터 거슬러 올라간다. Dev는 rebase만
+            # 허용돼 선형이다. 상한 2000은 ECR 보존 50개보다 훨씬 넉넉한 안전장치일 뿐이다.
+            if [ "$(git rev-list --parents -n1 HEAD | wc -w)" -ge 3 ]; then base=HEAD^2; else base=HEAD; fi
+            for full in $(git rev-list -n 2000 "$base"); do
+              short=$(git rev-parse --short=7 "$full")
+              if in_ecr "$short"; then tag="$short"; how="Dev 이력의 최신 빌드 ($base 기준)"; break; fi
+            done
+            if [ -z "$tag" ]; then
+              echo "::error::이력에서 ECR 이미지가 있는 SHA를 찾지 못했습니다. Dev 배포가 먼저 성공해야 합니다." >&2
+              exit 1
+            fi
+          fi
+          if ! in_ecr "$tag"; then
+            echo "::error::ECR에 $tag 이미지가 (두 리포지토리 모두) 없습니다." >&2
+            exit 1
+          fi
+          if [ "$TARGET_ENV" = prod ] && ! verified "$tag"; then
+            echo "::error::$tag 에 verified 태그가 없습니다 - staging 반영이나 E2E 스모크를 통과하지 못한 빌드입니다. staging에서 먼저 성공시키거나, 의도한 롤백이면 verified가 있는 이전 SHA를 image_tag로 지정하세요." >&2
+            exit 1
+          fi
+          echo "image_tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "how=$how" >> "$GITHUB_OUTPUT"
+          echo "반영 태그 $tag ($how)"
+
+      - name: 직전 태그 기록
+        id: prev
+        if: steps.gate.outputs.paused != 'true'
+        run: |
+          # 롤백의 근거가 되는 값이다. "없음"은 ParameterNotFound일 때만 인정하고, 스로틀링이나 권한
+          # 오류는 실패로 세운다 - 빈 값으로 넘어가면 반영 실패 시 롤백할 곳이 없어진다 (Codex P2).
+          set +e
+          out=$(aws ssm get-parameter --name "$SSM_PREFIX/IMAGE_TAG" --query Parameter.Value --output text 2>&1)
+          rc=$?
+          set -e
+          if [ "$rc" = 0 ]; then
+            prev="$out"
+          elif echo "$out" | grep -q ParameterNotFound; then
+            prev=""
+          else
+            echo "::error::직전 IMAGE_TAG 조회 실패: $out" >&2
+            exit 1
+          fi
+          echo "previous_tag=$prev" >> "$GITHUB_OUTPUT"
+          echo "직전 태그: ${prev:-(없음, 첫 배포)}"
+
+      # 원격 절차 한 벌. 인스턴스는 tag:Name으로 고른다 - user_data 변경으로 인스턴스가 교체돼도
+      # ID를 변수로 따라갈 필요가 없다. reload는 accentury-up.sh를 다시 태우고(SSM 재조회, pull,
+      # compose up), 그 뒤 두 컨테이너의 docker healthcheck가 healthy가 될 때까지 기다린다.
+      - name: 원격 반영 스크립트 준비
+        if: steps.gate.outputs.paused != 'true'
+        run: |
+          cat > remote.sh <<'REMOTE'
+          set -uo pipefail
+          EXPECTED_TAG=__EXPECTED_TAG__
+          # SSM Parameter Store 읽기는 최종 일관성이라 put 직후 reload가 옛 태그를 읽을 수 있다. 기동
+          # 스크립트가 실제로 어떤 태그를 썼는지 compose.env로 대조하고, 다르면 잠시 뒤 다시 reload한다
+          # (Codex 3차 P1). 대조 없이 healthy만 보면 옛 이미지를 검증하고 새 태그에 verified를 붙이게 된다.
+          current=""
+          for attempt in 1 2 3; do
+            if systemctl is-active --quiet accentury; then
+              systemctl reload accentury || { echo "reload 실패"; journalctl -u accentury -n 40 --no-pager; exit 1; }
+            else
+              systemctl start accentury || { echo "start 실패"; journalctl -u accentury -n 40 --no-pager; exit 1; }
+            fi
+            current=$(sed -n 's/^IMAGE_TAG=//p' /run/accentury/compose.env)
+            if [ "$current" = "$EXPECTED_TAG" ]; then break; fi
+            echo "기동 스크립트가 읽은 IMAGE_TAG=$current (기대 $EXPECTED_TAG). SSM 전파 대기 후 재시도 ($attempt/3)"
+            sleep 10
+          done
+          if [ "$current" != "$EXPECTED_TAG" ]; then
+            echo "IMAGE_TAG 불일치: 실제 $current, 기대 $EXPECTED_TAG"; exit 1
+          fi
+          cd /opt/accentury
+          for svc in ai backend; do
+            cid=$(docker compose --env-file /run/accentury/compose.env ps -q "$svc")
+            if [ -z "$cid" ]; then echo "컨테이너 없음: $svc"; exit 1; fi
+            st=starting
+            for i in $(seq 1 60); do
+              st=$(docker inspect -f '{{.State.Health.Status}}' "$cid" 2>/dev/null || echo missing)
+              if [ "$st" = healthy ]; then break; fi
+              if [ "$st" = unhealthy ]; then echo "$svc unhealthy"; docker logs --tail 60 "$cid"; exit 1; fi
+              sleep 5
+            done
+            if [ "$st" != healthy ]; then echo "$svc healthy 대기 시간 초과 (마지막 상태 $st)"; docker logs --tail 60 "$cid"; exit 1; fi
+            echo "$svc healthy"
+          done
+          echo "IMAGE_TAG=$current"
+          REMOTE
+          # 반영 함수: 태그를 SSM에 쓰고 Run Command를 보내 끝날 때까지 기다린다. 결과 0/1 반환.
+          cat > apply.sh <<'APPLY'
+          set -uo pipefail
+          tag="$1"
+          # 태그 쓰기가 실패하면 여기서 끝낸다 - 넘어가면 옛 태그로 reload가 돌고 healthy가 나와 새 태그가
+          # 반영된 것처럼 보인다 (Codex P1).
+          if ! aws ssm put-parameter --name "$SSM_PREFIX/IMAGE_TAG" --type String --value "$tag" --overwrite >/dev/null; then
+            echo "SSM $SSM_PREFIX/IMAGE_TAG 쓰기 실패 - 반영하지 않습니다."; exit 1
+          fi
+          # 원격 실행 상한 840초 (accentury-up.sh 재시도 약 4분 + pull + healthy 대기 5분 + 전파 재시도).
+          # 아래 대기 루프는 이보다 길어야(900초) 명령이 아직 도는데 롤백을 겹쳐 보내는 일이 없다 (Codex P2).
+          sed "s/__EXPECTED_TAG__/$tag/" remote.sh > "remote-$tag.sh"
+          jq -n --rawfile s "remote-$tag.sh" '{commands: [$s], executionTimeout: ["840"]}' > params.json
+          cmd=$(aws ssm send-command \
+            --document-name AWS-RunShellScript \
+            --targets "Key=tag:Name,Values=accentury-$TARGET_ENV" \
+            --parameters file://params.json \
+            --timeout-seconds 120 \
+            --comment "deploy $tag" \
+            --query Command.CommandId --output text)
+          if [ -z "$cmd" ] || [ "$cmd" = None ]; then echo "send-command 실패"; exit 1; fi
+          echo "Run Command $cmd (태그 $tag)"
+          # 종료 코드: 0 성공, 1 실패(원격 결과가 확인됨, 롤백 가능), 2 알 수 없음(조회 API가 계속 실패해
+          # 원격이 아직 도는지 모름 - 롤백을 겹쳐 보내면 안 되므로 자동 롤백하지 않는다, Codex 3차 P2).
+          status=Pending
+          api_errors=0
+          for i in $(seq 1 180); do
+            if out=$(aws ssm list-command-invocations --command-id "$cmd" --query 'CommandInvocations[0].Status' --output text 2>&1); then
+              api_errors=0
+              status="$out"
+            else
+              api_errors=$((api_errors + 1))
+              echo "조회 실패 ($api_errors/10): $out"
+              if [ "$api_errors" -ge 10 ]; then
+                echo "명령 상태를 확인할 수 없습니다 ($cmd). 원격이 아직 도는 중일 수 있어 자동 롤백하지 않습니다."; exit 2
+              fi
+              sleep 5; continue
+            fi
+            case "$status" in
+              Success|Failed|TimedOut|Cancelled|Undeliverable|Terminated) break ;;
+            esac
+            # 조회는 성공했는데 invocation이 없는 상태(None)가 60초 이어지면 대상 인스턴스가 없는 것이다.
+            if [ "$i" -ge 12 ] && [ "$status" = None ]; then
+              echo "60초가 지나도 대상 인스턴스가 없습니다 (tag:Name=accentury-$TARGET_ENV, SSM 에이전트 미등록?)"; exit 1
+            fi
+            sleep 5
+          done
+          case "$status" in
+            Success|Failed|TimedOut|Cancelled|Undeliverable|Terminated) ;;
+            *) echo "900초 안에 끝나지 않았습니다 (마지막 상태 $status). 자동 롤백하지 않습니다."; exit 2 ;;
+          esac
+          echo "--- 원격 출력 ---"
+          aws ssm list-command-invocations --command-id "$cmd" --details \
+            --query 'CommandInvocations[0].CommandPlugins[0].Output' --output text | tail -80
+          echo "--- 상태: $status ---"
+          [ "$status" = Success ]
+          APPLY
+          chmod +x apply.sh
+
+      - name: 반영 (SSM IMAGE_TAG 갱신 + reload + healthy 대기)
+        id: apply
+        if: steps.gate.outputs.paused != 'true'
+        env:
+          IMAGE_TAG: ${{ steps.resolve.outputs.image_tag }}
+        run: |
+          set +e
+          bash apply.sh "$IMAGE_TAG"; rc=$?
+          set -e
+          case "$rc" in
+            0) echo "result=ok" >> "$GITHUB_OUTPUT" ;;
+            1) echo "result=failed" >> "$GITHUB_OUTPUT"
+               echo "::error::$TARGET_ENV 반영 실패 (태그 $IMAGE_TAG). 자동 롤백을 시도합니다." ;;
+            *) echo "result=unknown" >> "$GITHUB_OUTPUT"
+               echo "::error::$TARGET_ENV 반영 결과를 확인하지 못했습니다 (태그 $IMAGE_TAG). 원격이 아직 도는 중일 수 있어 자동 롤백하지 않습니다. Session Manager로 journalctl -u accentury 를 확인한 뒤 필요하면 수동 실행으로 이전 태그를 넣으세요."
+               exit 1 ;;
+          esac
+
+      - name: 실패 시 직전 태그로 자동 롤백
+        if: steps.gate.outputs.paused != 'true' && steps.apply.outputs.result == 'failed'
+        env:
+          IMAGE_TAG: ${{ steps.resolve.outputs.image_tag }}
+          PREVIOUS_TAG: ${{ steps.prev.outputs.previous_tag }}
+        run: |
+          if [ -z "$PREVIOUS_TAG" ] || [ "$PREVIOUS_TAG" = "$IMAGE_TAG" ]; then
+            echo "::error::되돌릴 직전 태그가 없습니다. 인스턴스가 실패 상태로 남았습니다 - 수동 실행으로 유효한 태그를 반영하세요."
+            exit 1
+          fi
+          echo "직전 태그 $PREVIOUS_TAG 로 되돌립니다."
+          if bash apply.sh "$PREVIOUS_TAG"; then
+            echo "::error::롤백 완료 ($PREVIOUS_TAG). 새 태그 $IMAGE_TAG 는 반영되지 않았습니다."
+          else
+            echo "::error::롤백도 실패했습니다. SSM Session Manager로 접속해 journalctl -u accentury 를 확인하세요."
+          fi
+          exit 1
+
+      - name: 배포 기록
+        if: steps.gate.outputs.paused != 'true'
+        env:
+          IMAGE_TAG: ${{ steps.resolve.outputs.image_tag }}
+          HOW: ${{ steps.resolve.outputs.how }}
+          PREVIOUS_TAG: ${{ steps.prev.outputs.previous_tag }}
+        run: |
+          {
+            echo "| 환경 | 반영 태그 | 출처 | 직전 태그 | 워크플로 커밋 |"
+            echo "| --- | --- | --- | --- | --- |"
+            echo "| $TARGET_ENV | $IMAGE_TAG | $HOW | ${PREVIOUS_TAG:-(없음)} | ${GITHUB_SHA:0:7} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # 컨테이너 healthy와 ALB 대상 healthy 사이에는 수십 초 간극이 있고(대상 그룹 헬스체크 주기), 첫 배포나
+      # 오래 unhealthy였던 뒤에는 CloudFront 경유 요청이 그동안 502/503을 낸다. 스모크는 첫 응답의 게이트웨이
+      # 오류를 재시도하지 않으므로 공개 경로가 백엔드 응답(404 JSON도 응답이다)을 돌려줄 때까지 기다린다
+      # (Codex 4차 P2). 두 환경 모두 - prod도 "대상까지 살아났다"가 반영 완료의 기준이다.
+      - name: 공개 경로 준비 대기 (ALB 대상 healthy)
+        if: steps.gate.outputs.paused != 'true'
+        env:
+          APP_DOMAIN: ${{ vars.APP_DOMAIN }}
+        run: |
+          url="https://$APP_DOMAIN/v0/tests/readiness-probe-$(date +%s)"
+          for i in $(seq 1 36); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$url" || echo 000)
+            case "$code" in
+              502|503|504|000) echo "대기 중 ($i/36): HTTP $code"; sleep 10 ;;
+              *) echo "공개 경로 응답 확인: HTTP $code"; exit 0 ;;
+            esac
+          done
+          echo "::error::6분 안에 $APP_DOMAIN 이 백엔드 응답을 돌려주지 않았습니다. 컨테이너는 healthy이므로 ALB 대상 그룹 상태와 보안 그룹 사슬을 확인하세요." >&2
+          exit 1
+
+      # staging에만 E2E 스모크를 돌린다 (KAN-138). 관리자 토큰은 이 환경 SSM에서 읽어 합성 트래픽으로
+      # 표시한다 - 저장소 시크릿 하나로 두 환경 토큰을 못 담던 문제(README)가 여기서 해소된다.
+      # e2e-smoke.yml의 workflow_call을 쓰지 않는 이유: 토큰을 job output으로 넘기면 GitHub이 마스킹된
+      # 값이라며 output을 버린다. 그래서 같은 job 안에서 스크립트를 직접 부른다.
+      # prod는 승격 직후 사람이 e2e-smoke.yml을 workflow_dispatch로 돌린다 (README).
+      - name: E2E 스모크 (staging)
+        if: steps.gate.outputs.paused != 'true' && env.TARGET_ENV == 'staging'
+        env:
+          APP_DOMAIN: ${{ vars.APP_DOMAIN }}
+        run: |
+          token=$(aws ssm get-parameter --name "$SSM_PREFIX/ACCENTURY_ADMIN_TOKEN" --with-decryption --query Parameter.Value --output text)
+          echo "::add-mask::$token"
+          python3 scripts/e2e_smoke.py --base-url "https://$APP_DOMAIN" --synthetic-key "$token" --expect-stub-scores
+
+      # 반영과 스모크를 모두 통과한 SHA에만 verified 태그를 붙인다. prod 승격이 이 표시를 요구한다.
+      # 같은 매니페스트에 태그를 하나 더 붙이는 것이라 IMMUTABLE 리포지토리에서도 허용된다. 재실행으로
+      # 이미 있으면 그대로 둔다.
+      - name: staging 검증 표시 (ECR verified 태그)
+        if: steps.gate.outputs.paused != 'true' && env.TARGET_ENV == 'staging'
+        env:
+          IMAGE_TAG: ${{ steps.resolve.outputs.image_tag }}
+        run: |
+          for repo in accentury/backend accentury/ai; do
+            if aws ecr describe-images --repository-name "$repo" --image-ids imageTag="verified-$IMAGE_TAG" >/dev/null 2>&1; then
+              echo "$repo: verified-$IMAGE_TAG 이미 있음"; continue
+            fi
+            manifest=$(aws ecr batch-get-image --repository-name "$repo" --image-ids imageTag="$IMAGE_TAG" \
+              --query 'images[0].imageManifest' --output text)
+            media=$(aws ecr batch-get-image --repository-name "$repo" --image-ids imageTag="$IMAGE_TAG" \
+              --query 'images[0].imageManifestMediaType' --output text)
+            aws ecr put-image --repository-name "$repo" --image-tag "verified-$IMAGE_TAG" \
+              --image-manifest "$manifest" --image-manifest-media-type "$media" >/dev/null
+            echo "$repo: verified-$IMAGE_TAG 표시"
+          done

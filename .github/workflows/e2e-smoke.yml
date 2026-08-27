@@ -3,7 +3,9 @@
 # 세션 생성부터 결과 조회까지를 실제 HTTP로 순서대로 통과시킨다. 시나리오의 정본은
 # scripts/e2e_smoke.py이고, 이 파일은 그것을 부르는 세 갈래를 만든다.
 #
-#   1. workflow_call     배포 파이프라인(KAN-128)이 staging 반영 직후 한 단계로 부른다.
+#   1. workflow_call     다른 워크플로가 부를 수 있는 입구. 배포 파이프라인(deploy.yml, KAN-128)은
+#                        이 입구 대신 같은 job에서 scripts/e2e_smoke.py를 직접 부른다 - SSM에서
+#                        읽은 관리자 토큰을 job output으로 넘기면 GitHub이 마스킹 값이라며 버려서다.
 #   2. workflow_dispatch 사람이 staging이나 prod에 손으로 한 번 돌린다 (prod 승격 직후).
 #   3. pull_request      스모크 자신이나 compose가 바뀐 PR에서 로컬 풀스택으로 돌린다.
 #

@@ -81,11 +81,14 @@ EC2가 밖으로 거는 연결 (퍼블릭 서브넷이라 NAT 불필요)
   │    (awsSecretsManager 플러그인, 7일 회전을 앱이 따라감)
   └─ ECR accentury/backend, accentury/ai (commit SHA 태그)        KAN-120
 
-배포 파이프라인 (GitHub Actions, OIDC)                            KAN-128
-  Dev 병합     → 테스트 → 이미지 빌드 → ECR push → SSM IMAGE_TAG 갱신
-                 → systemctl reload accentury → staging 자동 → E2E 스모크 KAN-138
-  Release 병합 → 재빌드 없이 같은 SHA → 승인 → prod
-  웹 번들      → S3 업로드 + CloudFront 무효화                     KAN-127
+배포 파이프라인 (GitHub Actions, OIDC, 환경별 역할 modules/deploy)
+  이미지 deploy.yml                                                KAN-128
+    Dev 병합     → 이미지 빌드 → ECR push(SHA) → SSM IMAGE_TAG 갱신 → Run Command
+                   systemctl reload accentury → healthy 대기 → 실패 시 직전 SHA로 자동 롤백
+                   → E2E 스모크 KAN-138
+    Release 병합 → 재빌드 없이 Dev 이력의 최신 빌드 SHA → (environment 승인) → prod
+    롤백         → 수동 실행에 이전 SHA 입력, 같은 절차
+  웹 번들 web-deploy.yml → S3 업로드 + CloudFront 무효화            KAN-127
 
 운영
   ├─ ALB 5xx, 헬스체크 실패 알림 (CloudWatch)                      KAN-134
@@ -197,7 +200,9 @@ terraform apply
 
 - 이미지 태그 반영: `/accentury/{env}/IMAGE_TAG`에 ECR의 commit SHA 태그를 넣고
   `systemctl start accentury` (첫 기동) 또는 `systemctl reload accentury`
-  (교체). 파이프라인(KAN-128)이 이 두 단계를 자동화한다.
+  (교체). 파이프라인 `deploy.yml`(KAN-128)이 이 두 단계를 하므로 재구축 뒤에는
+  Actions "Image Deploy"를 staging으로 수동 실행하면 된다 (아래 "이미지 배포
+  파이프라인과 롤백").
 - GitHub environment 변수 3개를 apply 출력으로 채운다 (아래 "GitHub 설정"). 그
   뒤 웹 번들은 Web Deploy 워크플로가 올린다 (KAN-127). 등급 이미지 업로드는
   KAN-132.
@@ -230,7 +235,8 @@ JSON
 done
 ```
 
-변수 3개는 환경 apply 출력에서 채운다 (재구축으로 배포 ID나 역할 ARN이 바뀌면 다시).
+변수 4개는 환경 apply 출력에서 채운다 (재구축으로 배포 ID나 역할 ARN이 바뀌면 다시).
+`APP_DOMAIN`은 이미지 파이프라인의 E2E 스모크 대상이다 (KAN-128).
 
 ```
 cd infra/envs/staging   # 또는 prod
@@ -238,13 +244,63 @@ env=$(terraform output -raw domain | grep -q '^staging' && echo staging || echo 
 gh variable set AWS_DEPLOY_ROLE_ARN        -e "$env" --body "$(terraform output -raw github_deploy_role_arn)"
 gh variable set WEB_BUCKET                 -e "$env" --body "$(terraform output -raw web_bucket)"
 gh variable set CLOUDFRONT_DISTRIBUTION_ID -e "$env" --body "$(terraform output -raw cloudfront_distribution_id)"
+gh variable set APP_DOMAIN                 -e "$env" --body "$(terraform output -raw domain)"
 ```
 
 환경을 철거해 둔 동안에는 변수 `DEPLOY_PAUSED=true`를 추가로 둔다 ("teardown
 절차"). 있으면 워크플로가 배포 단계를 건너뛰고, 재구축 뒤 지우면 다시 배포한다.
 
-prod의 승인 게이트(required reviewers)는 KAN-128이 정한다. 켜면 웹 배포도 같은
-environment라 함께 승인을 기다린다.
+prod의 승인 게이트는 GitHub environment `prod`의 **required reviewers**다 (KAN-128
+확정). Settings > Environments > prod > Deployment protection rules > Required
+reviewers에 팀원을 넣으면 Release 병합이 만든 실행이 승인 전까지 `deploy` job에서
+멈춘다. 이미지와 웹 배포가 같은 environment라 둘 다 승인을 기다린다. 코드가 아니라
+저장소 설정이므로 레포에는 남지 않는다 - 새 저장소에서는 다시 켠다.
+
+## 이미지 배포 파이프라인과 롤백 (KAN-128)
+
+`.github/workflows/deploy.yml`이 한다. 승격 모델이라 이미지는 Dev 푸시에서 한 번만
+만들고, prod는 그 SHA를 고르기만 한다.
+
+| 트리거 | 하는 일 |
+| --- | --- |
+| Dev 푸시 (`backend/**`, `ai/**`) | `scripts/push-images.sh`로 두 이미지를 commit SHA 7자리 태그로 ECR에 push (이미 있으면 건너뜀) → staging 반영 → E2E 스모크 |
+| Release 푸시 | 빌드 없음. merge commit의 2번째 부모(Dev 끝)부터 거슬러 **처음 만나는 빌드된 SHA**가 후보다. 그 SHA에 `verified-<sha>` 태그(staging 반영과 스모크 통과 표시)가 없으면 더 오래된 것으로 건너뛰지 않고 실패한다 (서버 변경이 조용히 빠지는 것을 막는다). environment `prod`에 required reviewers가 있으면 승인 대기 |
+| 수동 실행 | 환경과 `image_tag` 선택. 비우면 staging은 현재 커밋 빌드, prod는 위 승격 규칙. **롤백 = 이전 SHA를 `image_tag`에 넣는 것** (같은 절차, 재빌드 없음) |
+
+반영 한 번은 SSM `/accentury/{env}/IMAGE_TAG`를 새 SHA로 바꾸고(직전 값은 기억),
+SSM Run Command(`AWS-RunShellScript`, 대상 `tag:Name=accentury-{env}`)로 인스턴스에서
+`systemctl reload accentury`(첫 기동이면 `start`)를 부른 뒤, ai와 backend 컨테이너의
+docker healthcheck가 healthy가 될 때까지 최대 5분 기다린다. 어느 쪽이든 unhealthy거나
+시간을 넘기면 IMAGE_TAG를 직전 값으로 되돌려 같은 절차를 다시 돌리고 실행을 실패로
+끝낸다. 그래서 "반영 실패 시 기존 이미지 유지"가 성립한다 (컨테이너는 compose가
+교체하므로 이미지 기준이다). 직전 값이 없는 첫 배포가 실패하면 인스턴스는 실패 상태로
+남고, 유효한 태그를 수동 실행으로 넣는다.
+
+컨테이너가 healthy가 된 뒤에는 공개 경로(`https://도메인/v0/...`)가 게이트웨이 오류
+(502, 503, 504) 대신 백엔드 응답을 돌려줄 때까지 최대 6분 더 기다린다. ALB 대상 그룹
+헬스체크가 healthy로 바뀌는 데 수십 초가 걸리고, 그동안 CloudFront 경유 요청은 502다.
+
+어느 환경에 어떤 SHA가 떠 있는지는 세 곳에 남는다. 실행 요약 표(환경, 반영 태그,
+출처, 직전 태그), GitHub environment의 deployments 목록, 그리고 SSM `IMAGE_TAG`
+자체다. 인스턴스에서 확인하려면 `grep IMAGE_TAG /run/accentury/compose.env`.
+
+staging 반영과 스모크가 모두 통과하면 같은 이미지에 ECR 태그 `verified-<sha>`를 하나 더
+붙인다 (IMMUTABLE은 기존 태그 덮어쓰기만 막는다). prod는 수동 입력이든 자동 승격이든
+이 표시가 있는 SHA만 받으므로, 빌드는 됐지만 staging에서 실패한 이미지는 prod에 갈 수
+없다. 표시는 prod 역할의 ECR 조회 권한만으로 확인되므로 환경 간 SSM 교차 읽기가 없다.
+
+테스트는 파이프라인에서 다시 돌리지 않는다 - PR의 `backend-test`, `ai-test` required
+check가 게이트다. E2E 스모크는 staging 반영 직후 같은 job에서 `scripts/e2e_smoke.py`를
+직접 부르고, 관리자 토큰은 그 환경 SSM에서 읽어 합성 트래픽으로 표시한다 (아래 "관리자
+토큰" 절의 저장소 시크릿 한계가 파이프라인에서는 사라진다). `e2e-smoke.yml`의
+`workflow_call`을 쓰지 않는 이유는 토큰을 job output으로 넘기면 GitHub이 마스킹된 값이라며
+output을 버리기 때문이다. prod는 승격 직후 사람이 `e2e-smoke.yml`을 workflow_dispatch로
+돌린다. 스모크 실패는 실행을 실패로 만들지만 반영을 되돌리지는 않는다 - 스모크가 보는
+것은 이미지가 아니라 전 구간이라, 원인이 이미지가 아닐 수 있다.
+
+권한은 `infra/modules/deploy`의 `image-deploy` 정책이다. staging 역할만 ECR push를
+갖고(`ci_image_push`, 환경 간 tfvars 차이) prod 역할은 조회뿐이다. Run Command는
+자기 환경 이름이 붙은 인스턴스에만 보낼 수 있다.
 
 ## EC2 컨테이너 기동 (KAN-124)
 
@@ -319,8 +375,10 @@ gh secret set ACCENTURY_ADMIN_TOKEN --body "$(aws ssm get-parameter --with-decry
 ```
 
 저장소 시크릿은 하나뿐이라 staging과 prod의 서로 다른 토큰을 동시에 담을 수 없다.
-정식 해법은 파이프라인(KAN-128)이 OIDC로 해당 환경의 SSM을 읽어 `workflow_call`의
-`admin-token`으로 넘기는 것이고, 그 전까지 수동 실행은 staging 값으로 맞춘다.
+파이프라인(`deploy.yml`, KAN-128)은 이 시크릿을 쓰지 않고 해당 환경 SSM에서 직접
+읽으므로 staging 자동 스모크는 항상 맞는 토큰을 쓴다. 이 시크릿이 필요한 것은
+`e2e-smoke.yml`을 사람이 workflow_dispatch로 돌릴 때(prod 승격 직후)뿐이라, 그때
+대상 환경의 값으로 맞춘다.
 
 ### 이미 있는 SSM 파라미터 (재구축, 수동 생성분)
 
@@ -375,6 +433,7 @@ Terraform 입력의 차이는 `diff -r infra/envs/staging infra/envs/prod`가 �
 | SSM 경로 | `/accentury/staging/*` | `/accentury/prod/*` | EC2 역할 정책, 기동 스크립트 |
 | 관리자 토큰 | 환경별 난수 | 환경별 난수 | `ACCENTURY_ADMIN_TOKEN` |
 | RDS 삭제 보호, 최종 스냅샷 | 없음, 생략 | 켬, 남김 | RDS |
+| 배포 역할 ECR push | 허용 | 불가 | `modules/deploy` image-deploy 정책 (KAN-128 승격 모델) |
 
 staging 설정으로 prod에 닿을 수 없는 이유: VPC가 분리돼 있고(피어링 없음), EC2
 역할이 자기 환경의 SSM 경로와 시크릿 ARN만 허용하며, 시크릿 ARN 자체가 환경별로
