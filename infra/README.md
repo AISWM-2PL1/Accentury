@@ -240,6 +240,9 @@ gh variable set WEB_BUCKET                 -e "$env" --body "$(terraform output 
 gh variable set CLOUDFRONT_DISTRIBUTION_ID -e "$env" --body "$(terraform output -raw cloudfront_distribution_id)"
 ```
 
+환경을 철거해 둔 동안에는 변수 `DEPLOY_PAUSED=true`를 추가로 둔다 ("teardown
+절차"). 있으면 워크플로가 배포 단계를 건너뛰고, 재구축 뒤 지우면 다시 배포한다.
+
 prod의 승인 게이트(required reviewers)는 KAN-128이 정한다. 켜면 웹 배포도 같은
 environment라 함께 승인을 기다린다.
 
@@ -409,6 +412,18 @@ terraform destroy
 - CloudFront 배포 삭제는 비활성화 전파 때문에 수 분 걸린다.
 - bootstrap의 state 버킷은 `prevent_destroy`로 보호된다. 두 환경 state가
   전부 필요 없어진 것이 확실할 때만 코드에서 보호를 풀고 지운다.
+- destroy 뒤에는 그 환경의 GitHub environment 변수 `DEPLOY_PAUSED`를 `true`로
+  둔다. 환경이 없는데 `web/**` 변경이 병합되면 Web Deploy가 역할 부재로
+  `AssumeRoleWithWebIdentity` 거부라는 헷갈리는 메시지로 실패하기 때문이다
+  (2026-08-27 실제 발생). 변수가 있으면 워크플로는 빌드만 하고 배포를 건너뛴 채
+  요약에 "환경 철거 중"을 남긴다. 재구축 뒤 변수를 지운다.
+
+  ```
+  gh variable set DEPLOY_PAUSED -e staging --body true      # destroy 직후
+  gh variable delete DEPLOY_PAUSED -e staging               # apply와 변수 3개 갱신 뒤
+  ```
+- Terraform이 만들지 않는 `/accentury/{env}/IMAGE_TAG`는 destroy가 지우지
+  않는다. 남겨 두면 다음 재구축 때 인스턴스가 그 SHA로 뜬다.
 
 ## 설계 결정 기록
 
