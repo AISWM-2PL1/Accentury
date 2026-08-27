@@ -28,6 +28,31 @@ export interface AccenturyBridge {
    * [getSessionToken]과 같은 이유로 optional이다
    */
   startRetest?(): void
+  /**
+   * 결과 화면의 [친구에게 공유하기] → 네이티브 카카오톡 공유 (KAN-30). 인자는 [SharePayload]의 JSON.
+   * 카카오 SDK 호출은 네이티브 몫이다 — 앱 키·카톡 설치 여부·OS 공유 시트 폴백 전부 네이티브 사정이고,
+   * 웹은 서버가 준 카드 자산을 그대로 건넬 뿐이다. [getSessionToken]과 같은 이유로 optional이다
+   */
+  shareResult?(payloadJson: string): void
+}
+
+/**
+ * 공유 카드 자산 — 브리지를 건너 네이티브 카카오 피드 템플릿에 실릴 값이다 (KAN-30).
+ *
+ * `result/testResult.ts`의 `ResultShare`와 모양이 같지만 일부러 따로 선언한다. 저쪽의 정본은
+ * 백엔드 응답이고 이쪽의 정본은 브리지 계약이라 — [GuideF0]와 같은 이유다 — 사본을 끌어오면
+ * 백엔드 스키마 변경이 컴파일 에러 없이 payload 형태를 바꿔 §5 버전 게이트를 우회한다.
+ *
+ * **점수·세션 id·등급 코드는 싣지 않는다** (KAN-30 요구). 수신자는 남의 결과를 열어 보는 것이
+ * 아니라 자기 테스트를 새로 응시하므로, 카드에 필요한 것은 등급 문구와 캠페인 URL뿐이다.
+ */
+export interface SharePayload {
+  /** 등급별 카드 이미지 (서버가 준 값 그대로) */
+  imageUrl: string
+  /** 카드 문구 — 등급명은 들어 있지만 점수는 없다 */
+  text: string
+  /** 캠페인 파라미터가 붙은 웹 테스트 URL — 전 등급 공통 */
+  webTestUrl: string
 }
 
 /**
@@ -95,6 +120,8 @@ declare global {
  * 이 웹 빌드가 요구하는 최소 브리지 계약 버전.
  * 계약 규칙(§5): 필드·메서드 추가는 하위호환(버전 유지), 삭제·의미 변경은 버전 증가.
  * KAN-100의 `startVoiceItem`·`onItemResult`는 둘 다 추가라서 1을 유지한다.
+ * KAN-30의 `shareResult`도 메서드 추가라 마찬가지로 1을 유지한다 — 그래서 이 메서드가 없는
+ * 계약 버전 1 앱이 스큐 게이트를 그대로 통과하고, 래퍼가 false로 걸러 폴백으로 내려간다.
  */
 export const REQUIRED_BRIDGE_VERSION = 1
 
@@ -195,6 +222,26 @@ export function startRetest(): boolean {
   const bridge = window.AccenturyBridge
   if (typeof bridge?.startRetest !== 'function') return false
   bridge.startRetest()
+  return true
+}
+
+/**
+ * 결과 공유를 네이티브에 넘긴다 (KAN-30). 성공 여부는 [startVoiceItem]과 같은 규칙이다 —
+ * 브리지가 없는 브라우저 단독 실행에서 false를 돌려줄 뿐 크래시하지 않는다.
+ * @JavascriptInterface는 문자열만 주고받으므로 payload는 JSON으로 직렬화해 넘긴다.
+ *
+ * false는 "여기서는 네이티브 공유로 갈 수 없다"까지만 말한다 — 브라우저 단독 실행인지
+ * `shareResult`를 모르는 구버전 앱인지는 호출자 관심사가 아니고, 대응(웹 폴백)도 같다
+ * (`share/shareResult.ts`가 그 갈래를 소유한다).
+ *
+ * 반대로 true도 "카톡이 떴다"는 뜻이 아니다. 카톡 미설치 시 OS 공유 시트로 내려가는 판정도,
+ * 사용자가 공유를 취소하는 경우도 전부 네이티브 안에서 끝난다 — 웹으로 회신이 오지 않는 이유는
+ * 결과 화면이 그 결말에 따라 달라질 것이 없기 때문이다 (KAN-30 AC "공유 취소가 결과를 변경하지 않는다").
+ */
+export function shareResult(payload: SharePayload): boolean {
+  const bridge = window.AccenturyBridge
+  if (typeof bridge?.shareResult !== 'function') return false
+  bridge.shareResult(JSON.stringify(payload))
   return true
 }
 

@@ -8,9 +8,11 @@ import {
   isStandaloneWeb,
   REQUIRED_BRIDGE_VERSION,
   requestMicPermission,
+  shareResult,
   startRetest,
   startVoiceItem,
   type AccenturyBridge,
+  type SharePayload,
   type VoiceItemStart,
 } from './bridge'
 import type { ItemResult } from './itemResult'
@@ -39,6 +41,12 @@ const voiceStart: VoiceItemStart = {
   maxDurationMs: 15_000,
   // 무성 구간 null 포함 — JSON.stringify가 null을 그대로 실어 보내는지도 이 픽스처가 덮는다 (KAN-102)
   guideF0: { unit: 'semitone', frameIntervalMs: 10, values: [0.5, null, -1.2] },
+}
+
+const sharePayload: SharePayload = {
+  imageUrl: 'https://static.accentury.app/tier/honorary.png',
+  text: '나는 명예주민! 너도 시도해볼래?',
+  webTestUrl: 'https://accentury.app/t?c=kko_share',
 }
 
 const itemResult: ItemResult = {
@@ -212,6 +220,38 @@ describe('startRetest — 재응시 요청 (KAN-34)', () => {
     window.AccenturyBridge = fakeBridge() // startRetest 없음
 
     expect(startRetest()).toBe(false)
+  })
+})
+
+describe('shareResult — 공유 요청 (KAN-30)', () => {
+  it('브리지가 있으면 payload를 JSON으로 직렬화해 넘기고 true를 돌려준다', () => {
+    const fn = vi.fn()
+    window.AccenturyBridge = fakeBridge({ shareResult: fn })
+
+    expect(shareResult(sharePayload)).toBe(true)
+    expect(fn).toHaveBeenCalledTimes(1)
+    // @JavascriptInterface는 문자열만 건넌다 — 객체를 그대로 주면 네이티브에서 [object Object]가 된다.
+    expect(fn).toHaveBeenCalledWith(JSON.stringify(sharePayload))
+  })
+
+  it('payload에 점수·세션은 실리지 않는다 — 수신자는 자기 테스트를 새로 응시한다', () => {
+    const fn = vi.fn()
+    window.AccenturyBridge = fakeBridge({ shareResult: fn })
+
+    shareResult(sharePayload)
+
+    const [payloadJson] = fn.mock.calls[0] as [string]
+    expect(Object.keys(JSON.parse(payloadJson) as object)).toEqual(['imageUrl', 'text', 'webTestUrl'])
+  })
+
+  it('브리지가 없으면(브라우저 단독 실행) 크래시 없이 false를 돌려준다', () => {
+    expect(shareResult(sharePayload)).toBe(false)
+  })
+
+  it('메서드만 없는 구버전 앱에서도 false다 (메서드 추가는 버전을 올리지 않는다)', () => {
+    window.AccenturyBridge = fakeBridge() // shareResult 없음
+
+    expect(shareResult(sharePayload)).toBe(false)
   })
 })
 

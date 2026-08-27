@@ -134,9 +134,12 @@ export async function fetchResult(
  * 오면 공유 버튼을 누르는 순간 TypeError가 나는 상태가 됐다 (Codex 교차 검증, 2026-08-22).
  * 버전 꼬리표도 검증 없이 그려서 `undefined · undefined`가 화면에 나갈 수 있었다.
  *
+ * `share.imageUrl`이 그 절차를 그대로 밟은 예다. KAN-29까지는 아무도 읽지 않아 빼 뒀는데,
+ * 공유 카드 결선(KAN-30)이 브리지 payload에 그 값을 실으면서 소비 필드가 됐다 — 빠지면
+ * 네이티브가 이미지 없는 카드를 그리거나 URL 자리에 `undefined`를 문자열로 받는다.
+ *
  * 반대로 아무도 읽지 않는 필드는 계속 보지 않는다 — `status`(READY 하나뿐이라 분기가 없다),
- * `expiresAt`(만료 판정은 서버의 410이지 클라이언트의 시계가 아니다), `share.imageUrl`
- * (KAN-30이 공유 카드를 만들 때 처음 읽는다 — 그 티켓이 자기 소비 필드를 여기 더한다).
+ * `expiresAt`(만료 판정은 서버의 410이지 클라이언트의 시계가 아니다).
  *
  * 서버가 이 필드들을 항상 채운다는 것은 안다(TierAssets가 기동 시 강제한다). 여기서 막는
  * 것은 서버 버그가 아니라 배포 스큐다 — 계약이 바뀐 서버에 옛 웹이 붙는 경우가 실제 경로다.
@@ -148,8 +151,8 @@ function isResultShape(value: unknown): value is TestResultView {
   if (!isNumberRecord(scores, ['intonation', 'vocabulary', 'overall'])) return false
   // rank·of는 "5개 등급 중 4번째" 표기가 읽는다. 빠지면 그 자리에 undefined가 나간다.
   if (!isStringRecord(tier, ['code', 'name']) || !isNumberRecord(tier, ['rank', 'of'])) return false
-  // text·webTestUrl은 공유 결선(App.shareResult)이 구조 분해로 읽는다.
-  if (!isStringRecord(share, ['text', 'webTestUrl'])) return false
+  // 셋 다 공유 결선(`share/shareResult`)이 브리지 payload로 옮겨 담는다 (KAN-30).
+  if (!isStringRecord(share, ['imageUrl', 'text', 'webTestUrl'])) return false
 
   return typeof comment === 'string' && typeof testVersion === 'string' && typeof scoreVersion === 'string'
 }

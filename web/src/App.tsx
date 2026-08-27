@@ -9,8 +9,8 @@ import { buildIntroUrl, buildResultUrl, buildTestUrl } from './navigation/entryU
 import { TestFlowScreen } from './progress/TestFlowScreen'
 import { ResultScreen } from './result/ResultScreen'
 import { useRetest } from './result/useRetest'
-import type { TestResultView } from './result/testResult'
 import { readCampaignToken, sanitizeCampaignToken } from './session/campaign'
+import { shareResult } from './share/shareResult'
 import { VoiceCheckScreen } from './voicecheck/VoiceCheckScreen'
 import {
   createWebSession,
@@ -379,7 +379,15 @@ function ResultRoute({
        * 제출 때마다 다시 읽을 필요가 없다.
        */
       sessionToken={standalone ? getWebSessionToken() : (getSessionToken() ?? '')}
-      onShare={shareResult}
+      /*
+       * [친구에게 공유하기] (KAN-30 1단계). 통로 선택은 `share/shareResult`가 소유한다 —
+       * 앱 안이면 브리지, 브라우저면 공유 시트, 둘 다 없으면 링크 복사다.
+       *
+       * 반환된 채널은 지금 버린다. 3단계에서 `share_clicked`의 파라미터로 [track]에 물린다.
+       */
+      onShare={(result) => {
+        shareResult(result.share)
+      }}
       retest={retest}
       storePlatform={storePlatform}
       /*
@@ -401,38 +409,6 @@ function ResultRoute({
       }
     />
   )
-}
-
-/**
- * [친구에게 공유하기] — 지금 웹이 혼자 할 수 있는 만큼만 한다.
- *
- * **완성은 KAN-30이다.** 카카오 피드 템플릿(v2) 공유가 정식 경로이고, 이 함수는 그때
- * 카카오 SDK 호출로 교체된다. 그 전까지 비워 두지 않는 이유는 버튼이 이미 화면에 있기
- * 때문이다 — 눌러도 아무 일이 없는 버튼보다, 되는 환경에서 실제로 되는 편이 낫다.
- *
- * `navigator.share`는 **보안 컨텍스트(HTTPS)에서만** 존재한다. 개발 WebView가 로드하는
- * `http://10.0.2.2:5173`에는 없다 — `crypto.randomUUID`가 같은 이유로 없었던 것과 같은
- * 상황이다(2026-08-18 에뮬레이터 실증). 그래서 없을 때를 정상 경로로 다룬다.
- *
- * 공유 payload에 점수를 싣지 않는다 (KAN-30 요구). 등급별 문구와 캠페인 URL은 서버가 준
- * 값 그대로다 — 수신자는 남의 결과를 보는 게 아니라 자기 테스트를 새로 응시한다.
- */
-function shareResult(result: TestResultView): void {
-  const { text, webTestUrl } = result.share
-
-  if (typeof navigator.share === 'function') {
-    // 취소는 실패가 아니다 — 사용자가 공유 시트를 닫으면 reject가 오는데, 그걸 오류로
-    // 다루면 정상 행동에 오류 로그가 쌓인다. 결과 화면은 그대로 두는 것이 맞다 (KAN-30 AC).
-    navigator.share({ text, url: webTestUrl }).catch(() => {})
-    return
-  }
-
-  // 공유 시트가 없는 환경(개발 http, 구형 WebView). 사용자에게 알릴 길이 이 화면에 아직
-  // 없으므로 진단만 남긴다 — 안내 문구와 폴백 UI는 KAN-30이 자기 화면 요구와 함께 정한다.
-  console.warn('[share] navigator.share가 없는 환경입니다 (KAN-30 카카오 공유 결선 전)', {
-    text,
-    webTestUrl,
-  })
 }
 
 /**
