@@ -67,10 +67,12 @@ describe('점수 표시', () => {
     // 종합 99는 (78 × 2 + 60) / 3 = 72와 다르다. 화면이 식을 다시 돌렸다면 72가 보인다.
     renderScreen({ fetchImpl: jsonFetch(200, readyBody({ scores: { intonation: 78, vocabulary: 60, overall: 99 } })) })
 
-    expect(await screen.findByText('99')).toBeInTheDocument()
-    expect(screen.getByText('78')).toBeInTheDocument()
-    expect(screen.getByText('60')).toBeInTheDocument()
-    expect(screen.queryByText('72')).not.toBeInTheDocument()
+    // 도넛 가운데는 이제 한 줄 `99점`이다 (KAN-161 3단계) — '종합 점수' 캡션은 화면에서
+    // 빠지고 스크린 리더에만 남는다
+    expect(await screen.findByText('99점')).toBeInTheDocument()
+    expect(screen.getByText('78점')).toBeInTheDocument()
+    expect(screen.getByText('60점')).toBeInTheDocument()
+    expect(screen.queryByText('72점')).not.toBeInTheDocument()
   })
 
   it('억양과 단어가 한 화면에 같은 형식으로 나온다 (AC 2항)', async () => {
@@ -95,8 +97,8 @@ describe('점수 표시', () => {
 
     expect(await screen.findByRole('progressbar', { name: '억양 점수' })).toHaveValue(100)
     expect(screen.getByRole('progressbar', { name: '단어 점수' })).toHaveValue(0)
-    expect(screen.getByText('140')).toBeInTheDocument()
-    expect(screen.getByText('-10')).toBeInTheDocument()
+    expect(screen.getByText('140점')).toBeInTheDocument()
+    expect(screen.getByText('-10점')).toBeInTheDocument()
   })
 
   it('발음·리듬 점수와 백분위는 없다 — MVP 범위 제외다', async () => {

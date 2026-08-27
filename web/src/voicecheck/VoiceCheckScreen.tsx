@@ -183,7 +183,9 @@ export function VoiceCheckScreen({ onDone, startFailure = null, capture, now }: 
 
       {/* 문항 화면과 같은 카드다 — 여기서 말한 방식 그대로 문항에서도 말하면 된다는 뜻이 된다 */}
       <div className="prompt-card">
-        <span className="type-caption prompt-card__badge">🎤 목소리 점검</span>
+        {/* 이모지(🎤)를 뗐다 (KAN-161 3단계) — 문항 카드의 유형 배지와 같은 규칙이다.
+            이모지는 시스템이 자기 색으로 그려 잉크 한 색 화면에 유일한 색조로 남는다 */}
+        <span className="type-caption prompt-card__badge">목소리 점검</span>
         <p className="type-headline">안녕하세요</p>
       </div>
 

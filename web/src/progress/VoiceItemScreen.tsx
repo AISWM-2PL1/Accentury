@@ -18,7 +18,7 @@ import type { UploadAccepted } from '../audio/uploadRecording'
 import { startVoiceItem } from '../bridge/bridge'
 import type { ItemResult } from '../bridge/itemResult'
 import { Button, StatusBlock } from '../ui'
-import { TYPE_BADGE } from './itemBadge'
+import { itemCaption } from './itemBadge'
 import type { VoiceItem } from './testDefinition'
 import { WebVoiceRecorder } from './WebVoiceRecorder'
 
@@ -100,9 +100,16 @@ export function VoiceItemScreen({
         type-headline(26px)은 ux-ui.md §5의 "대사 카드 24sp 이상"을 지키는 크기다.
       */}
       <div className="prompt-card">
-        <span className="type-caption prompt-card__badge">{TYPE_BADGE.VOICE}</span>
+        {/*
+          "3 / 10 · 이 문장을 읽어주세요" (KAN-161 3단계, 아트보드 `Voice.dc.html`).
+          카드 아래 따로 있던 지시문("이 문장을 따라 읽어주세요")이 이 한 줄로 합쳐졌다 —
+          같은 말을 카드 위아래에서 두 번 하고 있었고, 아래 줄이 대사와 곡선 사이를 갈라
+          "읽을 문장"과 "그 문장의 억양"이 한 덩어리로 보이지 않았다.
+        */}
+        <span className="type-caption prompt-card__badge">
+          {itemCaption('VOICE', itemNumber, totalItems)}
+        </span>
         <h1 className="type-headline">{item.prompt}</h1>
-        <p className="type-label prompt-card__sub">이 문장을 따라 읽어주세요</p>
       </div>
       {bridgeAccepted === false ? (
         /*

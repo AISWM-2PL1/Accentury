@@ -26,6 +26,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { storeLabelFor, storeUrlFor, type StorePlatform } from '../audio/storeLink'
 import type { FetchLike } from '../progress/fetchTestDefinition'
 import { Button, StatusBlock, type ButtonVariant } from '../ui'
+import { ShareIcon } from '../ui/icons'
+import { ResultHero } from '../ui/illustrations/ResultHero'
 import { fetchResult, ResultFetchError } from './fetchResult'
 import type { RetestControl } from './useRetest'
 import type { TestResultView } from './testResult'
@@ -175,10 +177,22 @@ export function ResultScreen({
   return (
     <main className="screen">
       <div className="screen__body">
-        <ScoreDonut score={scores.overall} />
+        {/*
+          깃발을 꽂은 사람. 등급이 무엇이든 같은 그림이다 — 등급별로 바꾸면 낮은 등급에
+          "졌다"는 그림을 주게 되는데, 이 테스트는 유사도를 재는 것이지 잘잘못을 가리는 것이
+          아니다 (KAN-29).
+        */}
+        <div className="illustration illustration--result">
+          <ResultHero />
+        </div>
 
         <div>
-          <h1 className="type-headline">{tier.name}</h1>
+          {/*
+            등급 이름이 이 화면에서 가장 큰 글자다 (KAN-161 3단계, 아트보드 `Result.dc.html`).
+            예전에는 종합 점수 도넛이 제일 컸는데, 사용자가 공유하고 기억하는 것은 숫자가
+            아니라 "명예주민"이라는 이름이다 — 점수는 그 이름의 근거로 아래 카드에 든다.
+          */}
+          <h1 className="type-display">{tier.name}</h1>
           {/* 서열은 순위로만 적는다 — 레벨업으로 읽히는 표기를 쓰지 않는다 */}
           <p className="type-caption result-tier__rank">
             {tier.of}개 등급 중 {tier.rank}번째
@@ -186,10 +200,18 @@ export function ResultScreen({
           <p className="type-body-sm result-tier__comment">{result.comment}</p>
         </div>
 
-        {/* 억양과 단어를 같은 형식으로, 같은 크기로 (AC 2항) */}
-        <div className="card result-scores">
-          <ScoreRow label="억양" score={scores.intonation} />
-          <ScoreRow label="단어" score={scores.vocabulary} />
+        {/*
+          점수 카드 — 왼쪽에 종합, 오른쪽에 내역. 억양과 단어는 그 안에서 같은 형식·같은
+          크기다 (AC 2항). 도넛을 카드 안으로 들인 것이 3단계의 변화다: 화면 위에 따로 떠
+          있을 때는 종합 점수와 두 세부 점수가 서로 다른 두 가지처럼 보였는데, 실제로는
+          한쪽이 다른 쪽의 가중 평균이라 한 상자에 있는 편이 관계를 말한다.
+        */}
+        <div className="card result-card">
+          <ScoreDonut score={scores.overall} />
+          <div className="result-scores">
+            <ScoreRow label="억양" score={scores.intonation} />
+            <ScoreRow label="단어" score={scores.vocabulary} />
+          </div>
         </div>
 
         {/*
@@ -215,10 +237,20 @@ export function ResultScreen({
           onClick={() => onShare(result)}
           style={{ width: '100%' }}
         >
-          친구에게 공유하기
+          {/* 아이콘이 라벨 앞에 선다 (아트보드). `.btn`의 gap 8이 사이를 잡고, 아이콘은
+              `currentColor`라 주버튼에서는 크림, 보조로 내려가면 잉크로 그려진다 */}
+          <ShareIcon />
+          <span>친구에게 공유하기</span>
         </Button>
-        {/* 학습 시작이 아니라 다시 테스트다 — 이 화면에서 나가는 길은 공유와 재응시뿐이다 */}
-        <RetestAction retest={retest} variant="text" />
+        {/*
+          학습 시작이 아니라 다시 테스트다 — 이 화면에서 나가는 길은 공유와 재응시뿐이다.
+
+          글자만 있던 버튼을 보조 버튼으로 올렸다 (KAN-161 3단계, 시안 v3). 글자 버튼은
+          눌리는 것인지가 모양으로 드러나지 않는데, 이 자리는 결과를 다 본 사람이 실제로
+          누르는 두 번째 출구다 — 테두리 1.5px 하나가 그 어포던스를 준다. 그림자는 여전히
+          주 버튼만 갖는다 (정본 §8: 떠 있는 종이가 둘이면 어느 쪽을 눌러야 할지 흐려진다).
+        */}
+        <RetestAction retest={retest} variant="secondary" />
       </div>
     </main>
   )
@@ -341,8 +373,16 @@ function ScoreDonut({ score }: { score: number }) {
         />
       </svg>
       <div className="score-donut__label">
-        <span className="type-display score-donut__score">{score}</span>
-        <span className="type-caption score-donut__unit">종합 점수</span>
+        {/*
+          "종합 점수" 캡션을 눈에서만 지웠다 (KAN-161 3단계, 아트보드). 96px 원 안에 두 줄이
+          들어가면 숫자가 캡션만 해지고, 옆 칸에 "억양"·"단어"가 이미 이름표를 달고 서 있어
+          왼쪽 큰 숫자가 무엇인지는 배치로 읽힌다.
+
+          소리로는 그 배치가 없다. 그래서 지운 것은 화면에서뿐이고 스크린 리더에는 남긴다 —
+          없으면 "74점"이 무엇의 74점인지 말해 주는 것이 아무것도 없다.
+        */}
+        <span className="sr-only">종합 점수</span>
+        <span className="type-headline score-donut__score">{score}점</span>
       </div>
     </div>
   )
@@ -359,8 +399,10 @@ function ScoreRow({ label, score }: { label: string; score: number }) {
   return (
     <div className="score-row">
       <div className="score-row__head">
-        <span className="type-body score-row__label">{label}</span>
-        <span className="type-title score-row__value">{score}</span>
+        <span className="type-label score-row__label">{label}</span>
+        {/* 점수는 Jua로, 라벨보다 한 급 크게 (아트보드). 카드 안 오른쪽 칸이 좁아 예전 크기
+            (title 30)로는 "억양"과 "78점"이 한 줄에 들어가지 않는다 */}
+        <span className="type-title-sm score-row__value">{score}점</span>
       </div>
       <progress
         className="score-row__bar"

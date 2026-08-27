@@ -3,6 +3,7 @@ import { requestMicrophonePermission, type MicPermission } from '../audio/microp
 import { detectStorePlatform } from '../audio/storeLink'
 import { requestMicPermission } from '../bridge/bridge'
 import { Button } from '../ui'
+import { IntroHero } from '../ui/illustrations/IntroHero'
 import {
   ESTIMATED_MINUTES,
   START_FAILED_MESSAGE,
@@ -39,9 +40,9 @@ export interface IntroScreenProps {
  * 권한이 없으면 테스트를 시작할 수 없다(API 명세서 §5.6) — 그래서 실패는 안내 화면으로
  * 갈아치운다. 인트로에 오류 문구만 붙이면 [시작하기]가 계속 눌리는 버튼으로 남는다.
  *
- * 배치는 시안(`prototype/src/app/App.tsx` LevelIntroScreen)을 따른다 — 히어로 아이콘,
- * 카피, 숫자 카드, 바닥의 주버튼. 문항 수·시간은 `introText.ts`의 상수가 정본이라
- * KAN-10 연동 때 서버 값으로 바꾸면 화면은 그대로 따라간다.
+ * 배치는 Papercut 아트보드(`Main.dc.html`)를 따른다 — 확성기 일러스트, 제목·부제, 숫자 카드,
+ * 바닥의 주버튼. 문항 수·시간은 `introText.ts`의 상수가 정본이라 KAN-10 연동 때 서버 값으로
+ * 바꾸면 화면은 그대로 따라간다.
  */
 export function IntroScreen({
   onWebStart = warnWebStartUnwired,
@@ -107,19 +108,18 @@ export function IntroScreen({
   return (
     <main className="screen">
       <div className="screen__body">
-        <div className="hero-icon">
-          🎯
-          <span className="hero-icon__spark hero-icon__spark--tr" aria-hidden="true">
-            ⭐
-          </span>
-          <span className="hero-icon__spark hero-icon__spark--bl" aria-hidden="true">
-            ✨
-          </span>
+        {/*
+          이모지 히어로(🎯⭐✨)를 오려 낸 종이 일러스트로 갈았다 (KAN-161 3단계). 이모지는
+          시스템이 자기 색으로 그려서 잉크 한 색 화면에 유일한 색조로 남았고, 기기마다 다른
+          그림이 나왔다 — 그림을 우리가 그리면 둘 다 사라진다.
+        */}
+        <div className="illustration illustration--intro">
+          <IntroHero />
         </div>
 
-        <div>
-          <h1 className="type-headline">사투리 억양 테스트</h1>
-          <p className="type-body-sm" style={{ color: 'var(--color-muted-foreground)', marginTop: 'var(--space-2)' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+          <h1 className="type-title">사투리 억양 테스트</h1>
+          <p className="type-body-sm" style={{ color: 'var(--color-muted-foreground)' }}>
             짧은 테스트로 내 억양이
             <br />
             얼마나 사투리인지 알아봐요.
@@ -129,25 +129,19 @@ export function IntroScreen({
         {/*
           숫자를 문장에 섞지 않고 칸으로 세운다 - 인트로에서 사용자가 실제로 재는 건
           "얼마나 걸리나"와 "몇 개나 하나" 둘뿐이라, 그 둘만 크게 보이는 편이 낫다.
+
+          "총 문제"·"예상 시간" 라벨을 뗐다 (아트보드). `10문항`과 `~3분`은 그 자체로 무엇인지
+          말하는 값이라, 라벨을 붙이면 카드 한 장에 글자 줄이 넷이 되어 숫자가 묻힌다.
         */}
         <div className="card">
           <div className="card__stats">
-            <div className="card__stat">
-              <p className="type-title card__stat-value">{totalItems}문항</p>
-              <p className="type-caption card__stat-label">총 문제</p>
-            </div>
-            <div className="card__stat">
-              <p className="type-title card__stat-value">~{ESTIMATED_MINUTES}분</p>
-              <p className="type-caption card__stat-label">예상 시간</p>
-            </div>
+            <p className="type-headline card__stat card__stat-value">{totalItems}문항</p>
+            <p className="type-headline card__stat card__stat-value">~{ESTIMATED_MINUTES}분</p>
           </div>
-          <div className="card__footnote type-label">
-            <span>🎤 음성 {VOICE_ITEM_COUNT}문항</span>
-            <span className="card__footnote-divider" aria-hidden="true">
-              |
-            </span>
-            <span>📝 단어 {VOCABULARY_ITEM_COUNT}문항</span>
-          </div>
+          {/* 문항 구성. 이모지(🎤📝)를 뺀 이유는 위 일러스트와 같다 */}
+          <p className="type-label card__footnote">
+            음성 {VOICE_ITEM_COUNT} · 단어 {VOCABULARY_ITEM_COUNT}
+          </p>
         </div>
       </div>
 
@@ -161,12 +155,14 @@ export function IntroScreen({
             {startFailure}
           </p>
         )}
+        {/*
+          아래 캡션("언제든지 다시 테스트할 수 있어요")을 걷었다 (아트보드). 재응시가 가능한
+          것은 결과 화면에서 [다시 테스트하기]로 말하면 되고, 시작하기 전에 미리 말하면
+          하단이 두 줄이 되어 주 버튼 하나만 남기는 시안의 배치가 흐려진다.
+        */}
         <Button onClick={handleStart} disabled={requesting} style={{ width: '100%' }}>
           {requesting ? '마이크 확인 중…' : '시작하기'}
         </Button>
-        <p className="type-caption" style={{ color: 'var(--color-muted-foreground)' }}>
-          언제든지 다시 테스트할 수 있어요
-        </p>
       </div>
     </main>
   )

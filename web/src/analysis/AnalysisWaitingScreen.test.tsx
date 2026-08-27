@@ -106,7 +106,7 @@ describe('진행률 — 분모는 10이다', () => {
     expect(bar).toHaveAttribute('aria-valuemax', '10')
     // 어휘 5 + 음성 완료 2
     expect(bar).toHaveAttribute('aria-valuenow', '7')
-    expect(screen.getByText('7 / 10')).toBeInTheDocument()
+    expect(screen.getByText('분석 중 7 / 10')).toBeInTheDocument()
   })
 
   it('음성이 전부 실패해도 분모는 10을 유지한다 — 시도 수와 무관하다', async () => {
@@ -117,6 +117,85 @@ describe('진행률 — 분모는 10이다', () => {
     const bar = screen.getByRole('progressbar', { name: '분석 진행률' })
     expect(bar).toHaveAttribute('aria-valuemax', '10')
     expect(bar).toHaveAttribute('aria-valuenow', '5')
+  })
+})
+
+/*
+ * 정상(기다리는 중) 분기의 마크업. 아트보드 ④의 세 칸이 폴링 상태를 따라 움직이는지 본다 —
+ * 매핑 자체는 `analysisStage.test.ts`가 순수 함수로 고정하고, 여기서는 그 번호가 실제로
+ * 동그라미 셋의 `data-state`로 나오는지, 즉 함수와 화면이 이어져 있는지를 확인한다.
+ *
+ * 색이 아니라 `data-state`를 보는 이유는 정본 §7이다: 완료·현재·미완료를 색으로 가르지
+ * 않기로 했으므로 테스트도 색을 볼 수 없다.
+ */
+function stepStates(container: HTMLElement): string[] {
+  return [...container.querySelectorAll('.analysis-step')].map(
+    (step) => step.getAttribute('data-state') ?? '',
+  )
+}
+
+describe('3단계 표시 — 폴링 상태에서 파생한다 (KAN-161 3단계)', () => {
+  it('음성 분석이 남았으면 1단계(곡선 추출)가 진행 중이다', async () => {
+    const { container } = await renderScreen({
+      fetchImpl: fetchFor({
+        analyses: () =>
+          jsonResponse(200, statusesBody(['COMPLETED', 'COMPLETED', 'PROCESSING', 'PROCESSING', 'PROCESSING'])),
+      }),
+    })
+
+    expect(stepStates(container)).toEqual(['current', 'todo', 'todo'])
+    expect(screen.getByText('곡선 추출')).toBeInTheDocument()
+    expect(screen.getByText('분포 비교')).toBeInTheDocument()
+    expect(screen.getByText('등급 계산')).toBeInTheDocument()
+  })
+
+  it('음성이 전부 끝나고 결과를 기다리면 2단계(분포 비교)로 넘어간다', async () => {
+    const { container } = await renderScreen({
+      fetchImpl: fetchFor({ analyses: () => jsonResponse(200, statusesBody(Array(5).fill('COMPLETED'))) }),
+    })
+
+    expect(stepStates(container)).toEqual(['done', 'current', 'todo'])
+  })
+
+  it('READY면 3단계(등급 계산)까지 온다', async () => {
+    const { container } = await renderScreen({
+      fetchImpl: fetchFor({
+        analyses: () => jsonResponse(200, statusesBody(Array(5).fill('COMPLETED'))),
+        complete: () => jsonResponse(200, { status: 'READY' }),
+      }),
+    })
+
+    expect(stepStates(container)).toEqual(['done', 'done', 'current'])
+  })
+
+  it('재녹음이 필요한 분기에는 그림도 단계도 그리지 않는다 — 자리를 안내가 갖는다', async () => {
+    const { container } = await renderScreen({
+      onRetake: vi.fn(),
+      fetchImpl: fetchFor({
+        analyses: () => jsonResponse(200, statusesBody(Array(5).fill('RETRYABLE_FAILED'))),
+        complete: () =>
+          jsonResponse(409, envelope('RESULT_RETAKE_REQUIRED', '실패한 문항이 있습니다.', true, {
+            retakeItems: ['v1'],
+          })),
+      }),
+    })
+
+    expect(stepStates(container)).toEqual([])
+    expect(screen.getByText('일부 문항을 다시 녹음해야 해요')).toBeInTheDocument()
+    // 막대는 어느 분기에서든 상단에 남는다 — 본문만 갈린다
+    expect(screen.getByRole('progressbar', { name: '분석 진행률' })).toBeInTheDocument()
+  })
+
+  it('본문 상자가 진행 막대를 가운데 정렬에서 떼어 놓는다', async () => {
+    // 상단 고정의 근거가 이 상자 하나다 (.analysis-body가 flex:1로 남는 높이를 전부 가져간다).
+    // 상자가 사라지면 `.screen`의 justify-content:center가 막대까지 화면 한가운데로 내린다.
+    const { container } = await renderScreen()
+
+    const body = container.querySelector('.analysis-body')
+    expect(body).not.toBeNull()
+    expect(body).toHaveClass('analysis-body--centered')
+    // 막대는 그 상자 **밖**에 있어야 위에 남는다
+    expect(body?.querySelector('.analysis-progress')).toBeNull()
   })
 })
 

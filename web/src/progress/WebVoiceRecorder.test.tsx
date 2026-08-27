@@ -89,7 +89,8 @@ describe('녹음 단계 (§5.7)', () => {
     })
 
     // 상한은 문항 정의에서 온다 (10초). 경과는 담긴 샘플 수에서 계산된 값이다
-    expect(screen.getByText('2.0초 / 10초')).toBeInTheDocument()
+    // 시계꼴 표기 `00:02` (KAN-161 3단계, 아트보드) — 같은 줄에 '초'가 두 번 나오지 않게 한다
+    expect(screen.getByText('00:02 / 10초')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '정지' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '녹음' })).not.toBeInTheDocument()
   })
