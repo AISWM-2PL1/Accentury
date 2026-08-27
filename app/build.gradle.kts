@@ -42,6 +42,24 @@ fun kakaoNativeAppKey(): String {
     return props.getProperty("kakaoNativeAppKey") ?: ""
 }
 
+/**
+ * 디버그 빌드가 열 웹·API 출처 오버라이드 (실기기 확인용, KAN-30). `-PwebUrl=` → local.properties의
+ * `webUrl=` 순. 없으면 에뮬레이터 기본값(10.0.2.2)으로 두 값이 각각 갈린다.
+ *
+ * 실기기는 10.0.2.2를 모른다. 대신 `cloudflared tunnel --url http://localhost:5173`의 HTTPS 주소를
+ * 여기에 주면 WebView가 그 주소를 열고, 네이티브의 세션·업로드 호출도 **같은 출처**로 나간다 -
+ * Vite dev 서버가 `/v0`를 8080으로 프록시하므로(web/vite.config.ts) 배포와 같은 단일 출처 구성이다
+ * (webview-layer.md §12.7). 예: `./gradlew :app:installDebug -PwebUrl=https://xxx.trycloudflare.com`
+ */
+fun debugWebUrlOverride(): String? {
+    (project.findProperty("webUrl") as String?)?.takeIf { it.isNotBlank() }?.let { return it.trimEnd('/') }
+    val local = rootProject.file("local.properties")
+    if (!local.exists()) return null
+    val props = Properties()
+    local.inputStream().use { props.load(it) }
+    return props.getProperty("webUrl")?.takeIf { it.isNotBlank() }?.trimEnd('/')
+}
+
 android {
     namespace = "com.accentury.app"
     compileSdk {
@@ -63,6 +81,9 @@ android {
         // staging(staging.accentury.app)을 보는 앱 빌드는 아직 없다 - 필요해지면 빌드 타입이나
         // 플레이버로 추가한다.
         buildConfigField("String", "WEB_URL", "\"https://accentury.app\"")
+        // 네이티브(세션·업로드)의 API 출처. 화면과 API가 같은 CloudFront 출처라(KAN-126) WEB_URL과
+        // 같은 값이다. debug는 아래에서 에뮬레이터 주소로 덮는다.
+        buildConfigField("String", "API_BASE_URL", "\"https://accentury.app\"")
 
         // 결과 공유의 카카오 경로 스위치 (KAN-30). debug/release가 같은 값을 쓰므로 여기 둔다 -
         // 카카오 앱 키는 빌드 타입이 아니라 "주입됐는가"로 갈리는 값이다 (kakaoNativeAppKey 주석).
@@ -73,7 +94,10 @@ android {
         debug {
             // 에뮬레이터에서 호스트의 Vite dev 서버를 가리킨다 (web/에서 npm run dev).
             // 10.0.2.2 평문 허용은 network_security_config.xml에 이미 있다.
-            buildConfigField("String", "WEB_URL", "\"http://10.0.2.2:5173\"")
+            // 실기기 확인은 debugWebUrlOverride()로 HTTPS 터널 주소를 주면 웹·API가 같은 출처로 간다.
+            val override = debugWebUrlOverride()
+            buildConfigField("String", "WEB_URL", "\"${override ?: "http://10.0.2.2:5173"}\"")
+            buildConfigField("String", "API_BASE_URL", "\"${override ?: "http://10.0.2.2:8080"}\"")
             // 에뮬레이터 마이크가 무음만 주는 환경에서 assets의 WAV를 마이크 대신 끼운다.
             // 예: ./gradlew :app:installDebug -PfakeMic=fake_mic.wav (audio/PcmSources.kt).
             // Android Studio Run은 프로퍼티를 못 받으므로 local.properties의 fakeMic=도 읽는다.
