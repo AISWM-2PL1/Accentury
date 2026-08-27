@@ -65,6 +65,11 @@ variable "ssm_prefix" {
   }
 }
 
+variable "ci_image_push" {
+  type        = bool
+  description = "배포 역할의 ECR push 권한 (KAN-128 승격 모델). staging true, prod false - prod 이미지는 언제나 staging을 거친 SHA다."
+}
+
 variable "db_deletion_protection" {
   type        = bool
   description = "RDS 삭제 보호 (prod true)"

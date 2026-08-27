@@ -16,6 +16,9 @@ db_instance_class = "db.t4g.micro"
 
 ssm_prefix = "/accentury/staging"
 
+# 이미지는 staging 파이프라인만 만든다 (KAN-128 승격 모델). prod는 그 SHA를 고르기만 한다.
+ci_image_push = true
+
 # staging은 부수고 다시 짓는 환경이다. 삭제 보호 없이, 최종 스냅샷도 남기지 않는다.
 db_deletion_protection = false
 db_skip_final_snapshot = true
