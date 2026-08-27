@@ -577,11 +577,48 @@ describe('App — 결과 화면 진입 쿼리 (KAN-29)', () => {
     return startRetest
   }
 
+  /** 공유까지 아는 브리지 대역 (KAN-30 2단계 결선 후의 앱) */
+  function stubBridgeWithShare(): ReturnType<typeof vi.fn> {
+    const shareResult = vi.fn()
+    window.AccenturyBridge = {
+      requestMicPermission: vi.fn(),
+      startVoiceItem: vi.fn(),
+      getContractVersion: () => 1,
+      getSessionToken: () => 'token-1',
+      shareResult,
+    }
+    return shareResult
+  }
+
   /** `navigator.share`는 jsdom에 없다. 정의했다가 되돌리는 자리를 한 곳에 모은다 */
   function withNavigatorShare(share: (data: ShareData) => Promise<void>): () => void {
     Object.defineProperty(navigator, 'share', { configurable: true, writable: true, value: share })
     return () => {
       delete (navigator as { share?: unknown }).share
+    }
+  }
+
+  /** `navigator.clipboard`·`window.alert`도 jsdom에 없다 — 복사 폴백을 보려면 둘 다 필요하다 */
+  function withClipboardAndAlert(): {
+    writeText: ReturnType<typeof vi.fn>
+    alert: ReturnType<typeof vi.fn>
+    restore: () => void
+  } {
+    const writeText = vi.fn(async () => {})
+    const alert = vi.fn()
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      writable: true,
+      value: { writeText },
+    })
+    Object.defineProperty(window, 'alert', { configurable: true, writable: true, value: alert })
+    return {
+      writeText,
+      alert,
+      restore: () => {
+        delete (navigator as { clipboard?: unknown }).clipboard
+        delete (window as { alert?: unknown }).alert
+      },
     }
   }
 
@@ -624,7 +661,11 @@ describe('App — 결과 화면 진입 쿼리 (KAN-29)', () => {
     consoleError.mockRestore()
   })
 
-  it('[친구에게 공유하기]는 점수 없이 등급 문구와 캠페인 URL만 넘긴다', async () => {
+  /*
+   * `stubBridgeWithToken`에는 `shareResult`가 없다 — 메서드 추가는 계약 버전을 올리지 않으므로(§5)
+   * 이 조합(토큰은 주는데 공유는 모르는 앱)이 실재하고, 그때는 웹의 공유 시트로 내려가야 한다.
+   */
+  it('공유를 모르는 구버전 앱에서는 navigator.share로 내려가 점수 없이 문구와 URL만 넘긴다', async () => {
     setSearch(RESULT_SEARCH)
     stubBridgeWithToken()
     stubResultFetch()
@@ -643,18 +684,42 @@ describe('App — 결과 화면 진입 쿼리 (KAN-29)', () => {
     restore()
   })
 
-  it('공유 시트가 없는 환경(개발 http)에서도 화면이 깨지지 않는다', async () => {
+  it('공유를 아는 앱에서는 브리지로 넘기고 공유 시트는 열지 않는다 (KAN-30)', async () => {
     setSearch(RESULT_SEARCH)
-    stubBridgeWithToken()
+    const bridgeShare = stubBridgeWithShare()
     stubResultFetch()
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const systemShare = vi.fn(async () => {})
+    const restore = withNavigatorShare(systemShare)
 
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: '친구에게 공유하기' }))
 
-    expect(warn).toHaveBeenCalled()
+    expect(bridgeShare).toHaveBeenCalledTimes(1)
+    expect(systemShare).not.toHaveBeenCalled()
+    // 개인 결과가 공유 payload로 새어 나가지 않는다 (KAN-30 요구)
+    const [payloadJson] = bridgeShare.mock.calls[0] as [string]
+    expect(payloadJson).not.toContain('78')
+    expect(JSON.parse(payloadJson)).toEqual({
+      imageUrl: 'https://static.accentury.app/tier/honorary.png',
+      text: '나는 명예주민! 너도 시도해볼래?',
+      webTestUrl: 'https://accentury.app/t?c=kko_share',
+    })
+    restore()
+  })
+
+  it('공유 시트가 없는 환경(개발 http)에서는 링크를 복사하고 화면은 그대로 둔다', async () => {
+    setSearch(RESULT_SEARCH)
+    stubBridgeWithToken()
+    stubResultFetch()
+    const clipboard = withClipboardAndAlert()
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: '친구에게 공유하기' }))
+
+    expect(clipboard.writeText).toHaveBeenCalledWith('https://accentury.app/t?c=kko_share')
+    await waitFor(() => expect(clipboard.alert).toHaveBeenCalled())
     expect(screen.getByRole('heading', { name: '명예주민' })).toBeInTheDocument()
-    warn.mockRestore()
+    clipboard.restore()
   })
 
   it('[다시 테스트하기]는 브리지가 없으면 폴백으로 화면 지정만 걷고 bridge·app은 남긴다', async () => {

@@ -247,6 +247,10 @@ describe('200인데 본문이 계약과 다른 경우', () => {
     ['share 누락 — 공유 버튼이 구조 분해에서 터진다', { share: undefined }],
     ['share.text 누락', { share: { imageUrl: 'https://img/x.png', webTestUrl: 'https://accentury.app/t' } }],
     ['share.webTestUrl 누락', { share: { imageUrl: 'https://img/x.png', text: '나는 명예주민!' } }],
+    [
+      'share.imageUrl 누락 — 공유 카드가 이미지 없이 나간다 (KAN-30)',
+      { share: { text: '나는 명예주민!', webTestUrl: 'https://accentury.app/t' } },
+    ],
     ['testVersion 누락 — 버전 꼬리표가 undefined가 된다', { testVersion: undefined }],
     ['scoreVersion 누락', { scoreVersion: undefined }],
   ]
@@ -267,11 +271,10 @@ describe('200인데 본문이 계약과 다른 경우', () => {
 
   it('아무도 읽지 않는 필드는 없어도 통과한다 — 계약이 늘 때 고칠 곳을 늘리지 않는다', async () => {
     // status는 READY 하나뿐이라 분기가 없고, expiresAt은 만료 판정이 서버의 410이라 안 읽는다.
-    // share.imageUrl은 KAN-30이 공유 카드를 만들 때 처음 읽는다.
+    // share.imageUrl은 이 목록에서 빠졌다 — KAN-30 공유 카드가 읽기 시작하면서 소비 필드가 됐다.
     const body: Record<string, unknown> = { ...readyBody() }
     delete body.status
     delete body.expiresAt
-    body.share = { text: '나는 명예주민! 너도 시도해볼래?', webTestUrl: 'https://accentury.app/t?c=kko_share' }
 
     const result = await fetchResult(query(), async () => jsonResponse(200, body))
 
