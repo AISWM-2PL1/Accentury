@@ -11,39 +11,39 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.accentury.app.ui.theme.Dimens
 import com.accentury.app.ui.theme.accenturyColors
 
 /**
- * 화면을 여는 원형 아이콘 (KAN-148). 웹의 `.hero-icon`과 같은 규격이다 —
- * 이모지 하나를 파랑 원에 얹고 테두리와 그림자로 띄운다.
+ * 화면을 여는 원형 아이콘 (KAN-148, 형태는 KAN-161 2단계). 웹의 `.hero-icon`과 같은 규격이다 —
+ * 오려 낸 크림 동그라미에 잉크 테두리를 두르고 오프셋 그림자로 띄운다.
  *
- * 아이콘 자산이 아니라 이모지를 쓰는 이유: 시안이 그렇게 잡았고, 화면마다 다른 그림이
- * 필요한데 벡터 자산을 화면 수만큼 들이면 관리 비용이 그림값보다 커진다.
+ * 잉크로 꽉 찬 원이었는데 뒤집었다: 잉크 면은 화면에서 주 버튼과 무게가 같아져 어느 쪽을
+ * 눌러야 하는지가 흐려진다. 아이콘은 누르는 것이 아니다.
+ *
+ * 안에 들어가는 이모지는 아직 시안 이전 상태다 — 시안의 히어로는 손으로 오린 일러스트라
+ * 잉크와 크림 두 색뿐인데, 이모지는 색을 갖고 있어 화면에서 유일한 색조로 남는다.
+ * 일러스트 자산은 화면 이식(KAN-161 3·4단계) 몫이라 여기서는 형태만 맞춘다.
  */
 @Composable
 fun HeroIcon(emoji: String, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.accenturyColors
     Box(
         modifier = modifier
+            .paperCircleShadow(colors.primaryDim)
             .size(Dimens.heroIconSize)
             .clip(CircleShape)
-            .background(
-                Brush.linearGradient(
-                    colors = listOf(colors.heroStart, colors.heroEnd),
-                    start = Offset.Zero,
-                    end = Offset.Infinite,
-                ),
-            )
-            .border(4.dp, MaterialTheme.colorScheme.secondaryContainer, CircleShape),
+            .background(colors.heroStart)
+            .border(HERO_BORDER, MaterialTheme.colorScheme.outlineVariant, CircleShape),
         contentAlignment = Alignment.Center,
     ) {
         Text(emoji, fontSize = HERO_EMOJI_SIZE)
     }
 }
+
+/** 테두리 굵기. 주 CTA와 선택 상태만 2dp, 나머지는 1.5dp다 (시안 규칙) */
+private val HERO_BORDER = 1.5.dp
 
 private val HERO_EMOJI_SIZE = 56.sp

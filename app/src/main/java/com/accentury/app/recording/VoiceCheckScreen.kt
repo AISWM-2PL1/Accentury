@@ -30,13 +30,14 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.accentury.app.audio.AudioQuality
 import com.accentury.app.ui.components.AccenturyButton
 import com.accentury.app.ui.components.CurveLane
+import com.accentury.app.ui.components.CurveLaneGroup
+import com.accentury.app.ui.components.CurveLaneVariant
 import com.accentury.app.ui.components.PromptCard
 import com.accentury.app.ui.components.StatusBlock
 import com.accentury.app.ui.components.StatusTone
 import com.accentury.app.ui.theme.Dimens
 import com.accentury.app.ui.theme.Radius
 import com.accentury.app.ui.theme.Spacing
-import com.accentury.app.ui.theme.accenturyColors
 import kotlin.math.log10
 
 /**
@@ -121,12 +122,14 @@ fun VoiceCheckScreen(
              * 중심이 잠기기 전에는 빈 레인이 정상이다 - 임시 축으로 그려 두면 축이 잠기는 순간
              * 곡선 전체가 한 번 점프한다 ([userCurveDisplayPoints] 참고).
              */
-            CurveLane(
-                label = "내 억양",
-                segments = segments,
-                lineColor = MaterialTheme.accenturyColors.userCurve,
-                dashed = false,
-            )
+            // 레인 하나여도 상자는 문항 화면과 같다 - 테두리·모서리는 상자가 갖는다.
+            CurveLaneGroup {
+                CurveLane(
+                    label = "내 억양",
+                    segments = segments,
+                    variant = CurveLaneVariant.User,
+                )
+            }
 
             Spacer(modifier = Modifier.height(Spacing.x4))
             InputLevelBar(level = (state as? VoiceCheckState.Listening)?.level ?: 0.0)

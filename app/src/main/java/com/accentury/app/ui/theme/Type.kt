@@ -26,14 +26,19 @@ val Jua = FontFamily(Font(R.font.jua_regular, FontWeight.Normal))
  *
  * 행간은 대사·등급이 1.15, 나머지가 1.5다. 큰 글자에 1.5를 그대로 주면 줄 사이가 벌어져
  * 한 덩어리로 안 읽힌다.
+ *
+ * **Jua 슬롯은 전부 [FontWeight.Normal]이다** (KAN-161 2단계). 번들한 Jua에는 굵기가
+ * 400 하나뿐이라 Bold·Black을 요청하면 Compose가 획을 부풀린 합성 볼드를 만든다 -
+ * 곡선이 뭉개져 손으로 오린 글씨가 아니라 두껍게 인쇄한 글씨로 보인다.
+ * `tools/check_tokens.py`가 정본 §3의 굵기 열과 이 값들을 대조한다.
  */
 val Typography = Typography(
-    // display 44sp - 결과 등급
+    // display 40sp - 결과 등급
     displayLarge = TextStyle(
         fontFamily = Jua,
-        fontWeight = FontWeight.Black,
-        fontSize = 44.sp,
-        lineHeight = 51.sp,
+        fontWeight = FontWeight.Normal,
+        fontSize = 40.sp,
+        lineHeight = 46.sp,
     ),
     /**
      * headline 26sp - 대사 카드. `ux-ui.md` §5의 "대사 카드 24sp 이상"이 여기 걸린다.
@@ -41,23 +46,23 @@ val Typography = Typography(
      */
     headlineMedium = TextStyle(
         fontFamily = Jua,
-        fontWeight = FontWeight.Black,
+        fontWeight = FontWeight.Normal,
         fontSize = 26.sp,
         lineHeight = 30.sp,
     ),
-    // title 22sp - 어휘 문항 질문
+    // title 30sp - 단어 문항·인트로 제목
     titleLarge = TextStyle(
         fontFamily = Jua,
-        fontWeight = FontWeight.Bold,
-        fontSize = 22.sp,
-        lineHeight = 26.sp,
+        fontWeight = FontWeight.Normal,
+        fontSize = 30.sp,
+        lineHeight = 35.sp,
     ),
-    // titleSmall 20sp - 화면 제목
+    // titleSmall 20sp - 주 CTA 라벨·화면 제목
     titleMedium = TextStyle(
         fontFamily = Jua,
-        fontWeight = FontWeight.Bold,
+        fontWeight = FontWeight.Normal,
         fontSize = 20.sp,
-        lineHeight = 24.sp,
+        lineHeight = 23.sp,
     ),
     // body 16sp - 본문, 버튼 라벨
     bodyLarge = TextStyle(
@@ -80,11 +85,11 @@ val Typography = Typography(
         fontSize = 14.sp,
         lineHeight = 21.sp,
     ),
-    // caption 12sp - 배지, 카드 보조 문구
+    // caption 13sp - 카드 위 캡션, 레인 라벨, 진행 표기
     labelSmall = TextStyle(
         fontFamily = FontFamily.Default,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 12.sp,
-        lineHeight = 18.sp,
+        fontWeight = FontWeight.Medium,
+        fontSize = 13.sp,
+        lineHeight = 20.sp,
     ),
 )

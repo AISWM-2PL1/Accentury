@@ -14,7 +14,9 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import com.accentury.app.ui.theme.Spacing
 
-/** 상태 블록의 성격. 색과 스크린 리더 통지 여부가 갈린다 */
+/**
+ * 상태 블록의 성격. 스크린 리더 통지 여부만 갈린다 - 색으로는 갈리지 않는다 (KAN-161).
+ */
 enum class StatusTone { Waiting, Error }
 
 /**
@@ -25,6 +27,10 @@ enum class StatusTone { Waiting, Error }
  * 스크린 리더가 스스로 읽어 줘야 사용자가 알아챈다. 대기 문구에는 걸지 않는다 —
  * 로딩은 곧 바뀔 상태라 매번 읽어 주면 소음이 된다. 웹이 `role="alert"`를 오류에만
  * 붙이는 것과 같은 판단이다.
+ *
+ * **색 면도, 빨강도 없다** (KAN-161 2단계). 오류를 색으로 알리던 규칙이 사라졌으니
+ * 두 톤에 다른 색을 줄 이유도 없다 - 무엇이 잘못됐는지는 잉크 문구가 말하고, 부연은
+ * 대기든 오류든 흐린 잉크다. 복구 동작은 [action]에 보조 버튼으로 들어온다.
  */
 @Composable
 fun StatusBlock(
@@ -34,11 +40,6 @@ fun StatusBlock(
     detail: String? = null,
     action: (@Composable () -> Unit)? = null,
 ) {
-    val detailColor = when (tone) {
-        StatusTone.Waiting -> MaterialTheme.colorScheme.onSurfaceVariant
-        StatusTone.Error -> MaterialTheme.colorScheme.onErrorContainer
-    }
-
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -61,7 +62,7 @@ fun StatusBlock(
             Text(
                 detail,
                 style = MaterialTheme.typography.labelSmall,
-                color = detailColor,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
             )
         }

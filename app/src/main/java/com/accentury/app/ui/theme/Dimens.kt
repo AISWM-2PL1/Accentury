@@ -37,6 +37,13 @@ object Dimens {
      */
     val touchTargetMin = 48.dp
 
+    /**
+     * 화면의 주 컨트롤 높이 - 주 버튼과 선택지가 같이 쓴다. [touchTargetMin] 48dp가 손가락이
+     * 닿는 최소선이라면 이 값은 시안이 "이 화면에서 누를 것"에 준 크기다.
+     * 보조 버튼은 [touchTargetMin] 그대로다 - 둘의 무게 차이가 크기로도 읽힌다.
+     */
+    val controlHeightLg = 56.dp
+
     /** 대사 카드 최소 높이. 문항 길이가 달라도 카드가 들썩이지 않게 고정한다 */
     val promptCardMinHeight = 152.dp
 
@@ -59,9 +66,18 @@ object Dimens {
     /** 진행바 두께 (시안: h-3) */
     val progressBarHeight = 12.dp
 
-    /** Chunky 3D 버튼의 기본 그림자 깊이. 눌리면 [buttonPressedDepth]로 줄어든다 */
-    val buttonRestDepth = 4.dp
-    val buttonPressedDepth = 1.dp
+    /** 진행 도트 하나의 두께. 막대가 아니라 캡슐 열 개라 진행바와 값이 다르다 */
+    val progressDotHeight = 8.dp
+
+    /**
+     * 오프셋 종이 그림자가 어긋난 거리 (정본 §5). 카드·버튼·원형 아이콘이 모두 이 값만큼
+     * 오른쪽·아래로 그림자를 깐다.
+     *
+     * 눌림도 이 값을 쓴다: 그림자가 사라지고 본체가 정확히 이만큼 내려가 그림자 자리를 덮는다.
+     * 그리는 쪽과 내려가는 쪽이 다른 값을 쓰면 종이가 바닥에 닿지 않고 어긋난 채로 멈춘다.
+     */
+    val paperShadowX = 3.dp
+    val paperShadowY = 4.dp
 }
 
 /**

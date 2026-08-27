@@ -1,29 +1,41 @@
 package com.accentury.app.ui.components
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.unit.dp
 import com.accentury.app.ui.theme.Dimens
-import com.accentury.app.ui.theme.Motion
+import com.accentury.app.ui.theme.Radius
 import com.accentury.app.ui.theme.Spacing
-import com.accentury.app.ui.theme.motionDuration
 
 /**
- * 진척도 (KAN-148). 웹의 `ProgressIndicator`와 같은 구성이다 — 막대와 "3/10" 표기를
- * 한 덩어리로 묶는다. 둘이 떨어져 있으면 한쪽만 고쳐 숫자와 막대가 어긋나는 날이 온다.
+ * 진척도 (KAN-148, 형태는 KAN-161 2단계). 웹의 `ProgressIndicator`와 같은 구성이다 —
+ * 도트 줄과 "3 / 10" 표기를 한 덩어리로 묶는다. 둘이 떨어져 있으면 한쪽만 고쳐 숫자와
+ * 도트가 어긋나는 날이 온다.
+ *
+ * 막대 하나였는데 [total]개의 캡슐로 바꿨다. 남은 문항을 세어 볼 수 있고, 칸 하나가
+ * 채워지는 것이 막대가 조금 자라는 것보다 "한 문항 넘어갔다"로 읽힌다.
+ *
+ * 세 상태를 색이 아니라 **형태**로 가른다 (정본 §7·§8): 완료는 잉크로 찬 캡슐, 현재는
+ * 테두리가 2dp로 두꺼워지고 왼쪽 절반만 찬 캡슐, 미완료는 빈 캡슐이다.
+ * `primaryDim`(#cfc5aa)으로 남은 칸을 칠하지 않는다 — 크림 위 1.46:1이라 안 보인다.
  *
  * [current]가 1부터 시작하는 건 호출자 몫이자 의도다 — 첫 문항을 0/10으로 보이면 아직
  * 시작도 안 한 느낌이라 이탈이 는다 (ux-ui.md §3 Goal-Gradient, endowed progress).
@@ -34,55 +46,80 @@ fun ProgressIndicator(
     total: Int,
     modifier: Modifier = Modifier,
     label: String = "문항 진행률",
+    note: String? = null,
 ) {
-    val fraction = progressFraction(current, total)
-    // 문항이 넘어갈 때 막대가 순간이동하지 않고 자란다. 모션 축소면 0ms라 즉시 값이 바뀐다
-    val animated by animateFloatAsState(
-        targetValue = fraction,
-        animationSpec = tween(durationMillis = motionDuration(Motion.BASE), easing = Motion.easeOut),
-        label = "progress",
-    )
-
-    // 시안은 막대와 숫자를 한 줄에 눕힌다 - 숫자를 아래가 아니라 옆에 두면 세로 공간이
-    // 문항 카드로 간다
-    Row(
+    Column(
         modifier = modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(Spacing.x3),
+        verticalArrangement = Arrangement.spacedBy(Spacing.x2),
     ) {
-        LinearProgressIndicator(
-            progress = { animated },
+        Row(
             modifier = Modifier
-                .weight(1f)
-                .height(Dimens.progressBarHeight)
+                .fillMaxWidth()
                 /*
-                 * 막대와 숫자가 각각 읽히면 스크린 리더가 같은 정보를 두 번 말한다.
-                 * 막대에 "3/10문항"을 통째로 실어 한 번만 읽히게 하고, 아래 숫자는
-                 * 의미론에서 뺀다(시각적으로는 남는다).
+                 * 값을 읽는 것은 이 줄 하나다. 도트 열 개가 각각 읽히면 스크린 리더가 같은
+                 * 정보를 열 번 말하므로 줄 전체에 "3 / 10문항"을 통째로 실어 한 번만 읽히게
+                 * 하고, 아래 숫자는 의미론에서 뺀다(시각적으로는 남는다).
                  */
                 .clearAndSetSemantics { contentDescription = "$label $current / $total" },
-            color = MaterialTheme.colorScheme.primary,
-            trackColor = MaterialTheme.colorScheme.surfaceVariant,
-            strokeCap = androidx.compose.ui.graphics.StrokeCap.Round,
-            gapSize = 0.dp,
-            drawStopIndicator = {},
-        )
+            horizontalArrangement = Arrangement.spacedBy(Spacing.x1),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            repeat(maxOf(total, 0)) { index ->
+                ProgressDot(state = dotState(index + 1, current))
+            }
+        }
         Text(
             // 웹의 ProgressIndicator와 같은 표기다 - 문항이 두 런타임을 오가므로 공백 하나도
             // 다르면 전환에서 숫자가 미세하게 움직인다
-            "$current / $total",
+            if (note == null) "$current / $total" else "$current / $total · $note",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.clearAndSetSemantics { },
+            modifier = Modifier.align(Alignment.End),
         )
     }
 }
 
+/** 도트 하나의 상태 */
+internal enum class ProgressDotState { Done, Current, Todo }
+
+@Composable
+private fun RowScope.ProgressDot(state: ProgressDotState) {
+    val ink = MaterialTheme.colorScheme.primary
+    val paper = MaterialTheme.colorScheme.surface
+    val shape = RoundedCornerShape(Radius.full)
+
+    Box(
+        modifier = Modifier
+            .weight(1f)
+            .height(Dimens.progressDotHeight)
+            .clip(shape)
+            .background(if (state == ProgressDotState.Done) ink else paper)
+            /*
+             * 현재 칸만 왼쪽 절반이 차 있다. 배경 위에 사각형 하나를 얹을 뿐이라 번지는
+             * 면이 아니고, 바깥의 clip이 캡슐 모양으로 잘라 준다 - 웹이 50%에서 딱 끊기는
+             * linear-gradient로 그리는 것과 같은 결과다.
+             */
+            .drawBehind {
+                if (state != ProgressDotState.Current) return@drawBehind
+                drawRect(color = ink, size = Size(size.width / 2f, size.height))
+            }
+            .border(
+                width = if (state == ProgressDotState.Current) CURRENT_BORDER else DOT_BORDER,
+                color = ink,
+                shape = shape,
+            ),
+    )
+}
+
+private val DOT_BORDER = 1.dp
+private val CURRENT_BORDER = 2.dp
+
 /**
- * 막대가 채워질 비율. 계산만 떼어 둔 이유는 두 가장자리 때문이다 —
- * 정의가 비어 [total]이 0이면 0으로 나누기가 되고(NaN이 들어가면 막대가 사라진다),
- * 상태가 어긋나 [current]가 [total]을 넘으면 막대가 칸을 넘어 그려진다.
- * 둘 다 화면에서 알아채기 어려운 종류라 단위 테스트로 못 박는다.
+ * 몇 번째 칸이 어떤 상태인가. 계산을 떼어 둔 이유는 경계다 — `position == current`가
+ * 현재 칸이고 그보다 앞이 완료인데, 부등호를 한 칸 잘못 쓰면 진행이 통째로 밀린다.
  */
-internal fun progressFraction(current: Int, total: Int): Float =
-    if (total <= 0) 0f else (current.toFloat() / total).coerceIn(0f, 1f)
+internal fun dotState(position: Int, current: Int): ProgressDotState = when {
+    position < current -> ProgressDotState.Done
+    position == current -> ProgressDotState.Current
+    else -> ProgressDotState.Todo
+}

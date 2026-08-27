@@ -42,13 +42,39 @@ describe('ProgressIndicator', () => {
   it('progressbar 의미론과 값을 그대로 노출한다', () => {
     render(<ProgressIndicator current={3} total={10} />)
     const bar = screen.getByRole('progressbar', { name: '문항 진행률' })
-    expect(bar).toHaveAttribute('value', '3')
-    expect(bar).toHaveAttribute('max', '10')
+    expect(bar).toHaveAttribute('aria-valuenow', '3')
+    expect(bar).toHaveAttribute('aria-valuemax', '10')
   })
 
-  it('숫자 표기가 막대와 같은 값을 쓴다 — 둘이 갈라지지 않는다', () => {
+  it('문항 수만큼 도트를 그리고 완료·현재·미완료를 속성으로 가른다', () => {
+    const { container } = render(<ProgressIndicator current={3} total={10} />)
+    const states = Array.from(container.querySelectorAll('.progress-indicator__dot')).map((dot) =>
+      dot.getAttribute('data-state'),
+    )
+
+    expect(states).toHaveLength(10)
+    // 색이 아니라 형태로 가르는 세 상태다 (정본 §8) - CSS가 이 속성을 보고 채움을 정한다
+    expect(states.slice(0, 2)).toEqual(['done', 'done'])
+    expect(states[2]).toBe('current')
+    expect(new Set(states.slice(3))).toEqual(new Set(['todo']))
+  })
+
+  it('도트 하나하나는 읽히지 않는다 — 값을 말하는 것은 progressbar 한 줄이다', () => {
+    const { container } = render(<ProgressIndicator current={3} total={10} />)
+    const dots = container.querySelectorAll('.progress-indicator__dot')
+
+    expect(dots.length).toBeGreaterThan(0)
+    dots.forEach((dot) => expect(dot).toHaveAttribute('aria-hidden', 'true'))
+  })
+
+  it('숫자 표기가 도트와 같은 값을 쓴다 — 둘이 갈라지지 않는다', () => {
     render(<ProgressIndicator current={7} total={10} />)
     expect(screen.getByText('7 / 10')).toBeInTheDocument()
+  })
+
+  it('note를 주면 숫자 뒤에 한 마디가 붙는다', () => {
+    const { container } = render(<ProgressIndicator current={3} total={10} note="음성" />)
+    expect(container.querySelector('.progress-indicator__count')).toHaveTextContent('3 / 10 · 음성')
   })
 })
 

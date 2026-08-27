@@ -1,9 +1,6 @@
 package com.accentury.app.recording
 
 import android.annotation.SuppressLint
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -19,19 +16,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.unit.dp
 import com.accentury.app.ui.components.AccenturyButton
 import com.accentury.app.ui.components.ButtonVariant
 import com.accentury.app.ui.components.CurveLane
+import com.accentury.app.ui.components.CurveLaneGroup
+import com.accentury.app.ui.components.CurveLaneVariant
 import com.accentury.app.ui.components.ProgressIndicator
 import com.accentury.app.ui.components.PromptCard
 import com.accentury.app.ui.components.RecordButton
 import com.accentury.app.ui.components.StatusBlock
 import com.accentury.app.ui.components.StatusTone
-import com.accentury.app.ui.theme.Radius
 import com.accentury.app.ui.theme.Spacing
-import com.accentury.app.ui.theme.accenturyColors
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.accentury.app.audio.QualityStatus
@@ -248,35 +243,27 @@ fun RecordingScreen(
 }
 
 /**
- * 곡선 두 레인을 감싸는 카드 (시안). 레인을 카드에 넣는 이유는 곡선이 "화면에 그려진 선"이
+ * 곡선 두 레인을 감싸는 상자 (시안). 레인을 상자에 넣는 이유는 곡선이 "화면에 그려진 선"이
  * 아니라 "지금 보고 있는 자료"로 읽히게 하기 위해서다 - 대사 카드와 나란히 놓이면 두 덩어리가
  * 화면의 위아래를 나눈다.
+ *
+ * 상자 위에 "억양 곡선" 제목을 달지 않는다 (KAN-161 2단계) - 레인 라벨이 이미 "가이드"와
+ * "내 억양"이라, 제목은 같은 말을 한 번 더 하면서 세로 공간만 먹는다.
  */
 @Composable
 private fun CurveCard(guidePoints: List<CurvePoint>, userSegments: List<List<CurvePoint>>) {
-    val colors = MaterialTheme.accenturyColors
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(Radius.xl))
-            .background(MaterialTheme.colorScheme.surface)
-            .border(1.dp, colors.curveLaneBorder, RoundedCornerShape(Radius.xl))
-            .padding(Spacing.x4),
-        verticalArrangement = Arrangement.spacedBy(Spacing.x2),
-    ) {
-        Text("억양 곡선", style = MaterialTheme.typography.labelLarge)
+    CurveLaneGroup {
         // 가이드는 무성 구간을 보간으로 이어 둔 하나짜리 폴리라인이라 선분 하나로 감싼다.
         CurveLane(
             label = "가이드",
             segments = listOf(guidePoints),
-            lineColor = colors.guideCurve,
-            dashed = true,
+            variant = CurveLaneVariant.Guide,
         )
         CurveLane(
             label = "내 억양",
             segments = userSegments,
-            lineColor = colors.userCurve,
-            dashed = false,
+            variant = CurveLaneVariant.User,
+            topDivider = true,
         )
     }
 }

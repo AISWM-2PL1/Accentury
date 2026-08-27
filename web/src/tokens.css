@@ -59,8 +59,8 @@
   --color-guide-curve: #1c1a17;
   --color-user-curve: #1c1a17;
   --color-curve-lane-surface: #f3ecd9;
-  --color-hero-start: #1c1a17;
-  --color-hero-end: #1c1a17;
+  --color-hero-start: #f3ecd9;
+  --color-hero-end: #f3ecd9;
   --color-curve-lane-border: #1c1a17;
 
   /* ── 타이포 (정본 §3) ──
@@ -69,18 +69,18 @@
   --font-display: 'Jua', system-ui, sans-serif;
   --font-body: system-ui, -apple-system, 'Noto Sans KR', sans-serif;
 
-  --text-display: 44px;
+  --text-display: 40px;
   --text-headline: 26px;
-  --text-title: 22px;
+  --text-title: 30px;
   --text-title-sm: 20px;
   --text-body: 16px;
   --text-body-sm: 15px;
   --text-label: 14px;
-  --text-caption: 12px;
+  --text-caption: 13px;
 
-  --weight-black: 900;
-  --weight-bold: 700;
-  --weight-semibold: 600;
+  /* 굵기는 둘뿐이다 (KAN-161 2단계). Jua는 굵기 하나짜리 폰트라 700·900을 주면 브라우저가
+     합성 볼드를 만들어 획이 뭉갠다 — 제목·대사·등급은 전부 400이다. 본문에서 무게를 주는
+     자리도 500이면 충분하고, 그 위는 잉크 한 색 화면에서 굵기만 늘어난 얼룩으로 보인다. */
   --weight-medium: 500;
   --weight-normal: 400;
 
@@ -102,14 +102,16 @@
   --radius-full: 9999px;
 
   --touch-target-min: 48px;
+  /* 화면의 주 컨트롤 높이 — 주 버튼과 선택지가 같이 쓴다. 48은 손가락이 닿는 최소선이고
+     이 값은 시안이 "이 화면에서 누를 것"에 준 크기다 */
+  --control-height-lg: 56px;
   --prompt-card-min-height: 152px;
   --content-max-width: 320px;
   --opacity-disabled: 0.6;
-  --button-rest-depth: 4px;
-  --button-pressed-depth: 1px;
-  --choice-depth: 3px;
-  --prompt-card-padding: 22px;
+  --prompt-card-padding: 24px;
   --progress-bar-height: 12px;
+  /* 진행 도트 하나의 두께. 진행바(12)와 다른 값인 것은 도트가 막대가 아니기 때문이다 */
+  --progress-dot-height: 8px;
   --hero-icon-size: 112px;
   /* F0 곡선 레인 하나. 앱 Dimens.curveLaneHeight와 같은 값이다 (design-tokens.md) —
      시안(72px)보다 키웠다: 실제 기기에서는 아래가 비어 곡선이 납작했다 */
@@ -117,11 +119,17 @@
 
   /* ── 그림자 (정본 §5, KAN-161) ──
      오프셋 종이 그림자. 번지지도 흐려지지도 않고, 어긋난 자리에 단색 면이 그대로 깔린다.
-     넷이 같은 값인 것은 규칙이다 — 종이 한 장의 두께는 카드든 버튼이든 같다. */
-  --shadow-card: 3px 4px 0 #cfc5aa;
-  --shadow-prompt: 3px 4px 0 #cfc5aa;
-  --shadow-hero: 3px 4px 0 #cfc5aa;
-  --shadow-choice: 3px 4px 0 #cfc5aa;
+     넷이 같은 값인 것은 규칙이다 — 종이 한 장의 두께는 카드든 버튼이든 같다.
+
+     어긋난 거리를 따로 토큰으로 둔 이유는 눌림이다: 누르면 그림자가 사라지고 본체가
+     정확히 이만큼 오른쪽·아래로 내려가 그림자 자리를 덮는다. 두 값이 갈리면 종이가
+     바닥에 닿지 않고 어긋난 채로 멈춘다. */
+  --paper-shadow-x: 3px;
+  --paper-shadow-y: 4px;
+  --shadow-card: var(--paper-shadow-x) var(--paper-shadow-y) 0 var(--color-primary-dim);
+  --shadow-prompt: var(--paper-shadow-x) var(--paper-shadow-y) 0 var(--color-primary-dim);
+  --shadow-hero: var(--paper-shadow-x) var(--paper-shadow-y) 0 var(--color-primary-dim);
+  --shadow-choice: var(--paper-shadow-x) var(--paper-shadow-y) 0 var(--color-primary-dim);
 
   /* ── 모션 (정본 §5) ── */
   --ease-out: cubic-bezier(0, 0, 0.2, 1);
@@ -208,24 +216,24 @@ body {
 
 .type-display {
   font-size: var(--text-display);
-  font-weight: var(--weight-black);
+  font-weight: var(--weight-normal);
 }
 
 /* 대사 카드 — `ux-ui.md` §5의 "24sp 이상"이 여기 걸린다.
    발화용 텍스트는 가독성이 곧 기능이라 이 값 아래로 내리면 안 된다 */
 .type-headline {
   font-size: var(--text-headline);
-  font-weight: var(--weight-black);
+  font-weight: var(--weight-normal);
 }
 
 .type-title {
   font-size: var(--text-title);
-  font-weight: var(--weight-bold);
+  font-weight: var(--weight-normal);
 }
 
 .type-title-sm {
   font-size: var(--text-title-sm);
-  font-weight: var(--weight-bold);
+  font-weight: var(--weight-normal);
 }
 
 .type-body {
@@ -245,7 +253,7 @@ body {
 
 .type-caption {
   font-size: var(--text-caption);
-  font-weight: var(--weight-semibold);
+  font-weight: var(--weight-medium);
 }
 
 /* 키보드 포커스만 링을 띄운다 — 마우스·터치 클릭까지 테두리가 남으면 시각적으로 거슬린다 */
