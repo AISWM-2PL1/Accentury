@@ -67,6 +67,10 @@ import com.accentury.app.audio.defaultPcmSource
 import com.accentury.app.recording.RecordingViewModel
 import com.accentury.app.recording.VoiceCheckScreen
 import com.accentury.app.recording.VoiceCheckViewModel
+import com.accentury.app.analytics.LogcatEventSink
+import com.accentury.app.analytics.ShareEvents
+import com.accentury.app.analytics.log
+import com.accentury.app.analytics.channelParam
 import com.accentury.app.share.ResultSharer
 import com.accentury.app.session.OkHttpSessionClient
 import com.accentury.app.session.RetestOutcome
@@ -138,7 +142,18 @@ private fun TestFlow(modifier: Modifier = Modifier) {
      * 우리 결과 화면으로 돌아오지 못한다.
      */
     val activity = checkNotNull(LocalActivity.current)
-    val resultSharer = remember(activity) { ResultSharer.forApp(activity) }
+
+    /*
+     * 앱 안 공유 계측 (KAN-30 3단계, FR-SH-06). 지금은 Logcat까지만 간다 — 전송은 KAN-33이
+     * 같은 인터페이스 뒤에 Firebase sink를 끼우는 일이고, 그때 이 화면 코드는 그대로다.
+     */
+    val events = remember { LogcatEventSink }
+    val resultSharer = remember(activity, events) {
+        ResultSharer.forApp(activity) { channel ->
+            // 띄운 통로만 싣는다. 세션·점수·등급은 익명 규칙에서 제외 대상이다 (AppEvents).
+            events.log(ShareEvents.LAUNCHED, mapOf(ShareEvents.PARAM_CHANNEL to channelParam(channel)))
+        }
+    }
 
     fun isMicGranted(): Boolean =
         ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
@@ -385,7 +400,15 @@ private fun TestFlow(modifier: Modifier = Modifier) {
                     flow.onStartVoiceItem(start, micGranted = isMicGranted())
                 },
                 onStartRetest = { startRetest() },
-                onShareResult = { resultSharer.share(it) },
+                /*
+                 * 탭과 실행을 따로 센다 (FR-SH-06). 탭은 사용자가 한 일이고 실행은 통로가 열린
+                 * 일이라, 둘의 차이가 곧 "눌렀는데 아무 데도 못 간" 비율이다 — 한 건으로 뭉치면
+                 * 그 구멍이 보이지 않는다. 실행 쪽은 [resultSharer]가 통로까지 붙여 울린다.
+                 */
+                onShareResult = {
+                    events.log(ShareEvents.TAPPED)
+                    resultSharer.share(it)
+                },
                 onWebViewCreated = { webView = it },
                 // 내가 들고 있는 인스턴스일 때만 놓는다 — 재생성 순서에 따라 새 WebView가 먼저
                 // 등록된 뒤 옛 것이 해제될 수 있고, 그때 방금 받은 참조를 지우면 안 된다.

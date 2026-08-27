@@ -32,6 +32,18 @@ describe('track — 퍼널 이벤트 (KAN-31 3단계)', () => {
     })
   })
 
+  it('공유 클릭에는 어느 통로로 나갔는지가 붙는다 (KAN-30 3단계, FR-SH-06)', () => {
+    window.dataLayer = []
+
+    track({ name: 'share_clicked', campaign: 'kko_share', channel: 'clipboard' })
+
+    expect(window.dataLayer[0]).toEqual({
+      event: 'share_clicked',
+      campaign: 'kko_share',
+      channel: 'clipboard',
+    })
+  })
+
   it('큐가 없으면(태그 미설치 빌드) 아무 일도 하지 않는다', () => {
     // KAN-33 이전의 지금이 이 상태다. 광고 차단기가 스니펫을 막은 브라우저도 같은 자리다.
     expect(() => track({ name: 'test_completed', campaign: 'kko_share' })).not.toThrow()

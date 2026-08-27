@@ -95,8 +95,10 @@ fun buildSystemShareIntent(payload: SharePayload): Intent {
  * @param isTalkAvailable 카톡 설치 여부 조회
  * @param shareViaKakao 카카오에 템플릿을 넘기고 실행할 인텐트를 돌려받는다. 결과는 (intent, error) 쌍이다
  * @param launch 인텐트 실행 (프로덕션: Activity.startActivity)
- * @param onLaunched 실제로 띄운 통로. 어느 통로가 얼마나 쓰이는지 계측(3단계)이 물릴 자리다 —
- *   지금은 비어 있지만, 폴백이 얼마나 도는지를 모르면 카카오 경로의 값을 판단할 수 없다
+ * @param onLaunched 실제로 띄운 통로. 3단계에서 계측이 여기 물렸다 (`analytics/AppEvents.kt`의
+ *   `share_launched`) — 폴백이 얼마나 도는지를 모르면 카카오 경로의 값을 판단할 수 없다.
+ *   띄우지 못한 경우([launchOrIgnore]가 삼킨 경우)에는 부르지 않는다: 열리지 않은 화면을
+ *   "띄웠다"로 세면 통로 하나가 통째로 막힌 기기가 집계에서 정상으로 보인다
  * @param buildSheetIntent 시트 인텐트 조립. 기본값이 곧 프로덕션 구현이라 결선에서 넘길 일은 없고,
  *   테스트만 갈아끼운다 — [Intent.createChooser]는 유닛 테스트에서 android.jar 스텁이라 null을
  *   돌려주고, 그러면 시트 경로가 인텐트를 만드는 자리에서 죽어 정작 검증하려던 폴백 순서에
@@ -157,8 +159,11 @@ class ResultSharer(
          * 프로덕션 결선. [Activity] 컨텍스트를 받는 이유: 공유 시트와 카톡 전환은 지금 화면 위에
          * 올라와야 하는 UI다 — application 컨텍스트로 띄우면 NEW_TASK 플래그가 필요하고, 그러면
          * 공유를 끝낸 뒤 우리 결과 화면이 아니라 별도 태스크로 돌아간다.
+         *
+         * @param onLaunched 실제로 띄운 통로를 받는다. 기본값이 빈 함수인 이유는 이 결선의 관심사가
+         *   공유이지 계측이 아니기 때문이다 — 계측을 붙이는 곳은 화면(MainActivity)이다 (KAN-30 3단계)
          */
-        fun forApp(activity: Activity): ResultSharer = ResultSharer(
+        fun forApp(activity: Activity, onLaunched: (ShareChannel) -> Unit = {}): ResultSharer = ResultSharer(
             kakaoEnabled = BuildConfig.KAKAO_NATIVE_APP_KEY.isNotBlank(),
             isTalkAvailable = { ShareClient.instance.isKakaoTalkSharingAvailable(activity) },
             shareViaKakao = { template, onResult ->
@@ -167,6 +172,7 @@ class ResultSharer(
                 }
             },
             launch = { intent -> activity.startActivity(intent) },
+            onLaunched = onLaunched,
         )
     }
 }
