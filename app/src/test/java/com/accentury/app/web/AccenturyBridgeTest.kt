@@ -1,6 +1,7 @@
 package com.accentury.app.web
 
 import com.accentury.app.bridge.GuideF0
+import com.accentury.app.bridge.SharePayload
 import com.accentury.app.bridge.VoiceItemStart
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -43,6 +44,7 @@ class AccenturyBridgeTest {
             onRequestMicPermission = {},
             onStartVoiceItem = { received = it },
             onStartRetest = {},
+            onShareResult = {},
         )
         bridge.startVoiceItem(payloadJson)
         queue.drain()
@@ -61,6 +63,7 @@ class AccenturyBridgeTest {
             onRequestMicPermission = { fired++ },
             onStartVoiceItem = {},
             onStartRetest = {},
+            onShareResult = {},
         )
         bridge.requestMicPermission()
         queue.drain()
@@ -79,6 +82,7 @@ class AccenturyBridgeTest {
             onRequestMicPermission = { fired++ },
             onStartVoiceItem = {},
             onStartRetest = {},
+            onShareResult = {},
         )
         bridge.requestMicPermission()
         queue.drain()
@@ -100,6 +104,7 @@ class AccenturyBridgeTest {
             onRequestMicPermission = { fired++ },
             onStartVoiceItem = {},
             onStartRetest = {},
+            onShareResult = {},
         )
         bridge.requestMicPermission() // 호출 시점엔 허용 상태
         allowedNow = false // 실행 전에 allowlist 밖으로 이동
@@ -119,6 +124,7 @@ class AccenturyBridgeTest {
             onRequestMicPermission = {},
             onStartVoiceItem = {},
             onStartRetest = { fired++ },
+            onShareResult = {},
         )
         bridge.startRetest()
         queue.drain()
@@ -150,6 +156,7 @@ class AccenturyBridgeTest {
             onRequestMicPermission = {},
             onStartVoiceItem = {},
             onStartRetest = { fired++ },
+            onShareResult = {},
         )
         bridge.startRetest() // 호출 시점엔 허용 상태
         allowedNow = false // 실행 전에 allowlist 밖으로 이동
@@ -175,6 +182,7 @@ class AccenturyBridgeTest {
             onRequestMicPermission = {},
             onStartVoiceItem = {},
             onStartRetest = { fired++ },
+            onShareResult = {},
         )
         bridge.startRetest()
         bridge.startRetest()
@@ -193,6 +201,7 @@ class AccenturyBridgeTest {
             onRequestMicPermission = {},
             onStartVoiceItem = {},
             onStartRetest = {},
+            onShareResult = {},
         )
         assertEquals(BRIDGE_CONTRACT_VERSION, bridge.getContractVersion())
     }
@@ -206,6 +215,7 @@ class AccenturyBridgeTest {
         onRequestMicPermission = {},
         onStartVoiceItem = {},
         onStartRetest = {},
+        onShareResult = {},
     )
 
     @Test
@@ -331,12 +341,67 @@ class AccenturyBridgeTest {
             onRequestMicPermission = {},
             onStartVoiceItem = { received = it },
             onStartRetest = {},
+            onShareResult = {},
         )
         bridge.startVoiceItem(payload()) // 호출 시점엔 허용 상태
         allowedNow = false // 실행 전에 allowlist 밖으로 이동
         queue.drain()
 
         assertNull(received)
+    }
+
+    /** shareResult를 한 번 호출하고 콜백이 받은 값을 돌려준다. 무시됐으면 null. */
+    private fun shareResult(payloadJson: String, allowed: Boolean = true): SharePayload? {
+        val queue = FakeMainQueue()
+        var received: SharePayload? = null
+        val bridge = AccenturyBridge(
+            postToMain = queue::post,
+            isCurrentUrlAllowed = { allowed },
+            isOriginAllowedNow = { false },
+            sessionToken = { "" },
+            onRequestMicPermission = {},
+            onStartVoiceItem = {},
+            onStartRetest = {},
+            onShareResult = { received = it },
+        )
+        bridge.shareResult(payloadJson)
+        queue.drain()
+        return received
+    }
+
+    private val sharePayloadJson =
+        """{"imageUrl":"https://cdn.accentury.app/share/grade-a.png",""" +
+            """"text":"\uB0B4 \uB4F1\uAE09!","webTestUrl":"https://accentury.app/?utm_source=kakao"}"""
+
+    @Test
+    fun `허용된 origin이면 공유 카드가 파싱돼 콜백으로 온다`() {
+        assertEquals(
+            SharePayload(
+                imageUrl = "https://cdn.accentury.app/share/grade-a.png",
+                text = "내 등급!",
+                webTestUrl = "https://accentury.app/?utm_source=kakao",
+            ),
+            shareResult(sharePayloadJson),
+        )
+    }
+
+    @Test
+    fun `allowlist 밖 origin에서는 공유 payload가 멀쩡해도 무시한다`() {
+        // 이 payload는 카카오 템플릿과 공유 인텐트를 타고 앱 밖으로 나간다 - allowlist 밖 페이지가
+        // 우리 앱 이름으로 링크를 뿌리는 통로가 되면 안 된다.
+        assertNull(shareResult(sharePayloadJson, allowed = false))
+    }
+
+    @Test
+    fun `공유 payload가 불량이면 무시한다`() {
+        assertNull(shareResult("{oops"))
+        assertNull(shareResult("""{"imageUrl":"https://a/b.png","text":"x"}"""))
+        // https가 아닌 링크. 검증은 parseSharePayload가 하고, 브리지는 그 결과를 그대로 따른다.
+        assertNull(
+            shareResult(
+                """{"imageUrl":"https://a/b.png","text":"x","webTestUrl":"javascript:alert(1)"}""",
+            ),
+        )
     }
 
     @Test

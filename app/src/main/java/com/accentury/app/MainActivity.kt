@@ -67,6 +67,7 @@ import com.accentury.app.audio.defaultPcmSource
 import com.accentury.app.recording.RecordingViewModel
 import com.accentury.app.recording.VoiceCheckScreen
 import com.accentury.app.recording.VoiceCheckViewModel
+import com.accentury.app.share.ResultSharer
 import com.accentury.app.session.OkHttpSessionClient
 import com.accentury.app.session.RetestOutcome
 import com.accentury.app.session.SessionGateController
@@ -130,6 +131,14 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun TestFlow(modifier: Modifier = Modifier) {
     val context = LocalContext.current
+
+    /*
+     * 결과 공유 (KAN-30). Activity 컨텍스트인 이유: 공유 시트와 카톡 전환은 지금 화면 위에 올라와야
+     * 하는 UI라, application 컨텍스트로 띄우면 NEW_TASK로 별도 태스크가 되고 공유를 끝낸 사용자가
+     * 우리 결과 화면으로 돌아오지 못한다.
+     */
+    val activity = checkNotNull(LocalActivity.current)
+    val resultSharer = remember(activity) { ResultSharer.forApp(activity) }
 
     fun isMicGranted(): Boolean =
         ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
@@ -376,6 +385,7 @@ private fun TestFlow(modifier: Modifier = Modifier) {
                     flow.onStartVoiceItem(start, micGranted = isMicGranted())
                 },
                 onStartRetest = { startRetest() },
+                onShareResult = { resultSharer.share(it) },
                 onWebViewCreated = { webView = it },
                 // 내가 들고 있는 인스턴스일 때만 놓는다 — 재생성 순서에 따라 새 WebView가 먼저
                 // 등록된 뒤 옛 것이 해제될 수 있고, 그때 방금 받은 참조를 지우면 안 된다.

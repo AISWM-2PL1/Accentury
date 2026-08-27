@@ -19,6 +19,29 @@ fun fakeMicAsset(): String {
     return props.getProperty("fakeMic") ?: ""
 }
 
+/**
+ * 카카오 네이티브 앱 키 (KAN-30). `-PkakaoNativeAppKey=` → 환경변수 `KAKAO_NATIVE_APP_KEY` →
+ * local.properties의 `kakaoNativeAppKey=` 순으로 본다. 셋 다 없으면 "".
+ *
+ * 환경변수 단계가 [fakeMicAsset]에 없고 여기에만 있는 이유: 이 값은 CI가 시크릿 저장소에서
+ * 주입하는 값이고, gradle 프로퍼티로 넘기면 CI 로그의 명령줄에 그대로 남는다.
+ *
+ * **빈 값이 정상 상태다.** 키가 없으면 앱은 카카오 SDK를 초기화하지 않고 공유가 OS 공유 시트로만
+ * 간다 (AccenturyApplication, ResultSharer) - 키를 모르는 로컬·CI 빌드도 빌드되고 동작해야 해서다.
+ * 키 자체는 APK에 박히는 값이라 비밀은 아니지만, 레포에 넣으면 우리 앱 키로 다른 앱이 카카오 API를
+ * 두드릴 수 있어(도메인·해시 등록으로 막는 것은 로그인 쪽이다) 커밋 대상에서 뺀다.
+ * 로컬 예시: local.properties에 `kakaoNativeAppKey=0123456789abcdef...` (gitignore 대상).
+ */
+fun kakaoNativeAppKey(): String {
+    (project.findProperty("kakaoNativeAppKey") as String?)?.let { return it }
+    System.getenv("KAKAO_NATIVE_APP_KEY")?.let { return it }
+    val local = rootProject.file("local.properties")
+    if (!local.exists()) return ""
+    val props = Properties()
+    local.inputStream().use { props.load(it) }
+    return props.getProperty("kakaoNativeAppKey") ?: ""
+}
+
 android {
     namespace = "com.accentury.app"
     compileSdk {
@@ -40,6 +63,10 @@ android {
         // staging(staging.accentury.app)을 보는 앱 빌드는 아직 없다 - 필요해지면 빌드 타입이나
         // 플레이버로 추가한다.
         buildConfigField("String", "WEB_URL", "\"https://accentury.app\"")
+
+        // 결과 공유의 카카오 경로 스위치 (KAN-30). debug/release가 같은 값을 쓰므로 여기 둔다 -
+        // 카카오 앱 키는 빌드 타입이 아니라 "주입됐는가"로 갈리는 값이다 (kakaoNativeAppKey 주석).
+        buildConfigField("String", "KAKAO_NATIVE_APP_KEY", "\"${kakaoNativeAppKey()}\"")
     }
 
     buildTypes {
@@ -89,6 +116,9 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.okhttp)
     implementation(libs.kotlinx.serialization.json)
+    // 결과 공유 (KAN-30). 피드 템플릿 공유만 쓰므로 v2-share 하나다 - 카카오 로그인(v2-user)은
+    // 우리 인증에 없다.
+    implementation(libs.kakao.share)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.okhttp.mockwebserver)

@@ -31,6 +31,7 @@ import com.accentury.app.ui.components.AccenturyButton
 import com.accentury.app.ui.components.StatusBlock
 import com.accentury.app.ui.components.StatusTone
 import com.accentury.app.ui.theme.Spacing
+import com.accentury.app.bridge.SharePayload
 import com.accentury.app.bridge.VoiceItemStart
 import kotlinx.coroutines.delay
 import java.util.concurrent.atomic.AtomicBoolean
@@ -53,6 +54,7 @@ sealed interface WebLoadState {
  *
  * @param sessionToken 브리지 getSessionToken이 웹에 건넬 세션 토큰 공급자 (KAN-13)
  * @param onStartRetest 결과 화면의 [다시 테스트하기] (KAN-34). 메인 스레드로 온다
+ * @param onShareResult 결과 화면의 [친구에게 공유하기] (KAN-30). 메인 스레드로 온다
  * @param onWebViewCreated 결과를 웹으로 주입하려면(evaluateJavascript) 상위가 인스턴스를 알아야 한다
  * @param onWebViewReleased 해제된 인스턴스. 상위가 들고 있는 참조를 놓을 자리다
  */
@@ -65,6 +67,7 @@ fun WebViewHost(
     onRequestMicPermission: () -> Unit,
     onStartVoiceItem: (VoiceItemStart) -> Unit,
     onStartRetest: () -> Unit,
+    onShareResult: (SharePayload) -> Unit,
     modifier: Modifier = Modifier,
     timeoutMs: Long = LOAD_TIMEOUT_MS,
     onWebViewCreated: (WebView) -> Unit = {},
@@ -163,6 +166,7 @@ fun WebViewHost(
                                 onRequestMicPermission = onRequestMicPermission,
                                 onStartVoiceItem = onStartVoiceItem,
                                 onStartRetest = onStartRetest,
+                                onShareResult = onShareResult,
                             ),
                             "AccenturyBridge",
                         )
