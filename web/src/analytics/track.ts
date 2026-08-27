@@ -4,6 +4,10 @@
  * 공유 링크를 탄 사람이 **어디서 빠지는지**를 익명으로 세는 것이 목적이다 —
  * 유입 → 테스트 시작 → 완주 → 다운로드 클릭, 네 지점뿐이다 (KAN-31 AC).
  *
+ * 여기에 공유 클릭(KAN-30 3단계, FR-SH-06)이 한 지점 더 붙는다. 퍼널의 끝이 아니라 **다음
+ * 퍼널의 시작**이라 따로 세는 값이다 — 이 클릭이 만든 링크를 타고 들어오는 것이 위의
+ * `referral_opened`이므로, 둘을 나란히 놓아야 "공유 한 번이 유입 몇 건을 만드는가"가 나온다.
+ *
  * ## 이 모듈은 계측을 "보내지" 않는다
  *
  * 실제 전송(GA4 태그 설치, 이벤트 매핑, 동의 처리)은 **KAN-33**이다. 여기서 하는 일은
@@ -23,12 +27,14 @@
  */
 
 import type { StorePlatform } from '../audio/storeLink'
+import type { ShareChannel } from '../share/shareResult'
 
 /**
- * 퍼널의 네 지점. 이름은 KAN-33이 GA4에 심을 이벤트명과 같다.
+ * 퍼널의 다섯 지점. 이름은 KAN-33이 GA4에 심을 이벤트명과 같다.
  *
- * 유니온으로 둔 이유: 지점마다 실을 수 있는 값이 다르다 (`platform`은 다운로드 탭에만 있다).
- * 하나의 넓은 타입으로 두면 "이 이벤트에 이 값이 왜 있지"를 컴파일러가 못 잡는다.
+ * 유니온으로 둔 이유: 지점마다 실을 수 있는 값이 다르다 (`platform`은 다운로드 탭에만,
+ * `channel`은 공유 탭에만 있다). 하나의 넓은 타입으로 두면 "이 이벤트에 이 값이 왜 있지"를
+ * 컴파일러가 못 잡는다.
  */
 export type FunnelEvent =
   /** 공유 링크로 웹 테스트를 열었다 */
@@ -39,6 +45,17 @@ export type FunnelEvent =
   | { name: 'test_completed'; campaign: string | null }
   /** 결과 화면의 [앱 다운로드]를 눌렀다 */
   | { name: 'app_download_clicked'; campaign: string | null; platform: StorePlatform }
+  /**
+   * 결과 화면의 [친구에게 공유하기]를 눌렀다 (FR-SH-06 "공유 버튼 탭"의 **웹 단독 몫**).
+   *
+   * 앱 안의 같은 탭은 네이티브가 센다 (`analytics/AppEvents.kt`) — 같은 사건을 두 경로로 세면
+   * 안 된다는 이 모듈의 규칙이 여기에도 그대로 걸린다. 그래서 호출자는 `standalone`일 때만
+   * 부른다.
+   *
+   * `channel`이 붙는 이유: 브라우저에서 공유 시트로 나간 클릭과 링크 복사로 새는 클릭은 다른
+   * 사실이다. 뭉뚱그리면 폴백을 더 깔아야 하는지를 볼 수 없다 (`shareResult`의 [ShareChannel]).
+   */
+  | { name: 'share_clicked'; campaign: string | null; channel: ShareChannel }
 
 declare global {
   interface Window {

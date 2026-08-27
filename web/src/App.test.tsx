@@ -1194,6 +1194,52 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
     ])
   })
 
+  it('[친구에게 공유하기] 탭은 어느 통로로 나갔는지까지 센다 (KAN-30 3단계, FR-SH-06)', async () => {
+    setSearch('?c=kko_share&screen=result&sessionId=s_web')
+    saveWebSession({
+      sessionId: 's_web',
+      sessionToken: 'st_web',
+      testVersion: 'gn-2026.08.1',
+      expiresAt: '2026-08-26T03:30:00Z',
+    })
+    stubResultFetch()
+    const queue = stubDataLayer()
+    // 브리지가 없는 웹 단독 실행의 정식 통로다 — jsdom에는 없어서 심어 준다
+    Object.defineProperty(navigator, 'share', {
+      configurable: true,
+      writable: true,
+      value: vi.fn(async () => {}),
+    })
+
+    try {
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: '친구에게 공유하기' }))
+
+      // 결과 화면으로 바로 들어온 경로라 유입 이벤트는 없다 (인트로를 거치지 않았다)
+      expect(queue).toEqual([
+        { event: 'share_clicked', campaign: 'kko_share', channel: 'system' },
+      ])
+    } finally {
+      delete (navigator as { share?: unknown }).share
+    }
+  })
+
+  it('앱 안 공유 탭은 웹이 세지 않는다 — 그 한 건은 네이티브가 센다 (AppEvents)', async () => {
+    setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0&c=kko_share&screen=result&sessionId=s_web`)
+    stubBridge()
+    const bridgeShare = vi.fn()
+    window.AccenturyBridge!.shareResult = bridgeShare
+    stubResultFetch()
+    const queue = stubDataLayer()
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: '친구에게 공유하기' }))
+
+    // 공유 자체는 브리지로 정상적으로 나간다 — 세지 않는 것과 보내지 않는 것은 다른 이야기다
+    expect(bridgeShare).toHaveBeenCalledTimes(1)
+    expect(queue).toEqual([])
+  })
+
   it('앱 안 실행에서는 웹이 아무것도 세지 않는다 — 앱 이벤트는 네이티브 Firebase 몫이다 (KAN-33)', () => {
     setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0&c=kko_share`)
     stubBridge()

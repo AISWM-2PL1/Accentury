@@ -380,13 +380,19 @@ function ResultRoute({
        */
       sessionToken={standalone ? getWebSessionToken() : (getSessionToken() ?? '')}
       /*
-       * [친구에게 공유하기] (KAN-30 1단계). 통로 선택은 `share/shareResult`가 소유한다 —
+       * [친구에게 공유하기] (KAN-30 1·3단계). 통로 선택은 `share/shareResult`가 소유한다 —
        * 앱 안이면 브리지, 브라우저면 공유 시트, 둘 다 없으면 링크 복사다.
        *
-       * 반환된 채널은 지금 버린다. 3단계에서 `share_clicked`의 파라미터로 [track]에 물린다.
+       * 공유 클릭 계측 (FR-SH-06). 공유를 **먼저** 보내고 그 반환값으로 센다 — 어느 통로로
+       * 갔는지는 통로를 고른 뒤에야 알 수 있는 값이고, 계측 때문에 공유가 한 틱이라도 늦으면
+       * 안 된다 ([shareResult]도 [track]도 던지지 않으므로 순서만 남는 이야기다).
+       *
+       * 웹 단독 실행에서만 센다. 앱 안의 같은 탭은 네이티브가 세므로(`analytics/AppEvents.kt`,
+       * KAN-33) 여기서도 세면 공유 클릭이 두 번 잡힌다 — 다운로드·유입 계측과 같은 규칙이다.
        */
       onShare={(result) => {
-        shareResult(result.share)
+        const channel = shareResult(result.share)
+        if (standalone) track({ name: 'share_clicked', campaign: trackedCampaign(), channel })
       }}
       retest={retest}
       storePlatform={storePlatform}
