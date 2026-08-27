@@ -64,6 +64,30 @@ class SharePayloadTest {
         assertNull(parseSharePayload(payload(imageUrl = "http://cdn.accentury.app/a.png")))
         // 스킴은 앞에 있어야 한다 - 문자열 어딘가에 https가 섞인 값은 통과하지 못한다.
         assertNull(parseSharePayload(payload(webTestUrl = " https://accentury.app/")))
+        // 스킴은 정확히 소문자 https다. 값을 정규화하지 않고 그대로 내보내므로 받은 그대로가 유효해야 한다.
+        assertNull(parseSharePayload(payload(webTestUrl = "HTTPS://accentury.app/t")))
+        assertNull(parseSharePayload(payload(imageUrl = "Https://cdn.accentury.app/a.png")))
+    }
+
+    @Test
+    fun `https로 시작하지만 붙일 데가 없는 링크는 거부한다`() {
+        // 접두사만 맞고 host가 없는 값들. 카드에 실려도 어디로도 가지 못하고, 카카오·인텐트가
+        // 이런 값을 어떻게 다루는지는 받는 쪽 구현에 달려 있다.
+        assertNull(parseSharePayload(payload(webTestUrl = "https://")))
+        assertNull(parseSharePayload(payload(imageUrl = "https://")))
+        assertNull(parseSharePayload(payload(webTestUrl = "https:///t")))
+        assertNull(parseSharePayload(payload(imageUrl = "https:///a.png")))
+        // 공백이 섞인 값은 URL이 아니다.
+        assertNull(parseSharePayload(payload(webTestUrl = "https://accentury.app/t 1")))
+        assertNull(parseSharePayload(payload(imageUrl = "https://cdn accentury.app/a.png")))
+    }
+
+    @Test
+    fun `캠페인 파라미터가 붙은 정상 URL은 그대로 통과한다`() {
+        assertEquals(
+            "https://accentury.app/t?c=kko_share",
+            parseSharePayload(payload(webTestUrl = "https://accentury.app/t?c=kko_share"))?.webTestUrl,
+        )
     }
 
     @Test

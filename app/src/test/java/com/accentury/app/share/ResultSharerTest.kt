@@ -88,7 +88,10 @@ class ResultSharerTest {
     private class Harness(
         kakaoEnabled: Boolean = true,
         talkAvailable: Boolean = true,
+        private val talkError: Throwable? = null,
         private val kakaoResult: (FeedTemplate) -> Pair<Intent?, Throwable?> = { Intent() to null },
+        private val kakaoError: Throwable? = null,
+        private val callbackBeforeKakaoError: Boolean = false,
         private val throwOnLaunch: Boolean = false,
     ) {
         var talkChecks = 0
@@ -101,13 +104,17 @@ class ResultSharerTest {
             kakaoEnabled = kakaoEnabled,
             isTalkAvailable = {
                 talkChecks++
+                if (talkError != null) throw talkError
                 talkAvailable
             },
             shareViaKakao = { template, onResult ->
                 kakaoCalls++
                 lastTemplate = template
-                val (intent, error) = kakaoResult(template)
-                onResult(intent, error)
+                if (kakaoError == null || callbackBeforeKakaoError) {
+                    val (intent, error) = kakaoResult(template)
+                    onResult(intent, error)
+                }
+                if (kakaoError != null) throw kakaoError
             },
             launch = {
                 launches++
@@ -195,5 +202,48 @@ class ResultSharerTest {
         assertEquals(1, h.launches)
         // 띄우지 못했으므로 계측도 울리지 않는다.
         assertTrue(h.launched.isEmpty())
+    }
+
+    @Test
+    fun `카톡 설치 조회가 던지면 카카오를 건너뛰고 시트로 간다`() {
+        // SDK 미초기화 등으로 조회가 예외로 끝나는 상황. 조회를 믿을 수 없으면 카카오에
+        // 템플릿을 넘겨 봐야 같은 자리에서 다시 깨진다.
+        val h = Harness(talkError = IllegalStateException("KakaoSdk is not initialized"))
+
+        h.sharer.share(payload)
+
+        assertEquals(1, h.talkChecks)
+        assertEquals(0, h.kakaoCalls)
+        assertEquals(1, h.launches)
+        assertEquals(listOf(ShareChannel.SYSTEM_SHEET), h.launched)
+    }
+
+    @Test
+    fun `카카오 공유 호출이 동기 예외로 끝나도 앱이 죽지 않고 시트로 간다`() {
+        // 콜백조차 오지 않는 실패다. 예외를 밖으로 흘리면 결과 화면을 보던 사용자의 앱이 죽는다.
+        val h = Harness(kakaoError = IllegalStateException("KakaoSdk is not initialized"))
+
+        h.sharer.share(payload)
+
+        assertEquals(1, h.kakaoCalls)
+        assertEquals(1, h.launches)
+        assertEquals(listOf(ShareChannel.SYSTEM_SHEET), h.launched)
+    }
+
+    @Test
+    fun `콜백으로 이미 폴백한 뒤 예외가 와도 시트는 한 번만 뜬다`() {
+        // 카카오 SDK는 콜백을 동기로 부를 수 있다 - 실패 콜백으로 시트를 띄운 직후 같은 호출이
+        // 예외로 끝나는 순서가 가능하고, 가드가 없으면 사용자가 공유 시트를 두 번 본다.
+        val h = Harness(
+            kakaoResult = { null to IllegalStateException("template rejected") },
+            kakaoError = RuntimeException("kakao internal"),
+            callbackBeforeKakaoError = true,
+        )
+
+        h.sharer.share(payload)
+
+        assertEquals(1, h.kakaoCalls)
+        assertEquals(1, h.launches)
+        assertEquals(listOf(ShareChannel.SYSTEM_SHEET), h.launched)
     }
 }

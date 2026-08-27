@@ -91,9 +91,14 @@ fun buildSystemShareIntent(payload: SharePayload): Intent {
  * **모든 호출이 메인 스레드라고 전제한다.** 진입점이 브리지의 shareResult 하나뿐이고 그쪽이
  * postToMain을 거치므로(AccenturyBridge) 별도 동기화를 두지 않는다.
  *
+ * **카카오 SDK 호출은 던질 수 있다고 전제한다.** SDK가 초기화되지 않았거나 내부에서 깨지면
+ * `isKakaoTalkSharingAvailable`·`shareDefault`가 콜백이 아니라 동기 예외로 끝나는데, 그게 밖으로
+ * 새면 결과 화면을 보던 사용자의 앱이 죽는다. 두 호출 모두 시트 폴백으로 받는다.
+ *
  * @param kakaoEnabled 카카오 앱 키가 있는가. false면 [isTalkAvailable]·[shareViaKakao]는 불리지 않는다
- * @param isTalkAvailable 카톡 설치 여부 조회
- * @param shareViaKakao 카카오에 템플릿을 넘기고 실행할 인텐트를 돌려받는다. 결과는 (intent, error) 쌍이다
+ * @param isTalkAvailable 카톡 설치 여부 조회. 던지면 "카톡 없음"으로 읽어 시트로 간다
+ * @param shareViaKakao 카카오에 템플릿을 넘기고 실행할 인텐트를 돌려받는다. 결과는 (intent, error) 쌍이다.
+ *   콜백은 동기로 불릴 수 있고, 호출 자체가 던져도 시트로 폴백한다 (둘이 겹쳐도 시트는 한 번뿐)
  * @param launch 인텐트 실행 (프로덕션: Activity.startActivity)
  * @param onLaunched 실제로 띄운 통로. 3단계에서 계측이 여기 물렸다 (`analytics/AppEvents.kt`의
  *   `share_launched`) — 폴백이 얼마나 도는지를 모르면 카카오 경로의 값을 판단할 수 없다.
@@ -116,23 +121,60 @@ class ResultSharer(
         val channel = chooseShareChannel(
             kakaoEnabled = kakaoEnabled,
             // 키가 없으면 SDK가 초기화되지 않았으므로 조회 자체를 하지 않는다 (미초기화 접근은 예외다).
-            talkAvailable = kakaoEnabled && isTalkAvailable(),
+            talkAvailable = kakaoEnabled && talkAvailableOrFalse(),
         )
         when (channel) {
-            ShareChannel.KAKAO -> shareViaKakao(buildFeedTemplate(payload)) { intent, error ->
-                if (intent == null) {
-                    /*
-                     * 카카오 쪽 실패는 공유의 끝이 아니라 통로 하나가 막힌 것이다 (템플릿 거부,
-                     * 카카오 서버 오류, 앱 키 설정 불일치 등). 사용자가 누른 건 "공유"지 "카톡 공유"가
-                     * 아니므로, 아무 일도 일어나지 않은 화면을 보여주는 대신 시트로 넘긴다.
-                     */
-                    Log.w(TAG, "카카오 공유 실패 - 시스템 공유 시트로 폴백", error)
-                    launchSheet(payload)
-                } else {
-                    launchOrIgnore(intent, ShareChannel.KAKAO)
+            ShareChannel.KAKAO -> shareViaKakaoOrSheet(payload)
+            ShareChannel.SYSTEM_SHEET -> launchSheet(payload)
+        }
+    }
+
+    /**
+     * 카톡 설치 조회. 예외는 "카톡 없음"으로 읽는다 — 조회에 실패했다는 건 카카오 경로를 믿을 수
+     * 없다는 뜻이고(SDK 초기화 상태 불일치, 카카오 내부 오류), 그 상태로 카카오에 템플릿을
+     * 넘겨 봐야 같은 자리에서 다시 깨진다. 여기서 false를 돌려주면 [chooseShareChannel]이
+     * 시트로 보낸다.
+     */
+    private fun talkAvailableOrFalse(): Boolean = try {
+        isTalkAvailable()
+    } catch (e: Exception) {
+        Log.w(TAG, "카톡 설치 조회 실패 - 카톡 없음으로 본다", e)
+        false
+    }
+
+    /**
+     * 카카오 경로. 실패의 모양이 둘이라 폴백도 두 자리에 있다 — 콜백으로 오는 실패(템플릿 거부,
+     * 카카오 서버 오류)와 호출 자체가 던지는 동기 예외(SDK 미초기화 [IllegalStateException],
+     * 카카오 내부 오류)다. 후자를 감싸지 않으면 결과 화면을 보던 사용자의 앱이 그대로 죽는다.
+     *
+     * [handled]는 그 둘이 겹칠 때를 막는다: 카카오 SDK는 콜백을 동기로 부를 수 있어서, 콜백이
+     * 이미 시트를 띄운 뒤 같은 호출이 예외로 끝나는 순서가 가능하다. 가드가 없으면 사용자가
+     * 공유 시트를 두 번 보게 된다.
+     */
+    private fun shareViaKakaoOrSheet(payload: SharePayload) {
+        var handled = false
+        try {
+            shareViaKakao(buildFeedTemplate(payload)) { intent, error ->
+                if (!handled) {
+                    handled = true
+                    if (intent == null) {
+                        /*
+                         * 카카오 쪽 실패는 공유의 끝이 아니라 통로 하나가 막힌 것이다 (템플릿 거부,
+                         * 카카오 서버 오류, 앱 키 설정 불일치 등). 사용자가 누른 건 "공유"지 "카톡 공유"가
+                         * 아니므로, 아무 일도 일어나지 않은 화면을 보여주는 대신 시트로 넘긴다.
+                         */
+                        Log.w(TAG, "카카오 공유 실패 - 시스템 공유 시트로 폴백", error)
+                        launchSheet(payload)
+                    } else {
+                        launchOrIgnore(intent, ShareChannel.KAKAO)
+                    }
                 }
             }
-            ShareChannel.SYSTEM_SHEET -> launchSheet(payload)
+        } catch (e: Exception) {
+            if (handled) return
+            handled = true
+            Log.w(TAG, "카카오 공유 호출이 예외로 끝났다 - 시스템 공유 시트로 폴백", e)
+            launchSheet(payload)
         }
     }
 
