@@ -14,13 +14,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.PointMode
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -99,6 +102,10 @@ internal fun CurveLane(
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val isUser = variant == CurveLaneVariant.User
     val lineColor = if (isUser) colors.userCurve else colors.guideCurve
+    // 망점 격자는 레인 크기가 그대로면 그대로다 - 녹음 중에는 매 프레임 다시 그리는데
+    // 격자는 곡선이 아니라 레인 좌표에 붙어 있어(아래 [HalftoneGrid]) 프레임마다 다시
+    // 만들 이유가 없다.
+    val halftoneGrid = remember { HalftoneGrid() }
 
     Box(
         modifier = Modifier
@@ -128,28 +135,44 @@ internal fun CurveLane(
             }
             // 선분마다 따로 그린다 - 긴 무성 구간에서 곡선이 끊기므로(KAN-105) 하나로 이으면
             // 쉼 구간을 가로지르는 가짜 사선이 생긴다. 가이드는 선분 하나짜리 목록이다.
+            //
+            // 그리기 전에 선분을 한 바퀴 돌며 모양을 모은다 - 채울 면은 **하나로 합쳐서**
+            // 망점을 프레임당 한 번만 찍기 위해서다. 선분마다 찍으면 무성 구간이 많을수록
+            // clipPath와 격자 순회가 선분 수만큼 늘어난다.
+            val outlines = ArrayList<Path>(segments.size)
+            val dots = ArrayList<Offset>()
+            // 유성 선분끼리는 x 구간이 겹치지 않으므로 addPath로 이어 붙이면 그대로 합집합이
+            // 된다 (기본 NonZero) - Path.op(Union)까지 갈 일이 아니다.
+            val fillArea = if (isUser) Path() else null
             segments.forEach { points ->
                 if (points.size >= 2) {
                     val commands = smoothPathCommands(points, size.width, size.height)
-                    // 채움을 먼저 그리고 선을 나중에 그린다 - 순서가 바뀌면 망점이 곡선 위를
-                    // 덮어 선이 점무늬에 잠긴다.
-                    if (isUser) drawHalftone(commands.toPath(closeAtY = size.height), lineColor)
-                    drawPath(
-                        commands.toPath(),
-                        lineColor,
-                        style = Stroke(
-                            width = stroke,
-                            cap = StrokeCap.Round,
-                            join = StrokeJoin.Round,
-                            pathEffect = effect,
-                        ),
-                    )
+                    outlines += commands.toPath()
+                    fillArea?.addPath(commands.toPath(closeAtY = size.height))
                 } else if (points.size == 1) {
                     // 점이 하나뿐인 선분 - 선은 못 그리니 그 시각에 점 하나로 남긴다
                     val p = points.single()
-                    drawCircle(lineColor, radius = stroke, center = Offset(p.x * size.width, p.y * size.height))
+                    dots += Offset(p.x * size.width, p.y * size.height)
                 }
             }
+            // 채움을 먼저 그리고 선을 나중에 그린다 - 순서가 바뀌면 망점이 곡선 위를 덮어
+            // 선이 점무늬에 잠긴다.
+            if (fillArea != null && !fillArea.isEmpty) {
+                drawHalftone(fillArea, lineColor, halftoneGrid.pointsFor(size, HALFTONE_STEP.toPx()))
+            }
+            outlines.forEach { outline ->
+                drawPath(
+                    outline,
+                    lineColor,
+                    style = Stroke(
+                        width = stroke,
+                        cap = StrokeCap.Round,
+                        join = StrokeJoin.Round,
+                        pathEffect = effect,
+                    ),
+                )
+            }
+            dots.forEach { center -> drawCircle(lineColor, radius = stroke, center = center) }
         }
         // 라벨은 레인 좌상단에 얹는다(시안). 곡선 상단 여백 10% 안쪽이라 겹치지 않는다
         Text(
@@ -166,22 +189,61 @@ internal fun CurveLane(
  * 개념이 없어서, 닫은 도형으로 [clipPath]를 걸고 그 안에 격자로 점을 찍는다 — 결과는 같고
  * 점의 간격·크기도 웹과 같은 값이다.
  *
+ * **선분 수와 무관하게 프레임당 격자 1회다.** [area]는 유성 선분 전부를 합친 면이라
+ * [clipPath]도 한 번, 점 찍기도 한 번이다 — 선분마다 부르면 무성 구간이 많은 녹음일수록
+ * 매 프레임 비용이 선분 수에 비례해 는다.
+ *
  * 점을 레인 좌표 격자에 찍는 것이 요점이다(웹의 `userSpaceOnUse`와 같다). 곡선을 기준으로
  * 찍으면 곡선이 자랄 때 이미 찍힌 점이 함께 움직여 무늬가 살아 있는 것처럼 보인다.
+ * 격자는 [grid]로 받아 [HalftoneGrid]가 캐시하고, 점 하나씩 [drawCircle]하는 대신
+ * [drawPoints]에 통째로 넘긴다 - 둥근 cap에 굵기가 지름이라 그려지는 그림은 같고
+ * draw call만 점 개수에서 1로 준다.
  */
-private fun DrawScope.drawHalftone(area: Path, color: Color) {
+private fun DrawScope.drawHalftone(area: Path, color: Color, grid: List<Offset>) {
+    if (grid.isEmpty()) return
     clipPath(area) {
-        val step = HALFTONE_STEP.toPx()
-        val radius = HALFTONE_DOT.toPx()
-        var y = step / 2f
-        while (y < size.height) {
-            var x = step / 2f
-            while (x < size.width) {
-                drawCircle(color, radius = radius, center = Offset(x, y), alpha = HALFTONE_ALPHA)
-                x += step
+        drawPoints(
+            points = grid,
+            pointMode = PointMode.Points,
+            color = color,
+            strokeWidth = HALFTONE_DOT.toPx() * 2f,
+            cap = StrokeCap.Round,
+            alpha = HALFTONE_ALPHA,
+        )
+    }
+}
+
+/**
+ * 망점 격자 점 목록 캐시 (KAN-161 Codex 지적). 레인 크기와 칸 크기가 그대로면 같은 목록을
+ * 그대로 돌려준다 — 격자는 곡선이 아니라 레인 좌표에 붙어 있어서(위 [drawHalftone]) 곡선이
+ * 자라도 점 자리는 안 바뀌는데, 녹음 중에는 매 프레임 다시 그린다. 레인 크기가 바뀌는 때는
+ * 화면 회전이나 창 크기 변경뿐이다.
+ */
+private class HalftoneGrid {
+    private var size = Size.Zero
+    private var step = 0f
+    private var points: List<Offset> = emptyList()
+
+    fun pointsFor(size: Size, step: Float): List<Offset> {
+        if (size == this.size && step == this.step) return points
+        val next = ArrayList<Offset>()
+        // step이 0 이하면 while이 안 끝난다. dp 상수라 실제로는 안 걸리지만 무한 루프를
+        // 그리기 경로에 남겨 둘 이유가 없다.
+        if (step > 0f) {
+            var y = step / 2f
+            while (y < size.height) {
+                var x = step / 2f
+                while (x < size.width) {
+                    next += Offset(x, y)
+                    x += step
+                }
+                y += step
             }
-            y += step
         }
+        this.size = size
+        this.step = step
+        this.points = next
+        return next
     }
 }
 
