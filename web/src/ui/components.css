@@ -732,9 +732,9 @@
  * 저쪽은 "내가 몇 문항 풀었나"라 셀 수 있는 캡슐이고, 이쪽은 "서버가 얼마나 처리했나"라
  * 내가 셀 수 있는 단위가 아니다 — 같은 도트로 그리면 아직 풀 문항이 남은 것처럼 읽힌다.
  *
- * 두께가 8인 것은 `progress-dot-height`를 빌려 쓴 것이다. 결과 점수 막대(12)보다 얇은
- * 자리라 값이 갈리는데, 8dp짜리 토큰이 그것 하나뿐이다 — 이름을 나누는 것은 정본 §4를
- * 고치는 일이라 네이티브와 함께 가는 후속 단계로 남긴다.
+ * 두께는 `progress-bar-height` 8이다. 결과 점수 막대와 값이 같은데, 정본 §7에서 막대를
+ * 전부 8로 내리면서 갈릴 이유가 없어졌다 — 셀 수 있는 칸을 재는 `progress-dot-height`가
+ * 아니라 그릇을 그리는 막대 토큰을 쓴다.
  */
 .analysis-progress {
   display: flex;
@@ -745,7 +745,7 @@
 }
 
 .analysis-progress__bar {
-  height: var(--progress-dot-height);
+  height: var(--progress-bar-height);
   border: 1px solid var(--color-primary);
   border-radius: var(--radius-full);
   background: var(--color-card);
