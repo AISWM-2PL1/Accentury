@@ -43,10 +43,10 @@ export interface ResultTier {
 /**
  * 카카오 공유 카드 자산 (KAN-30이 소비).
  *
- * KAN-29는 이 값을 **화면에 그리지 않고 그대로 들고만 있다.** `imageUrl`이 가리키는
- * 등급별 정적 이미지는 아직 제작 전이라(설정값은 `static.accentury.app` 자리표시자),
- * 결과 화면이 그 로딩에 걸리면 자산이 생기기 전까지 화면이 깨진 채로 보인다.
- * 등급 표현은 디자인 토큰(KAN-148)으로 직접 그리고, 이 자산은 공유 시점에 KAN-30이 쓴다.
+ * 결과 화면은 이 값을 **그리지 않고 그대로 들고만 있다.** `imageUrl`은 카카오가 자기 서버로
+ * 가져가는 800×400 공유 카드(`assets/share/<code>.png`, KAN-162 확정)이고, 결과 화면의 캐릭터는
+ * 웹 번들에 든 WebP(`tierAssets.ts`)다 — 둘은 규격도 수명도 달라서 한쪽을 다른 쪽에 쓰지 않는다.
+ * 이 자산은 공유 시점에 KAN-30이 쓴다.
  */
 export interface ResultShare {
   imageUrl: string
