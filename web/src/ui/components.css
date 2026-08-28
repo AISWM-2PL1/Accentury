@@ -956,11 +956,25 @@ a.btn {
  * 간격을 각자 margin으로 잡는다 — footer를 flex로 바꾸면 이미 그 자리를 쓰는 어휘 문항의
  * 오류 문구·버튼 간격이 같이 움직인다.
  */
-.record-hint,
-.record-elapsed {
+.record-hint {
   margin: 0 0 var(--space-3);
   color: var(--color-muted-foreground);
   text-align: center;
+}
+
+/*
+ * 경과 시간 `00:04 / 10초` (KAN-161 4단계). 타이포는 `.type-timer`(Jua 16)가 주고 여기는
+ * 자리만 잡는다 — 시스템 폰트 14였는데, 초마다 바뀌는 숫자가 본문 글꼴로 적히면 "지금 몇 초"가
+ * 문단의 한 낱말처럼 읽혔다. 앱 녹음 화면의 타이머와 같은 슬롯이다 (정본 §3 `timer`).
+ */
+.record-elapsed {
+  margin: 0 0 var(--space-3);
+  text-align: center;
+}
+
+/* 상한은 흐린 잉크다. 앞은 바뀌는 값, 뒤는 고정 — 같은 무게면 어느 쪽이 지금인지 안 갈린다 */
+.record-elapsed__limit {
+  color: var(--color-muted-foreground);
 }
 
 /*

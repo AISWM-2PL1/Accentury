@@ -105,6 +105,9 @@ TYPE_SLOTS = {
     "headline": ("headlineMedium", "headline"),
     "title": ("titleLarge", "title"),
     "titleSmall": ("titleMedium", "title-sm"),
+    # 녹음 타이머·경고 캡슐 (KAN-161 4단계). M3에 "타이머" 슬롯이 없어 남아 있던 titleSmall에
+    # 얹었다 - 이름은 M3 것이고 뜻은 정본 §3의 `timer`다. 이 표가 그 대응의 정본이다.
+    "timer": ("titleSmall", "timer"),
     "body": ("bodyLarge", "body"),
     "bodySmall": ("bodyMedium", "body-sm"),
     "label": ("labelLarge", "label"),
@@ -178,7 +181,7 @@ def parse_css_type_rows():
 
 
 # Jua를 쓰는 스타일. 번들 폰트에 굵기가 400 하나뿐이라 그 위를 요청하면 합성 볼드가 된다
-JUA_STYLES = {"display", "headline", "title", "titleSmall"}
+JUA_STYLES = {"display", "headline", "title", "titleSmall", "timer"}
 JUA_WEIGHT = 400
 
 

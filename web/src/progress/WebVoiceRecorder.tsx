@@ -82,6 +82,13 @@ const CURVE_UPDATE_INTERVAL_MS = 33
  */
 const WARN_REMAINING_MS = 2_000
 
+/*
+ * 앱 쪽 같은 값은 `RecordingCountdown.kt`의 `WARN_REMAINING_MS`다 (KAN-161 4단계). 경계도
+ * 같은 방향으로 잡았다 — 남은 시간이 정확히 2초인 순간부터 경고이고(이하), 캡슐의 초는 올림이다.
+ * 한 테스트 안에서 두 런타임이 번갈아 나오므로, 경고가 시작하는 순간이 다르면 사용자에게는
+ * 같은 문항이 화면마다 다르게 동작하는 것으로 보인다.
+ */
+
 /**
  * 경과 시간 표기 `00:04` (시안). 초만 적던 것(`4.0초`)을 시계꼴로 바꿨다 — 옆에 붙는 상한이
  * "10초"라 같은 줄에 "초"가 두 번 나오면 어느 쪽이 지금인지 한눈에 안 갈린다.
@@ -317,12 +324,15 @@ export function WebVoiceRecorder({
             assertive면 사용자가 읽던 대사 문장을 스크린 리더가 가로챈다.
           */}
           {warning ? (
-            <p className="type-label record-countdown" role="status" aria-live="polite">
+            <p className="type-timer record-countdown" role="status" aria-live="polite">
               {Math.ceil(remainingMs / 1000)}초 남음
             </p>
           ) : (
-            <p className="type-label record-elapsed">
-              {formatElapsed(state.elapsedMs)} / {limitSec}초
+            <p className="type-timer record-elapsed">
+              {formatElapsed(state.elapsedMs)}{' '}
+              {/* 상한만 흐린 잉크다 — 앞의 두 자리가 초마다 바뀌는 값이고 뒤는 고정이라,
+                  같은 무게로 적으면 어느 쪽이 지금인지 한 번에 안 갈린다 (아트보드 ②) */}
+              <span className="record-elapsed__limit">/ {limitSec}초</span>
             </p>
           )}
           <div className="record-meter" aria-hidden="true">

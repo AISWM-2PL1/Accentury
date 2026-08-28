@@ -3,6 +3,7 @@ package com.accentury.app
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
@@ -11,6 +12,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -21,6 +23,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.MaterialTheme
@@ -40,10 +44,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
+import androidx.core.view.WindowCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -110,7 +116,27 @@ private const val ORPHANED_SUBMIT_TIMEOUT_MS = 2_000L
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        /*
+         * 시스템 바를 **항상 밝은 배경용**으로 고정한다 (KAN-161 4단계).
+         *
+         * 인자 없는 `enableEdgeToEdge()`는 `SystemBarStyle.auto`라 night 리소스 설정을 보고
+         * 아이콘 색을 정한다. 그런데 이 앱의 배경은 테마와 무관하게 늘 크림(#f3ecd9)이라
+         * (Theme.kt의 다크 고정), 시스템 다크에서는 크림 위에 흰 시계·배터리가 얹혀 거의
+         * 안 보였다. 화면이 뒤집히지 않는데 시스템 바만 뒤집힌 것이다.
+         *
+         * `light(...)`로 스타일 자체를 못 박고, 그 뒤 컨트롤러로 한 번 더 세운다. 스타일만
+         * 주면 나중에 누가 `enableEdgeToEdge()`를 인자 없는 꼴로 되돌렸을 때 조용히 원래
+         * 증상으로 돌아가는데, 컨트롤러 쪽은 그 호출 뒤에 실행돼 마지막 말이 된다.
+         * 프레임이 그려지기 전 한 프레임은 `themes.xml`의 `windowLightStatusBar`가 맡는다.
+         */
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
+        )
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = true
+            isAppearanceLightNavigationBars = true
+        }
         setContent {
             AccenturyTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
@@ -713,7 +739,10 @@ private fun GateScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(Spacing.x6, Alignment.CenterVertically),
             ) {
-                HeroIcon(emoji = "🎤")
+                // 마이크 선화. 잉크 한 색이라 아래 녹음 버튼 안의 아이콘과 같은 그림이다 -
+                // "이 앱이 쓰는 것"과 "지금 허락을 구하는 것"이 같다는 게 그림으로 읽힌다.
+                // 설명을 달지 않는 것은 바로 아래 제목이 이미 마이크 이야기를 하기 때문이다.
+                HeroIcon(painter = painterResource(R.drawable.outline_mic_24))
 
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -759,12 +788,23 @@ private fun AssuranceCard() {
             .padding(Spacing.x4),
         verticalArrangement = Arrangement.spacedBy(Spacing.x3),
     ) {
-        ASSURANCES.forEach { (emoji, text) ->
+        ASSURANCES.forEach { text ->
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(Spacing.x3),
             ) {
-                Text(emoji, style = MaterialTheme.typography.titleMedium)
+                /*
+                 * 줄머리는 잉크 점 하나다 (KAN-161 4단계). 📊·🏆·🔒였는데, 잉크 한 색 화면에서
+                 * 이모지는 색을 가진 유일한 물건이라 세 줄이 그림 밖으로 튀었다 (정본 §7).
+                 * 그림을 잉크 선화 셋으로 바꾸려면 자산이 필요한데, 이 세 줄이 나르는 정보는
+                 * 전부 글에 있어서 그림이 없어도 잃는 것이 없다 - 점은 목록이라는 표시만 한다.
+                 */
+                Box(
+                    modifier = Modifier
+                        .size(ASSURANCE_BULLET)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary),
+                )
                 Text(text, style = MaterialTheme.typography.bodyMedium)
             }
         }
@@ -772,7 +812,10 @@ private fun AssuranceCard() {
 }
 
 private val ASSURANCES = listOf(
-    "📊" to "실시간 억양 곡선 분석",
-    "🏆" to "발음 정확도 점수 측정",
-    "🔒" to "음성은 분석 즉시 삭제",
+    "실시간 억양 곡선 분석",
+    "발음 정확도 점수 측정",
+    "음성은 분석 즉시 삭제",
 )
+
+/** 안심 문구 줄머리 점 */
+private val ASSURANCE_BULLET = 6.dp
