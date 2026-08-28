@@ -83,6 +83,20 @@ module "compute" {
   config_parameter_names = module.config.parameter_names
 }
 
+# CloudFront 앞단 WAF (KAN-149). CLOUDFRONT 스코프 웹 ACL과 그 로그 그룹은 us-east-1에만
+# 만들 수 있어 프로바이더 별칭을 넘긴다. Count/Block 전환은 tfvars의 waf_enforce로 한다.
+module "waf" {
+  source = "../../modules/waf"
+
+  providers = {
+    aws = aws.us_east_1
+  }
+
+  env        = var.env
+  enforce    = var.waf_enforce
+  rate_limit = var.waf_rate_limit
+}
+
 module "edge" {
   source = "../../modules/edge"
 
@@ -95,6 +109,7 @@ module "edge" {
   acm_certificate_arn = data.aws_acm_certificate.cloudfront.arn
   alb_certificate_arn = data.aws_acm_certificate.alb.arn
   zone_id             = data.aws_route53_zone.this.zone_id
+  web_acl_arn         = module.waf.web_acl_arn
 }
 
 # 배포 파이프라인 역할 (KAN-127). GitHub Actions가 OIDC로 맡는다. 공급자는 bootstrap 소유.

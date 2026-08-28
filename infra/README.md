@@ -99,7 +99,8 @@ EC2가 밖으로 거는 연결 (퍼블릭 서브넷이라 NAT 불필요)
 ECS/Fargate가 없는 이유: backend의 요청 제한, 회로 차단기, 혼잡 판정, 디스패처
 큐가 전부 프로세스 메모리라 인스턴스를 1개로 고정해야 하고, 그러면 ECS의 이점이
 사라진다 (아래 설계 결정 기록). AI 실모델용 GPU 서버 분리는 KAN-36, KAN-57 판정
-이후다. WAF(KAN-149)는 이 문서 작성 시점(2026-08-25)에 아직 코드가 없다.
+이후다. WAF(KAN-149)는 `modules/waf`가 us-east-1에 만들어 CloudFront 배포에 붙인다
+(아래 'WAF 웹 ACL').
 
 workspace가 아니라 디렉토리 분리를 쓴다. workspace는 현재 선택된 환경이 눈에
 보이지 않아 prod에 실수로 apply할 위험이 있다. 디렉토리가 갈려 있으면 어느
@@ -418,6 +419,71 @@ docker 자체는 컨테이너 환경 변수를 `/var/lib/docker/containers/*/con
 것은 아니다. 레포, 이미지, 로그에 없다는 것이 KAN-122/129의 요구이고 그것은
 충족한다.
 
+## WAF 웹 ACL (KAN-149)
+
+`modules/waf`가 us-east-1에 CLOUDFRONT 스코프 웹 ACL과 로그 그룹을 만들고, `modules/edge`가
+배포의 `web_acl_id`에 그 ARN을 넣는다. envs는 `providers = { aws = aws.us_east_1 }`로
+모듈을 호출한다 (서울 리전에 만들면 배포의 WAF 목록에 나타나지 않고 오류도 없다).
+
+| 우선순위 | 규칙 | 하는 일 | 예외 |
+| --- | --- | --- | --- |
+| 10 | `rate-limit-costly-posts` | IP당 5분 창에 `POST /v0/sessions` + `POST …/recording` 합산 `waf_rate_limit`건 초과 시 429 | 폴링, 어휘 답안, 정적 자산은 세지 않음 |
+| 20 | `aws-common` | `AWSManagedRulesCommonRuleSet` (본문 8KB 상한, XSS, LFI/RFI, 경로 조작 등. SQLi 규칙은 이 그룹에 없음) | 경로가 `/recording`으로 끝나는 요청은 그룹 전체를 건너뜀 (multipart 음성이 본문 규칙에 걸리므로) |
+| 30 | `aws-known-bad-inputs` | `AWSManagedRulesKnownBadInputsRuleSet` (Log4j, Java 역직렬화 등) | 없음 |
+
+차단 응답은 backend의 429 봉투와 같은 JSON(`RATE_LIMITED`, `retryable: true`,
+`retryAfterMs: 300000`) + `Retry-After: 300`이다. 앱과 웹이 backend 429와 똑같이
+처리한다. 대기 시간이 평가 창(5분)과 같은 이유는 한 번 넘긴 IP의 요청이 창에서
+빠질 때까지 차단이 이어지기 때문이다. 관리형 규칙의 차단은 WAF 기본 403(본문
+없음)이다. 경로 비교는 `URL_DECODE` + `NORMALIZE_PATH` 뒤에 정규식으로 하고, 세그먼트
+뒤의 matrix 파라미터(`;x=1`)를 허용한다 - Tomcat과 Spring이 `%73essions`, `./`, `;x=1`을
+풀어 라우팅하므로, 변환 없이는 변형 경로가 컨트롤러에는 닿으면서 집계만 비껴간다
+(backend `UploadRateLimitFilter`가 같은 이유로 파싱된 경로로 매칭한다).
+
+### Count 관찰 후 Block 전환
+
+1. `waf_enforce = false`(기본)로 apply한다. 세 규칙 전부 Count라 아무것도 막지 않고
+   매치만 로그에 남긴다.
+2. 실제 녹음 파일로 앱 전 구간(세션 생성, 업로드 10건 이상, 완료, 결과)을 돌린다.
+3. us-east-1 CloudWatch Logs Insights에서 로그 그룹 `aws-waf-logs-accentury-<env>`
+   (output `waf_log_group`)에 다음을 돌린다. 기본 Allow는 로그 필터가 버리므로 남는
+   건 매치된 요청뿐이다.
+
+   ```
+   fields @timestamp, httpRequest.httpMethod as method, httpRequest.uri as uri,
+          httpRequest.clientIp as ip, action, terminatingRuleId
+   | parse @message /"ruleId":"(?<rule>[^"]+)"/
+   | stats count() by method, uri, rule
+   | sort count desc
+   ```
+
+   업로드 경로(`…/recording`)에 `aws-common` 매치가 0건이어야 한다. 매치가 있으면
+   스코프 다운이 빠진 것이다. 다른 경로의 매치는 규칙 이름을 티켓에 기록하고 오탐
+   여부를 판단한다.
+4. 오탐 건수와 규칙을 KAN-149에 기록한 뒤 `waf_enforce = true`로 apply한다.
+   staging 먼저, 기록 뒤 prod.
+5. 전환 확인: 같은 IP에서 `POST /v0/sessions`를 `waf_rate_limit`건 넘게 보내면 429와
+   위 JSON 봉투가 오고, 로그에 `action = BLOCK`, `terminatingRuleId =
+   rate-limit-costly-posts`가 남는다. WAF는 약 10초 간격으로 집계하므로 넘긴 직후
+   몇 건은 통과한다. 차단은 IP의 5분 창 요청 수가 임계값 아래로 내려가면 풀린다.
+
+### rate limit 임계값 300의 근거 (2026-08-28)
+
+- 정상 사용자 1명의 5분 창: 세션 1 + 업로드 5문항(재녹음 포함 10건 이내) = 최대 11건.
+- backend의 IP당 제한이 세션 생성, 업로드 각각 분당 30(5분 150)이라 보통의 초과는
+  backend가 먼저 잡아 정식 429 봉투를 낸다. WAF는 그 2배인 300에서만 개입해 backend가
+  multipart를 받느라 지치기 전에 홍수를 엣지에서 자른다.
+- 공유 Wi-Fi(학교, 시연장)는 외부 IP가 하나다. 동시 응시 20명 x 11건 = 220 < 300.
+  시연 인원이 그보다 많으면 당일 tfvars 값을 올려 apply한다.
+- staging도 같은 값이다. staging에서 본 결과가 prod에 그대로 적용되어야 Count 관찰의
+  의미가 있다.
+
+### 비용
+
+환경당 월 약 8달러(웹 ACL 5 + 규칙 3개 x 1) + 요청 100만 건당 0.60달러. 로그는 매치된
+요청만 7일 보존이라 1달러 미만. 두 환경 합산 월 16달러 안팎을 감수한다 (KAN-149 코멘트,
+2026-08-28).
+
 ## 환경별 값 차이 (KAN-129)
 
 Terraform 입력의 차이는 `diff -r infra/envs/staging infra/envs/prod`가 전부다
@@ -558,6 +624,24 @@ terraform destroy
   인스턴스 자격 증명을 연다. 신뢰하지 않는 오디오를 받는 ai가 뚫리면 RDS 시크릿과 관리자
   토큰까지 읽는 자격 증명이 새므로, ai는 게이트웨이 없는 internal 네트워크에만 붙여 IMDS와
   인터넷 경로를 끊는다. backend는 default와 internal 둘 다에 붙는다.
+- **WAF 업로드 예외는 스코프 다운, override가 아님** (2026-08-28, KAN-149):
+  `rule_action_override`로 본문 규칙 5개를 Count로 내리면 모든 경로에서 XSS/LFI/RFI 본문
+  검사가 꺼진다. 스코프 다운은 업로드 경로만 CommonRuleSet에서 빼고 JSON 본문 경로의
+  검사는 남긴다. 스코프 다운은 규칙 그룹 단위라 "업로드 경로에서 특정 규칙만 빼기"는
+  불가능하고, 같은 관리형 그룹을 한 웹 ACL에 두 번 넣을 수도 없다.
+- **rate-based rule은 세션 생성과 업로드만 센다** (KAN-149): 웹이 `/complete`를 800ms
+  마다 POST로 폴링해 `POST /v0/*` 전체를 세면 정상 사용자 1명이 5분에 375건이다. GPU
+  비용이 되는 경로는 세션 생성과 업로드뿐이다.
+- **WAF 차단 응답은 backend 봉투와 같은 429 JSON** (KAN-149): 앱은 봉투 없는 응답을
+  `retryable = false`로 판정해 재시도 버튼을 지운다 (`UploadClient.toResult`,
+  `UploadStatusBar`). 기본 403을 쓰면 사용자가 막다른 길에 선다.
+- **WAF 로그는 매치만, Authorization 마스킹, 샘플 요청 끔** (KAN-149): 기본 Allow까지
+  남기면 정적 자산이 대부분이라 비용만 든다. 로그 헤더의 세션 Bearer 토큰과
+  X-Admin-Token은 `redacted_fields`로 가린다. 샘플 요청 저장은 마스킹 보장을 문서에서
+  확인하지 못해 끈다.
+- **WAF는 staging에도 붙인다** (2026-08-28 확정, KAN-149 코멘트): 실모델 전환이 임박해
+  오탐과 임계값을 staging에서 먼저 봐야 하고, 두 환경 구조를 같게 유지한다. 월 8달러를
+  감수한다.
 - **backend `mem_limit: 1g`**: KAN-120 실측 권고 하한. t3.small 2GB에서 힙
   768MB(75%) + 나머지 25%로 네이티브 영역, 남은 1GB를 OS, docker, ai 스텁이 쓴다.
 - **ECR 라이프사이클 최근 50개**: 롤백(KAN-128)이 이전 SHA를 다시 당기는 방식이라

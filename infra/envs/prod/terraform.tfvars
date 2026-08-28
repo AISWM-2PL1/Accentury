@@ -22,3 +22,8 @@ ci_image_push = false
 # prod는 실수로 지워지면 안 된다. destroy하려면 먼저 이 값을 false로 apply한다.
 db_deletion_protection = true
 db_skip_final_snapshot = false
+
+# WAF (KAN-149). staging의 Count 관찰 결과가 티켓에 기록된 뒤에만 true로 바꾼다. 두 환경 같은
+# 값이다 - staging에서 본 결과가 prod에 그대로 적용되어야 관찰의 의미가 있다 (2026-08-28 확정).
+waf_enforce    = false
+waf_rate_limit = 300

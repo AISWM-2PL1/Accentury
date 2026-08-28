@@ -42,3 +42,8 @@ variable "zone_id" {
   type        = string
   description = "accentury.app 호스팅 영역 (KAN-119, data 소스로만 참조)"
 }
+
+variable "web_acl_arn" {
+  type        = string
+  description = "CloudFront 배포에 붙일 WAFv2 웹 ACL ARN (KAN-149, modules/waf 출력, us-east-1 CLOUDFRONT 스코프)"
+}

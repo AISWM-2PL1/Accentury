@@ -35,3 +35,8 @@ output "github_deploy_role_arn" {
   value       = module.deploy.github_deploy_role_arn
   description = "GitHub environment 변수 AWS_DEPLOY_ROLE_ARN에 넣는다 (KAN-127, README 'GitHub 설정')"
 }
+
+output "waf_log_group" {
+  value       = module.waf.log_group_name
+  description = "us-east-1의 WAF 로그 그룹 (KAN-149). Count 관찰과 차단 확인 쿼리는 README 'WAF 웹 ACL'."
+}

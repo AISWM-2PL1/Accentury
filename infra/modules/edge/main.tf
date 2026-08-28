@@ -218,6 +218,11 @@ resource "aws_cloudfront_distribution" "this" {
   # 주 사용자(한국)를 놓치고, All은 남미, 호주 비용만 더 낸다.
   price_class = "PriceClass_200"
 
+  # WAF 웹 ACL (KAN-149, modules/waf). WAFv2는 ID가 아니라 ARN을 넣는다. 배포 앞단에서
+  # 요청을 먼저 거르므로 차단된 요청은 ALB와 backend 로그에 남지 않는다 - 원인 추적은
+  # us-east-1의 WAF 로그 그룹에서 한다 (README 'WAF 웹 ACL').
+  web_acl_id = var.web_acl_arn
+
   origin {
     origin_id                = "s3-web"
     domain_name              = aws_s3_bucket.web.bucket_regional_domain_name

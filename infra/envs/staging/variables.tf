@@ -70,6 +70,16 @@ variable "ci_image_push" {
   description = "배포 역할의 ECR push 권한 (KAN-128 승격 모델). staging true, prod false - prod 이미지는 언제나 staging을 거친 SHA다."
 }
 
+variable "waf_enforce" {
+  type        = bool
+  description = "WAF 규칙을 차단(Block)으로 돌릴지 (KAN-149). false면 전부 Count(기록만). 먼저 false로 관찰한 뒤 오탐 기록을 남기고 true로 바꾼다."
+}
+
+variable "waf_rate_limit" {
+  type        = number
+  description = "WAF rate-based rule: IP당 5분 창의 세션 생성 + 음성 업로드 허용 수 (KAN-149). 산정 근거는 README 'WAF 웹 ACL'."
+}
+
 variable "db_deletion_protection" {
   type        = bool
   description = "RDS 삭제 보호 (prod true)"
