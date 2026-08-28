@@ -250,22 +250,30 @@ def main() -> None:
         SHARE_OUT.mkdir(parents=True, exist_ok=True)
         card_path = SHARE_OUT / f"{code}.png"
         card_bytes = save_png_under(draw_card(name, cut, fonts), card_path, CARD_MAX_BYTES)
-        rows.append((code, web, card_bytes))
+        # 저장된 파일을 다시 열어 잰다 — 메모리의 이미지가 아니라 디스크의 결과가 규격이다
+        with Image.open(card_path) as saved:
+            card_size = saved.size
+            card_corner = saved.convert("RGB").getpixel((4, 4))
+        rows.append((code, web, card_bytes, card_size, card_corner))
 
     ok = True
-    print(f"{'code':10s} {'web.webp':>10s} {'size':>9s} {'q':>3s} {'α(모서리)':>8s} {'share.png':>10s}  판정")
-    for code, web, card_bytes in rows:
+    print(f"{'code':10s} {'web.webp':>10s} {'size':>9s} {'q':>3s} {'α(모서리)':>8s} {'share.png':>10s}  카드 규격·종이색  판정")
+    for code, web, card_bytes, card_size, card_corner in rows:
         checks = [
             web["size"][0] == WEB_WIDTH,
             abs(web["size"][0] / web["size"][1] - 0.8) < 0.01,
             web["bytes"] <= WEB_MAX_BYTES,
             web["corner_alpha"] == 0,
             card_bytes <= CARD_MAX_BYTES,
+            # 카카오 피드 카드 규격과 앱 종이색 — 용량만 보면 잘못된 캔버스도 통과한다
+            card_size == (CARD_W, CARD_H),
+            card_corner == PAPER,
         ]
         ok &= all(checks)
         print(
             f"{code:10s} {web['size'][0]}x{web['size'][1]:<5d} {web['bytes']:>9,} {web['quality']:>3d}"
-            f" {web['corner_alpha']:>8d} {card_bytes:>10,}  {'OK' if all(checks) else 'FAIL'}"
+            f" {web['corner_alpha']:>8d} {card_bytes:>10,}  {card_size[0]}x{card_size[1]}"
+            f" #{card_corner[0]:02x}{card_corner[1]:02x}{card_corner[2]:02x}  {'OK' if all(checks) else 'FAIL'}"
         )
     if not ok:
         sys.exit(1)

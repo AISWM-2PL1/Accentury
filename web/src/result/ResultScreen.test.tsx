@@ -133,6 +133,23 @@ describe('등급 표시', () => {
     expect(image).toHaveAttribute('height')
   })
 
+  it.each([
+    ['OUTSIDER', '외지인', 1],
+    ['TRAVELER', '여행객', 2],
+    ['WANNABE', '사투리 호소인', 3],
+    ['HONORARY', '명예주민', 4],
+    ['NATIVE', '경남 토박이', 5],
+  ])('서버 code %s는 그 등급의 그림을 싣는다 (KAN-162 AC1)', async (code, name, rank) => {
+    renderScreen({
+      fetchImpl: jsonFetch(200, readyBody({ tier: { code, name, rank, of: 5 } })),
+    })
+
+    const image = await screen.findByRole('img', { name })
+    // 다섯 등급이 각자 다른 그림을 얻는다 — 매핑 표의 빈칸이나 복사 실수를 화면 단에서 잡는다
+    expect(image).toHaveAttribute('src', tierImageFor(code))
+    expect(document.querySelector('.tier-character__fallback')).toBeNull()
+  })
+
   it('그림 로딩에 실패하면 같은 자리에 등급명 텍스트가 선다 (KAN-162 Req 3)', async () => {
     renderScreen()
 
