@@ -1,7 +1,14 @@
 package com.accentury.app.recording
 
 import android.annotation.SuppressLint
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -9,6 +16,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -16,6 +26,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.dp
 import com.accentury.app.ui.components.AccenturyButton
 import com.accentury.app.ui.components.ButtonVariant
 import com.accentury.app.ui.components.CurveLane
@@ -26,7 +44,11 @@ import com.accentury.app.ui.components.PromptCard
 import com.accentury.app.ui.components.RecordButton
 import com.accentury.app.ui.components.StatusBlock
 import com.accentury.app.ui.components.StatusTone
+import com.accentury.app.ui.theme.Dimens
+import com.accentury.app.ui.theme.Motion
+import com.accentury.app.ui.theme.Radius
 import com.accentury.app.ui.theme.Spacing
+import com.accentury.app.ui.theme.motionDuration
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.accentury.app.audio.QualityStatus
@@ -109,125 +131,96 @@ fun RecordingScreen(
     // 프레임이 청크마다 늘어나므로 remember로 묶지 않는다 - 어차피 매 방출마다 다시 계산해야 한다.
     val mySegments = userCurveDisplayPoints(pitchFrames, windowMs, centerHz)
 
-    Column(modifier = Modifier.fillMaxSize().padding(Spacing.x4)) {
+    /*
+     * 화면 틀 (아트보드 ②). 위 64 · 좌우 24 · 아래 32다 - 위만 8의 배수 밖에 서는 이유는
+     * 배치이기 때문이고(정본 §4), 웹 4화면의 `--screen-padding-top`과 같은 값이라 문항이 두
+     * 런타임을 오가도 첫 요소가 같은 높이에서 시작한다.
+     */
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(
+                top = Dimens.screenPaddingTop,
+                start = Spacing.x6,
+                end = Spacing.x6,
+                bottom = Spacing.x8,
+            ),
+    ) {
         /*
-         * 웹 진행바와 같은 컴포넌트, 같은 값, 같은 폭이다 - 웹은 음성 문항 화면 맨 위에서 진행바를
-         * 폭 전체로 그린다(.progress-indicator { width: 100% }). 문항이 두 런타임을 오가므로
-         * 막대 길이나 표기가 달라지면 사용자에게는 진행이 튄 것처럼 보인다.
-         * ProgressIndicator가 이미 막대와 "3 / 10"을 한 줄에 눕히는 Row라 따로 감싸지 않는다.
+         * 본문은 스크롤하고 하단(타이머·녹음 버튼)은 고정이다 (아트보드의 `screen()` 틀).
+         * 글꼴을 200%로 키운 기기에서 대사 카드와 곡선이 자라면 녹음 버튼이 화면 밖으로 밀리는데,
+         * 이 화면에서 버튼이 안 보이는 것은 곧 녹음을 못 하는 것이다 - 밀려야 할 쪽은 본문이다.
          */
-        ProgressIndicator(
-            current = questionIndex,
-            total = totalQuestions,
-            modifier = Modifier.fillMaxWidth(),
-        )
-
-        Spacer(modifier = Modifier.height(Spacing.x4))
-        /*
-         * 대사 카드. 웹 음성 문항 화면의 카드와 같은 규격이라 전환에서 카드가 튀지 않는다.
-         * headlineMedium(26sp)이 ux-ui.md §5의 "대사 카드 24sp 이상"을 지킨다.
-         */
-        PromptCard(
-            badge = "🎤 음성 문항",
-            prompt = questionText,
-            supporting = "평소 말하듯 자연스럽게 읽어주세요",
-        )
-
-        Spacer(modifier = Modifier.height(Spacing.x4))
-        CurveCard(guidePoints = guidePoints, userSegments = mySegments)
-
-        Spacer(modifier = Modifier.weight(1f))
-
-        if (submitting) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState()),
+        ) {
             /*
-             * 결과를 기다리는 동안의 하단. 버튼 자리를 문구 하나로 바꿔 "눌린 건 알아들었고 지금
-             * 처리 중"만 알린다 - 진행률이나 취소를 주지 않는 이유는 이 구간이 보통 1초 안쪽이고
-             * (상한도 호출자가 건다) 여기서 되돌릴 수 있는 것이 없기 때문이다.
+             * 웹 진행바와 같은 컴포넌트, 같은 값, 같은 폭이다 - 웹은 음성 문항 화면 맨 위에서 진행바를
+             * 폭 전체로 그린다(.progress-indicator { width: 100% }). 문항이 두 런타임을 오가므로
+             * 막대 길이나 표기가 달라지면 사용자에게는 진행이 튄 것처럼 보인다.
+             *
+             * [note]가 "음성"인 것도 같은 이유다 - 웹 캡션이 "3 / 10 · 음성"이라, 여기서만 종류를
+             * 빼면 같은 자리의 같은 줄이 화면을 넘어갈 때마다 길어졌다 짧아진다.
              */
-            Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("제출 중…")
-            }
-        } else when (val s = state) {
-            is RecordingUiState.Idle -> {
-                Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                    RecordButton(contentDescription = "녹음 시작", onClick = viewModel::startRecording)
-                    Spacer(modifier = Modifier.height(Spacing.x2))
-                    Text(
-                        if (afterUploadFailure) {
-                            failureMessage ?: "업로드에 실패해서 다시 녹음이 필요해요"
-                        } else {
-                            "버튼을 눌러 녹음"
-                        },
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
+            ProgressIndicator(
+                current = questionIndex,
+                total = totalQuestions,
+                note = "음성",
+                modifier = Modifier.fillMaxWidth(),
+            )
 
-            is RecordingUiState.Recording -> {
-                Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        formatElapsed(s.elapsedMs) + " / 최대 10초",
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    // 개발용 — 오디오 경로 진단
-                    Text("입력 레벨(RMS): ${s.rms.toInt()}", style = MaterialTheme.typography.labelSmall)
-                    if (s.countdownActive) {
-                        Text(
-                            "곧 자동 종료됩니다 (${(RecordingEngine.MAX_DURATION_MS - s.elapsedMs) / 1000 + 1}초)",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(Spacing.x2))
-                    RecordButton(
-                        contentDescription = "녹음 정지",
-                        onClick = viewModel::stopRecording,
-                        recording = true,
-                    )
-                }
-            }
+            Spacer(modifier = Modifier.height(Spacing.x6))
+            /*
+             * 대사 카드. 배지·이모지·부연을 걷고 캡션 한 줄 + 대사만 남겼다 (아트보드 ②).
+             * "평소 말하듯 자연스럽게 읽어주세요"가 사라진 것은 문구를 줄이려는 게 아니라 자리를
+             * 옮긴 것이다 - 카드는 읽을 문장을 내밀고, 어떻게 하라는 말은 버튼 밑 캡션이 한다.
+             */
+            PromptCard(
+                caption = promptCaption(questionIndex, totalQuestions),
+                prompt = questionText,
+            )
 
-            is RecordingUiState.Review -> {
-                Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                    if (s.autoStopped) {
-                        Text(
-                            "10초가 지나 자동으로 종료됐어요",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Text(qualityMessage(s.quality), style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        "녹음 길이 ${"%.1f".format(s.durationMs / 1000.0)}초",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(modifier = Modifier.height(Spacing.x2))
-                    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.x3)) {
-                        AccenturyButton(
-                            text = "재녹음",
-                            variant = ButtonVariant.Secondary,
-                            onClick = viewModel::retryRecording,
-                        )
-                        AccenturyButton(
-                            text = "다음",
-                            enabled = s.canProceed,
-                            /*
-                             * 되감기(reset)를 여기서 부르지 않는다 (KAN-146). [다음] 뒤에도 이 화면은
-                             * 결과가 나갈 때까지 제출 중 상태로 남으므로, 이 자리에서 되감으면 방금 그린
-                             * '내 억양' 곡선이 그 구간에서 사라진다. 되감기는 화면이 걷힌 뒤 호출자
-                             * (MainActivity)가 한다. onNext 안의 consumeRecording이 PCM을 이미
-                             * 가져가므로(FR-DP-02) 되감기가 늦어져도 음성 바이트가 남지는 않는다.
-                             */
-                            onClick = { onNext(s.attemptId, s.durationMs, s.quality) },
-                        )
-                    }
-                }
-            }
+            Spacer(modifier = Modifier.height(Spacing.x6))
+            CurveCard(guidePoints = guidePoints, userSegments = mySegments)
+        }
 
-            is RecordingUiState.Failed -> {
-                StatusBlock(
+        // 하단 고정. 아트보드의 footer는 본문과 16만큼 떨어진다
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(top = Spacing.x4),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            if (submitting) {
+                /*
+                 * 결과를 기다리는 동안의 하단. 버튼 자리를 문구 하나로 바꿔 "눌린 건 알아들었고 지금
+                 * 처리 중"만 알린다 - 진행률이나 취소를 주지 않는 이유는 이 구간이 보통 1초 안쪽이고
+                 * (상한도 호출자가 건다) 여기서 되돌릴 수 있는 것이 없기 때문이다.
+                 */
+                Text("제출 중…", style = MaterialTheme.typography.bodyLarge)
+            } else when (val s = state) {
+                is RecordingUiState.Idle -> IdleControls(
+                    hint = if (afterUploadFailure) {
+                        failureMessage ?: "업로드에 실패해서 다시 녹음이 필요해요"
+                    } else {
+                        "버튼을 눌러 녹음"
+                    },
+                    onStart = viewModel::startRecording,
+                )
+
+                is RecordingUiState.Recording -> RecordingControls(
+                    elapsedMs = s.elapsedMs,
+                    warning = s.countdownActive,
+                    onStop = viewModel::stopRecording,
+                )
+
+                is RecordingUiState.Review -> ReviewControls(
+                    state = s,
+                    onRetry = viewModel::retryRecording,
+                    onNext = { onNext(s.attemptId, s.durationMs, s.quality) },
+                )
+
+                is RecordingUiState.Failed -> StatusBlock(
                     tone = StatusTone.Error,
                     message = "녹음에 실패했어요",
                     detail = s.reason,
@@ -237,10 +230,178 @@ fun RecordingScreen(
                 )
             }
         }
-
-        Spacer(modifier = Modifier.height(Spacing.x8))
     }
 }
+
+/**
+ * 대사 카드 위 캡션. 아트보드는 "3 / 10 · 이 문장을 읽어주세요"다 — 진행 도트 아래 캡션이
+ * 이미 같은 숫자를 말하지만 두 줄이 화면 위아래로 떨어져 있어, 대사 바로 위에 한 번 더
+ * 있는 편이 "지금 읽을 것은 이것"으로 읽힌다.
+ *
+ * 번호를 모르는 경우(구버전 웹이 문항 수를 안 실어 보냈다)에는 안내만 남긴다. `0 / 0 ·`으로
+ * 시작하는 줄은 숫자가 있는 것보다 나쁘다 — 사용자가 자기가 몇 번째인지 잘못 읽는다.
+ */
+internal fun promptCaption(questionIndex: Int, totalQuestions: Int): String =
+    if (questionIndex > 0 && totalQuestions > 0) {
+        "$questionIndex / $totalQuestions · 이 문장을 읽어주세요"
+    } else {
+        "이 문장을 읽어주세요"
+    }
+
+/** 대기. 누를 것 하나와 그 아래 캡션 한 줄이다 (아트보드 ②) */
+@Composable
+private fun IdleControls(hint: String, onStart: () -> Unit) {
+    RecordButton(contentDescription = "녹음 시작", onClick = onStart)
+    Spacer(modifier = Modifier.height(Spacing.x2))
+    Caption(hint)
+}
+
+/**
+ * 녹음 중 (아트보드 ②·②b). 위에서부터 타이머 → 버튼 → 캡션이고, 마지막 2초에는 타이머 자리가
+ * 잉크 캡슐로, 캡션이 자동 종료 안내로 바뀐다.
+ *
+ * 같은 숫자를 다르게 그리는 것이 아니라 **다른 것을 말한다** — 위 표기는 "얼마나 읽었나",
+ * 캡슐은 "곧 끊긴다"다. 그래서 문장을 맺어야 하는 순간에만 나타나고, 나타났다는 사실 자체가
+ * 신호가 된다. 팔레트에 빨강이 없어 위급함을 색으로 말할 수 없는데(정본 §7), 애초에 색보다
+ * 문구와 등장이 강하다.
+ */
+@Composable
+private fun RecordingControls(elapsedMs: Long, warning: Boolean, onStop: () -> Unit) {
+    val enter = tween<Float>(
+        durationMillis = motionDuration(Motion.BASE),
+        easing = Motion.easeOut,
+    )
+
+    /*
+     * 타이머와 캡슐이 같은 자리를 나눠 쓴다. 높이를 캡슐 크기로 고정해 두는 이유는 둘의 높이가
+     * 달라서다(글자 한 줄 vs 32dp 알약) - 자리를 안 잡아 두면 경고가 뜨는 순간 아래 녹음 버튼이
+     * 14dp 내려앉는다. 사용자는 그때 버튼을 누르려던 참이다.
+     */
+    Box(
+        modifier = Modifier.height(COUNTDOWN_CAPSULE_HEIGHT),
+        contentAlignment = Alignment.Center,
+    ) {
+        AnimatedVisibility(visible = !warning, enter = fadeIn(enter), exit = fadeOut(enter)) {
+            ElapsedTimer(elapsedMs)
+        }
+        AnimatedVisibility(
+            visible = warning,
+            // 살짝 커지며 나타난다 - 자리에 원래 있던 것이 바뀐 게 아니라 새로 놓였다는 뜻이다
+            enter = fadeIn(enter) + scaleIn(enter, initialScale = 0.92f),
+            exit = fadeOut(enter),
+        ) {
+            CountdownCapsule(remainingSeconds(elapsedMs, RecordingEngine.MAX_DURATION_MS))
+        }
+    }
+
+    Spacer(modifier = Modifier.height(Spacing.x2))
+    RecordButton(contentDescription = "녹음 정지", onClick = onStop, recording = true)
+    Spacer(modifier = Modifier.height(Spacing.x2))
+    // 자동 종료를 미리 알린다 — 갑자기 멈추면 사용자는 자기가 뭘 잘못 눌렀다고 생각한다
+    Caption(if (warning) "10초가 되면 자동으로 멈춰요" else "녹음 중 · 탭해서 멈추기")
+}
+
+/**
+ * `00:04 / 10초`. 뒤쪽 상한만 흐린 잉크다 — 앞의 두 자리가 초마다 바뀌는 값이고 뒤는 고정이라,
+ * 같은 무게로 적으면 어느 쪽이 지금인지 한 번에 안 갈린다.
+ */
+@Composable
+private fun ElapsedTimer(elapsedMs: Long) {
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Text(
+        buildAnnotatedString {
+            append(formatElapsed(elapsedMs))
+            withStyle(SpanStyle(color = muted)) {
+                append(" / ${RecordingEngine.MAX_DURATION_MS / 1000}초")
+            }
+        },
+        style = MaterialTheme.typography.titleSmall,
+    )
+}
+
+/**
+ * 8초 경고 캡슐 (아트보드 ②b). 잉크로 채운 알약이라 화면에서 주 버튼 다음으로 눈에 띈다.
+ *
+ * `liveRegion = Polite`로 화면을 안 보는 사용자에게도 남은 시간이 닿는다. Assertive가 아닌
+ * 이유는 매초 바뀌는 값이라, 끼어드는 쪽으로 두면 사용자가 지금 소리 내어 읽고 있는 대사를
+ * 스크린 리더가 가로챈다.
+ */
+@Composable
+private fun CountdownCapsule(seconds: Int) {
+    Box(
+        modifier = Modifier
+            .height(COUNTDOWN_CAPSULE_HEIGHT)
+            .clip(RoundedCornerShape(Radius.full))
+            .background(MaterialTheme.colorScheme.primary)
+            .padding(horizontal = COUNTDOWN_CAPSULE_PADDING)
+            .semantics { liveRegion = LiveRegionMode.Polite },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            "${seconds}초 남음",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onPrimary,
+        )
+    }
+}
+
+/** 정지 뒤의 확인. 판정 한 줄, 길이 한 줄, 그리고 갈림길 둘 */
+@Composable
+private fun ReviewControls(
+    state: RecordingUiState.Review,
+    onRetry: () -> Unit,
+    onNext: () -> Unit,
+) {
+    if (state.autoStopped) {
+        Caption("10초가 지나 자동으로 종료됐어요")
+    }
+    Text(qualityMessage(state.quality), style = MaterialTheme.typography.bodyLarge)
+    Caption("녹음 길이 ${"%.1f".format(state.durationMs / 1000.0)}초")
+
+    Spacer(modifier = Modifier.height(Spacing.x4))
+    /*
+     * 둘이 같은 폭을 갖는다 (웹 `.record-actions`와 같은 규칙). 무게는 이미 변형이 가르므로
+     * (보조는 그림자 없는 크림, 주는 잉크 면) 폭까지 다르면 보조 동작이 눌리지 않을 만큼 작아진다.
+     */
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(Spacing.x3),
+    ) {
+        AccenturyButton(
+            text = "재녹음",
+            variant = ButtonVariant.Secondary,
+            onClick = onRetry,
+            modifier = Modifier.weight(1f),
+        )
+        AccenturyButton(
+            text = "다음",
+            enabled = state.canProceed,
+            /*
+             * 되감기(reset)를 여기서 부르지 않는다 (KAN-146). [다음] 뒤에도 이 화면은
+             * 결과가 나갈 때까지 제출 중 상태로 남으므로, 이 자리에서 되감으면 방금 그린
+             * '내 억양' 곡선이 그 구간에서 사라진다. 되감기는 화면이 걷힌 뒤 호출자
+             * (MainActivity)가 한다. onNext 안의 consumeRecording이 PCM을 이미
+             * 가져가므로(FR-DP-02) 되감기가 늦어져도 음성 바이트가 남지는 않는다.
+             */
+            onClick = onNext,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+/** 하단 캡션 한 줄. 13sp 흐린 잉크다 (정본 §3 `caption`) */
+@Composable
+private fun Caption(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/** 경고 캡슐 크기 (아트보드 ②b: 높이 32 · 가로 패딩 14) */
+private val COUNTDOWN_CAPSULE_HEIGHT = 32.dp
+private val COUNTDOWN_CAPSULE_PADDING = 14.dp
 
 /**
  * 곡선 두 레인을 감싸는 상자 (시안). 레인을 상자에 넣는 이유는 곡선이 "화면에 그려진 선"이
@@ -266,11 +427,6 @@ private fun CurveCard(guidePoints: List<CurvePoint>, userSegments: List<List<Cur
             topDivider = true,
         )
     }
-}
-
-private fun formatElapsed(elapsedMs: Long): String {
-    val seconds = elapsedMs / 1000
-    return "00:%02d".format(seconds)
 }
 
 private fun qualityMessage(quality: QualityStatus): String = when (quality) {

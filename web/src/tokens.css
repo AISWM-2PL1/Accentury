@@ -77,6 +77,10 @@
   --text-body-sm: 15px;
   --text-label: 14px;
   --text-caption: 13px;
+  /* 녹음 타이머·8초 경고 캡슐 (KAN-161 4단계). Jua 16 — 숫자 두 자리가 초마다 바뀌는 자리라
+     본문 글꼴로 적으면 "지금 몇 초"가 문단의 한 낱말처럼 읽힌다. 앱은 M3의 titleSmall 슬롯이
+     이 값을 든다 (Type.kt) */
+  --text-timer: 16px;
 
   /* 굵기는 둘뿐이다 (KAN-161 2단계). Jua는 굵기 하나짜리 폰트라 700·900을 주면 브라우저가
      합성 볼드를 만들어 획이 뭉갠다 — 제목·대사·등급은 전부 400이다. 본문에서 무게를 주는
@@ -101,9 +105,9 @@
   --radius-xl: 24px;
   --radius-full: 9999px;
 
-  /* 화면 위쪽 여백 (KAN-161 3단계). 좌우(24)·아래(32)와 달리 이 값만 8의 배수 밖에 서는
-     이유는 배치이기 때문이다 — 첫 요소를 이만큼 내려야 그림과 제목이 세로 가운데에 앉는다.
-     네이티브 화면에는 아직 없다: 웹 4화면부터 붙이고 네이티브 녹음 화면은 후속 단계다. */
+  /* 화면 위쪽 여백 (KAN-161 3단계, 네이티브 반영 4단계). 좌우(24)·아래(32)와 달리 이 값만
+     8의 배수 밖에 서는 이유는 배치이기 때문이다 — 첫 요소를 이만큼 내려야 그림과 제목이
+     세로 가운데에 앉는다. 앱은 `Dimens.screenPaddingTop`이 같은 값을 든다 */
   --screen-padding-top: 64px;
 
   --touch-target-min: 48px;
@@ -114,8 +118,11 @@
   --content-max-width: 320px;
   --opacity-disabled: 0.6;
   --prompt-card-padding: 24px;
-  --progress-bar-height: 12px;
-  /* 진행 도트 하나의 두께. 진행바(12)와 다른 값인 것은 도트가 막대가 아니기 때문이다 */
+  /* 막대 두께. 결과 점수 막대·입력 레벨 바·남은 시간 게이지가 같이 쓴다.
+     12에서 8로 내렸다 (KAN-161 4단계) — 아트보드의 막대가 전부 8이고 진행 도트도 8이라,
+     한 화면에 두 굵기가 섞이면 같은 "막대"인데 무게가 달라 보인다 */
+  --progress-bar-height: 8px;
+  /* 진행 도트 하나의 두께. 막대와 값은 같지만 뜻이 다르다 — 저쪽은 그릇, 이쪽은 칸 하나다 */
   --progress-dot-height: 8px;
   --hero-icon-size: 112px;
   /* F0 곡선 레인 하나. 앱 Dimens.curveLaneHeight와 같은 값이다 (design-tokens.md) —
@@ -204,7 +211,8 @@ body {
 .type-display,
 .type-headline,
 .type-title,
-.type-title-sm {
+.type-title-sm,
+.type-timer {
   font-family: var(--font-display);
   line-height: var(--leading-tight);
   margin: 0;
@@ -239,6 +247,14 @@ body {
 .type-title-sm {
   font-size: var(--text-title-sm);
   font-weight: var(--weight-normal);
+}
+
+/* 녹음 타이머·경고 캡슐. 자간을 벌리는 것은 여기뿐이다 — 자리가 고정된 숫자라
+   0.04em이 있어야 `00:04`의 두 자리가 서로 붙어 보이지 않는다 (시안) */
+.type-timer {
+  font-size: var(--text-timer);
+  font-weight: var(--weight-normal);
+  letter-spacing: 0.04em;
 }
 
 .type-body {

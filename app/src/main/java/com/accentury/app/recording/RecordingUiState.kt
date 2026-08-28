@@ -16,11 +16,16 @@ sealed interface RecordingUiState {
         val rms: Double,
         val pitchFrames: List<RecordingEngine.PitchFrame> = emptyList(),
     ) : RecordingUiState {
-        val countdownActive: Boolean get() = elapsedMs >= COUNTDOWN_WARNING_MS
-
-        companion object {
-            const val COUNTDOWN_WARNING_MS = 8_000L
-        }
+        /**
+         * 지금이 8초 경고 구간인가. 판정은 [isCountdownWarning]이 하고 여기는 상한만 채운다 —
+         * 경계와 반올림이 웹과 같은 값이어야 해서 규칙을 한 자리에 뒀다 (`RecordingCountdown.kt`).
+         *
+         * `elapsedMs >= 8_000`을 직접 적던 것을 "남은 시간 2초 이하"로 바꿨다. 값이 같아
+         * 동작은 그대로지만, 상한이 문항마다 달라지는 날 비율도 절대값도 아닌 **남은 시간**이
+         * 옳은 기준이라는 것이 식에 남는다.
+         */
+        val countdownActive: Boolean
+            get() = isCountdownWarning(elapsedMs, RecordingEngine.MAX_DURATION_MS)
     }
 
     /**

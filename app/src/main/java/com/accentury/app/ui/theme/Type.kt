@@ -5,6 +5,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.accentury.app.R
 
@@ -63,6 +64,26 @@ val Typography = Typography(
         fontWeight = FontWeight.Normal,
         fontSize = 20.sp,
         lineHeight = 23.sp,
+    ),
+    /**
+     * timer 16sp - 녹음 타이머·8초 경고 캡슐 (KAN-161 4단계).
+     *
+     * M3에 "타이머" 슬롯이 없어 남아 있던 `titleSmall`에 얹었다. 이름은 M3 것이고 뜻은
+     * 정본 §3의 `timer`다 - `tools/check_tokens.py`의 `TYPE_SLOTS`가 그 대응을 들고 있다.
+     * 슬롯을 새로 만들지 않은 이유는 [Typography]를 감싸는 자기 타입을 하나 더 두면
+     * 화면 코드가 `MaterialTheme.typography`와 그 타입 둘을 번갈아 읽게 되기 때문이다.
+     *
+     * 왜 Jua 16인가: 숫자 두 자리가 초마다 바뀌는 자리라 본문 글꼴로 적으면 "지금 몇 초"가
+     * 문단의 한 낱말처럼 읽힌다. 대사와 같은 글꼴로 두되 크기를 본문에 맞춰 낮췄다.
+     */
+    titleSmall = TextStyle(
+        fontFamily = Jua,
+        fontWeight = FontWeight.Normal,
+        fontSize = 16.sp,
+        lineHeight = 18.sp,
+        // 자리가 고정된 숫자라 자간을 벌리지 않으면 `00:04`의 두 자리가 서로 붙어 보인다.
+        // 자간을 주는 슬롯은 여기 하나다 (웹 `.type-timer`와 같은 값).
+        letterSpacing = 0.04.em,
     ),
     // body 16sp - 본문, 버튼 라벨
     bodyLarge = TextStyle(

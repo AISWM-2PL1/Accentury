@@ -2,6 +2,7 @@ package com.accentury.app.recording
 
 import android.annotation.SuppressLint
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -113,7 +114,9 @@ fun VoiceCheckScreen(
 
             Spacer(modifier = Modifier.height(Spacing.x4))
             // 문항 화면과 같은 카드다 - 여기서 말한 방식 그대로 문항에서도 말하면 된다는 뜻이 된다.
-            PromptCard(badge = "🎤 목소리 점검", prompt = "안녕하세요")
+            // 캡션에서 이모지를 걷었다 (KAN-161 4단계). 잉크 한 색 화면에서 이모지는 색을
+            // 가진 유일한 물건이라, 종이에 붙은 스티커처럼 그림 밖으로 튄다 (정본 §7).
+            PromptCard(caption = "목소리 점검", prompt = "안녕하세요")
 
             Spacer(modifier = Modifier.height(Spacing.x4))
             /*
@@ -198,12 +201,20 @@ private fun InputLevelBar(level: Double) {
     val fraction = levelBarFraction(level)
     val threshold = levelBarFraction(AudioQuality.QUIET_RMS_THRESHOLD)
 
+    /*
+     * 그릇은 면이 아니라 **테두리**로 그린다 (KAN-161 4단계, 웹 `.level-bar`와 같은 규격).
+     * `surfaceVariant`(#cfc5aa) 면이었는데 크림 위 1.46:1이라 바의 오른쪽 끝이 어디인지
+     * 보이지 않았다 - 채운 만큼만 보이고 전체 길이가 안 보이면 "얼마나 더 크게"를 알 수 없다.
+     * 정본 §7이 이 색으로 상태를 표시하지 말라고 하는 자리가 정확히 여기다.
+     */
+    val shape = RoundedCornerShape(Radius.full)
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(Dimens.progressBarHeight)
-            .clip(RoundedCornerShape(Radius.full))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surface)
+            .border(LEVEL_BAR_BORDER, MaterialTheme.colorScheme.primary, shape)
             // 값이 아니라 뜻만 읽힌다 - 시시각각 바뀌는 숫자를 읽어 주면 화면을 못 쓴다.
             .clearAndSetSemantics { contentDescription = "입력 레벨" },
     ) {
@@ -227,6 +238,9 @@ private fun InputLevelBar(level: Double) {
 }
 
 private val TICK_WIDTH = 2.dp
+
+/** 그릇 테두리. 결과 점수 막대·녹음 게이지와 같은 1dp다 (정본 §8 컷아웃 규칙의 막대 판) */
+private val LEVEL_BAR_BORDER = 1.dp
 
 /**
  * 원 스케일 rms를 바의 0..1 비율로. **로그 스케일**이다 —

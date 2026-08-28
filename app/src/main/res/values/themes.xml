@@ -1,5 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.Accentury" parent="android:Theme.Material.Light.NoActionBar" />
+    <!--
+      values-night/ 대응 폴더가 없다. 그래서 시스템이 다크여도 이 Light 테마가 그대로 쓰인다 —
+      Theme.kt가 `isSystemInDarkTheme()`을 안 보는 것과 짝을 이루는 결정이다 (정본 §7).
+
+      아래 두 줄은 그 결정을 창(window)에도 적는다. 이 앱의 배경은 테마와 무관하게 늘 크림
+      (#f3ecd9)이라 시계·배터리 아이콘은 언제나 어두워야 한다. 코드 쪽(MainActivity의
+      enableEdgeToEdge + WindowInsetsController)이 같은 값을 세우지만, 그쪽은 onCreate가
+      돌아야 적용된다 — 창이 처음 그려지는 한 프레임을 여기가 맡아 시스템 다크에서 흰 아이콘이
+      깜빡였다 사라지는 것을 막는다.
+    -->
+    <style name="Theme.Accentury" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
 </resources>

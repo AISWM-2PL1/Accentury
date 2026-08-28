@@ -90,7 +90,15 @@ describe('녹음 단계 (§5.7)', () => {
 
     // 상한은 문항 정의에서 온다 (10초). 경과는 담긴 샘플 수에서 계산된 값이다
     // 시계꼴 표기 `00:02` (KAN-161 3단계, 아트보드) — 같은 줄에 '초'가 두 번 나오지 않게 한다
-    expect(screen.getByText('00:02 / 10초')).toBeInTheDocument()
+    //
+    // 한 줄이 요소 둘로 나뉘어 있어(KAN-161 4단계: 상한만 흐린 잉크) 기본 매처로는 안 잡힌다
+    // — 기본 매처가 보는 것은 자식 요소를 뺀 그 노드의 글자라서다. 줄 전체를 확인해야 하므로
+    // textContent로 직접 짚는다: 두 조각이 각각 맞아도 줄이 뒤집혀 있으면 사용자는 못 읽는다.
+    expect(
+      screen.getByText((_, node) => node?.textContent === '00:02 / 10초', {
+        selector: '.record-elapsed',
+      }),
+    ).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '정지' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '녹음' })).not.toBeInTheDocument()
   })

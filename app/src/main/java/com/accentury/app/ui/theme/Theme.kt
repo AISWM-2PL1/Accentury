@@ -119,6 +119,13 @@ val MaterialTheme.accenturyColors: AccenturyColors
  *
  * 다크 전용 팔레트는 후속 티켓이다. 그때까지 [DarkPrimary] 같은 상수는 정본 §2의 다크 표와
  * 대조하는 `tools/check_tokens.py`를 위해 남아 있고, 값은 라이트와 같다.
+ *
+ * **시스템 바도 같이 고정한다** (KAN-161 4단계). 화면이 안 뒤집히는데 시계·배터리 아이콘만
+ * 뒤집히면 크림 위에 흰 글자가 얹혀 안 보인다 — 다크 고정은 앱 안쪽만의 결정이 아니라 창
+ * 전체의 결정이다. 세 자리가 같은 값을 든다: `res/values/themes.xml`의
+ * `windowLightStatusBar`(첫 프레임), `MainActivity`의 `enableEdgeToEdge(SystemBarStyle.light)`,
+ * 그 뒤의 `WindowInsetsController.isAppearanceLight*Bars`(마지막 말). `values-night/` 폴더는
+ * 만들지 않는다 — 만드는 순간 이 결정을 우회하는 자리가 하나 생긴다.
  */
 @Composable
 fun AccenturyTheme(
