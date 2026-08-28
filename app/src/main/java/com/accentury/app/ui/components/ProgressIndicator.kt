@@ -74,7 +74,9 @@ fun ProgressIndicator(
             if (note == null) "$current / $total" else "$current / $total · $note",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.align(Alignment.End),
+            // 숫자는 시각 전용 - 위 Row가 이미 "문항 진행률 3 / 10"을 읽는다 (PR #58 리뷰 P2).
+            // align만 남기고 clearAndSetSemantics를 떨어뜨리면 TalkBack이 문항마다 두 번 읽는다.
+            modifier = Modifier.align(Alignment.End).clearAndSetSemantics { },
         )
     }
 }
