@@ -27,8 +27,8 @@ import { storeLabelFor, storeUrlFor, type StorePlatform } from '../audio/storeLi
 import type { FetchLike } from '../progress/fetchTestDefinition'
 import { Button, StatusBlock, type ButtonVariant } from '../ui'
 import { ShareIcon } from '../ui/icons'
-import { ResultHero } from '../ui/illustrations/ResultHero'
 import { fetchResult, ResultFetchError } from './fetchResult'
+import { TIER_IMAGE_HEIGHT, TIER_IMAGE_WIDTH, tierImageFor } from './tierAssets'
 import type { RetestControl } from './useRetest'
 import type { TestResultView } from './testResult'
 
@@ -178,13 +178,14 @@ export function ResultScreen({
     <main className="screen">
       <div className="screen__body">
         {/*
-          깃발을 꽂은 사람. 등급이 무엇이든 같은 그림이다 — 등급별로 바꾸면 낮은 등급에
-          "졌다"는 그림을 주게 되는데, 이 테스트는 유사도를 재는 것이지 잘잘못을 가리는 것이
-          아니다 (KAN-29).
+          등급 캐릭터 (KAN-162). KAN-29 때는 등급이 무엇이든 깃발 꽂은 사람 한 그림이었다 —
+          등급별 그림이 낮은 등급에 "졌다"는 그림이 될까 봐서였다. KAN-162가 그 결정을
+          뒤집었다: 확정된 다섯 캐릭터(외지인~경남 토박이, 노션 「결과화면 티어 이미지」)는
+          서열의 그림이 아니라 정체성의 그림이다 — 갈매기에 쫓기는 외지인도 튜브 낀 여행객도
+          각자 웃기고, 사용자가 공유하고 기억하는 것은 "내가 어느 캐릭터인가"다 (Peak-End:
+          절정 = 캐릭터 공개, ux-ui.md).
         */}
-        <div className="illustration illustration--result">
-          <ResultHero />
-        </div>
+        <TierCharacter code={tier.code} name={tier.name} />
 
         <div>
           {/*
@@ -253,6 +254,61 @@ export function ResultScreen({
         <RetestAction retest={retest} variant="secondary" />
       </div>
     </main>
+  )
+}
+
+/**
+ * 등급 캐릭터 한 장 (KAN-162 2단계).
+ *
+ * `alt`는 서버의 `tier.name`이다 — 등급명은 서버 것이고(KAN-29), 그림이 무엇을 그렸는지를
+ * 말로 하면 결국 등급명이다. 바로 아래 h1이 같은 이름을 크게 적지만 그건 중복이 아니라
+ * 그림의 설명이다: 스크린 리더는 "명예주민 그림, 제목 명예주민"으로 읽고, 그림 없는 사람에게
+ * 이 자리가 무엇이었는지 알려 주는 것이 alt의 일이다.
+ *
+ * ## 폴백은 등급명 텍스트다
+ *
+ * 그림이 없거나(모르는 code) 로딩에 실패하면 같은 슬롯에 등급명을 크게 적는다 (Req 3).
+ * 깨진 이미지 아이콘도, 빈 자리도 아니다 — 자리를 비워 두면 화면이 위로 튀어 오르고,
+ * 브라우저의 깨진 아이콘은 우리 그림이 아니다. `aria-hidden`인 이유: 이 텍스트는 그림의
+ * 자리를 눈으로 메우는 것이고, 소리로는 바로 아래 h1이 이미 같은 이름을 읽는다. 여기까지
+ * 읽어 주면 등급명이 두 번 나온다.
+ *
+ * ## halo
+ *
+ * 그림은 투명 배경 WebP고 종이·잉크 색이 박혀 있다 (정본 §7 `ILLO` — 일러스트는 테마를
+ * 따르지 않는다). 다크 팔레트가 붙는 날 검정 선이 어두운 배경에 묻히는 것을 막는 것이
+ * `.tier-character__image`의 크림 2px halo다 (`paper.tsx`의 `PAPER_FILTER`와 같은 규칙).
+ * 라이트에서는 halo가 배경과 같은 크림이라 보이지 않는다 — 지금 넣어 두는 이유는 다크가
+ * 오는 날 이 화면을 다시 열지 않기 위해서다.
+ */
+function TierCharacter({ code, name }: { code: string; name: string }) {
+  const src = tierImageFor(code)
+  // 로딩 실패는 렌더 중에 알 수 없다 — onError가 뜬 뒤에야 폴백으로 바꾼다.
+  const [failed, setFailed] = useState(false)
+
+  // code가 바뀌면(재응시 후 다른 결과) 이전 실패가 새 그림을 가리면 안 된다.
+  useEffect(() => {
+    setFailed(false)
+  }, [src])
+
+  return (
+    <div className="illustration illustration--result">
+      {src !== undefined && !failed ? (
+        <img
+          className="tier-character__image"
+          src={src}
+          alt={name}
+          width={TIER_IMAGE_WIDTH}
+          height={TIER_IMAGE_HEIGHT}
+          decoding="async"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <span className="tier-character__fallback type-display" aria-hidden="true">
+          {name}
+        </span>
+      )}
+    </div>
   )
 }
 

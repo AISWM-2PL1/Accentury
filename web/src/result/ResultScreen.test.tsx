@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { FetchLike } from '../progress/fetchTestDefinition'
 import { ResultScreen, type ResultScreenProps } from './ResultScreen'
+import { tierImageFor } from './tierAssets'
 import type { RetestControl } from './useRetest'
 
 const API_BASE = 'http://localhost:8080'
@@ -119,6 +120,41 @@ describe('등급 표시', () => {
     })
 
     expect(await screen.findByRole('heading', { name: '명예 도민' })).toBeInTheDocument()
+  })
+
+  it('등급 code의 캐릭터 그림을 등급명 alt로 싣는다 (KAN-162)', async () => {
+    renderScreen()
+
+    const image = await screen.findByRole('img', { name: '명예주민' })
+    // 그림 선택은 code로, 이름은 서버 값으로 — 표는 tierAssets 한 곳이다
+    expect(image).toHaveAttribute('src', tierImageFor('HONORARY'))
+    // 자리를 미리 잡아 그림이 오기 전후로 아래 등급명이 내려앉지 않는다
+    expect(image).toHaveAttribute('width')
+    expect(image).toHaveAttribute('height')
+  })
+
+  it('그림 로딩에 실패하면 같은 자리에 등급명 텍스트가 선다 (KAN-162 Req 3)', async () => {
+    renderScreen()
+
+    const image = await screen.findByRole('img', { name: '명예주민' })
+    fireEvent.error(image)
+
+    expect(screen.queryByRole('img', { name: '명예주민' })).not.toBeInTheDocument()
+    // 폴백은 그림 자리를 눈으로 메우는 것이라 h1과 별개로 떠 있고, 소리로는 h1만 읽힌다
+    const fallback = document.querySelector('.tier-character__fallback')
+    expect(fallback).toHaveTextContent('명예주민')
+    expect(fallback).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.getByRole('heading', { name: '명예주민' })).toBeInTheDocument()
+  })
+
+  it('모르는 등급 code면 그림 없이 등급명 텍스트로 대신한다', async () => {
+    renderScreen({
+      fetchImpl: jsonFetch(200, readyBody({ tier: { code: 'LEGEND', name: '전설', rank: 6, of: 6 } })),
+    })
+
+    await screen.findByRole('heading', { name: '전설' })
+    expect(screen.queryByRole('img')).not.toBeInTheDocument()
+    expect(document.querySelector('.tier-character__fallback')).toHaveTextContent('전설')
   })
 
   it('등급 코멘트와 순위를 함께 보여준다', async () => {
@@ -288,11 +324,15 @@ describe('내보내는 길 — AC 5항', () => {
     expect(props.retest.onRetest).toHaveBeenCalledTimes(1)
   })
 
-  it('공유 이미지를 화면에 띄우지 않는다 — 아직 없는 자산이라 로딩에 걸리면 안 된다', async () => {
+  it('공유 이미지(share.imageUrl)를 화면에 띄우지 않는다 — 원격 자산 로딩에 결과 화면이 걸리면 안 된다', async () => {
     renderScreen()
 
     await screen.findByText('명예주민')
-    expect(screen.queryByRole('img')).not.toBeInTheDocument()
+    // 화면의 그림은 번들에 든 등급 캐릭터 한 장뿐이다 (KAN-162). S3의 공유 카드는 공유 시점에
+    // KAN-30이 쓰는 것이지 이 화면이 내려받는 것이 아니다.
+    const images = screen.getAllByRole('img')
+    expect(images).toHaveLength(1)
+    expect(images[0]).not.toHaveAttribute('src', 'https://static.accentury.app/tier/honorary.png')
   })
 })
 
