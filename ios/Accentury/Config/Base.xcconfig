@@ -1,0 +1,34 @@
+// Base.xcconfig — Debug·Release가 공유하는 설정. 안드로이드의 app/build.gradle.kts
+// `defaultConfig` 블록에 해당한다. 빌드 구성별로 갈리는 값만 Debug/Release.xcconfig가 덮는다.
+//
+// [xcconfig 주석 함정] 이 파일에서 `//`는 줄 끝까지 주석이다. URL의 `//`를 그대로 쓰면
+// 스킴만 남고 잘리므로 빈 변수 참조 `$()`를 끼워 `http:/$()/localhost` 꼴로 쓴다
+// (Debug/Release.xcconfig 참고). 이 파일에는 URL이 없지만 규칙은 같다.
+
+PRODUCT_NAME = Accentury
+PRODUCT_BUNDLE_IDENTIFIER = com.accentury.app
+
+// 안드로이드 versionName/versionCode와 짝. 릴리스 때 두 플랫폼을 같이 올린다.
+MARKETING_VERSION = 1.0
+CURRENT_PROJECT_VERSION = 1
+
+// minSdk 29(Android 10, 2019)와 대략 같은 시기·보급률 대의 하한.
+IPHONEOS_DEPLOYMENT_TARGET = 16.0
+// 1 = iPhone 전용. 안드로이드 쪽도 폰 세로 화면만 지원한다.
+TARGETED_DEVICE_FAMILY = 1
+
+SWIFT_VERSION = 5.0
+SWIFT_EMIT_LOC_STRINGS = YES
+ENABLE_USER_SCRIPT_SANDBOXING = YES
+
+// 서명. 팀 ID는 레포에 넣지 않는다 — 개인 계정 식별자이고 사람마다 다르다.
+// 실기기 빌드가 필요하면 Local.xcconfig(gitignore 대상)에 `ACCENTURY_TEAM_ID = ABCDE12345`를
+// 적는다. 값이 없으면 빈 문자열이 되고, 시뮬레이터 빌드는 서명 없이 그대로 통과한다.
+CODE_SIGN_STYLE = Automatic
+DEVELOPMENT_TEAM = $(ACCENTURY_TEAM_ID)
+
+// 여기서 Local.xcconfig를 한 번 읽는 이유는 ACCENTURY_TEAM_ID 하나 때문이다 — Release도
+// 팀 ID는 필요하다. WEB_URL·API_BASE_URL 오버라이드는 이 지점이 아니라 Debug.xcconfig 끝의
+// 두 번째 `#include?`가 담당한다. Release의 URL은 이 include '뒤'에 놓여 있어(Release.xcconfig)
+// 로컬 파일이 프로덕션 빌드의 주소를 조용히 바꿀 수 없다.
+#include? "Local.xcconfig"

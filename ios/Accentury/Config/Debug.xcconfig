@@ -1,0 +1,25 @@
+// Debug.xcconfig — 안드로이드 buildTypes.debug에 해당.
+#include "Base.xcconfig"
+
+// [xcconfig 주석 함정] `//`가 주석이라 URL을 그대로 못 쓴다. `$()`는 빈 문자열로 펼쳐지는
+// 변수 참조라, `http:/$()/localhost:5173`이 빌드 시점에 `http://localhost:5173`이 된다.
+
+// 맥에서 도는 Vite dev 서버 (web/에서 npm run dev). 시뮬레이터는 호스트와 네트워크 스택을
+// 공유하므로 localhost가 곧 맥이다 — 안드로이드 에뮬레이터의 10.0.2.2에 해당하는 주소가 따로 없다.
+WEB_URL = http:/$()/localhost:5173
+API_BASE_URL = http:/$()/localhost:8080
+
+// 평문 http 예외가 든 plist. Release는 예외 없는 쪽을 쓴다.
+INFOPLIST_FILE = Accentury/Info-Debug.plist
+
+ONLY_ACTIVE_ARCH = YES
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) DEBUG
+SWIFT_OPTIMIZATION_LEVEL = -Onone
+GCC_PREPROCESSOR_DEFINITIONS = $(inherited) DEBUG=1
+
+// 실기기 확인용 오버라이드 (안드로이드 local.properties의 `webUrl=`과 같은 자리).
+// 실기기는 맥의 localhost를 모른다. `cloudflared tunnel --url http:/$()/localhost:5173`이 준
+// HTTPS 주소를 Local.xcconfig에 적으면 화면과 API가 배포와 같은 단일 출처로 나간다 —
+// Vite dev 서버가 /v0를 8080으로 프록시한다 (web/vite.config.ts, webview-layer.md §12.7).
+// 기본값 '뒤'에 와야 덮어쓸 수 있으므로 이 include는 반드시 파일 끝에 있어야 한다.
+#include? "Local.xcconfig"

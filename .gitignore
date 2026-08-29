@@ -33,3 +33,17 @@ scripts/__pycache__/
 # terraform plan -out 산출물. state처럼 리소스 값이 들어 있다.
 *.tfplan
 tfplan
+
+# === iOS (KAN-108) ===
+# 개발자 개인 설정 파일. 팀 ID와 실기기 확인용 터널 주소가 들어가므로 커밋 대상이 아니다
+# (안드로이드의 local.properties와 같은 자리). 템플릿은 Local.xcconfig.example로 커밋돼 있다.
+ios/Accentury/Config/Local.xcconfig
+# Xcode가 사람마다 다르게 쓰는 상태(열린 파일, 브레이크포인트, 스킴 선택).
+# Accentury.xcodeproj 자체는 커밋한다 - 원본은 ios/project.yml이고 이건 xcodegen 산출물이다.
+ios/**/xcuserdata/
+ios/**/*.xcuserstate
+# SwiftPM 빌드 캐시와 로컬 패키지 상태.
+ios/**/.build/
+ios/**/.swiftpm/
+ios/DerivedData/
+# Package.resolved는 일부러 빼지 않는다 - 외부 의존성이 생기면 버전을 고정하는 파일이다.

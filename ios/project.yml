@@ -1,0 +1,91 @@
+# XcodeGen 정의 파일. **이 파일이 원본이고 Accentury.xcodeproj는 산출물이다.**
+# .xcodeproj도 커밋하지만(티켓 AC: Xcode 프로젝트가 레포에 있어야 한다) 손으로 고치지 않는다 —
+# Xcode UI에서 만진 변경은 다음 `xcodegen generate` 때 조용히 사라진다.
+# 빌드 설정을 바꿀 자리는 여기, 또는 Accentury/Config/*.xcconfig다.
+name: Accentury
+
+options:
+  bundleIdPrefix: com.accentury
+  createIntermediateGroups: true
+  generateEmptyDirectories: false
+  # 아래 두 값의 정본은 Accentury/Config/Base.xcconfig다. 여기 한 번 더 두는 이유는
+  # xcconfig가 붙지 않는 타깃(AccenturyTests)도 같은 하한·같은 Swift 버전으로 빌드하기 위해서다.
+  deploymentTarget:
+    iOS: "16.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    TARGETED_DEVICE_FAMILY: "1"
+
+configs:
+  Debug: debug
+  Release: release
+
+packages:
+  AccenturyCore:
+    path: AccenturyCore
+
+targets:
+  Accentury:
+    type: application
+    platform: iOS
+    sources:
+      - path: Accentury
+        excludes:
+          - "Info-Debug.plist"
+          - "Info-Release.plist"
+          - "Config"
+      # 빌드 산출물이 아니라 설정 파일이라 컴파일·복사 대상이 아니다. Xcode 네비게이터에서
+      # 열어 볼 수 있게 그룹으로만 넣는다. Local.xcconfig는 사람마다 다른 파일이라 제외한다 —
+      # 넣으면 프로젝트 파일이 기계마다 갈린다.
+      - path: Accentury/Info-Debug.plist
+        buildPhase: none
+      - path: Accentury/Info-Release.plist
+        buildPhase: none
+      - path: Accentury/Config
+        buildPhase: none
+        excludes:
+          - "Local.xcconfig"
+    configFiles:
+      Debug: Accentury/Config/Debug.xcconfig
+      Release: Accentury/Config/Release.xcconfig
+    settings:
+      base:
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+    dependencies:
+      - package: AccenturyCore
+        product: AccenturyCore
+
+  AccenturyTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: AccenturyTests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: "YES"
+        PRODUCT_BUNDLE_IDENTIFIER: com.accentury.app.tests
+    dependencies:
+      - target: Accentury
+
+schemes:
+  Accentury:
+    build:
+      targets:
+        Accentury: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      # 앱 계층(AccenturyTests)과 순수 Swift 계층(AccenturyCoreTests)을 한 스킴에서 같이 돌린다.
+      # Core 쪽은 `cd AccenturyCore && swift test`로도 도는데, 그쪽이 시뮬레이터 없이 훨씬 빠르다.
+      targets:
+        - AccenturyTests
+        - package: AccenturyCore/AccenturyCoreTests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
