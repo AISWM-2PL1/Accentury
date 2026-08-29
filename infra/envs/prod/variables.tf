@@ -106,3 +106,9 @@ variable "github_repository_id" {
   type    = number
   default = 1308814203
 }
+
+variable "alert_email" {
+  type        = string
+  description = "CloudWatch 경보 수신 주소 (KAN-134, 2026-08-28 확정). 두 환경이 같은 값이라 tfvars가 아니라 기본값이다. 환경별로 나누려면 tfvars에 한 줄 넣으면 된다."
+  default     = "team2pl1@gmail.com"
+}

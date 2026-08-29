@@ -14,6 +14,8 @@ infra/
     compute/          EC2, 운영 compose 파일, 기동 스크립트, systemd 유닛 (KAN-124)
     config/           backend 환경 변수의 정본인 SSM 파라미터와 관리자 토큰 (KAN-129)
     edge/             internal ALB, VPC 오리진, CloudFront, S3 (KAN-125, KAN-126)
+    waf/              CloudFront 앞단 웹 ACL. us-east-1 프로바이더로 호출한다 (KAN-149)
+    monitoring/       SNS 이메일과 CloudWatch 경보 4종 (KAN-134)
     deploy/           GitHub Actions가 OIDC로 맡는 환경별 배포 역할 (KAN-127)
   envs/
     staging/          main.tf + terraform.tfvars
@@ -207,6 +209,9 @@ terraform apply
 - GitHub environment 변수 3개를 apply 출력으로 채운다 (아래 "GitHub 설정"). 그
   뒤 웹 번들은 Web Deploy 워크플로가 올린다 (KAN-127). 등급 이미지 업로드는
   KAN-132.
+- **SNS 이메일 구독을 확인한다** (KAN-134). apply 직후 수신함에 AWS 확인 메일이
+  오고, 링크를 누르기 전에는 경보가 울려도 메일이 나가지 않는다. 아래 "경보와
+  알림"에 확인 명령이 있다.
 
 ## GitHub 설정 (KAN-127)
 
@@ -484,6 +489,144 @@ docker 자체는 컨테이너 환경 변수를 `/var/lib/docker/containers/*/con
 요청만 7일 보존이라 1달러 미만. 두 환경 합산 월 16달러 안팎을 감수한다 (KAN-149 코멘트,
 2026-08-28).
 
+## 경보와 알림 (KAN-134)
+
+prod는 무인으로 돈다. 서버가 죽은 것을 사용자보다 먼저 알아야 하므로 SNS 토픽
+하나(`accentury-{env}-alerts`)에 이메일 구독을 걸고 CloudWatch 경보 4종을 붙인다
+(`infra/modules/monitoring`, 두 환경 각 1벌). 지표를 새로 수집하지 않는다. 전부 ALB,
+RDS, EC2가 이미 내보내는 표준 지표라 backend와 ai 코드는 손대지 않는다. 지표 수집과
+대시보드, correlation ID 규약은 KAN-38이고, 이 절은 그중 최소 선행분이다.
+
+| 경보 | 지표 | 조건 | 결측 처리 |
+| --- | --- | --- | --- |
+| `unhealthy-hosts` | `UnHealthyHostCount` (TargetGroup + LoadBalancer) | 1분 최대 >= 1이 2회 연속 | `breaching` |
+| `alb-5xx` | `HTTPCode_ELB_5XX_Count` + `HTTPCode_Target_5XX_Count` 합 | 1분 합계 > 5가 2회 연속 | `notBreaching` |
+| `rds-free-storage` | `FreeStorageSpace` | 5분 최소 < 2GiB | `missing` |
+| `ec2-cpu-surplus` | `CPUSurplusCreditBalance` | 5분 최대 > 144가 2회 연속 | `missing` |
+
+앞의 둘이 티켓의 필수 2종이고 뒤의 둘은 "선택" 항목인데 두 환경 모두 넣기로 했다
+(2026-08-28). 네 경보 모두 ALARM과 OK 양쪽을 알린다. 해제 알림이 없으면 아직 죽어
+있는지를 콘솔에서 확인해야 하기 때문이다.
+
+몇 가지가 의도된 선택이다.
+
+- **5xx는 두 지표의 합이다.** `ELB_5XX`만 보면 backend가 500을 쏟는 상황을 놓치고,
+  `Target_5XX`만 보면 backend가 아예 죽어 ALB가 502를 내는 상황을 놓친다. 합계
+  하나로 보면 경보 개수도 한 개로 유지되어 "이 티켓은 경보 2종만"이라는 KAN-38
+  경계가 그대로 선다.
+- **`unhealthy-hosts`만 결측을 장애로 센다.** 이 지표는 대상이 등록돼 있는 한 계속
+  나오므로 끊겼다는 것은 ALB나 대상 그룹이 사라졌다는 뜻이다. 대가로 스택을 새로
+  apply한 직후 EC2가 부팅하는 몇 분 동안 한 번 울린다. 이때는 대상이 실제로
+  비정상이라 경보가 맞고, 뜨고 나면 OK 알림이 따라온다.
+- **5xx는 결측을 정상으로 센다.** 트래픽이 0인 시간대에는 지표가 나오지 않는다.
+  서버가 죽은 것은 `unhealthy-hosts`가 트래픽과 무관하게 잡는다. 다만 이미 ALARM인
+  상태에서 트래픽이 완전히 끊기면 **해제되지 않고 ALARM에 머문다.** 경보를 다시
+  평가하려면 데이터포인트가 최소 하나는 필요하기 때문이다 (2026-08-28 실측: 8분간
+  요청 0인 동안 ALARM 유지, 정상 요청이 들어온 직후 OK). 아무도 복구를 확인해 주지
+  않은 상태에서 알아서 내려가지 않는 편이 안전하므로 그대로 둔다.
+- **토픽에 SSE를 켜지 않는다.** AWS 관리형 키 `alias/aws/sns`는 키 정책에
+  `cloudwatch.amazonaws.com`이 없어서, 켜면 경보 상태는 ALARM인데 메일만 조용히
+  안 오는 상태가 된다. 나르는 내용이 "어느 경보가 어느 상태로 바뀌었다"뿐이라
+  고객 관리형 키를 따로 만들 이유가 없다.
+- **`ec2-cpu-surplus`는 성능이 아니라 비용 신호다.** compute 모듈이
+  `credit_specification`을 지정하지 않아 t3.small이 기본값 unlimited로 뜬다
+  (2026-08-28 실측 확인). 크레딧이 0이 돼도 스로틀이 걸리지 않고 빌린 만큼이
+  요금으로 붙으므로, 이 경보는 "느려진다"가 아니라 "부하가 기준선을 넘겨 요금이
+  붙기 시작한다"는 뜻이다.
+- **그 경보가 `CPUCreditBalance`가 아니라 `CPUSurplusCreditBalance`를 보는
+  이유.** unlimited 인스턴스는 잔액 0으로 시작해 시간당 24개씩 쌓는다. 잔액
+  하한으로 경보를 걸면 **새로 뜬 인스턴스가 임계값에 닿을 때까지 몇 시간 동안
+  무조건 운다.** 2026-08-28 staging 실증에서 실제로 그렇게 됐다 (기동 직후
+  `CPUCreditBalance` 0.0, 경보 ALARM). 초과 크레딧은 정상 부하에서 0 근처에
+  머물다가 기준선을 넘겨 쓴 만큼만 쌓이므로 기동 오탐이 없고, "크레딧을 다 쓰고
+  빚을 지기 시작했다"는 뜻이 지표 그대로다. 임계값 144는 여섯 시간치 벌이만큼
+  빚진 상태이고 실제 과금이 시작되는 576의 4분의 1이다. 기동 직후 스파이크는
+  실측 0.5로 한참 아래다.
+
+### 수신 주소와 구독 확인
+
+수신 주소는 `envs/{env}/variables.tf`의 `alert_email` 기본값이다 (2026-08-28 확정).
+두 환경이 같은 값이라 `github_repository`와 같은 이유로 tfvars가 아니라 기본값에 둔다.
+환경별로 나누려면 해당 tfvars에 `alert_email = "..."` 한 줄을 넣으면 된다.
+
+SNS 이메일 구독은 Terraform이 확인까지 해 줄 수 없다. apply 직후 상태는
+`PendingConfirmation`이고 수신자가 AWS 메일의 링크를 눌러야 활성화된다. **누르기
+전에는 경보가 울려도 메일이 나가지 않는다.** 환경을 새로 지을 때마다 확인한다.
+
+```
+aws sns list-subscriptions-by-topic \
+  --topic-arn "$(terraform output -raw alerts_topic_arn)" \
+  --query 'Subscriptions[].[Protocol,Endpoint,SubscriptionArn]' --output table
+```
+
+`SubscriptionArn`이 `PendingConfirmation`이면 아직 안 누른 것이고, `arn:aws:sns:...`
+형태면 활성이다.
+
+### 경보 상태 확인과 실증
+
+```
+aws cloudwatch describe-alarms \
+  --alarm-names $(terraform output -json alarm_names | jq -r '.[]') \
+  --query 'MetricAlarms[].[AlarmName,StateValue,StateReason]' --output table
+```
+
+AC 실증은 backend 컨테이너를 내려서 한다. EC2는 살려 두고 컨테이너만 멈춰야
+헬스체크 실패와 ALB 502가 함께 나온다. 컨테이너 이름은 compose 프로젝트 이름이
+붙어 `accentury-backend-1`이므로, 이름 대신 서비스 이름으로 멈춘다.
+
+```
+# 컨테이너만 정지 (SSM Run Command, 대상은 인스턴스 ID가 아니라 Name 태그)
+aws ssm send-command --document-name AWS-RunShellScript \
+  --targets Key=tag:Name,Values=accentury-staging \
+  --parameters 'commands=["cd /opt/accentury && docker compose stop backend"]'
+```
+
+여기까지로 `unhealthy-hosts`가 선다. 헬스체크가 실패하는 매 분 데이터가 나오므로
+2회 연속 조건이 저절로 충족된다.
+
+`alb-5xx`는 **2분 이상 요청을 계속 보내야** 선다. 20건을 한 번에 몰아치면 그것이
+전부 한 분에 들어가고 다음 분은 결측이 되는데, 결측이 `notBreaching`이라 "2회 연속"이
+성립하지 않는다 (Codex 지적, 2026-08-28). 3분 동안 흘려보낸다.
+
+```
+end=$(( $(date +%s) + 180 ))
+while [ "$(date +%s)" -lt "$end" ]; do
+  for i in $(seq 1 6); do
+    curl -s -o /dev/null -w '%{http_code} ' \
+      "https://staging.accentury.app/v0/tests/gn-2026.08.1"
+  done
+  echo " @ $(date +%H:%M:%S)"
+  sleep 10
+done
+```
+
+분당 약 36건이라 임계치 5를 세 분 연속 넘긴다. 복구는 기동 스크립트를 다시 태우면
+된다 (`up -d`가 멈춘 컨테이너를 다시 올린다).
+
+```
+aws ssm send-command --document-name AWS-RunShellScript \
+  --targets Key=tag:Name,Values=accentury-staging \
+  --parameters 'commands=["systemctl reload accentury"]'
+```
+
+2026-08-28 staging 실측값이다.
+
+| 구간 | 걸린 시간 |
+| --- | --- |
+| 컨테이너 정지부터 `unhealthy-hosts` ALARM까지 | 5분 47초 |
+| 트래픽 시작부터 `alb-5xx` ALARM까지 | 3분 38초 |
+
+`unhealthy-hosts`가 더 걸리는 이유는 앞에 ALB 헬스체크 판정이 한 겹 더 있기 때문이다.
+컨테이너가 멈춰도 대상이 unhealthy로 바뀌는 데 연속 실패 판정만큼 걸리고, 그 뒤에야
+지표가 1이 되어 1분 × 2회 평가가 시작된다. 티켓 AC의 "수 분 내"는 이 값 기준이다.
+복구 뒤에는 같은 간격으로 OK 메일이 온다.
+
+### 비용
+
+CloudWatch 표준 경보는 개당 월 0.10달러, 지표 math 경보(`alb-5xx`)는 지표 2개를 세어
+0.20달러다. 환경당 월 약 0.50달러이고 SNS 이메일 알림은 월 1000건까지 무료다. 두 환경
+합산 월 1달러 남짓이라 상시 켜 둔다.
+
 ## 환경별 값 차이 (KAN-129)
 
 Terraform 입력의 차이는 `diff -r infra/envs/staging infra/envs/prod`가 전부다
@@ -549,6 +692,9 @@ terraform destroy
   ```
 - Terraform이 만들지 않는 `/accentury/{env}/IMAGE_TAG`는 destroy가 지우지
   않는다. 남겨 두면 다음 재구축 때 인스턴스가 그 SHA로 뜬다.
+- 미확인 SNS 이메일 구독은 AWS가 지워 주지 않아 state에서만 빠지지만, 토픽이
+  삭제되면 딸린 구독도 함께 사라져 잔존물이 남지 않는다 (KAN-134). 재구축 때는
+  토픽이 새로 생기므로 확인 메일이 다시 오고 다시 눌러야 한다.
 
 ## 설계 결정 기록
 

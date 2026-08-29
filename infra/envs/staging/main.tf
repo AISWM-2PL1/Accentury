@@ -125,3 +125,16 @@ module "deploy" {
   web_bucket_arn              = module.edge.web_bucket_arn
   cloudfront_distribution_arn = module.edge.distribution_arn
 }
+
+# 최소 알림 (KAN-134). ALB, RDS, EC2가 이미 내보내는 표준 지표에 경보 4종과 SNS 이메일을 건다.
+# 지표를 새로 수집하지 않으므로 backend와 ai 코드에는 영향이 없다. 전체 관측성은 KAN-38.
+module "monitoring" {
+  source = "../../modules/monitoring"
+
+  env                     = var.env
+  alert_email             = var.alert_email
+  alb_arn_suffix          = module.edge.alb_arn_suffix
+  target_group_arn_suffix = module.edge.target_group_arn_suffix
+  db_instance_identifier  = module.data.instance_identifier
+  ec2_instance_id         = module.compute.instance_id
+}
