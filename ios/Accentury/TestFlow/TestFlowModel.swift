@@ -76,10 +76,11 @@ final class TestFlowModel: ObservableObject {
     /// 그러면 이미 한 번 돈 이펙트가 다시 돌 이유가 없어 화면이 준비 중인 채로 멈춘다.
     @Published private(set) var gateAttempt: Int
 
-    /// 업로드 한 건씩의 상태. **6단계에서 채워진다** — 지금은 늘 비어 있고, 그래서
-    /// ``takeResultsForDelivery()``도 늘 빈 배열을 돌려준다. 배선을 미리 세워 두는 이유는
-    /// 이 자리가 "결과가 언제 웹으로 나가는가"의 유일한 통로이기 때문이다.
-    // TODO(KAN-108 §6): UploadViewModel(안드로이드) 대응물이 이 값을 채운다.
+    /// 업로드 한 건씩의 상태. ``UploadModel``이 매니저의 상태 스트림에서 받아 ``setUploads(_:)``로
+    /// 흘려 넣는다 — 이 자리가 "결과가 언제 웹으로 나가는가"의 유일한 통로다.
+    ///
+    /// 업로드 계층을 이 클래스가 직접 알지 않는 이유는 Core `TestFlowController`가 그러지 않는
+    /// 이유와 같다: 알면 단위 테스트가 불가능해진다. 여기는 값만 받는다.
     @Published private(set) var uploads: [String: UploadState] = [:]
 
     /// 공유 시트를 띄울 카드. 화면이 소비하면 nil로 되돌린다 (``consumeShare()``).
@@ -114,9 +115,9 @@ final class TestFlowModel: ObservableObject {
     private let isMicGranted: () -> Bool
 
     /// - Parameters:
-    ///   - sessionClient: `POST /v0/sessions` 클라이언트. **6단계에서 URLSession 구현이 들어온다** —
-    ///     그때까지 Debug 빌드는 고정 세션을 주는 스텁을 쓰고 Release는 nil이라 세션 게이트가
-    ///     자리 표시 화면에서 멈춘다.
+    ///   - sessionClient: `POST /v0/sessions` 클라이언트. 기본값이 실제 `URLSession` 구현이고,
+    ///     Debug 빌드에서 `-StubSession 1`을 주면 서버 없이 고정 세션을 주는 스텁으로 바뀐다
+    ///     (``TestFlowModel/defaultSessionClient()``).
     ///   - isMicGranted: 지금의 실제 마이크 권한. 문항 진입마다 다시 묻는다 — 시작 게이트에서
     ///     한 번 허용받았어도 설정에서 회수될 수 있다.
     init(
@@ -143,10 +144,15 @@ final class TestFlowModel: ObservableObject {
 
         /*
          * 대응 업로드가 없는 대기 시도를 한 번 걷어낸다 (안드로이드의 첫 LaunchedEffect).
-         * 지금은 업로드 계층이 없어 **복원된 시도가 전부 걷힌다** — 6단계에서 업로드가
-         * 붙으면 그때 살아 있는 키가 넘어온다. 남겨두면 영영 조립되지 않을 가짜 대기가 된다.
+         *
+         * 여기서 넘기는 키가 **늘 비어 있는 것이 규칙 그 자체다**. 업로드는 메모리에만 산다
+         * (PCM을 디스크에 남기지 않는 것이 FR-DP-02) — 이 모델이 만들어지는 순간은 프로세스가
+         * 막 뜬 뒤라 살아 있는 업로드가 있을 수 없고, 그러면 저장에서 복원된 대기 시도는 전부
+         * 영영 조립되지 않을 가짜 대기다. 안드로이드가 `uploadViewModel?.uploads?.value?.keys`를
+         * 넘기는 자리인데, 그쪽도 프로세스 사망 복원에서는 같은 빈 집합이다(회전에서만 값이
+         * 있고, iOS에는 회전으로 인한 재생성이 없다 — 세로 고정이고 모델은 `@StateObject`다).
          */
-        flow.pruneAttemptsWithoutUpload(Set(uploads.keys))
+        flow.pruneAttemptsWithoutUpload([])
         syncFlow()
     }
 
@@ -243,14 +249,15 @@ final class TestFlowModel: ObservableObject {
         guard let previousToken = sessionGate.beginRetest() else { return nil }
         guard let sessionClient else {
             /*
-             * 6단계 전에는 클라이언트가 없다. 그래도 **웹에는 회신해야 한다** — 결과 화면은
-             * [다시 테스트하기]를 누른 뒤 버튼을 잠그고 실패 회신만 기다린다(시간 기반 해제는
-             * 금지, §8). 여기서 조용히 돌아서면 그 버튼이 영영 잠긴 채로 남는다.
+             * 클라이언트를 nil로 주입한 경우(테스트)뿐이다 — 앱은 늘 실제 클라이언트를 든다.
+             * 그래도 **웹에는 회신해야 한다** — 결과 화면은 [다시 테스트하기]를 누른 뒤 버튼을
+             * 잠그고 실패 회신만 기다린다(시간 기반 해제는 금지, §8). 여기서 조용히 돌아서면
+             * 그 버튼이 영영 잠긴 채로 남는다.
              *
              * 진행 중 플래그를 푸는 것도 같은 호출이 한다 — 안 풀면 다시 누를 수도 없다.
              */
             let outcome = sessionGate.onRetestResult(
-                .transportError(reason: "세션 클라이언트 미결선 (KAN-108 §6)")
+                .transportError(reason: "세션 클라이언트 없음")
             )
             syncGate()
             guard case .failed(let failure) = outcome else { return nil }
@@ -272,6 +279,58 @@ final class TestFlowModel: ObservableObject {
         case .failed(let failure):
             return retestFailurePayload(failure)
         }
+    }
+
+    // MARK: 업로드
+
+    /// ``UploadModel``이 매니저의 상태 스트림에서 받은 값을 흘려 넣는다.
+    ///
+    /// 값이 그대로면 아무것도 하지 않는다 — 스트림은 라벨 등록 같은 화면과 무관한 변화에도
+    /// 울리는데, 같은 값을 다시 발행하면 결과 전달 이펙트가 헛돈다.
+    func setUploads(_ next: [String: UploadState]) {
+        guard uploads != next else { return }
+        uploads = next
+    }
+
+    /// 녹음이 끝났다 — 대기 시도로 등록하고 화면을 제출 중으로 붙든다 (KAN-146).
+    ///
+    /// - Returns: 같은 문항의 앞 시도 중 이 녹음에 밀려난 attemptId들. 호출자가 그 업로드를
+    ///   폐기한다 (KAN-147) — 남겨두면 상태 바의 [재시도]가 그대로 서 있고, 그걸 누르면 같은
+    ///   문항에 분석 작업이 둘 생겨 웹이 결과를 두 번 받는다.
+    @discardableResult
+    func onRecordingFinished(attemptId: String, durationMs: Int64, quality: QualityStatus) -> [String] {
+        let superseded = flow.onRecordingFinished(
+            attemptId: attemptId,
+            durationMs: durationMs,
+            quality: quality
+        )
+        syncFlow()
+        return superseded
+    }
+
+    /// 이 시도의 업로드를 포기하고 녹음부터 다시 한다 — 서버가 녹음 자체를 거절해
+    /// `rerecord`가 선 경우다 (KAN-147, 2026-08-25 B안).
+    ///
+    /// - Returns: 컨트롤러가 시도를 거둬갔는가. true면 호출자가 그 업로드의 바이트를 폐기한다.
+    @discardableResult
+    func onUploadGivenUp(attemptId: String, message: String?) -> Bool {
+        // 권한이 그새 회수됐을 수 있다 — 다시 열 화면이 녹음인지 권한 게이트인지를 이 값이 가른다.
+        let taken = flow.onUploadGivenUp(attemptId: attemptId, micGranted: isMicGranted(), message: message)
+        syncFlow()
+        return taken
+    }
+
+    /// 지금 페이즈가 업로드 실패로 스스로 다시 열린 녹음 화면인가 (KAN-147). 제출을 기다리는
+    /// 중에는 뜻이 없는 값이라 Recording일 때만 참이다.
+    var recordingAfterUploadFailure: Bool {
+        if case .recording(let recording) = phase { return recording.afterUploadFailure }
+        return false
+    }
+
+    /// 그 전환에서 서버가 준 문구. nil이면 화면이 기본 안내를 쓴다.
+    var recordingFailureMessage: String? {
+        if case .recording(let recording) = phase { return recording.failureMessage }
+        return nil
     }
 
     // MARK: 결과 전달
@@ -336,32 +395,33 @@ final class TestFlowModel: ObservableObject {
         defaults.set(sessionGate.saved(), forKey: Self.gateStorageKey)
     }
 
+    /// 이 앱이 쓸 세션 클라이언트. 안드로이드 `remember { OkHttpSessionClient(BuildConfig.API_BASE_URL) }`
+    /// 자리이고, 기본은 **실제 서버**다.
+    ///
     /// `nonisolated`인 이유는 이 함수가 ``init(defaults:sessionClient:isMicGranted:)``의 기본
     /// 인자이기 때문이다 — 기본 인자 식은 언제나 격리 밖에서 평가된다
     /// (`PermissionGateView`의 모델 주입 생성자가 갈린 것과 같은 제약).
     nonisolated private static func defaultSessionClient() -> SessionClient? {
         #if DEBUG
-        return DebugStubSessionClient()
-        #else
         /*
-         * TODO(KAN-108 §6): `URLSessionSessionClient(baseURL: AppConfig.apiBaseURL)` 한 줄이면 된다.
-         * 그 타입은 5a에서 Core에 이미 들어왔지만(`Session/URLSessionSessionClient.swift`,
-         * 안드로이드 `OkHttpSessionClient` 대응물), 결선은 세션 게이트 **화면**과 한 몸이라
-         * §6이 함께 가져간다 — 여기만 먼저 이으면 릴리스에서 실패 화면 대신 자리 표시가
-         * 서는 어긋난 조합이 생긴다.
+         * 백엔드 없이 게이트 뒤 화면을 보려면 `-StubSession 1`을 준다. 기본이 아니라 인자인
+         * 것이 요점이다 — 스텁이 기본이면 "세션이 실패하는 화면"을 개발 중에 한 번도 못 본다.
+         * 릴리스 바이너리에는 이 분기도, `DebugStubSessionClient`라는 문자열도 없다.
          */
-        return nil
+        if UserDefaults.standard.bool(forKey: "StubSession") { return DebugStubSessionClient() }
         #endif
+        return URLSessionSessionClient(baseURL: AppConfig.apiBaseURL)
     }
 }
 
 #if DEBUG
-/// 6단계까지의 자리 표시 세션 클라이언트. 고정 세션을 즉시 돌려줘 웹이 `?screen=test`로
-/// 넘어가는 것까지를 시뮬레이터에서 확인할 수 있게 한다.
+/// 백엔드 없이 시작 게이트를 통과시키는 디버그 스텁 (`-StubSession 1`). 고정 세션을 즉시 돌려줘
+/// 웹이 `?screen=test`로 넘어가는 것까지를 시뮬레이터에서 확인할 수 있게 한다.
 ///
 /// **네트워크를 타지 않는다** — 그래서 이 세션의 `sessionId`·`sessionToken`은 서버가 모르는
 /// 값이고, 웹이 이어서 부르는 `GET /v0/tests/{testVersion}`은 백엔드가 붙는 8단계 전에는 실패한다.
-/// 여기까지가 이 스텁이 확인해 주는 범위다.
+/// 여기까지가 이 스텁이 확인해 주는 범위다. 업로드도 같은 이유로 거절된다 — 서버가 모르는
+/// 세션이라 401이 온다.
 struct DebugStubSessionClient: SessionClient {
     func create(appVersion: String, previousToken: String?) async -> SessionResult {
         .created(

@@ -12,8 +12,10 @@ import SwiftUI
 /// 이유다. 같은 게이트를 테스트 시작과 VOICE 문항 진입 두 곳에서 쓰는데 통과 후 할 일이
 /// 서로 다르다(테스트 URL 로드 vs 기다리던 문항의 녹음 재개).
 ///
-/// 그림은 임시다. 팔레트(Papercut)·간격·계층은 `docs/wiki/design-tokens.md`를 따르지만
+/// 그림은 임시다. 팔레트(``Papercut``)·간격·계층은 `docs/wiki/design-tokens.md`를 따르지만
 /// Jua 서체 번들과 잉크 선화 자산은 §7·§8 다듬기 몫이라 시스템 서체와 SF Symbol로 세워 뒀다.
+/// 토큰 자체는 §6에서 `UI/Theme/PapercutTheme.swift`로 옮겼다 — 같은 값을 쓰는 화면이
+/// 넷 늘면서 사본이 파일마다 생길 자리가 됐다.
 struct PermissionGateView: View {
 
     @StateObject private var model: PermissionGateModel
@@ -235,26 +237,6 @@ struct PermissionGateView: View {
         "발음 정확도 점수 측정",
         "음성은 분석 즉시 삭제",
     ]
-}
-
-/// `docs/wiki/design-tokens.md`(정본)에서 이 화면이 쓰는 값만 옮긴 사본. 화면이 늘면
-/// `app/.../ui/theme/Color.kt`처럼 테마 파일로 떼어낸다 — §7·§8 다듬기 몫이다.
-enum Papercut {
-    static let ink = Color(red: 0x1c / 255, green: 0x1a / 255, blue: 0x17 / 255)
-    static let cream = Color(red: 0xf3 / 255, green: 0xec / 255, blue: 0xd9 / 255)
-    static let paperShadow = Color(red: 0xcf / 255, green: 0xc5 / 255, blue: 0xaa / 255)
-    static let muted = Color(red: 0x6b / 255, green: 0x64 / 255, blue: 0x59 / 255)
-
-    static let space2: CGFloat = 8
-    static let space3: CGFloat = 12
-    static let space4: CGFloat = 16
-    static let space6: CGFloat = 24
-
-    static let radiusMD: CGFloat = 16
-    static let radiusXL: CGFloat = 24
-    static let controlHeightLarge: CGFloat = 56
-    static let heroIconSize: CGFloat = 112
-    static let opacityDisabled: Double = 0.6
 }
 
 #Preview {

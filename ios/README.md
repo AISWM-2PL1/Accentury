@@ -60,8 +60,24 @@ WAV는 16kHz 모노 16bit여야 한다 — 리샘플하지 않는다 (`Accentury
 안드로이드가 쓰는 파일이 `app/src/debug/assets/fake_mic.wav`에 있으니 그 절대 경로를 그대로
 넣으면 두 플랫폼이 같은 음성을 흘린다.
 
-릴리스 빌드에는 이 경로가 없다. 읽기 코드가 통째로 `#if DEBUG`이고 `FAKE_MIC_ASSET` 키가
-`Info-Release.plist`에 아예 없어서, 릴리스에서 파일 소스를 켜려면 릴리스 plist를 고쳐야 한다.
+번들 리소스로 넣으려면 `Accentury/DebugResources/`에 둔다. 그 폴더는 **Debug 빌드에만** 실린다
+(`project.yml`의 `EXCLUDED_SOURCE_FILE_NAMES`). 목소리 점검(§6)까지 자동으로 통과시키려면
+유성으로 잡히는 톤이 필요한데, 220Hz 3초짜리는 이렇게 만든다:
+
+```bash
+python3 - <<'PY'
+import math, struct, pathlib
+sr, hz, secs, amp = 16000, 220.0, 3.0, 8000
+pcm = b''.join(struct.pack('<h', int(amp*math.sin(2*math.pi*hz*i/sr))) for i in range(int(sr*secs)))
+hdr = (b'RIFF' + struct.pack('<I', 36+len(pcm)) + b'WAVEfmt ' + struct.pack('<IHHIIHH', 16,1,1,sr,sr*2,2,16)
+       + b'data' + struct.pack('<I', len(pcm)))
+pathlib.Path('ios/Accentury/DebugResources/fake_mic.wav').write_bytes(hdr+pcm)
+PY
+```
+
+릴리스 빌드에는 이 경로가 없다. 잠금이 셋이다 — 읽기 코드가 통째로 `#if DEBUG`이고,
+`FAKE_MIC_ASSET` 키가 `Info-Release.plist`에 아예 없고, `DebugResources/`가 릴리스 번들에서
+빠진다. 릴리스에서 파일 소스를 켜려면 셋을 다 고쳐야 하고, 그건 리뷰에 걸린다.
 
 ## 스모크 메뉴 (KAN-108 §3·§4)
 
@@ -187,8 +203,57 @@ xcrun simctl launch --console-pty booted com.accentury.app -AutoNavSmoke "https:
 ### 여기서 멈추는 지점 (§8 백엔드 결선)
 
 테스트 진입 URL이 열리면 웹이 `GET /v0/tests/{testVersion}`을 부르고, 백엔드가 없으면
-«문항을 불러오는 중…»에서 멈춘다. §5에서 확인 가능한 범위는 거기까지다 —
-세션도 디버그 스텁이 주는 고정값이라 서버가 모르는 id다 (`DebugStubSessionClient`).
+«문항을 불러오는 중…»에서 멈춘다. 웹을 통해 확인 가능한 범위는 거기까지다.
+
+## 목소리 점검·세션 게이트·녹음 화면 (KAN-108 §6)
+
+§6부터 시작 게이트의 세 칸이 전부 진짜 화면이다 — 마이크 권한(KAN-98) → 목소리 점검(KAN-105)
+→ 세션 생성(KAN-34). 세션 클라이언트도 **기본이 실제 서버**다 (`URLSessionSessionClient`).
+
+```bash
+# 백엔드 없이 게이트 뒤를 보려면 세션을 스텁으로 바꾼다 (디버그 전용).
+xcrun simctl privacy booted grant microphone com.accentury.app
+xcrun simctl launch --console-pty booted com.accentury.app \
+  -StubSession 1 -AutoStartSmoke 1 -AutoGateSmoke 1
+# NAV: committed .../?bridge=1&app=1.0&screen=test&testVersion=gn-2026.08.1&sessionId=s_debug_stub
+```
+
+- `-StubSession 1` — `DebugStubSessionClient`(고정 세션, 네트워크 없음). **없으면 실제 서버로
+  나간다** — 백엔드가 안 떠 있으면 세션 게이트의 «연결이 불안정해요» 실패 화면을 볼 수 있다.
+  기본을 스텁으로 두지 않은 이유가 그것이다: 스텁이 기본이면 실패 화면을 한 번도 못 본다.
+- `-AutoGateSmoke 1` — 목소리 점검의 [다음]을 대신 누른다. 가짜 마이크가 물려 있으면 실제로
+  잰 중심 음높이를 넘기고, 없으면 자리 표시 0으로 넘긴다.
+
+### 녹음 화면을 따로 보기
+
+백엔드가 없으면 웹이 VOICE 문항을 못 그려 브리지의 `startVoiceItem`이 오지 않는다. 그 화면만
+따로 세우는 통로가 있다.
+
+```bash
+xcrun simctl launch --console-pty booted com.accentury.app \
+  -StubSession 1 -AutoStartSmoke 1 -AutoGateSmoke 1 -AutoRecordingOverlay 1 -AutoRecordingDrive 1
+# FLOW: startVoiceItem item=it_debug_overlay number=3/10
+```
+
+- `-AutoRecordingOverlay 1` — 고정 `VoiceItemStart`를 **웹이 부르는 것과 같은 함수**로 흘려
+  넣는다. 배선까지 함께 확인된다.
+- `-AutoRecordingDrive 1` — 녹음 버튼도 대신 누른다. 대기(4초) → 녹음 중(4초) → 확인 순서로
+  서므로 그 사이에 `xcrun simctl io booted screenshot`을 끼우면 세 화면이 다 잡힌다.
+
+곡선 레인은 자리만 서 있다 — 곡선 그리기는 §7b 몫이다 (`UI/Components/CurveLane.swift`).
+
+### 녹음은 디스크에 닿지 않는다 (§5.5, FR-DP-02)
+
+음성 바이트가 사는 곳은 둘뿐이다: 녹음 직후의 `RecordingModel`(한 번 꺼내면 사라진다)과
+업로드가 끝나거나 폐기될 때까지의 `UploadManager`(메모리). `AccenturyTests/RecordingFileLifecycleTests`가
+녹음 한 벌을 통째로 태운 뒤 임시 폴더·캐시·문서에 WAV가 없는지 파일 시스템에 직접 묻는다.
+
+### 업로드는 앱이 뒤로 가도 이어진다
+
+진행 중인 업로드가 있는 동안 `beginBackgroundTask`로 실행 시간을 빌린다 — **상한은 약 30초**고
+iOS가 주는 시간이라 보장값이 아니다. 그 안에 못 끝내면 전송 실패로 떨어지고 업로드 상태 바의
+[재시도]가 받는다. `URLSessionConfiguration.background`는 쓰지 않는다: 그쪽은 본문을 파일로
+요구해서 녹음이 디스크에 남는다 (`Upload/UploadModel.swift` 주석).
 
 ### 진행 저장이 남는다
 

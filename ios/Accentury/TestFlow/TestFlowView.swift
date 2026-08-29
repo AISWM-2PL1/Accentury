@@ -12,36 +12,74 @@ import WebKit
 /// ``TestFlowModel``(→ Core ``AccenturyCore/TestFlowController``)이 정하고, 여기는 SwiftUI
 /// 결선만 한다.
 ///
-/// ## 이 단계에서 자리 표시로 남는 것 (KAN-108 §6)
+/// ## 세로 배치
 ///
-/// 목소리 점검·세션 게이트 화면·녹음 화면·업로드는 6단계 몫이다. 그 자리에는 **무엇이
-/// 빠졌는지 화면에 적힌** 자리 표시 뷰를 둔다 — 아무것도 없으면 흐름이 조용히 멈춘 것처럼
-/// 보여서, 6단계 이전의 스모크에서 "어디까지 왔는지"를 눈으로 읽을 수 없다.
+/// 업로드 상태 바는 오버레이가 아니라 화면 **아래**를 나눠 갖는다 (안드로이드의 `Column`) —
+/// 녹음 중에도 실패한 업로드의 재시도 통로가 가려지지 않아야 한다.
 struct TestFlowView: View {
 
     @StateObject private var model = TestFlowModel()
+
+    /// 녹음·목소리 점검·업로드의 주인. 화면 값이 다시 만들어져도 살아남아야 하는 것들이라
+    /// `@StateObject`다 — 안드로이드가 `ViewModel`에 둔 자리와 같다.
+    @StateObject private var recording = RecordingModel()
+    @StateObject private var voiceCheck = VoiceCheckModel()
+    @StateObject private var uploads = UploadModel()
 
     /// 결과를 웹에 넣으려면 `evaluateJavaScript`를 부를 인스턴스가 필요하다.
     /// 로드 실패 화면·재시도 구간에는 WebView가 아예 없으므로 옵셔널이다.
     @State private var webView: WKWebView?
 
-    var body: some View {
-        ZStack {
-            WebViewHost(
-                url: model.webUrl,
-                allowedOrigins: model.allowedOrigins,
-                sessionToken: model.bridgeToken,
-                onRequestMicPermission: { model.onRequestMicPermission() },
-                onStartVoiceItem: { model.onStartVoiceItem($0) },
-                onStartRetest: { Task { @MainActor in await handleRetest() } },
-                onShareResult: { model.onShareResult($0) },
-                onWebViewCreated: { webView = $0 },
-                // 내가 들고 있는 인스턴스일 때만 놓는다 — 재생성 순서에 따라 새 WebView가 먼저
-                // 등록된 뒤 옛 것이 해제될 수 있고, 그때 방금 받은 참조를 지우면 안 된다.
-                onWebViewReleased: { released in if webView === released { webView = nil } }
-            )
+    /// 지금 화면에 서 있는 오버레이 페이즈. 페이즈가 바뀔 때 녹음을 되감을지 정하는 데 쓴다
+    /// (안드로이드 `DisposableEffect(phase) { onDispose { ... } }`의 자리).
+    @State private var shownOverlayPhase: TestFlowPhase?
 
-            overlay
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ZStack {
+                WebViewHost(
+                    url: model.webUrl,
+                    allowedOrigins: model.allowedOrigins,
+                    sessionToken: model.bridgeToken,
+                    onRequestMicPermission: { model.onRequestMicPermission() },
+                    onStartVoiceItem: { model.onStartVoiceItem($0) },
+                    onStartRetest: { Task { @MainActor in await handleRetest() } },
+                    onShareResult: { model.onShareResult($0) },
+                    onWebViewCreated: { webView = $0 },
+                    // 내가 들고 있는 인스턴스일 때만 놓는다 — 재생성 순서에 따라 새 WebView가 먼저
+                    // 등록된 뒤 옛 것이 해제될 수 있고, 그때 방금 받은 참조를 지우면 안 된다.
+                    onWebViewReleased: { released in if webView === released { webView = nil } }
+                )
+
+                overlay
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            // 세션 전에는 올라간 것도, 실패한 것도 없다 — 상태 바가 설 이유 자체가 없는 구간이다.
+            if model.session != nil {
+                UploadStatusBar(
+                    entries: uploads.entries,
+                    labelOf: { uploads.labelOf($0) },
+                    onRetry: { uploads.retry($0) }
+                )
+            }
+        }
+        /*
+         * 업로드가 어느 세션으로 나가는지는 매니저를 만드는 순간 정해진다 (KAN-34). 세션이
+         * 바뀌면 새 매니저를 받아 끝난 응시의 업로드가 새 세션에 섞이지 않는다.
+         * `.task(id:)`는 첫 등장에도 한 번 도는 자리라 초기 결선이 따로 필요 없다.
+         */
+        .task(id: model.session?.sessionId) { uploads.bind(to: model.session) }
+        /*
+         * 업로드 상태를 흐름 쪽으로 흘려 넣는다. 안드로이드는 `collectAsStateWithLifecycle()`이
+         * 만든 `uploads` 값 자체가 두 LaunchedEffect의 키였는데, 여기서는 값이 두 모델에 나뉘어
+         * 있어 옮기는 한 줄이 먼저 온다.
+         */
+        .onChange(of: uploads.entries) { _ in
+            model.setUploads(uploads.uploads)
+            handleRerecordFailures()
         }
         /*
          * 업로드가 끝난 시도를 웹으로 흘려보낸다.
@@ -52,6 +90,33 @@ struct TestFlowView: View {
          */
         .onChange(of: model.uploads) { _ in deliverResults() }
         .onChange(of: webView.map(ObjectIdentifier.init)) { _ in deliverResults() }
+        /*
+         * 녹음 상태 되감기를 [다음] 자리가 아니라 여기서 한다 (KAN-146). 그 자리에서 즉시
+         * 되감으면 제출을 기다리는 동안 화면이 대기 상태로 바뀌어, 방금 그린 '내 억양' 곡선이
+         * 사라진다. 되감을지의 판정(`continuesFrom`)은 Core에 있다 — 화면 겹침의 정확성을
+         * 좌우하는 판정을 SwiftUI 안에 두면 시뮬레이터 없이 검증할 수 없다. 여기서는 "언제
+         * 물어보는가"만 정한다.
+         */
+        .onChange(of: model.phase) { phase in syncOverlayPhase(phase) }
+        .onAppear { syncOverlayPhase(model.phase) }
+        /*
+         * 흐름이 끝나면 업로드 계층을 명시적으로 놓는다 — 구독을 끊고, 남은 음성 바이트를
+         * 폐기하고(FR-DP-02), 빌려 둔 백그라운드 실행 시간을 반납한다.
+         *
+         * `deinit`에 맡기지 않는 이유는 시점이다. `@StateObject`가 언제 해제되는지는 SwiftUI가
+         * 정하는데, 빌린 실행 시간은 제때 반납하지 않으면 iOS가 앱을 죽이는 자원이다. `deinit`은
+         * 같은 정리를 한 번 더 시도하는 안전망으로 남긴다(반납은 멱등이라 겹쳐도 한 번이다).
+         */
+        .onDisappear { uploads.teardown() }
+        /*
+         * 앱이 뒤로 가면 마이크를 놓는다. 녹음 화면이 떠 있는 채로 홈으로 나가는 것은 흔한
+         * 일이고, 그동안 마이크가 열려 있는 것은 사용자에게 설명할 수 없는 상태다. 돌아와서
+         * 다시 녹음하는 것은 사용자의 몫으로 둔다 — 자동으로 이어서 녹음하면 나가 있는 동안의
+         * 소리가 앞부분에 붙은 것처럼 보인다.
+         */
+        .onChange(of: scenePhase) { phase in
+            if phase != .active { recording.reset() }
+        }
         /*
          * 자취 없는 제출을 걷는 최후 안전망 (KAN-146). 안드로이드
          * `LaunchedEffect(submittingAttemptId, holdUnbacked)`와 같은 키 두 개다.
@@ -76,6 +141,40 @@ struct TestFlowView: View {
                 ShareSheet(payload: share)
             }
         }
+        #if DEBUG
+        /*
+         * `-AutoRecordingOverlay 1` — 백엔드 없이 녹음 화면 자체를 보는 통로다.
+         *
+         * 웹은 백엔드가 없으면 `GET /v0/tests`에서 멈춰 VOICE 문항을 그리지 못하고, 그러면
+         * 브리지의 `startVoiceItem`이 영영 오지 않아 이 화면을 한 번도 볼 수 없다. 시뮬레이터에는
+         * 탭을 넣을 방법도 없어서(`xcrun simctl`에 좌표 입력이 없다) 고정 payload를 실행 인자로
+         * 흘려 넣는다 — 웹이 부르는 것과 **같은 함수**로 들어가므로 배선까지 함께 확인된다.
+         * 마이크 권한은 미리 줘야 한다(권한이 없으면 게이트가 먼저 선다).
+         */
+        .task {
+            guard UserDefaults.standard.bool(forKey: "AutoRecordingOverlay") else { return }
+            model.onStartVoiceItem(
+                VoiceItemStart(
+                    itemId: "it_debug_overlay",
+                    prompt: "오늘 날씨가 정말 좋네요",
+                    itemNumber: 3,
+                    totalItems: 10,
+                    maxDurationMs: RecordingEngine.maxDurationMs
+                )
+            )
+            /*
+             * `-AutoRecordingDrive 1`을 함께 주면 녹음 버튼도 대신 눌러 세 화면(대기 → 녹음 중
+             * → 확인)을 차례로 세운다. 사이를 넉넉히 벌리는 것은 화면 캡처가 끼어들 창을 주기
+             * 위해서다 — 시뮬레이터에는 좌표 입력이 없어(`xcrun simctl`) 이 경로 말고는 녹음
+             * 화면의 상태 변화를 한 번도 볼 수 없다.
+             */
+            guard UserDefaults.standard.bool(forKey: "AutoRecordingDrive") else { return }
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            recording.start()
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            recording.stop()
+        }
+        #endif
     }
 
     // MARK: 오버레이
@@ -91,22 +190,29 @@ struct TestFlowView: View {
 
         // 시작 게이트 2칸 — 목소리 점검 (KAN-105). 중심 음높이를 받으면 조건이 풀린다.
         } else if model.startRequested, model.session == nil, model.micPassed, model.voiceCenterHz == nil {
-            VoiceCheckPlaceholder(onDone: { model.onVoiceCheckDone(centerHz: $0) })
+            VoiceCheckScreen(model: voiceCheck) { centerHz in
+                model.onVoiceCheckDone(centerHz: Double(centerHz))
+            }
 
         // 시작 게이트 3칸 — 세션 생성 (KAN-34). 확보되면 테스트 URL이 로드되고 조건이 풀려
         // 이 화면이 사라진다.
         } else if model.startRequested, model.session == nil {
-            SessionGatePlaceholder(model: model)
+            SessionGateScreen(model: model, onBackToIntro: { model.backToIntro() })
 
         // 문항 진입 시점의 게이트 — 통과하면 기다리던 문항의 녹음으로 곧장 들어간다.
         } else if case .needsPermission = model.phase {
             PermissionGateView(onGranted: { model.onPermissionGranted() })
 
         } else if let start = overlayStart {
-            RecordingOverlayPlaceholder(
+            RecordingOverlay(
                 start: start,
                 submitting: isSubmitting,
-                onExit: { model.onRecordingExit() }
+                afterUploadFailure: model.recordingAfterUploadFailure,
+                failureMessage: model.recordingFailureMessage,
+                recording: recording,
+                onSubmit: { attemptId, durationMs, quality in
+                    submitRecording(start: start, attemptId: attemptId, durationMs: durationMs, quality: quality)
+                }
             )
         }
     }
@@ -133,6 +239,78 @@ struct TestFlowView: View {
 
     // MARK: 결선
 
+    /// 검토 화면의 [다음]. 안드로이드 `RecordingOverlay(onSubmit = ...)` 본문의 이식이다.
+    @MainActor
+    private func submitRecording(
+        start: VoiceItemStart,
+        attemptId: String,
+        durationMs: Int64,
+        quality: QualityStatus
+    ) {
+        // consumeRecording은 PCM을 넘기면서 모델에서 지운다 (FR-DP-02: 보관하지 않음).
+        guard let pcm = recording.consumeRecording() else {
+            /*
+             * 올릴 바이트가 없으면 결과도 만들어질 수 없다. 시도로 등록하면 웹이 오지 않을
+             * 결과를 기다리며 그 문항에 멈추므로, 등록 없이 돌려보내 [녹음 화면 다시 열기]로
+             * 다시 녹음하게 한다 (KAN-147).
+             */
+            model.onRecordingExit()
+            return
+        }
+
+        uploads.enqueue(
+            UploadRequest(
+                attemptId: attemptId,
+                itemId: start.itemId,
+                wavBytes: WavWriter.toWavBytes(pcm),
+                durationMs: durationMs,
+                clientQuality: AudioQuality.measure(pcm)
+            ),
+            label: "\(start.itemNumber)번 문항"
+        )
+        /*
+         * 화면은 결과가 나갈 때까지 붙들되(Submitting) 진행은 업로드를 기다리지 않는다 —
+         * 대기 시도는 여기서 바로 등록된다.
+         *
+         * 밀려난 앞 시도의 업로드는 여기서 폐기한다 (KAN-147). 새 업로드를 먼저 걸고 지우는
+         * 순서라 attemptId가 겹치는 경우에도 방금 건 업로드가 살아남는다.
+         */
+        for superseded in model.onRecordingFinished(attemptId: attemptId, durationMs: durationMs, quality: quality) {
+            uploads.discard(superseded)
+        }
+    }
+
+    /// 녹음을 새로 해야 풀리는 실패를 걷고 그 문항의 녹음 화면을 다시 연다 (KAN-147, B안).
+    ///
+    /// 서버가 녹음 자체를 거절한 건(rerecord)만 여기로 온다 — 그것만이 재전송으로 풀리지 않아
+    /// 복구 경로가 재녹음 하나뿐이다. 전송 실패는 [재시도]가 계속 서 있고, 그 외 서버 거절은
+    /// 서버 문구를 단 실패 행으로 상태 바에 그대로 남는다.
+    ///
+    /// 폐기는 컨트롤러가 그 시도를 실제로 거둬갔을 때만 한다 — false는 이미 밀려났거나 모르는
+    /// 시도라는 뜻이라, 그때 폐기하면 같은 키를 쓰는 다른 흐름의 상태를 건드릴 수 있다.
+    @MainActor
+    private func handleRerecordFailures() {
+        for entry in uploads.entries {
+            guard case .failed(let failure) = entry.state, failure.rerecord else { continue }
+            // 서버 문구를 그대로 실어 보낸다 — 왜 다시 녹음해야 하는지는 서버만 안다.
+            if model.onUploadGivenUp(attemptId: entry.attemptId, message: failure.message) {
+                uploads.discard(entry.attemptId)
+            }
+        }
+    }
+
+    /// 오버레이가 걷히거나 다른 문항으로 넘어갈 때 녹음을 되감는다.
+    @MainActor
+    private func syncOverlayPhase(_ phase: TestFlowPhase) {
+        if let shown = shownOverlayPhase, !continuesFrom(shown: shown, current: phase) {
+            recording.reset()
+        }
+        switch phase {
+        case .recording, .submitting: shownOverlayPhase = phase
+        default: shownOverlayPhase = nil
+        }
+    }
+
     @MainActor
     private func deliverResults() {
         guard let webView else { return }
@@ -151,6 +329,46 @@ struct TestFlowView: View {
         guard let failure = await model.startRetest() else { return }
         // 결과 화면은 그대로 살아 있다 — 왜 아무 일도 일어나지 않았는지 그 화면에 회신한다.
         webView?.evaluateJavaScript(retestFailedDeliveryJs(failure), completionHandler: nil)
+    }
+}
+
+// MARK: - 녹음 오버레이
+
+/// 녹음 화면 오버레이. 아래 WebView를 완전히 가린다 — WebView는 살아 있고 배경만 덮는 구조라,
+/// 배경이 없으면 웹 화면이 그대로 비친다.
+///
+/// 전환에 애니메이션을 두지 않는다 (안드로이드와 같은 판단): 웹이 음성 문항을 먼저 그려야
+/// 브리지가 호출되는 구조라 등장에 페이드를 걸면 그 대기 화면이 페이드 내내 비쳐, 없앨 수
+/// 있던 노출을 되레 늘린다. 퇴장도 즉시다 — 걷히는 자리에는 이미 다음 문항이 그려져 있다.
+private struct RecordingOverlay: View {
+
+    let start: VoiceItemStart
+    /// 제출한 시도의 결과를 기다리는 중 — 화면은 그대로 두고 하단만 바꾼다 (KAN-146).
+    let submitting: Bool
+    /// 업로드 재녹음 전환으로 이 화면이 스스로 다시 열렸는가 (KAN-147).
+    let afterUploadFailure: Bool
+    /// 그 전환에서 서버가 준 문구. nil이면 화면이 기본 안내를 쓴다.
+    let failureMessage: String?
+
+    @ObservedObject var recording: RecordingModel
+
+    let onSubmit: (_ attemptId: String, _ durationMs: Int64, _ quality: QualityStatus) -> Void
+
+    var body: some View {
+        RecordingScreen(
+            questionText: start.prompt,
+            questionIndex: start.itemNumber,
+            totalQuestions: start.totalItems,
+            submitting: submitting,
+            afterUploadFailure: afterUploadFailure,
+            failureMessage: failureMessage,
+            model: recording,
+            onNext: onSubmit
+        )
+        // 화면이 걷히면 마이크를 놓는다. 되감기 판정(`continuesFrom`)은 상위가 하지만, 오버레이
+        // 자체가 사라지는 경우(웹으로 돌아감)는 여기서도 한 번 더 막는다 — 상위의 페이즈 변화가
+        // 오지 않는 경로(뷰 재구성)에서도 마이크는 반드시 닫혀야 한다.
+        .onDisappear { recording.reset() }
     }
 }
 
@@ -178,164 +396,4 @@ private struct ShareSheet: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
-}
-
-// MARK: - 6단계 자리 표시 화면
-
-/// 목소리 점검 (KAN-105)의 자리. 실제 화면은 6단계에서 온다.
-// TODO(KAN-108 §6): 안드로이드 `VoiceCheckScreen` + `VoiceCheckViewModel` 이식본으로 교체.
-private struct VoiceCheckPlaceholder: View {
-
-    let onDone: (Double) -> Void
-
-    var body: some View {
-        PlaceholderScreen(
-            title: "목소리 점검",
-            detail: "6단계에서 붙습니다 (KAN-105 이식)",
-            // 점검이 잰 중심 음높이는 이후 모든 문항의 곡선 축이 된다. 여기서 넣는 값은
-            // 흐름을 끝까지 밀어 보기 위한 것이지 측정값이 아니라, 디버그 빌드에만 둔다.
-            debugAction: ("점검을 지난 것으로 두기", { onDone(0) })
-        )
-        #if DEBUG
-        // `-AutoGateSmoke 1` — 위 버튼을 실행 인자로 대신 누른다. 시뮬레이터에는 좌표 입력이
-        // 없어서(`xcrun simctl`) 자리 표시 화면을 손으로 넘길 방법이 없다.
-        .task {
-            guard UserDefaults.standard.bool(forKey: "AutoGateSmoke") else { return }
-            onDone(0)
-        }
-        #endif
-    }
-}
-
-/// 세션 생성 (KAN-34)의 자리. Debug 빌드는 ``DebugStubSessionClient``가 고정 세션을 즉시 줘서
-/// 웹이 `?screen=test`로 넘어가는 것까지 확인된다. Release에는 클라이언트가 없어 여기서 멈춘다.
-// TODO(KAN-108 §6): 안드로이드 `SessionGateScreen` + `OkHttpSessionClient` 이식본으로 교체.
-private struct SessionGatePlaceholder: View {
-
-    @ObservedObject var model: TestFlowModel
-
-    var body: some View {
-        Group {
-            switch model.gateState {
-            case .creating:
-                PlaceholderScreen(title: "테스트를 준비하고 있어요", detail: "세션 생성 (6단계)")
-
-            case .failed(let reason, let retryAfterSeconds):
-                PlaceholderScreen(
-                    title: "테스트를 시작하지 못했어요",
-                    detail: failureDetail(reason: reason, retryAfterSeconds: retryAfterSeconds),
-                    primary: ("다시 시도", { model.retrySession() }),
-                    secondary: ("처음으로", { model.backToIntro() })
-                )
-
-            case .ready:
-                // 이 화면이 서 있는 조건 자체가 session == nil이라 도달하지 않는다.
-                EmptyView()
-            }
-        }
-        // 게이트가 화면에 서 있는 동안 요청을 건다. attempt가 바뀌면(=[다시 시도]) 다시 건다 —
-        // 상태만 되돌리면 이미 한 번 돈 이펙트가 다시 돌 이유가 없어 준비 중인 채로 멈춘다.
-        .task(id: model.gateAttempt) { await model.createSessionIfNeeded() }
-    }
-
-    /// 갈래별 안내. 안드로이드 `SessionGateScreen`의 문구 자리이고, 6단계에서 그 화면이 정본을 가져간다.
-    private func failureDetail(reason: SessionFailureReason, retryAfterSeconds: Int64?) -> String {
-        switch reason {
-        case .rateLimited:
-            if let retryAfterSeconds {
-                return "접속이 몰리고 있어요 · \(retryAfterSeconds)초 뒤에 다시 시도해 주세요"
-            }
-            return "접속이 몰리고 있어요 · 잠시 뒤에 다시 시도해 주세요"
-        case .network:
-            return "연결이 불안정해요 · 네트워크를 확인하고 다시 시도해 주세요"
-        case .server:
-            return "잠시 뒤에 다시 시도해 주세요"
-        case .unsupported:
-            return "앱을 최신 버전으로 업데이트해 주세요"
-        }
-    }
-}
-
-/// 녹음 화면 (KAN-100·KAN-102·KAN-146)의 자리. 실제 화면은 6단계에서 온다.
-// TODO(KAN-108 §6): 안드로이드 `RecordingScreen` + `RecordingViewModel` 이식본으로 교체.
-private struct RecordingOverlayPlaceholder: View {
-
-    let start: VoiceItemStart
-    /// 제출한 시도의 결과를 기다리는 중 — 화면은 그대로 두고 하단만 바꾼다 (KAN-146).
-    let submitting: Bool
-    let onExit: () -> Void
-
-    var body: some View {
-        PlaceholderScreen(
-            title: start.prompt,
-            detail: "\(start.itemNumber)/\(start.totalItems) · "
-                + (submitting ? "결과를 보내는 중 (6단계)" : "녹음 화면 (6단계)"),
-            // 안드로이드의 [나가기]는 KAN-147에서 없앴다. 여기 있는 것은 그 버튼이 아니라
-            // "결과 없이 돌려보내는" 경로(PCM 없는 제출)를 손으로 태우는 디버그 통로다.
-            debugAction: submitting ? nil : ("결과 없이 돌아가기", onExit)
-        )
-    }
-}
-
-/// 자리 표시 화면 한 장. 팔레트·간격은 `PermissionGateView`와 같은 토큰(Papercut)을 쓴다 —
-/// 6단계에서 진짜 화면이 오면 이 파일과 함께 사라진다.
-private struct PlaceholderScreen: View {
-
-    let title: String
-    let detail: String
-    var primary: (String, () -> Void)?
-    var secondary: (String, () -> Void)?
-    var debugAction: (String, () -> Void)?
-
-    var body: some View {
-        ZStack {
-            Papercut.cream.ignoresSafeArea()
-            VStack(spacing: Papercut.space4) {
-                Spacer(minLength: 0)
-
-                Text(title)
-                    .font(.system(size: 24))
-                    .foregroundColor(Papercut.ink)
-                    .multilineTextAlignment(.center)
-                Text(detail)
-                    .font(.system(size: 15))
-                    .foregroundColor(Papercut.muted)
-                    .multilineTextAlignment(.center)
-
-                Spacer(minLength: 0)
-
-                if let primary {
-                    button(primary.0, filled: true, action: primary.1)
-                }
-                if let secondary {
-                    button(secondary.0, filled: false, action: secondary.1)
-                }
-                #if DEBUG
-                if let debugAction {
-                    button("[디버그] \(debugAction.0)", filled: false, action: debugAction.1)
-                }
-                #endif
-            }
-            .padding(Papercut.space6)
-        }
-    }
-
-    private func button(_ label: String, filled: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(label)
-                .font(.system(size: 18))
-                .foregroundColor(filled ? Papercut.cream : Papercut.ink)
-                .frame(maxWidth: .infinity)
-                .frame(height: Papercut.controlHeightLarge)
-                .background(
-                    RoundedRectangle(cornerRadius: Papercut.radiusMD)
-                        .fill(filled ? Papercut.ink : Papercut.cream)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: Papercut.radiusMD)
-                                .stroke(Papercut.ink, lineWidth: filled ? 0 : 1)
-                        )
-                )
-        }
-        .buttonStyle(.plain)
-    }
 }
