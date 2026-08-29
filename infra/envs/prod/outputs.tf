@@ -40,3 +40,13 @@ output "waf_log_group" {
   value       = module.waf.log_group_name
   description = "us-east-1의 WAF 로그 그룹 (KAN-149). Count 관찰과 차단 확인 쿼리는 README 'WAF 웹 ACL'."
 }
+
+output "alerts_topic_arn" {
+  value       = module.monitoring.alerts_topic_arn
+  description = "경보 알림 SNS 토픽 (KAN-134). 이메일 구독은 수신자가 확인 링크를 눌러야 활성화된다 - README '경보와 알림'."
+}
+
+output "alarm_names" {
+  value       = module.monitoring.alarm_names
+  description = "생성된 CloudWatch 경보 4종 (KAN-134)"
+}

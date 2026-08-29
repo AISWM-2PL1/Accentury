@@ -25,3 +25,13 @@ output "distribution_arn" {
   value       = aws_cloudfront_distribution.this.arn
   description = "배포 역할의 무효화 권한 범위 (KAN-127, modules/deploy)"
 }
+
+output "alb_arn_suffix" {
+  value       = aws_lb.this.arn_suffix
+  description = "CloudWatch AWS/ApplicationELB의 LoadBalancer 차원 값 (KAN-134)"
+}
+
+output "target_group_arn_suffix" {
+  value       = aws_lb_target_group.backend.arn_suffix
+  description = "CloudWatch AWS/ApplicationELB의 TargetGroup 차원 값 (KAN-134)"
+}
