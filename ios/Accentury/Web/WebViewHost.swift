@@ -259,7 +259,17 @@ private struct WebViewRepresentable: UIViewRepresentable {
 
         context.coordinator.webView = webView
         context.coordinator.userContentController = controller
-        onWebViewCreated(webView)
+        /*
+         * 등록을 한 틱 미룬다. `updateUIView`가 `model.onNavigationStarted()`를 미루는 것과 같은
+         * 이유이고(아래 주석), 같은 이유가 여기에도 있다는 것을 §8 통합 스모크에서 알았다.
+         *
+         * 이 자리는 SwiftUI의 갱신 사이클 **안**이라 상위의 `@State`를 그 자리에서 쓰면 값이
+         * 반영되지 않는다. 증상이 조용해서 오래 숨어 있었다: 상위(`TestFlowView`)가 WebView
+         * 참조를 영영 nil로 들고, 그러면 문항 결과 주입(`deliverResults`)이 매번 "받을 곳이
+         * 없다"로 건너뛴다 — 첫 음성 문항의 업로드까지는 멀쩡히 끝나고 그 다음부터 웹이 오지
+         * 않을 결과를 기다리며 멈춘다.
+         */
+        DispatchQueue.main.async { onWebViewCreated(webView) }
         return webView
     }
 
@@ -291,9 +301,15 @@ private struct WebViewRepresentable: UIViewRepresentable {
     }
 
     static func dismantleUIView(_ webView: WKWebView, coordinator: WebViewCoordinator) {
-        // 참조를 먼저 놓게 한 뒤 끊는다 — 상위가 죽은 WebView를 붙들 틈을 주지 않는다
-        // (안드로이드 `onRelease`가 `onWebViewReleased` → `destroy()` 순서인 것과 같다).
-        coordinator.onReleased?(webView)
+        /*
+         * 참조를 놓게 한 뒤 끊는다 — 상위가 죽은 WebView를 붙들 틈을 주지 않는다
+         * (안드로이드 `onRelease`가 `onWebViewReleased` → `destroy()` 순서인 것과 같다).
+         *
+         * 여기도 갱신 사이클 안이라 통지를 한 틱 미룬다(`makeUIView` 주석). 등록과 해제가 같은
+         * 큐를 지나므로 순서는 그대로다 — 새 WebView가 먼저 등록되고 옛 것이 뒤에 해제되는
+         * 경우에도 상위의 신원 대조(`webView === released`)가 방금 받은 참조를 지킨다.
+         */
+        DispatchQueue.main.async { coordinator.onReleased?(webView) }
         webView.stopLoading()
         webView.navigationDelegate = nil
         /*
@@ -344,6 +360,12 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate {
     /// 주석 참고). 로드가 끝나면(``didFinish``) 비운다 — 그래야 "지금 기다리는 것"이라는 뜻이
     /// 유지되고, 로드가 끝난 뒤 새로 시작되는 내비게이션은 자기 신원을 새로 받는다.
     private var currentMainFrameNavigation: ObjectIdentifier?
+
+    #if DEBUG
+    /// 웹 화면을 대신 눌러 주는 구동기 (`-AutoFlowDrive 1`, KAN-108 §8). WebView 하나에 하나이고
+    /// 문서가 바뀔 때마다 스크립트를 다시 심는다 — 전역이 새 문서에서 사라지기 때문이다.
+    var autoDriver: WebAutoDriver?
+    #endif
 
     private let model: WebLoadModel
     private let onRequestMicPermission: () -> Void
@@ -548,6 +570,26 @@ private extension WebViewCoordinator {
         if let target = defaults.string(forKey: "AutoNavSmoke"), !target.isEmpty {
             let js = "window.location.href = \(BridgeUserScript.jsStringLiteral(target));"
             webView.evaluateJavaScript(js, completionHandler: nil)
+        }
+
+        /*
+         * `-AutoFlowDrive 1` — 웹 화면을 문항 끝까지 대신 누른다 (§8 통합 스모크).
+         *
+         * 문서마다 다시 심는다. 인트로 → 테스트 진입은 같은 WebView의 **다른 문서**라 앞
+         * 문서에 심은 전역이 남아 있지 않다 — 여기서 다시 부르지 않으면 정작 문항 화면에서
+         * 구동기가 없다.
+         */
+        if WebAutoDriver.isEnabled {
+            Task { @MainActor in
+                if autoDriver == nil {
+                    autoDriver = WebAutoDriver(
+                        webView: webView,
+                        // 인트로는 `-AutoStartSmoke`가 이미 맡고 있으면 그쪽에 넘긴다.
+                        drivesIntro: !defaults.bool(forKey: "AutoStartSmoke")
+                    )
+                }
+                autoDriver?.installIntoCurrentDocument()
+            }
         }
     }
 }

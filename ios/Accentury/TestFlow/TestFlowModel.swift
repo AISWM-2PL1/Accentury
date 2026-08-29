@@ -99,8 +99,26 @@ final class TestFlowModel: ObservableObject {
         buildWebUrl(
             base: AppConfig.webURL,
             appVersionName: AppConfig.appVersionName,
-            testEntry: startRequested ? session.map { TestEntry(testVersion: $0.testVersion, sessionId: $0.sessionId) } : nil
+            testEntry: startRequested ? session.map { TestEntry(testVersion: $0.testVersion, sessionId: $0.sessionId) } : nil,
+            bridgeVersion: Self.urlBridgeVersion
         )
+    }
+
+    /// URL에 실어 보낼 브리지 버전. 릴리스에서는 상수 하나이고, 디버그에서만
+    /// `-BridgeVersionOverride <n>`이 끼어든다 (KAN-108 §8 스큐 검증).
+    ///
+    /// 웹의 «앱 업데이트가 필요해요» 화면은 앱이 **자기보다 낮은** 버전을 실어 보낼 때만 뜬다
+    /// (`web/src/bridge/bridge.ts`의 `isBridgeCompatible`). 그 화면을 한 번도 확인하지 않으면
+    /// 계약 버전을 올리는 날 구버전 앱이 어떤 화면을 만나는지 아무도 본 적이 없게 된다.
+    private static var urlBridgeVersion: Int {
+        #if DEBUG
+        // `object(forKey:)`로 먼저 묻는 이유: `integer(forKey:)`는 키가 없을 때도 0을 돌려줘
+        // "0을 지정했다"와 "지정하지 않았다"가 구분되지 않는다. 0이야말로 이 스모크가 쓰는 값이다.
+        if UserDefaults.standard.object(forKey: "BridgeVersionOverride") != nil {
+            return UserDefaults.standard.integer(forKey: "BridgeVersionOverride")
+        }
+        #endif
+        return bridgeContractVersion
     }
 
     /// allowlist (§7). 우리가 여는 주소의 origin 하나뿐이다.
@@ -232,6 +250,9 @@ final class TestFlowModel: ObservableObject {
         )
         sessionGate.onResult(result)
         syncGate()
+        #if DEBUG
+        smokeLog("SESSION: \(Self.describe(result))")
+        #endif
     }
 
     /// 세션 게이트 실패 화면의 [다시 시도].
@@ -289,6 +310,13 @@ final class TestFlowModel: ObservableObject {
     /// 울리는데, 같은 값을 다시 발행하면 결과 전달 이펙트가 헛돈다.
     func setUploads(_ next: [String: UploadState]) {
         guard uploads != next else { return }
+        #if DEBUG
+        // 바뀐 칸만 찍는다 — 스트림은 진행 중 업로드가 있는 동안 자주 울리는데, 매번 전부
+        // 찍으면 스모크 출력에서 "방금 무엇이 달라졌는가"가 묻힌다.
+        for (attemptId, state) in next where uploads[attemptId] != state {
+            smokeLog("UPLOAD: attempt=\(attemptId) state=\(Self.describe(state))")
+        }
+        #endif
         uploads = next
     }
 
@@ -412,6 +440,35 @@ final class TestFlowModel: ObservableObject {
         #endif
         return URLSessionSessionClient(baseURL: AppConfig.apiBaseURL)
     }
+
+    #if DEBUG
+    /// 세션 결과 한 줄 (KAN-108 §8 스모크). **토큰은 절대 찍지 않는다** — 브리지가 토큰 값을
+    /// 로그에 남기지 않는 규칙(`TOKEN:` 줄)과 같은 이유다. 세션 식별자와 버전만으로 백엔드
+    /// 로그의 같은 요청을 찾을 수 있다.
+    private static func describe(_ result: SessionResult) -> String {
+        switch result {
+        case .created(let session):
+            return "created sessionId=\(session.sessionId) testVersion=\(session.testVersion) scoreVersion=\(session.scoreVersion)"
+        case .rejected(let code, _, let retryable, let retryAfterMs):
+            // message는 사용자용 한국어 문구라 찍지 않는다 — 코드가 진단에 쓰는 값이다.
+            return "rejected code=\(code ?? "(none)") retryable=\(retryable) retryAfterMs=\(retryAfterMs.map(String.init) ?? "(none)")"
+        case .transportError(let reason):
+            return "transportError reason=\(reason)"
+        }
+    }
+
+    /// 업로드 상태 한 칸.
+    private static func describe(_ state: UploadState) -> String {
+        switch state {
+        case .inFlight:
+            return "inFlight"
+        case .done(let analysisJobId):
+            return "done analysisJobId=\(analysisJobId)"
+        case .failed(let failure):
+            return "failed retryable=\(failure.retryable) rerecord=\(failure.rerecord) message=\(failure.message ?? "(none)")"
+        }
+    }
+    #endif
 }
 
 #if DEBUG

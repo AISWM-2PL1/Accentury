@@ -2,6 +2,9 @@
 
 안드로이드 앱(`app/`)이 정본이고, 이쪽은 같은 설정 의미를 iOS 문법으로 옮긴 포팅본이다.
 
+이 파일은 **빌드·실행·스모크 명령**이다. 왜 그렇게 갈렸는지(브리지 심의 보안 등가성, 단계별
+차이, 실기기·TestFlight 현황)는 [`docs/wiki/ios-port.md`](../docs/wiki/ios-port.md)에 있다.
+
 ## 필요한 것
 
 Xcode 26.x, XcodeGen (`brew install xcodegen`). 시뮬레이터만 쓰면 애플 개발자 계정은 없어도 된다.
@@ -70,9 +73,14 @@ WAV는 16kHz 모노 16bit여야 한다 — 리샘플하지 않는다 (`Accentury
 > 값이 안 변해 억양 곡선이 레인 한가운데 평선으로만 그려져, 곡선 렌더를 검증할 수 없었다.
 > 목소리 점검(§6)은 이 발화 자산으로도 그대로 통과한다.
 
-릴리스 빌드에는 이 경로가 없다. 잠금이 셋이다 — 읽기 코드가 통째로 `#if DEBUG`이고,
+릴리스 빌드에는 이 경로가 **결선되지 않는다**. 잠금이 셋이다 — 읽기 코드가 통째로 `#if DEBUG`이고,
 `FAKE_MIC_ASSET` 키가 `Info-Release.plist`에 아예 없고, `DebugResources/`가 릴리스 번들에서
 빠진다. 릴리스에서 파일 소스를 켜려면 셋을 다 고쳐야 하고, 그건 리뷰에 걸린다.
+
+`FilePcmSource`라는 **타입 자체는 릴리스 바이너리에도 링크된다** — `AccenturyCore`가 구성별로
+갈리지 않는 한 모듈이라 그렇다. 없는 것은 그 타입을 고르는 코드와 읽을 자산이지 심볼이 아니다
+(`strings`로 `FAKE_MIC_ASSET`을 찾으면 0건인 이유가 그것이다). 디버그 실행 인자들은 반대로
+문자열까지 통째로 빠진다.
 
 ## 스모크 메뉴 (KAN-108 §3·§4)
 
@@ -195,10 +203,46 @@ xcrun simctl launch --console-pty booted com.accentury.app -AutoNavSmoke "https:
 
 `TOKEN:` 줄에 **토큰 값은 찍히지 않는다** — 밀어 넣었다는 사실과 origin, 비었는지만 남긴다.
 
-### 여기서 멈추는 지점 (§8 백엔드 결선)
+### 백엔드가 없으면 멈추는 지점
 
 테스트 진입 URL이 열리면 웹이 `GET /v0/tests/{testVersion}`을 부르고, 백엔드가 없으면
-«문항을 불러오는 중…»에서 멈춘다. 웹을 통해 확인 가능한 범위는 거기까지다.
+«문항을 불러오는 중…»에서 멈춘다. 백엔드 없이 웹을 통해 확인 가능한 범위는 거기까지다.
+
+## 통합 스모크 (KAN-108 §8)
+
+실제 스택(Vite + 백엔드 + AI + Postgres)에 붙여 **인트로부터 결과까지 자동으로 완주**시킨다.
+`-AutoFlowDrive 1`이 그 훅이고, 네이티브 절반과 웹 절반이 함께 움직인다 — 녹음 오버레이가 뜰
+때마다 [녹음]을 누르고 가짜 마이크가 끝나면 [다음]을, 어휘 문항에서는 첫 선택지와 [다음]을 누른다.
+
+```bash
+xcrun simctl privacy booted grant microphone com.accentury.app
+xcrun simctl launch --console-pty booted com.accentury.app \
+  -AutoFlowDrive 1 -AutoStartSmoke 1 -AutoGateSmoke 1
+# SESSION: created sessionId=s_… testVersion=gn-2026.08.1 scoreVersion=sv-0.3
+# FLOW: recording overlay item=v1 number=1/10 → [녹음]
+# FLOW: review item=v1 duration=2500ms quality=normal autoStopped=false frames=75
+# UPLOAD: attempt=at_… state=done analysisJobId=a_…
+# RESULT: attempt=at_… item=v1 accepted=true
+# FLOW: vocab:'정구지'는 표준어로 무엇일까요? → [다음] 클릭
+# FLOW: waiting → 화면 진입
+# FLOW: result → 화면 진입
+```
+
+`-StubSession`을 **주지 않는다** — 실제 세션이어야 업로드가 받아들여지고, 그래야 결과 주입까지
+간다. 가짜 마이크(`FAKE_MIC_ASSET`)가 물려 있어야 문항마다 같은 발화가 들어간다.
+
+`RESULT:` 줄이 이 스모크의 핵심이다. `accepted=false`나 «webView 없음»이면 업로드는 됐는데 결과가
+웹에 닿지 않았다는 뜻이고, 그때 웹은 «잠시만요…»에서 멈춘다.
+
+### 브리지 스큐 화면
+
+웹의 «앱 업데이트가 필요해요»는 앱이 **자기보다 낮은** 계약 버전을 실어 보낼 때 뜬다. 상수를
+잠깐 고쳐 빌드하면 그 검증이 커밋에 남지 않으므로 실행 인자로 덮는다.
+
+```bash
+xcrun simctl launch --console-pty booted com.accentury.app -BridgeVersionOverride 0
+# NAV: committed http://localhost:5173/?bridge=0&app=1.0
+```
 
 ## 목소리 점검·세션 게이트·녹음 화면 (KAN-108 §6)
 
@@ -242,7 +286,8 @@ xcrun simctl launch --console-pty booted com.accentury.app \
 아래 레인에 억양이 나오려면 가짜 마이크가 물려 있어야 한다(위 «가짜 마이크» 절) — 자산은
 안드로이드와 같은 파일이라 두 런타임의 캡처를 그대로 나란히 놓고 비교할 수 있다.
 
-`-AutoRecordingDrive 1`이면 녹음이 끝날 때 `LATENCY: p50=… p95=… max=… n=…` 한 줄이 찍힌다
+`-AutoRecordingDrive 1`(또는 `-AutoFlowDrive 1`)이면 녹음이 끝날 때
+`LATENCY: p50=… p95=… max=… n=…` 한 줄이 찍힌다
 (NFR-PF-02). 재는 구간은 파이프라인 전체가 아니라 **진행 콜백 → 캔버스 그리기**, 곧 이
 런타임이 새로 얹는 몫이다 — 앞쪽(창 채우기·EMA·캡처 버퍼)은 `docs/wiki/pitch-curve.md` §3이
 분해해 두었다. 시뮬레이터 기준 p50 8.4ms · p95 15.1ms · max 16.4ms (n=68).

@@ -131,14 +131,17 @@ final class RecordingModel: ObservableObject {
 
         case .review:
             /*
-             * 녹음 끝. 자동 구동 스모크(`-AutoRecordingDrive 1`)일 때만 찍는다 — 사람이 쓰는
-             * 경로에 계측 로그가 섞이면 스모크 출력에서 무엇이 신호인지 갈리지 않는다.
+             * 녹음 끝. 자동 구동 스모크(`-AutoRecordingDrive 1`·`-AutoFlowDrive 1`)일 때만
+             * 찍는다 — 사람이 쓰는 경로에 계측 로그가 섞이면 스모크 출력에서 무엇이 신호인지
+             * 갈리지 않는다. 통합 스모크(§8)를 함께 받는 이유는 실기기다: 그쪽에서 문항마다
+             * 한 줄이 나와야 NFR-PF-02 값을 시뮬레이터 밖에서도 모을 수 있다.
              *
              * 곧바로 찍지 않고 한 박자 기다리는 이유는 마지막 청크다. 검토로 넘어가는 상태
              * 변화와 그 청크의 그리기가 같은 런루프에 있어, 지금 찍으면 마지막 표본 하나가
              * 빠진 채로 집계된다.
              */
-            guard UserDefaults.standard.bool(forKey: "AutoRecordingDrive") else { return }
+            let defaults = UserDefaults.standard
+            guard defaults.bool(forKey: "AutoRecordingDrive") || defaults.bool(forKey: "AutoFlowDrive") else { return }
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 500_000_000)
                 if let line = CurveLatencyProbe.shared.report() { smokeLog(line) }
