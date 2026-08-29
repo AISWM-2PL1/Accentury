@@ -268,8 +268,14 @@ private struct WebViewRepresentable: UIViewRepresentable {
          * 참조를 영영 nil로 들고, 그러면 문항 결과 주입(`deliverResults`)이 매번 "받을 곳이
          * 없다"로 건너뛴다 — 첫 음성 문항의 업로드까지는 멀쩡히 끝나고 그 다음부터 웹이 오지
          * 않을 결과를 기다리며 멈춘다.
+         *
+         * 미루면 "미룬 사이에 해체됐는가"를 물어야 한다 — 그 판정은
+         * ``WebViewLifecycleNotifier``가 든다.
          */
-        DispatchQueue.main.async { onWebViewCreated(webView) }
+        WebViewLifecycleNotifier.shared.noteCreated(webView) { created in
+            guard let created = created as? WKWebView else { return }
+            onWebViewCreated(created)
+        }
         return webView
     }
 
@@ -308,8 +314,15 @@ private struct WebViewRepresentable: UIViewRepresentable {
          * 여기도 갱신 사이클 안이라 통지를 한 틱 미룬다(`makeUIView` 주석). 등록과 해제가 같은
          * 큐를 지나므로 순서는 그대로다 — 새 WebView가 먼저 등록되고 옛 것이 뒤에 해제되는
          * 경우에도 상위의 신원 대조(`webView === released`)가 방금 받은 참조를 지킨다.
+         *
+         * **해체 기록은 동기다** (``WebViewLifecycleNotifier/noteDismantled(_:publish:)``의 첫 줄).
+         * 미뤄 둔 생성 통지가 아직 큐에 남아 있을 수 있고, 그게 그대로 발행되면 상위가 방금
+         * 해체한 인스턴스를 받아 든다 — 거기 건 `evaluateJavaScript`는 아무 데도 가지 않는다.
          */
-        DispatchQueue.main.async { coordinator.onReleased?(webView) }
+        WebViewLifecycleNotifier.shared.noteDismantled(webView) { [weak coordinator] released in
+            guard let released = released as? WKWebView else { return }
+            coordinator?.onReleased?(released)
+        }
         webView.stopLoading()
         webView.navigationDelegate = nil
         /*
