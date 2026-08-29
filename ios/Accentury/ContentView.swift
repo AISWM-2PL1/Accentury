@@ -4,18 +4,36 @@ import SwiftUI
 import os
 #endif
 
-/// KAN-108 §1의 임시 화면. 빌드 구성이 정한 주소가 실제로 앱까지 흘러왔는지를 눈으로 확인하는 용도다 —
-/// 시뮬레이터 스크린샷 한 장으로 Debug/Release 구분이 되도록 값을 그대로 찍는다.
-/// §5에서 WKWebView 호스트로 통째로 갈아 끼운다.
+/// 앱의 첫 화면. 안드로이드 `MainActivity.onCreate`가 `TestFlow()`를 세우는 자리다.
+///
+/// KAN-108 §5부터 기본 화면은 ``TestFlowView``(WKWebView 호스트 + 브리지)다. §1~§4에서
+/// 임시로 세워 뒀던 설정값 표시와 스모크 버튼은 실행 인자 `-DebugSmokeMenu 1`로만 열린다 —
+/// 지우지 않은 이유는 캡처·권한 경로를 시뮬레이터에서 손으로 다시 확인할 일이 6단계까지
+/// 남아 있기 때문이고, 기본 화면에서 걷어낸 이유는 그 화면이 더는 앱의 첫 화면이 아니기 때문이다.
 struct ContentView: View {
 
-    #if DEBUG
+    var body: some View {
+        #if DEBUG
+        if UserDefaults.standard.bool(forKey: "DebugSmokeMenu") {
+            DebugSmokeMenu()
+        } else {
+            TestFlowView()
+        }
+        #else
+        TestFlowView()
+        #endif
+    }
+}
+
+#if DEBUG
+/// §1~§4의 스모크 화면. `xcrun simctl launch --console-pty booted com.accentury.app -DebugSmokeMenu 1`.
+/// 릴리스 빌드에는 통째로 없다.
+private struct DebugSmokeMenu: View {
+
     @StateObject private var smoke = RecordingSmokeModel()
 
-    // TODO(KAN-108 §5): 제거 — 게이트를 여는 것은 웹의 `requestMicPermission`이 된다.
     @State private var showsPermissionGate = false
     @State private var permissionResult = ""
-    #endif
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -27,25 +45,19 @@ struct ContentView: View {
             configRow(label: "app", value: AppConfig.appVersionName)
             configRow(label: "bridge", value: String(bridgeContractVersion))
 
-            Text("KAN-108 §1 · WKWebView 호스트는 §5에서 붙는다")
+            Text("KAN-108 스모크 메뉴 · 기본 화면은 TestFlowView다")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
-            #if DEBUG
-            // TODO(KAN-108 §5): 제거 — WKWebView 호스트가 들어오면 녹음은 웹 화면이 시작한다.
-            // 여기 있는 동안의 역할은 "캡처 → 프레이밍 → YIN → WAV"가 실기기·시뮬레이터에서
-            // 실제로 도는지 눈과 로그로 한 번 확인하는 것뿐이다.
             Divider()
             recordingSmokeSection
             Divider()
             permissionSmokeSection
-            #endif
 
             Spacer()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(24)
-        #if DEBUG
         .task { await smoke.runAutoSmokeIfRequested() }
         // `-AutoPermissionSmoke 1`: 시뮬레이터에는 탭을 넣을 방법이 없어서(`xcrun simctl`에
         // 좌표 입력이 없다) 버튼 말고 실행 인자로도 게이트를 열 수 있게 둔다.
@@ -59,11 +71,8 @@ struct ContentView: View {
                 onStateChange: Self.reportPermissionState
             )
             // 권한 없이 게이트를 벗어나는 길은 없다 (FR-AD-01, 2026-07-27 확정).
-            // `fullScreenCover`는 기본적으로 아래로 쓸어 닫을 수 없지만, 계약을 코드로 적어
-            // 둔다 — 나중에 sheet로 바꾸는 순간 조용히 열리는 종류의 구멍이다.
             .interactiveDismissDisabled(true)
         }
-        #endif
     }
 
     private func configRow(label: String, value: String) -> some View {
@@ -77,7 +86,6 @@ struct ContentView: View {
         }
     }
 
-    #if DEBUG
     private var recordingSmokeSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Button(smoke.isRecording ? "정지" : "녹음 테스트") {
@@ -98,9 +106,6 @@ struct ContentView: View {
         }
     }
 
-    /// TODO(KAN-108 §5): 제거 — 권한 게이트는 웹의 `requestMicPermission`이 연다
-    /// (`docs/wiki/webview-layer.md` §8). 그때까지 게이트 화면과 상태 저장·복원이 실기기·
-    /// 시뮬레이터에서 실제로 도는지 눈과 로그로 확인하는 임시 배선이다.
     private var permissionSmokeSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Button("권한 게이트 테스트") { showsPermissionGate = true }
@@ -121,8 +126,8 @@ struct ContentView: View {
         print(line)
         Logger(subsystem: "com.accentury.app", category: "permission").info("\(line, privacy: .public)")
     }
-    #endif
 }
+#endif
 
 #Preview {
     ContentView()
