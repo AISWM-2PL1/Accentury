@@ -63,10 +63,17 @@ WAV는 16kHz 모노 16bit여야 한다 — 리샘플하지 않는다 (`Accentury
 릴리스 빌드에는 이 경로가 없다. 읽기 코드가 통째로 `#if DEBUG`이고 `FAKE_MIC_ASSET` 키가
 `Info-Release.plist`에 아예 없어서, 릴리스에서 파일 소스를 켜려면 릴리스 plist를 고쳐야 한다.
 
-## 녹음 스모크 (KAN-108 §3, §5에서 제거)
+## 스모크 메뉴 (KAN-108 §3·§4)
 
-`ContentView`의 «녹음 테스트» 버튼과 실행 인자 두 개가 임시로 붙어 있다. WKWebView 호스트가
-들어오는 §5에서 통째로 걷어낸다.
+§5부터 앱의 첫 화면은 `TestFlowView`(WKWebView + 브리지)다. §1~§4에서 세워 둔 설정값 표시와
+녹음·권한 버튼은 지우지 않고 실행 인자 뒤로 옮겼다 — 캡처·권한 경로를 손으로 다시 확인할 일이
+§6까지 남아 있어서다.
+
+```bash
+xcrun simctl launch --console-pty booted com.accentury.app -DebugSmokeMenu 1
+```
+
+아래 자동 스모크 인자들은 이 메뉴 없이도 그대로 동작한다.
 
 ```bash
 # 파일 소스로 3초 - 220Hz WAV를 앱이 임시 폴더에 만들어 흘린다. 마이크 권한이 필요 없다.
@@ -103,10 +110,10 @@ xcrun simctl launch --console-pty booted com.accentury.app -AutoMicSmoke 1
 그래서 캡처 계층 검증은 **파일 소스(`-AutoRecordSmoke`)까지**이고, `AudioRecorder`(AVAudioEngine)
 경로는 실기기에서 한 번 확인해야 한다.
 
-## 권한 게이트 스모크 (KAN-108 §4, §5에서 제거)
+## 권한 게이트 스모크 (KAN-108 §4)
 
-`ContentView`의 «권한 게이트 테스트» 버튼과 실행 인자 두 개. §5에서 웹의 `requestMicPermission`이
-게이트를 열게 되면 통째로 걷어낸다.
+스모크 메뉴의 «권한 게이트 테스트» 버튼과 실행 인자 두 개. §5부터 게이트를 여는 정본은 웹의
+`requestMicPermission`이고(아래 WebView 스모크), 이 인자들은 게이트 화면 자체를 따로 볼 때 쓴다.
 
 ```bash
 # 게이트를 바로 띄운다. 상태가 바뀔 때마다 PERM: 한 줄이 로그로 나온다.
@@ -140,3 +147,77 @@ xcrun simctl launch --console-pty booted com.accentury.app -AutoPermissionSmoke 
 
 `Config/*.xcconfig` → `Info-{Debug,Release}.plist`의 `$(WEB_URL)` → `AppConfig.swift`.
 안드로이드의 `BuildConfig.WEB_URL` 자리다. 값이 비면 기본값으로 때우지 않고 즉시 중단한다.
+
+## WebView·브리지 스모크 (KAN-108 §5)
+
+웹 dev 서버가 먼저 떠 있어야 한다.
+
+```bash
+cd web && npm run dev -- --host 127.0.0.1 --port 5173
+```
+
+시뮬레이터에는 탭을 넣을 방법이 없어서(`xcrun simctl`에 좌표 입력이 없다) 눌러야 하는 자리마다
+실행 인자를 따로 뒀다. 전부 디버그 빌드 전용이고 릴리스 바이너리에는 문자열조차 없다.
+
+```bash
+# 인트로가 뜨는 것까지. 브리지 버전이 URL에 실려 나가 «앱 업데이트 필요»가 뜨지 않는다.
+xcrun simctl launch --console-pty booted com.accentury.app
+# TOKEN: pushed origin=http://localhost:5173 empty=true
+# NAV: committed http://localhost:5173/?bridge=1&app=1.0
+
+# 인트로의 [시작하기]를 눌러 브리지 requestMicPermission을 흘린다 → 권한 게이트가 웹 위를 덮는다.
+xcrun simctl privacy booted reset microphone com.accentury.app
+xcrun simctl launch --console-pty booted com.accentury.app -AutoStartSmoke 1
+# SMOKE: autostart=armed
+# FLOW: startRequested=true
+
+# 시작 게이트를 끝까지 밀어 테스트 진입 URL까지 간다 (권한 허용 + 목소리 점검 자리 표시 통과).
+xcrun simctl privacy booted grant microphone com.accentury.app
+xcrun simctl launch --console-pty booted com.accentury.app -AutoStartSmoke 1 -AutoGateSmoke 1
+# TOKEN: pushed origin=http://localhost:5173 empty=false
+# NAV: committed .../?bridge=1&app=1.0&screen=test&testVersion=gn-2026.08.1&sessionId=s_debug_stub
+
+# allowlist 밖으로 나가 보고 막히는지 본다. 화면은 인트로 그대로 (오류 화면이 아니다).
+xcrun simctl launch --console-pty booted com.accentury.app -AutoNavSmoke "https://example.com"
+# NAV: cancelled https://example.com/
+```
+
+`TOKEN:` 줄에 **토큰 값은 찍히지 않는다** — 밀어 넣었다는 사실과 origin, 비었는지만 남긴다.
+
+### 여기서 멈추는 지점 (§8 백엔드 결선)
+
+테스트 진입 URL이 열리면 웹이 `GET /v0/tests/{testVersion}`을 부르고, 백엔드가 없으면
+«문항을 불러오는 중…»에서 멈춘다. §5에서 확인 가능한 범위는 거기까지다 —
+세션도 디버그 스텁이 주는 고정값이라 서버가 모르는 id다 (`DebugStubSessionClient`).
+
+### 진행 저장이 남는다
+
+`TestFlowModel`이 `UserDefaults`에 진행을 적는다(`test_flow_state`·`session_gate_state`·
+`test_flow_start_requested` 등, 안드로이드 `rememberSaveable` 자리). 인트로부터 다시 보려면
+앱을 지웠다 깔거나 시뮬레이터를 초기화한다.
+
+```bash
+xcrun simctl uninstall booted com.accentury.app
+```
+
+## 브리지가 iOS에서 갈리는 지점
+
+안드로이드는 `addJavascriptInterface`로 코틀린 객체를 페이지에 그대로 심어서, 값을 **동기로
+돌려주는** `getContractVersion()`·`getSessionToken()`이 공짜로 나온다. WKWebView에는 그 자리가
+없다 — `WKScriptMessageHandler`는 단방향·비동기다.
+
+그래서 브리지 객체 자체를 JS로 적어 `WKUserScript`(`.atDocumentStart`, 메인 프레임 전용)로 심는다
+(`Accentury/Web/BridgeUserScript.swift`). 값을 돌려주는 둘은 JS 안의 값을 읽고, 상태를 바꾸는
+넷은 `postMessage`로 네이티브에 넘긴다. **웹은 이 차이를 모른다** — `web/src/bridge/bridge.ts`는
+한 글자도 바뀌지 않았다.
+
+토큰은 문서에 매인 JS 변수다. 안드로이드의 fail-closed `AtomicBoolean`이 하던 일이 구조로 따라온다:
+시작값이 빈 문자열이고, 메인 프레임 전환마다 유저 스크립트가 다시 돌아 초기화되며, 네이티브는
+**커밋된 문서의 origin이 allowlist 안일 때만** 밀어 넣는다. iframe에는 스크립트 자체가 가지 않는다.
+
+## 카카오 공유가 iOS에 없다
+
+안드로이드는 카카오 피드 템플릿으로 카톡을 직접 열고 미설치면 OS 공유 시트로 내려간다.
+iOS는 그 **폴백에 해당하는 것만** 세웠다 — `UIActivityViewController`에 문구와 캠페인 URL을 싣는다
+(카톡이 깔려 있으면 시트에 그대로 뜬다). 카카오 링크 SDK는 KAN-30의 안드로이드 범위였고,
+iOS 도입은 후속 티켓이다 (`TestFlowView.swift`의 `ShareSheet` 주석).

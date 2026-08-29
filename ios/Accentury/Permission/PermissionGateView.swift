@@ -95,9 +95,10 @@ struct PermissionGateView: View {
         // `@Published`의 퍼블리셔는 구독 순간 현재 값부터 흘려주므로, 첫 상태도 여기서 잡힌다.
         .onReceive(model.$state) { onStateChange?($0) }
         #if DEBUG
-        // TODO(KAN-108 §5): 제거 — 스모크용. `xcrun simctl`에 좌표 입력이 없어 시뮬레이터에서는
-        // «마이크 허용»을 누를 방법이 없다. 설정에서 이미 거부된 상태로 이 인자를 주면 요청이
-        // 팝업 없이 곧바로 거절돼(iOS 규칙) 영구 거부 화면까지 자동으로 간다.
+        // 스모크용. `xcrun simctl`에 좌표 입력이 없어 시뮬레이터에서는 «마이크 허용»을 누를
+        // 방법이 없다. 설정에서 이미 거부된 상태로 이 인자를 주면 요청이 팝업 없이 곧바로
+        // 거절돼(iOS 규칙) 영구 거부 화면까지 자동으로 간다. §5에서 걷으려던 배선인데, 게이트가
+        // 이제 웹의 requestMicPermission으로도 열리는 만큼 **자동화가 닿는 유일한 통로**로 남긴다.
         .task {
             guard UserDefaults.standard.bool(forKey: "AutoPermissionRequest") else { return }
             await model.requestPermission()
