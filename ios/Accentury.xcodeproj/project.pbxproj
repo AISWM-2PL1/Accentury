@@ -8,13 +8,17 @@
 
 /* Begin PBXBuildFile section */
 		23A926CAEA2B263C22C7533B /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D06BC29425E893F55AE8F9A /* AppConfig.swift */; };
+		387373ED323D0FED5A62B215 /* PermissionGateModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1AD1979B9D7FBA7E7FFB170 /* PermissionGateModel.swift */; };
 		3958ED33ADDA31F6FE392B5C /* PcmSourcesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A728677C2DA7FF5644257BD /* PcmSourcesTests.swift */; };
+		3B949FFAAB1FABA338069613 /* PermissionGateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3AB85017A7A546F989420EE /* PermissionGateView.swift */; };
 		5E60AE7995F74242710F685B /* AccenturyCore in Frameworks */ = {isa = PBXBuildFile; productRef = 40EFC6BFA1E64779B7362D13 /* AccenturyCore */; };
+		795AE3D905017B3C1F41962F /* PermissionGateModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67AD63BE69878C4E4EA59593 /* PermissionGateModelTests.swift */; };
 		8F1B9A53CDAEE4D6A8F89EC2 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37D2DAA08F2853EC2AE0D174 /* ContentView.swift */; };
 		9657C4EA660358AADEF55CF3 /* AppConfigTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5375A299C4DD27AFDBA3FBDE /* AppConfigTests.swift */; };
 		A371283916C2882A4A4C7C84 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = FA38785B971425B6F2AF86D5 /* Assets.xcassets */; };
 		B34211F2D69B414CB38A5784 /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61C285C11F1957A7F62C8E6B /* AudioRecorder.swift */; };
 		C51B1AC0B01DF054FC0A23EA /* RecordingSmokeModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7C2427E4D1A062E023DB7E1 /* RecordingSmokeModel.swift */; };
+		EF16FA13AAC3F86EF5455E0D /* MicPermission.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB797E81992F94828EE83D32 /* MicPermission.swift */; };
 		F0D5C163710987FB48AF55CA /* AccenturyApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2929E30A84C10FDE57D3643B /* AccenturyApp.swift */; };
 		FC06743A68EA85DDE80AD806 /* PcmSources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 710CF5D06B7D559FE6C6CA94 /* PcmSources.swift */; };
 /* End PBXBuildFile section */
@@ -41,12 +45,16 @@
 		5375A299C4DD27AFDBA3FBDE /* AppConfigTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfigTests.swift; sourceTree = "<group>"; };
 		5427870AADAE9970E09CBC35 /* Local.xcconfig.example */ = {isa = PBXFileReference; path = Local.xcconfig.example; sourceTree = "<group>"; };
 		61C285C11F1957A7F62C8E6B /* AudioRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecorder.swift; sourceTree = "<group>"; };
+		67AD63BE69878C4E4EA59593 /* PermissionGateModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionGateModelTests.swift; sourceTree = "<group>"; };
 		6F8D1A37CB7B9A8DB919ABD3 /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
 		710CF5D06B7D559FE6C6CA94 /* PcmSources.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PcmSources.swift; sourceTree = "<group>"; };
 		9058E17A31F284B23B302D03 /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
 		BDD3770C39CB1432FBAB3BB8 /* AccenturyTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AccenturyTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		CB58377AE12082A4E6DFF97D /* Accentury.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Accentury.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D7C2427E4D1A062E023DB7E1 /* RecordingSmokeModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingSmokeModel.swift; sourceTree = "<group>"; };
+		EB797E81992F94828EE83D32 /* MicPermission.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicPermission.swift; sourceTree = "<group>"; };
+		F1AD1979B9D7FBA7E7FFB170 /* PermissionGateModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionGateModel.swift; sourceTree = "<group>"; };
+		F3AB85017A7A546F989420EE /* PermissionGateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionGateView.swift; sourceTree = "<group>"; };
 		FA38785B971425B6F2AF86D5 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -77,6 +85,7 @@
 			children = (
 				5375A299C4DD27AFDBA3FBDE /* AppConfigTests.swift */,
 				2A728677C2DA7FF5644257BD /* PcmSourcesTests.swift */,
+				67AD63BE69878C4E4EA59593 /* PermissionGateModelTests.swift */,
 			);
 			path = AccenturyTests;
 			sourceTree = "<group>";
@@ -119,6 +128,7 @@
 				42B781741E830E2F917845E1 /* Info-Release.plist */,
 				2A867CA9FAA03EE0E07AB832 /* Audio */,
 				D0CECAC03F3782E93DFD2217 /* Config */,
+				D97E4BCCC33F339EC0E7961C /* Permission */,
 			);
 			path = Accentury;
 			sourceTree = "<group>";
@@ -132,6 +142,16 @@
 				6F8D1A37CB7B9A8DB919ABD3 /* Release.xcconfig */,
 			);
 			path = Config;
+			sourceTree = "<group>";
+		};
+		D97E4BCCC33F339EC0E7961C /* Permission */ = {
+			isa = PBXGroup;
+			children = (
+				EB797E81992F94828EE83D32 /* MicPermission.swift */,
+				F1AD1979B9D7FBA7E7FFB170 /* PermissionGateModel.swift */,
+				F3AB85017A7A546F989420EE /* PermissionGateView.swift */,
+			);
+			path = Permission;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -233,7 +253,10 @@
 				23A926CAEA2B263C22C7533B /* AppConfig.swift in Sources */,
 				B34211F2D69B414CB38A5784 /* AudioRecorder.swift in Sources */,
 				8F1B9A53CDAEE4D6A8F89EC2 /* ContentView.swift in Sources */,
+				EF16FA13AAC3F86EF5455E0D /* MicPermission.swift in Sources */,
 				FC06743A68EA85DDE80AD806 /* PcmSources.swift in Sources */,
+				387373ED323D0FED5A62B215 /* PermissionGateModel.swift in Sources */,
+				3B949FFAAB1FABA338069613 /* PermissionGateView.swift in Sources */,
 				C51B1AC0B01DF054FC0A23EA /* RecordingSmokeModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -244,6 +267,7 @@
 			files = (
 				9657C4EA660358AADEF55CF3 /* AppConfigTests.swift in Sources */,
 				3958ED33ADDA31F6FE392B5C /* PcmSourcesTests.swift in Sources */,
+				795AE3D905017B3C1F41962F /* PermissionGateModelTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

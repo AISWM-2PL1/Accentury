@@ -103,6 +103,39 @@ xcrun simctl launch --console-pty booted com.accentury.app -AutoMicSmoke 1
 그래서 캡처 계층 검증은 **파일 소스(`-AutoRecordSmoke`)까지**이고, `AudioRecorder`(AVAudioEngine)
 경로는 실기기에서 한 번 확인해야 한다.
 
+## 권한 게이트 스모크 (KAN-108 §4, §5에서 제거)
+
+`ContentView`의 «권한 게이트 테스트» 버튼과 실행 인자 두 개. §5에서 웹의 `requestMicPermission`이
+게이트를 열게 되면 통째로 걷어낸다.
+
+```bash
+# 게이트를 바로 띄운다. 상태가 바뀔 때마다 PERM: 한 줄이 로그로 나온다.
+xcrun simctl launch --console-pty booted com.accentury.app -AutoPermissionSmoke 1
+# PERM: state=rationale real=undetermined
+
+# 권한을 밖에서 바꿔 가며 복원 규칙을 확인한다.
+xcrun simctl privacy booted reset  microphone com.accentury.app   # 안 물어본 상태
+xcrun simctl privacy booted grant  microphone com.accentury.app   # 허용
+xcrun simctl privacy booted revoke microphone com.accentury.app   # 거부
+```
+
+`state`는 저장 키(안드로이드 `rememberSaveable` 값과 같은 문자열), `real`은 OS가 말하는 실제
+권한이라 둘이 어긋나는 순간이 로그에 그대로 남는다 — **실제 권한이 이긴다**는 규칙이 여기서 보인다.
+
+`-AutoPermissionRequest 1`을 같이 주면 화면이 뜨자마자 권한을 요청한다. 시뮬레이터에는 탭을
+넣을 방법이 없어서(`xcrun simctl`에 좌표 입력이 없다) 버튼을 누를 수 없는데, 이미 거부된
+상태에서는 요청이 팝업 없이 곧바로 거절돼 영구 거부 화면까지 자동으로 간다.
+
+```bash
+xcrun simctl privacy booted revoke microphone com.accentury.app
+xcrun simctl launch --console-pty booted com.accentury.app -AutoPermissionSmoke 1 -AutoPermissionRequest 1
+# PERM: state=rationale real=denied
+# PERM: state=permanently_denied real=denied
+```
+
+**아직 안 물어본 상태(`reset`)에서는 팝업이 실제로 뜬다.** 그 팝업은 자동화로 누를 수 없어
+허용/거부 분기는 손으로 눌러 확인해야 한다.
+
 ## 주소가 흐르는 경로
 
 `Config/*.xcconfig` → `Info-{Debug,Release}.plist`의 `$(WEB_URL)` → `AppConfig.swift`.
