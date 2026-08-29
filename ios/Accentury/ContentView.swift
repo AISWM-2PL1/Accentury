@@ -5,6 +5,11 @@ import SwiftUI
 /// 시뮬레이터 스크린샷 한 장으로 Debug/Release 구분이 되도록 값을 그대로 찍는다.
 /// §5에서 WKWebView 호스트로 통째로 갈아 끼운다.
 struct ContentView: View {
+
+    #if DEBUG
+    @StateObject private var smoke = RecordingSmokeModel()
+    #endif
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("accentury")
@@ -19,10 +24,21 @@ struct ContentView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
+            #if DEBUG
+            // TODO(KAN-108 §5): 제거 — WKWebView 호스트가 들어오면 녹음은 웹 화면이 시작한다.
+            // 여기 있는 동안의 역할은 "캡처 → 프레이밍 → YIN → WAV"가 실기기·시뮬레이터에서
+            // 실제로 도는지 눈과 로그로 한 번 확인하는 것뿐이다.
+            Divider()
+            recordingSmokeSection
+            #endif
+
             Spacer()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(24)
+        #if DEBUG
+        .task { await smoke.runAutoSmokeIfRequested() }
+        #endif
     }
 
     private func configRow(label: String, value: String) -> some View {
@@ -35,6 +51,28 @@ struct ContentView: View {
                 .textSelection(.enabled)
         }
     }
+
+    #if DEBUG
+    private var recordingSmokeSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button(smoke.isRecording ? "정지" : "녹음 테스트") {
+                smoke.toggle()
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(smoke.isBusy)
+
+            Text(smoke.status)
+                .font(.callout)
+            Text("경과 \(smoke.elapsedMs)ms · rms \(String(format: "%.0f", smoke.rms)) · f0 \(smoke.lastF0.map { String(format: "%.1fHz", $0) } ?? "무성")")
+                .font(.system(.footnote, design: .monospaced))
+            if !smoke.result.isEmpty {
+                Text(smoke.result)
+                    .font(.system(.footnote, design: .monospaced))
+                    .textSelection(.enabled)
+            }
+        }
+    }
+    #endif
 }
 
 #Preview {
