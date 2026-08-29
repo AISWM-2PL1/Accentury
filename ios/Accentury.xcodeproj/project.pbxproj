@@ -24,6 +24,7 @@
 		459AB9A5EE1DE6176CF5F668 /* SessionGateScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4912C22B3DB8478DFFDB15D1 /* SessionGateScreen.swift */; };
 		4A84448D61B3CBA605DAAA05 /* TestFlowModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A0F1602F0CEE2A8462704A /* TestFlowModel.swift */; };
 		4BFF2CB4480E6FDE33185928 /* CurveLane.swift in Sources */ = {isa = PBXBuildFile; fileRef = B886426FC063688254DDCEB6 /* CurveLane.swift */; };
+		5786181C02EE2EC4B4AE863F /* WebAutoDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53EFA92F03249BAA2DB5FCF8 /* WebAutoDriver.swift */; };
 		57AF8BF8F43FD391DEDA98DC /* PaperShadow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F692C86E93A83A08A00B810 /* PaperShadow.swift */; };
 		5BA4AD39A52498A1CA365979 /* HeroIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = 678FAE681AA8637F3AA3B4ED /* HeroIcon.swift */; };
 		5E60AE7995F74242710F685B /* AccenturyCore in Frameworks */ = {isa = PBXBuildFile; productRef = 40EFC6BFA1E64779B7362D13 /* AccenturyCore */; };
@@ -94,6 +95,7 @@
 		4F992496097E1162874666B6 /* WebViewHostPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewHostPolicyTests.swift; sourceTree = "<group>"; };
 		514DE1060D23DE29162CBED3 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
 		5375A299C4DD27AFDBA3FBDE /* AppConfigTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfigTests.swift; sourceTree = "<group>"; };
+		53EFA92F03249BAA2DB5FCF8 /* WebAutoDriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebAutoDriver.swift; sourceTree = "<group>"; };
 		5427870AADAE9970E09CBC35 /* Local.xcconfig.example */ = {isa = PBXFileReference; path = Local.xcconfig.example; sourceTree = "<group>"; };
 		54D6ABD705F2CA4791966C17 /* GuideCurveCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuideCurveCache.swift; sourceTree = "<group>"; };
 		5F38F6B8DAF4F82A6A2F4E3B /* CurvePathBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurvePathBuilder.swift; sourceTree = "<group>"; };
@@ -178,6 +180,7 @@
 			children = (
 				A2CE5A25F0FDE137C0C1ACE8 /* AccenturyBridge.swift */,
 				DFA23661AF83EC18C5D92B7B /* BridgeUserScript.swift */,
+				53EFA92F03249BAA2DB5FCF8 /* WebAutoDriver.swift */,
 				3823E1F07E0644A73178339E /* WebViewHost.swift */,
 			);
 			path = Web;
@@ -485,6 +488,7 @@
 				B054A9D077B1545A061FC651 /* UploadStatusBar.swift in Sources */,
 				D9B4B12CAA8445E94A026C6E /* VoiceCheckModel.swift in Sources */,
 				9F3F84ED5415429D7EF5FEFD /* VoiceCheckScreen.swift in Sources */,
+				5786181C02EE2EC4B4AE863F /* WebAutoDriver.swift in Sources */,
 				AEBA6331A67BF471D222A388 /* WebViewHost.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

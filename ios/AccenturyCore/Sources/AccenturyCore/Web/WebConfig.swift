@@ -32,9 +32,19 @@ public struct TestEntry: Equatable, Sendable {
 /// `testEntry`가 있으면 테스트 진입 URL, 없으면 인트로 URL이다. 두 URL을 한 함수로 묶은 이유:
 /// 스큐 파라미터는 어느 쪽에도 빠지면 안 되는데(빠지면 웹이 업데이트 안내를 띄운다) 조립을
 /// 나누면 한쪽만 고치는 실수가 생긴다.
-public func buildWebUrl(base: String, appVersionName: String, testEntry: TestEntry? = nil) -> String {
+///
+/// - Parameter bridgeVersion: URL에 실어 보낼 브리지 계약 버전. 기본값이 앱이 실제로 구현한
+///   버전(``bridgeContractVersion``)이고, **이 인자를 넘기는 곳은 디버그 스모크 하나뿐이다**
+///   (`-BridgeVersionOverride`, KAN-108 §8). 웹의 스큐 판정은 낮은 버전을 실어 보내야만 볼 수
+///   있는데, 그걸 보려고 상수를 잠깐 고쳐 빌드하면 그 검증이 커밋에 남지 않는다.
+public func buildWebUrl(
+    base: String,
+    appVersionName: String,
+    testEntry: TestEntry? = nil,
+    bridgeVersion: Int = bridgeContractVersion
+) -> String {
     let separator: Character = base.contains("?") ? "&" : "?"
-    var query = "bridge=\(bridgeContractVersion)&app=\(encodeQueryValue(appVersionName))"
+    var query = "bridge=\(bridgeVersion)&app=\(encodeQueryValue(appVersionName))"
     if let testEntry {
         query += "&screen=test"
         query += "&testVersion=\(encodeQueryValue(testEntry.testVersion))"

@@ -47,10 +47,20 @@ struct TestFlowView: View {
                     onStartVoiceItem: { model.onStartVoiceItem($0) },
                     onStartRetest: { Task { @MainActor in await handleRetest() } },
                     onShareResult: { model.onShareResult($0) },
-                    onWebViewCreated: { webView = $0 },
+                    onWebViewCreated: { created in
+                        webView = created
+                        #if DEBUG
+                        smokeLog("WEBVIEW: created \(ObjectIdentifier(created))")
+                        #endif
+                    },
                     // 내가 들고 있는 인스턴스일 때만 놓는다 — 재생성 순서에 따라 새 WebView가 먼저
                     // 등록된 뒤 옛 것이 해제될 수 있고, 그때 방금 받은 참조를 지우면 안 된다.
-                    onWebViewReleased: { released in if webView === released { webView = nil } }
+                    onWebViewReleased: { released in
+                        #if DEBUG
+                        smokeLog("WEBVIEW: released \(ObjectIdentifier(released)) held=\(webView.map { "\(ObjectIdentifier($0))" } ?? "nil")")
+                        #endif
+                        if webView === released { webView = nil }
+                    }
                 )
 
                 overlay
@@ -175,6 +185,18 @@ struct TestFlowView: View {
             try? await Task.sleep(nanoseconds: 4_000_000_000)
             recording.stop()
         }
+        /*
+         * `-AutoFlowDrive 1` — 통합 스모크의 **네이티브 절반** (§8).
+         *
+         * `-AutoRecordingDrive`와 갈리는 지점은 "몇 번인가"다. 그쪽은 고정 payload로 세운 화면
+         * 하나를 시간에 맞춰 밀지만, 통합 스모크에서는 녹음 오버레이가 음성 문항 수만큼 뜨고
+         * 언제 뜨는지는 서버가 준 정의가 정한다. 그래서 시간이 아니라 **페이즈 변화**를 듣는다.
+         *
+         * 정지도 누르지 않는다. 가짜 마이크의 WAV가 끝나면 캡처 스트림이 닫혀 엔진이 스스로
+         * 검토로 넘어가므로(`FilePcmSource`), 정지를 걸면 그 자연스러운 종료 대신 사람이 끊은
+         * 녹음을 재게 된다 — 안드로이드 캡처와 나란히 놓을 값이 아니게 된다.
+         */
+        .onChange(of: model.phase) { phase in autoFlowDrive(phase) }
         #endif
     }
 
@@ -317,16 +339,108 @@ struct TestFlowView: View {
 
     @MainActor
     private func deliverResults() {
-        guard let webView else { return }
-        for result in model.takeResultsForDelivery() {
-            webView.evaluateJavaScript(itemResultDeliveryJs(result)) { handed, _ in
+        guard let webView else {
+            #if DEBUG
+            smokeLog("RESULT: deliver skipped — webView 없음")
+            #endif
+            return
+        }
+        let pending = model.takeResultsForDelivery()
+        #if DEBUG
+        smokeLog("RESULT: deliver n=\(pending.count)")
+        #endif
+        for result in pending {
+            webView.evaluateJavaScript(itemResultDeliveryJs(result)) { handed, error in
                 // 주입 JS는 수신 지점이 실제로 있어 결과를 넘겼을 때만 true를 돌려준다 (KAN-146).
                 // JS의 boolean은 `NSNumber`로 건너온다.
-                guard (handed as? NSNumber)?.boolValue == true else { return }
+                let accepted = (handed as? NSNumber)?.boolValue == true
+                #if DEBUG
+                /*
+                 * 결과가 웹에 실제로 닿았는지는 흐름이 멈췄을 때 가장 먼저 묻게 되는 값인데,
+                 * 여기 로그가 없으면 «업로드는 됐는데 화면이 안 넘어간다»에서 원인이 네이티브
+                 * 쪽인지 웹 수신 지점인지 가를 방법이 없다 (KAN-108 §8에서 실제로 겪었다).
+                 */
+                smokeLog(
+                    "RESULT: attempt=\(result.attemptId) item=\(result.itemId) accepted=\(accepted)"
+                        + (error.map { " error=\($0.localizedDescription)" } ?? "")
+                )
+                #endif
+                guard accepted else { return }
                 Task { @MainActor in model.onResultDelivered(attemptId: result.attemptId) }
             }
         }
     }
+
+    #if DEBUG
+    /// 지금 구동 중인 문항. 녹음 오버레이가 걷히면 비워서, 같은 문항이 다시 열려도
+    /// (업로드 실패 → 재녹음, KAN-147) 한 번 더 구동된다.
+    @State private var autoDrivenItem: String?
+
+    /// 녹음 오버레이가 뜰 때마다 [녹음] → (가짜 마이크가 끝날 때까지) → [다음]을 대신 누른다.
+    @MainActor
+    private func autoFlowDrive(_ phase: TestFlowPhase) {
+        guard UserDefaults.standard.bool(forKey: "AutoFlowDrive") else { return }
+        guard case .recording(let recordingPhase) = phase else {
+            // 제출을 기다리는 동안에는 열쇠를 쥐고 있는다 — 여기서 비우면 같은 문항이 다시
+            // 구동돼 이미 올라간 녹음 위에 두 번째 시도가 겹친다.
+            if case .submitting = phase { return }
+            autoDrivenItem = nil
+            return
+        }
+
+        let start = recordingPhase.start
+        guard autoDrivenItem != start.itemId else { return }
+        autoDrivenItem = start.itemId
+
+        Task { @MainActor in
+            smokeLog("FLOW: recording overlay item=\(start.itemId) number=\(start.itemNumber)/\(start.totalItems) → [녹음]")
+            // 오버레이가 자리를 잡을 짬. 화면 캡처가 «대기» 상태를 잡을 창이기도 하다.
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            recording.start()
+
+            /*
+             * 검토로 넘어가기를 기다린다. 상한은 녹음 상한(10초)에 여유를 얹은 값이다 —
+             * 가짜 마이크가 안 물려 있으면 실제 마이크로 10초를 채우고 넘어오는데, 그것도
+             * 결국은 넘어오므로 상한이 그보다 짧으면 스모크만 헛되이 실패한다.
+             */
+            let deadline = Date().addingTimeInterval(20)
+            while Date() < deadline {
+                switch recording.uiState {
+                case .review(let review):
+                    smokeLog(
+                        "FLOW: review item=\(start.itemId) duration=\(review.durationMs)ms "
+                            + "quality=\(review.quality) autoStopped=\(review.autoStopped) "
+                            + "frames=\(review.pitchFrames.count)"
+                    )
+                    guard review.canProceed else {
+                        // 화면의 [다음]도 이 조건으로 서지 않는다 (FR-AD-08). 여기서 억지로
+                        // 제출하면 스모크가 사람이 못 하는 일을 해 버려 통과가 거짓말이 된다.
+                        smokeLog("FLOW: [다음] 잠김 — 품질 \(review.quality), 이 문항에서 멈춘다")
+                        return
+                    }
+                    // 검토 화면을 캡처할 창.
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    smokeLog("FLOW: review item=\(start.itemId) attempt=\(review.attemptId) → [다음]")
+                    submitRecording(
+                        start: start,
+                        attemptId: review.attemptId,
+                        durationMs: review.durationMs,
+                        quality: review.quality
+                    )
+                    return
+
+                case .failed(let reason):
+                    smokeLog("FLOW: recording failed item=\(start.itemId) reason=\(reason)")
+                    return
+
+                case .idle, .recording:
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                }
+            }
+            smokeLog("FLOW: recording drive timeout item=\(start.itemId) state=\(recording.uiState)")
+        }
+    }
+    #endif
 
     @MainActor
     private func handleRetest() async {
