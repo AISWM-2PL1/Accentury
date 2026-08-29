@@ -1,0 +1,17 @@
+// Local.xcconfig.example — 이 파일을 같은 폴더에 `Local.xcconfig`로 복사해서 쓴다.
+// `Local.xcconfig`는 gitignore 대상이다 (안드로이드의 local.properties와 같은 자리).
+// 두 파일 다 없어도 시뮬레이터 빌드는 그대로 통과한다 — 없는 게 정상 상태다.
+//
+// [xcconfig 주석 함정] `//`는 주석이다. URL은 `$()`를 끼워 `https:/$()/example.com` 꼴로 쓴다.
+
+// --- 실기기 빌드용 애플 개발자 팀 ID ---
+// Xcode > Settings > Accounts에서 확인. 시뮬레이터만 쓸 거면 비워 둬도 된다.
+// ACCENTURY_TEAM_ID = ABCDE12345
+
+// --- Debug 빌드가 열 주소 오버라이드 (실기기 확인용) ---
+// 실기기는 맥의 localhost를 모른다. 터널을 띄우고
+//   cloudflared tunnel --url http:/$()/localhost:5173
+// 받은 HTTPS 주소를 두 값에 같이 넣는다. Vite dev 서버가 /v0를 8080으로 프록시하므로
+// 화면과 API가 배포와 같은 단일 출처가 된다.
+// WEB_URL = https:/$()/xxxx-yyyy.trycloudflare.com
+// API_BASE_URL = https:/$()/xxxx-yyyy.trycloudflare.com
