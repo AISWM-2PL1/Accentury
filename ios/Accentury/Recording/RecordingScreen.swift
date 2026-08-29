@@ -8,7 +8,8 @@ import SwiftUI
 /// **재생은 없다** (FR-AD-09). 검토 화면의 선택지는 [재녹음]과 [다음] 둘뿐이고, [다음]은 품질
 /// 판정이 통과일 때만 선다 (FR-AD-08).
 ///
-/// 곡선 레인은 자리만 세운다 — 곡선 그리기는 §7b 몫이다 (``CurveLaneView`` 주석).
+/// 곡선 좌표를 고르는 자리이기도 하다 (KAN-105) — 어떤 프레임을, 얼마짜리 창으로 볼지는
+/// ``curveCard``가 한 번에 정하고 레인은 픽셀 변환만 한다.
 struct RecordingScreen: View {
 
     let questionText: String
@@ -30,7 +31,21 @@ struct RecordingScreen: View {
     /// 반복한다. nil이면 기본 안내를 쓴다.
     var failureMessage: String?
 
+    /// 상단 레인의 정적 가이드 곡선 (KAN-102). nil은 안 실어 보낸 구버전 웹 — 레인만 비운다.
+    var guideF0: GuideF0?
+
+    /// 사용자 곡선 y축의 중심 음높이 (KAN-105). 목소리 점검 화면이 미리 잰 값을 넘긴다.
+    /// nil이면 이 녹음의 첫 유성 프레임들로 직접 잡고(``AccenturyCore/userCurveCenterHz(_:)``),
+    /// 그것도 안 되면 곡선을 그리지 않는다 — 축이 정해지기 전에 임시 축으로 그려 두면 축이
+    /// 잠기는 순간 곡선 전체가 한 번 점프한다.
+    var centerHz: Float?
+
     @ObservedObject var model: RecordingModel
+
+    /// 정적인 가이드 좌표를 문항당 한 번만 계산한다 — 안드로이드 `remember(guideF0)`의 자리다
+    /// (``GuideCurveCache``). 참조 타입을 `@State`로 들고 있어야 뷰 값이 다시 만들어져도
+    /// 같은 인스턴스가 남는다.
+    @State private var guideCurve = GuideCurveCache()
 
     /// quality는 검토 상태에만 있고 화면이 넘어가는 즉시 되감기므로 호출자가 나중에 되물을 수
     /// 없다. 브리지 계약(KAN-89)이 qualityStatus를 요구해서 여기서 함께 넘긴다.
@@ -95,9 +110,40 @@ struct RecordingScreen: View {
     /// 상자 위에 "억양 곡선" 제목을 달지 않는다 (KAN-161 2단계) — 레인 라벨이 이미 "가이드"와
     /// "내 억양"이라, 제목은 같은 말을 한 번 더 하면서 세로 공간만 먹는다.
     private var curveCard: some View {
-        CurveLaneGroup {
-            CurveLaneView(label: "가이드", variant: .guide)
-            CurveLaneView(label: "내 억양", variant: .user, topDivider: true)
+        /*
+         * 좌표 계산 한 벌. 안드로이드가 `remember`로 묶던 정적인 것 둘은 여기서도 다시 계산되지
+         * 않는다 — 가이드 좌표는 ``GuideCurveCache``가 payload 기준으로, 좌표→`Path` 변환은
+         * `CurveLaneView`의 형상 캐시가 좌표 기준으로 들고 있다. 청크마다 새로 도는 것은
+         * 사용자 곡선 하나뿐이고, 그건 어차피 매번 달라진다.
+         *
+         * 창 길이에는 unit 가드를 걸지 않는다. 가이드 쪽 가드(``GuideCurveCache/points(for:)``)는
+         * "값을 어떻게 읽을 것인가"의 문제라 단위를 모르면 그릴 수 없지만, 길이는 간격 × 구간
+         * 수라서 단위와 무관하게 맞는다. 그래서 가이드를 못 그리는 경우에도 창은 제 값을 잡는다.
+         */
+        let liveWindowMs = userCurveWindowMs(
+            frameIntervalMs: guideF0?.frameIntervalMs,
+            valueCount: guideF0?.values.count
+        )
+        let frames = model.curvePitchFrames
+        // 이 창은 사용자 레인만 쓴다. 가이드는 사용자 창과 무관하게 항상 자기 길이로 레인 폭
+        // 전체를 쓴다 (2026-08-25 결정 — `docs/wiki/pitch-curve.md` §4 "가이드 레인은 별도
+        // 시간축이다"). 두 레인은 같은 시각을 맞춰 보는 도구가 아니라 모양을 견주는 도구다.
+        let windowMs = model.isReviewing
+            ? reviewWindowMs(frames, liveWindowMs: liveWindowMs)
+            : liveWindowMs
+        let guidePoints = guideCurve.points(for: guideF0)
+        let userSegments = userCurveDisplayPoints(frames, windowMs: windowMs, centerHz: centerHz)
+
+        return CurveLaneGroup {
+            // 가이드는 무성 구간을 보간으로 이어 둔 하나짜리 폴리라인이라 선분 하나로 감싼다.
+            CurveLaneView(label: "가이드", variant: .guide, segments: [guidePoints])
+            CurveLaneView(
+                label: "내 억양",
+                variant: .user,
+                segments: userSegments,
+                topDivider: true,
+                renderedFrameCount: frames.count
+            )
         }
     }
 
