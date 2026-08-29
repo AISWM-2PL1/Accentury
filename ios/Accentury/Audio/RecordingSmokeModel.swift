@@ -130,9 +130,14 @@ final class RecordingSmokeModel: ObservableObject {
         self.engine = nil
         switch outcome {
         case let .success(pcm, durationMs, autoStopped):
+            /*
+             * WAV를 만들되 **디스크에 쓰지 않는다** (FR-DP-02, KAN-108 §5.5). §3에서는 만들어진
+             * 파일을 손으로 열어 파형을 보려고 임시 폴더에 `last.wav`를 남겼는데, 그때는 이
+             * 화면이 앱의 전부였고 지금은 실제 녹음이 도는 앱에 붙어 있는 디버그 메뉴다 —
+             * 녹음이 파일로 남는 경로를 하나라도 열어 두면 "녹음은 메모리에만 산다"가 규칙이
+             * 아니라 습관이 된다. 바이트 수만 로그로 남기고 값은 여기서 끝난다.
+             */
             let wav = WavWriter.toWavBytes(pcm)
-            let url = FileManager.default.temporaryDirectory.appendingPathComponent("last.wav")
-            let written = (try? wav.write(to: url)) != nil
             let line = "\(tag): pcm=\(pcm.count) duration=\(durationMs) f0frames=\(frameCount)"
                 + " voiced=\(voicedCount) wav=\(wav.count)"
             print(line)
@@ -141,7 +146,7 @@ final class RecordingSmokeModel: ObservableObject {
                 self.isBusy = false
                 self.isRecording = false
                 self.status = autoStopped ? "10초 자동 종료" : "녹음 완료"
-                self.result = line + (written ? "\n\(url.path)" : "\n(파일 저장 실패)")
+                self.result = line
             }
         case let .failure(reason):
             let line = "\(tag): FAILED \(reason)"

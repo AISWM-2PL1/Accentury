@@ -53,6 +53,13 @@ targets:
     settings:
       base:
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+      configs:
+        # 가짜 마이크 WAV 등 디버그 전용 자산은 릴리스 번들에 넣지 않는다 (KAN-108 §6).
+        # 안드로이드는 `src/debug/assets/`가 소스셋으로 갈려 이 일이 저절로 되지만, XcodeGen에는
+        # 구성별 소스 목록이 없어서 빌드 설정으로 뺀다 — `FAKE_MIC_ASSET` 키가 Info-Release.plist에
+        # 아예 없는 것과 같은 방향의 두 번째 잠금이다(읽는 코드도 `#if DEBUG`라 셋이 겹친다).
+        Release:
+          EXCLUDED_SOURCE_FILE_NAMES: $(SRCROOT)/Accentury/DebugResources/*
     dependencies:
       - package: AccenturyCore
         product: AccenturyCore
