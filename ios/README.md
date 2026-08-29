@@ -57,23 +57,18 @@ FAKE_MIC_ASSET = /Users/me/fake_mic.wav  # 또는 맥의 절대 경로 (시뮬�
 ```
 
 WAV는 16kHz 모노 16bit여야 한다 — 리샘플하지 않는다 (`AccenturyCore/Audio/FilePcmSource.swift`).
-안드로이드가 쓰는 파일이 `app/src/debug/assets/fake_mic.wav`에 있으니 그 절대 경로를 그대로
-넣으면 두 플랫폼이 같은 음성을 흘린다.
 
-번들 리소스로 넣으려면 `Accentury/DebugResources/`에 둔다. 그 폴더는 **Debug 빌드에만** 실린다
-(`project.yml`의 `EXCLUDED_SOURCE_FILE_NAMES`). 목소리 점검(§6)까지 자동으로 통과시키려면
-유성으로 잡히는 톤이 필요한데, 220Hz 3초짜리는 이렇게 만든다:
+번들 리소스는 `Accentury/DebugResources/`에 둔다. 그 폴더는 **Debug 빌드에만** 실린다
+(`project.yml`의 `EXCLUDED_SOURCE_FILE_NAMES`).
 
-```bash
-python3 - <<'PY'
-import math, struct, pathlib
-sr, hz, secs, amp = 16000, 220.0, 3.0, 8000
-pcm = b''.join(struct.pack('<h', int(amp*math.sin(2*math.pi*hz*i/sr))) for i in range(int(sr*secs)))
-hdr = (b'RIFF' + struct.pack('<I', 36+len(pcm)) + b'WAVEfmt ' + struct.pack('<IHHIIHH', 16,1,1,sr,sr*2,2,16)
-       + b'data' + struct.pack('<I', len(pcm)))
-pathlib.Path('ios/Accentury/DebugResources/fake_mic.wav').write_bytes(hdr+pcm)
-PY
-```
+거기 있는 `fake_mic.wav`는 **안드로이드 `app/src/debug/assets/fake_mic.wav`와 바이트가 같다**
+(실제 발화 2.5초, 유성 70/75, F0 80~239Hz). 두 런타임에 같은 소리를 넣어야 캡처를 나란히
+놓고 비교할 수 있어서다 — 한쪽만 갈면 곡선이 달라져도 그게 렌더 차이인지 입력 차이인지
+못 가른다. **한쪽을 바꾸면 반대쪽도 같은 커밋에서 바꾼다.**
+
+> 한때 이 자리에 220Hz 고정 톤을 만들어 넣는 스니펫이 있었는데 걷어냈다 (KAN-108 §7b).
+> 값이 안 변해 억양 곡선이 레인 한가운데 평선으로만 그려져, 곡선 렌더를 검증할 수 없었다.
+> 목소리 점검(§6)은 이 발화 자산으로도 그대로 통과한다.
 
 릴리스 빌드에는 이 경로가 없다. 잠금이 셋이다 — 읽기 코드가 통째로 `#if DEBUG`이고,
 `FAKE_MIC_ASSET` 키가 `Info-Release.plist`에 아예 없고, `DebugResources/`가 릴리스 번들에서
@@ -240,7 +235,17 @@ xcrun simctl launch --console-pty booted com.accentury.app \
 - `-AutoRecordingDrive 1` — 녹음 버튼도 대신 누른다. 대기(4초) → 녹음 중(4초) → 확인 순서로
   서므로 그 사이에 `xcrun simctl io booted screenshot`을 끼우면 세 화면이 다 잡힌다.
 
-곡선 레인은 자리만 서 있다 — 곡선 그리기는 §7b 몫이다 (`UI/Components/CurveLane.swift`).
+두 곡선 레인이 다 그려진다 (§7b, `UI/Components/CurveLane.swift`). 위는 payload의 `guideF0`를
+점선으로, 아래는 녹음 중 자라는 내 억양을 굵은 실선 + 망점으로 긋는다 — 자동 오버레이가 실어
+보내는 가이드는 합성 곡선이다(`TestFlowView.swift`의 `debugGuideF0`).
+
+아래 레인에 억양이 나오려면 가짜 마이크가 물려 있어야 한다(위 «가짜 마이크» 절) — 자산은
+안드로이드와 같은 파일이라 두 런타임의 캡처를 그대로 나란히 놓고 비교할 수 있다.
+
+`-AutoRecordingDrive 1`이면 녹음이 끝날 때 `LATENCY: p50=… p95=… max=… n=…` 한 줄이 찍힌다
+(NFR-PF-02). 재는 구간은 파이프라인 전체가 아니라 **진행 콜백 → 캔버스 그리기**, 곧 이
+런타임이 새로 얹는 몫이다 — 앞쪽(창 채우기·EMA·캡처 버퍼)은 `docs/wiki/pitch-curve.md` §3이
+분해해 두었다. 시뮬레이터 기준 p50 8.4ms · p95 15.1ms · max 16.4ms (n=68).
 
 ### 녹음은 디스크에 닿지 않는다 (§5.5, FR-DP-02)
 

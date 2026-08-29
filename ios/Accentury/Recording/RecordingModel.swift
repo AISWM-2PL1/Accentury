@@ -48,8 +48,48 @@ final class RecordingModel: ObservableObject {
          * 누적값(경과·프레임 전체)이라 다음 청크가 곧바로 덮는다.
          */
         controller.onStateChange = { [weak self] state in
-            Task { @MainActor in self?.uiState = state }
+            #if DEBUG
+            /*
+             * 지연 계측의 시작점 (NFR-PF-02). **메인으로 넘기기 전에** 찍는다 — 아래 hop 자체가
+             * 재려는 구간의 일부라, 메인에 도착한 뒤에 찍으면 없애고 싶은 시간이 측정에서 빠진다.
+             */
+            let receivedAt = CFAbsoluteTimeGetCurrent()
+            #endif
+            Task { @MainActor in
+                guard let self else { return }
+                self.uiState = state
+                #if DEBUG
+                self.noteLatency(state, receivedAt: receivedAt)
+                #endif
+            }
         }
+    }
+
+    // MARK: - 곡선
+
+    /// 곡선 레인이 그릴 프레임 목록 (`docs/wiki/pitch-curve.md` §4).
+    ///
+    /// 녹음 중에는 자라는 곡선, 완료 후에는 방금 녹음의 곡선을 남긴다 (2026-08-18 결정) —
+    /// 재녹음을 시작하면 Recording의 빈 목록으로 바뀌므로 지난 곡선이 새 녹음에 섞이지 않는다.
+    ///
+    /// **Review에서만 짧은 무성 구멍을 메운다.** 녹음 중에는 곡선이 인과적이어야 해서(뒤
+    /// 프레임을 보면 이미 그린 과거가 다시 그려진다) 구멍을 앞 값으로 유지하는 수밖에 없지만,
+    /// 완료 후에는 데이터가 다 모여 있어 구멍의 양옆을 보고 이어도 거짓이 아니다
+    /// (``AccenturyCore/fillShortGaps(_:maxGapMs:)``).
+    var curvePitchFrames: [RecordingEngine.PitchFrame] {
+        switch uiState {
+        case let .recording(recording): return recording.pitchFrames
+        case let .review(review): return fillShortGaps(review.pitchFrames)
+        case .idle, .failed: return []
+        }
+    }
+
+    /// 지금이 검토 화면인가. 사용자 레인의 **창 길이 선택**이 이 값 하나로 갈린다 —
+    /// 녹음 중에는 미끄러지는 라이브 창, 끝난 뒤에는 발화 전체가 들어오는 창이다
+    /// (``AccenturyCore/reviewWindowMs(_:liveWindowMs:)``).
+    var isReviewing: Bool {
+        if case .review = uiState { return true }
+        return false
     }
 
     /// 녹음을 시작한다. 이미 녹음 중이면 아무 일도 하지 않는다.
@@ -68,4 +108,46 @@ final class RecordingModel: ObservableObject {
     /// 화면을 떠난다. 마이크를 놓고(정지 요청 + Task 취소) 남은 PCM을 버린 뒤 처음 상태로
     /// 돌아간다. 여러 번 불려도 안전하다.
     func reset() { controller.reset() }
+
+    // MARK: - 지연 계측 (디버그)
+
+    #if DEBUG
+    /// 지난 표시의 프레임 수. 줄었다는 것은 새 녹음이 시작됐다는 뜻이다.
+    private var lastLatencyFrameCount = 0
+
+    /// 진행 한 건을 계측기에 넘긴다. 프레임이 늘지 않은 진행(첫 `Recording`, 같은 청크의
+    /// 재발행)은 그릴 것이 안 늘었다는 뜻이라 표본이 아니다.
+    private func noteLatency(_ state: RecordingUiState, receivedAt: CFAbsoluteTime) {
+        switch state {
+        case let .recording(recording):
+            let count = recording.pitchFrames.count
+            if count < lastLatencyFrameCount {
+                // 재녹음. 지난 녹음의 표본이 섞이면 분위수가 두 녹음의 혼합이 된다.
+                CurveLatencyProbe.shared.reset()
+            }
+            defer { lastLatencyFrameCount = count }
+            guard count > lastLatencyFrameCount else { return }
+            CurveLatencyProbe.shared.progressReceived(frameCount: count, at: receivedAt)
+
+        case .review:
+            /*
+             * 녹음 끝. 자동 구동 스모크(`-AutoRecordingDrive 1`)일 때만 찍는다 — 사람이 쓰는
+             * 경로에 계측 로그가 섞이면 스모크 출력에서 무엇이 신호인지 갈리지 않는다.
+             *
+             * 곧바로 찍지 않고 한 박자 기다리는 이유는 마지막 청크다. 검토로 넘어가는 상태
+             * 변화와 그 청크의 그리기가 같은 런루프에 있어, 지금 찍으면 마지막 표본 하나가
+             * 빠진 채로 집계된다.
+             */
+            guard UserDefaults.standard.bool(forKey: "AutoRecordingDrive") else { return }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                if let line = CurveLatencyProbe.shared.report() { smokeLog(line) }
+            }
+
+        case .idle, .failed:
+            CurveLatencyProbe.shared.reset()
+            lastLatencyFrameCount = 0
+        }
+    }
+    #endif
 }

@@ -159,7 +159,8 @@ struct TestFlowView: View {
                     prompt: "오늘 날씨가 정말 좋네요",
                     itemNumber: 3,
                     totalItems: 10,
-                    maxDurationMs: RecordingEngine.maxDurationMs
+                    maxDurationMs: RecordingEngine.maxDurationMs,
+                    guideF0: debugGuideF0
                 )
             )
             /*
@@ -209,6 +210,9 @@ struct TestFlowView: View {
                 submitting: isSubmitting,
                 afterUploadFailure: model.recordingAfterUploadFailure,
                 failureMessage: model.recordingFailureMessage,
+                // 사용자 곡선의 y축 중심 (KAN-105). 목소리 점검이 잰 값을 모든 문항이 함께
+                // 쓴다 — 문항마다 다시 잡으면 같은 사람의 곡선이 문항마다 다른 축에 놓인다.
+                centerHz: model.voiceCenterHz.map { Float($0) },
                 recording: recording,
                 onSubmit: { attemptId, durationMs, quality in
                     submitRecording(start: start, attemptId: attemptId, durationMs: durationMs, quality: quality)
@@ -350,6 +354,9 @@ private struct RecordingOverlay: View {
     /// 그 전환에서 서버가 준 문구. nil이면 화면이 기본 안내를 쓴다.
     let failureMessage: String?
 
+    /// 사용자 곡선 y축의 중심 음높이 (KAN-105). 목소리 점검이 잰 값이고, 아직 없으면 nil이다.
+    let centerHz: Float?
+
     @ObservedObject var recording: RecordingModel
 
     let onSubmit: (_ attemptId: String, _ durationMs: Int64, _ quality: QualityStatus) -> Void
@@ -362,6 +369,9 @@ private struct RecordingOverlay: View {
             submitting: submitting,
             afterUploadFailure: afterUploadFailure,
             failureMessage: failureMessage,
+            // 가이드 곡선은 문항 payload가 실어 온 그대로다 (KAN-102). 없으면 위 레인만 빈다.
+            guideF0: start.guideF0,
+            centerHz: centerHz,
             model: recording,
             onNext: onSubmit
         )
@@ -397,3 +407,28 @@ private struct ShareSheet: UIViewControllerRepresentable {
 
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
+
+#if DEBUG
+/// `-AutoRecordingOverlay 1`이 실어 보내는 가이드 곡선 (KAN-108 §7b).
+///
+/// 실제 정의(KAN-17 산출물)를 가져올 수 없는 자리라 **모양만 흉내 낸 합성 곡선**이다 —
+/// 서술문 억양처럼 앞머리에서 올랐다 문장 끝으로 내려오고, 어절 사이 두 곳이 무성(nil)이라
+/// 가이드의 무성 보간(``AccenturyCore/guideCurveDisplayPoints(_:)``)까지 화면에서 확인된다.
+/// 값이 아니라 배선과 렌더를 보는 데이터이므로 실제 발화에서 뽑을 이유가 없다.
+///
+/// 1.2초(10ms × 120)는 시드 문항의 길이 범위(0.9~1.2초) 위쪽이다. 사용자 창은 그 2배인
+/// 2.4초가 되어(``AccenturyCore/userCurveWindowMs(frameIntervalMs:valueCount:)``) 가짜 마이크
+/// WAV 2.5초가 거의 그대로 들어온다.
+private var debugGuideF0: GuideF0 {
+    let count = 120
+    let values: [Double?] = (0..<count).map { index in
+        // 어절 사이 무성 구간 둘. 90ms·70ms라 실제 자음 구간과 같은 자릿수다.
+        if (38...46).contains(index) || (78...84).contains(index) { return nil }
+        let t = Double(index) / Double(count - 1)
+        // 올라갔다 내려오는 봉우리(sin) 위에 문장 끝으로 향하는 하강(-4t)을 얹는다.
+        // 등락 폭이 9.6 semitone 남짓이라 실측 발화의 최대치와 같은 범위다.
+        return 3.5 * sin(t * .pi * 1.6) - 4.0 * t + 1.0
+    }
+    return GuideF0(unit: "semitone", frameIntervalMs: 10, values: values)
+}
+#endif
