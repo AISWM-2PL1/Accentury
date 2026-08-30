@@ -8,6 +8,8 @@
 	     실려 나가는 경로를 애초에 만들지 않는다. -->
 	<key>CFBundleDevelopmentRegion</key>
 	<string>ko</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>CFBundleDisplayName</key>
 	<string>accentury</string>
 	<key>CFBundleExecutable</key>
