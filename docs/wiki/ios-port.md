@@ -152,13 +152,17 @@ setter는 non-writable이고 객체는 freeze한다. 토큰 값은 **로그에 �
 
 - **실기기** — 이 맥에 연결된 iPhone이 없다(`xcrun devicectl list devices` → No devices found).
   위 체크리스트가 그대로 남는다.
-- **TestFlight 서명** (§1 AC3). Release 아카이브가 서명에서 막힌다:
-  `error: No Accounts: Add a new account in Accounts settings.` /
-  `error: No profiles for 'com.accentury.app' were found`.
-  코드는 문제가 아니다 — `CODE_SIGNING_ALLOWED=NO`로는 같은 Release 구성이 BUILD SUCCEEDED다.
-  필요한 사람 작업: **Xcode › Settings › Accounts에 애플 개발자 계정 로그인**, 그리고 그 팀
-  (`ACCENTURY_TEAM_ID = 559P9SYY57`)에 App ID `com.accentury.app`이 없으면
-  developer.apple.com에서 등록. 그 뒤 `-allowProvisioningUpdates`가 프로파일을 스스로 받아 온다.
+- **TestFlight 서명** (§1 AC3) — **해결(2026-08-31)**. 처음엔 `No Accounts`로 막혔고(Apple ID 미로그인),
+  로그인 뒤에는 자동 서명 `archive`가 `Your team has no devices from which to generate a provisioning
+  profile`로 막혔다 — 팀에 등록된 기기가 0대라 개발용 프로파일을 못 만든다. 우회는 두 단계다:
+  ① `xcodebuild archive … CODE_SIGNING_ALLOWED=NO` (무서명 아카이브)
+  ② `xcodebuild -exportArchive -exportOptionsPlist`(method `app-store-connect`, `signingStyle automatic`,
+  `teamID 559P9SYY57`) `-allowProvisioningUpdates` — 이 단계가 App ID·Apple Distribution 인증서(Cloud Managed)·
+  `iOS Team Store Provisioning Profile: com.accentury.app`을 스스로 만들어 재서명한다.
+  결과 `.ipa`는 `codesign -dv`로 `Apple Distribution: … (559P9SYY57)`, 프로파일에 `beta-reports-active`(TestFlight
+  자격) 확인. 업로드 전제는 App Store Connect **앱 레코드**(번들 `com.accentury.app`)이고, 없으면 업로드가
+  "application record not found"로 거절된다. 앱 아이콘 1024px(알파 없음)과 `ITSAppUsesNonExemptEncryption=false`는
+  업로드·배포가 멈추지 않게 미리 넣었다(`7931e2c`).
 - **분석의 실제 모델** — 백엔드 로그의 `modelVersion=stub-0.1`이다. 이 스모크가 확인한 것은 iOS가
   올린 바이트로 분석 파이프라인이 끝까지 돌아 결과 화면이 뜬다는 사실이지, 점수의 타당성이 아니다.
 
