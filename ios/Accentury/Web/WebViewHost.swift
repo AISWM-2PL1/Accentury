@@ -77,6 +77,38 @@ func shouldReportMainFrameFailure(
     return navigation == currentMainFrame
 }
 
+/// 지금 이 문서에 세션 토큰을 밀 것인가 (§8).
+///
+/// 판정을 밖으로 뺀 이유는 ``navigationDecision(url:allowedOrigins:)``과 같다 — 이 자리도 보안
+/// 경계다. allowlist 밖 문서에는 어떤 경우에도 토큰이 가지 않는다는 규칙을, WebKit 없이 직접
+/// 확인할 수 있어야 한다.
+///
+/// `forced`는 **같은 토큰을 한 번 더 미는 문**이다. 평소에는 `pushedToken != sessionToken`이
+/// 중복 주입을 막지만(`updateUIView`가 갱신마다 부른다), 그 기억은 "네이티브가 밀어 넣기를
+/// **시도했다**"는 뜻일 뿐 "문서가 받았다"는 뜻이 아니다. `.atDocumentStart` 유저 스크립트와
+/// `evaluateJavaScript`의 순서가 보장되지 않아 시도가 헛돌 수 있으므로(``BridgeUserScript``),
+/// 유저 스크립트가 확실히 다 돈 `didFinish`에서 한 번 더 민다. setter는 멱등이다.
+///
+/// - Parameters:
+///   - hasCommitted: 커밋된 문서가 있는가. 없으면 밀 곳이 없다 — fail-closed.
+///   - forced: 중복 방지 기억을 건너뛰는가 (`didFinish`의 재주입).
+///   - pushedToken: 이 문서에 마지막으로 민 토큰. `nil`이면 아직 아무것도 안 밀었다.
+///   - sessionToken: 지금 네이티브가 든 토큰.
+///   - urlAllowed: 커밋된 메인 프레임 URL이 allowlist 안인가.
+func shouldPushToken(
+    hasCommitted: Bool,
+    forced: Bool,
+    pushedToken: String?,
+    sessionToken: String,
+    urlAllowed: Bool
+) -> Bool {
+    guard hasCommitted else { return false }
+    // origin 판정은 forced가 열지 못한다 — 여기가 보안 경계다.
+    guard urlAllowed else { return false }
+    if forced { return true }
+    return pushedToken != sessionToken
+}
+
 // MARK: - 상태 보유자
 
 /// ``AccenturyCore/WebLoadController``(순수 상태 머신)를 SwiftUI가 볼 수 있는 `@Published`로 감싼다.
@@ -303,7 +335,7 @@ private struct WebViewRepresentable: UIViewRepresentable {
 
         // 토큰이 바뀌었으면 지금 문서에 다시 민다 (세션이 뒤늦게 생기는 경로 — 인트로에서
         // 시작을 누르고 세션을 받는 사이 문서는 그대로다).
-        context.coordinator.pushSessionTokenIfNeeded()
+        context.coordinator.pushSessionToken()
     }
 
     static func dismantleUIView(_ webView: WKWebView, coordinator: WebViewCoordinator) {
@@ -421,17 +453,30 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate {
 
     /// 세션 토큰을 지금 문서에 민다. **origin이 allowlist 안일 때만** —
     /// 안드로이드가 `onPageStarted`에서 `originAllowed`를 갱신하는 자리와 같은 판정이다.
-    func pushSessionTokenIfNeeded() {
-        guard hasCommittedDocument else { return }
-        guard pushedToken != sessionToken else { return }
+    ///
+    /// 판정은 순수 함수 ``shouldPushToken(hasCommitted:forced:pushedToken:sessionToken:urlAllowed:)``이
+    /// 하고, 여기서는 WebKit에서 값을 읽어 넘기고 결과를 실행하기만 한다.
+    ///
+    /// - Parameter force: 같은 토큰이어도 다시 민다 (`didFinish`의 재주입). origin 판정은
+    ///   이 인자가 열지 못한다.
+    func pushSessionToken(force: Bool = false) {
         guard let webView else { return }
         let current = webView.url?.absoluteString
-        guard isAllowedWebUrl(current, allowedOrigins: allowedOrigins) else { return }
+        guard shouldPushToken(
+            hasCommitted: hasCommittedDocument,
+            forced: force,
+            pushedToken: pushedToken,
+            sessionToken: sessionToken,
+            urlAllowed: isAllowedWebUrl(current, allowedOrigins: allowedOrigins)
+        ) else { return }
         pushedToken = sessionToken
         webView.evaluateJavaScript(BridgeUserScript.sessionTokenPushJs(sessionToken), completionHandler: nil)
         #if DEBUG
         // 토큰 값은 절대 찍지 않는다 — 밀어 넣었다는 사실과 어느 origin이었는지만 남긴다.
-        smokeLog("TOKEN: pushed origin=\(webOrigin(current ?? "") ?? "?") empty=\(sessionToken.isEmpty)")
+        smokeLog(
+            "TOKEN: pushed origin=\(webOrigin(current ?? "") ?? "?")"
+                + " empty=\(sessionToken.isEmpty) forced=\(force)"
+        )
         #endif
     }
 
@@ -486,13 +531,24 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate {
         // 네이티브가 든 기억도 여기서 비워야 다음 push가 실제로 나간다.
         hasCommittedDocument = true
         pushedToken = nil
-        pushSessionTokenIfNeeded()
+        pushSessionToken()
         #if DEBUG
         smokeLog("NAV: committed \(webView.url?.absoluteString ?? "(nil)")")
         #endif
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        /*
+         * 토큰을 한 번 더 민다. `didCommit`의 push는 `.atDocumentStart` 유저 스크립트보다 먼저
+         * 돌 수 있고(WebKit이 둘 사이의 순서를 보장하지 않는다 — 실기기에서 실측했다), 그러면
+         * setter가 아직 없어 호출이 조용히 던진다. 여기는 유저 스크립트가 전부 돈 뒤라 setter가
+         * 반드시 있다. setter는 멱등이므로 두 번 밀어도 결과가 같다.
+         *
+         * `force`가 필요한 이유는 `pushedToken`이 "밀기를 **시도했다**"만 기억하기 때문이다 —
+         * `didCommit`의 헛돈 시도도 그 기억을 남겨, 힘을 주지 않으면 이 재주입이 통째로 건너뛰어진다.
+         * origin 판정은 `force`가 열지 못한다(``shouldPushToken``).
+         */
+        pushSessionToken(force: true)
         currentMainFrameNavigation = nil
         model.onPageFinished()
         #if DEBUG

@@ -52,7 +52,37 @@ ios/
 | allowlist 밖 로드 | `shouldOverrideUrlLoading` true | `decidePolicyFor navigationAction` → `.cancel` |
 
 setter는 non-writable이고 객체는 freeze한다. 토큰 값은 **로그에 남기지 않는다** — `TOKEN:` 줄은
-밀어 넣었다는 사실과 origin, 비었는지만 찍는다.
+밀어 넣었다는 사실과 origin, 비었는지, 재주입인지만 찍는다.
+
+### 토큰 push 시점 규칙 (실기기 결함, 2026-08-31)
+
+**`WKUserScript(.atDocumentStart)`와 `evaluateJavaScript` 사이의 순서는 보장되지 않는다.** 심을 심는
+쪽과 토큰을 미는 쪽이 다른 경로라, 새 문서에서 push가 심보다 먼저 도는 창이 실재한다. 그러면
+`window.__accenturySetSessionToken`이 아직 없어 호출이 던지는데, `completionHandler`가 nil이라
+**실패가 아무 데도 남지 않는다** — 토큰은 `""`인 채고 네이티브는 "밀었다"고 기억한다.
+
+시뮬레이터에서는 이 창이 열리지 않아 8단계 스모크가 어휘 5/5로 통과했다. 실기기(TestFlight
+Release, cloudflared 터널)에서 백엔드가 `SESSION_EXPIRED`를 찍었다 — 웹의 어휘 답안 POST에
+Bearer 토큰이 비어 있었다. 같은 세션의 음성 업로드는 성공했다(그쪽은 네이티브가 토큰을 직접 든다).
+증상이 웹 경로에만 나타난 이유가 그것이다.
+
+고침은 순서를 맞추려 드는 대신 **순서와 무관하게** 만드는 것이다. 규칙 셋:
+
+| 규칙 | 어디 | 왜 |
+|---|---|---|
+| push는 "부르거나, 없으면 두고 간다" | `BridgeUserScript.sessionTokenPushJs` | setter가 없으면 `__accenturyPendingSessionToken`에 두고, 뒤늦게 도는 심이 그 값을 시작값으로 든다 |
+| `didCommit` + `didFinish` 두 번 민다 | `WebViewHost` 코디네이터 | `didFinish`는 유저 스크립트가 전부 돈 뒤다. setter는 멱등이라 두 번 밀어도 결과가 같다 |
+| 재주입은 `force: true` | `shouldPushToken(forced:)` | `pushedToken`은 "밀기를 **시도했다**"만 기억한다 — 헛돈 시도도 그 기억을 남겨 힘을 주지 않으면 재주입이 건너뛰어진다 |
+
+**보안 등가성은 그대로다.** 대기 자리에 쓰는 조건도 setter를 부르는 조건과 같다 — 커밋된 origin이
+allowlist를 통과한 문서뿐이고, `force`는 그 문을 열지 못한다. 심은 대기 자리에서 **문자열만** 받고
+읽는 즉시 그 자리를 비운다. 페이지가 그 이름에 무엇을 적어도 네이티브가 밀지 않은 토큰이
+생기지는 않는다.
+
+회귀 방지는 두 겹이다. `BridgeUserScriptTests`가 주입 JS를 `JSContext`(JavaScriptCore)에서 **실제로
+실행해** 심→push·push→심 두 순서 모두에서 토큰이 도착하는지 보고, `WebViewHostPolicyTests`가
+`shouldPushToken`의 판정표(강제 재주입은 통과, allowlist 밖은 강제로도 차단)를 단언한다. 앞의
+테스트들이 문자열의 **모양**만 봤기 때문에 이 결함이 통과했다 — 모양이 아니라 실행 순서에서 났다.
 
 `decisionHandler(.cancel)`을 부르면 WebKit이 곧바로 실패 콜백을 쏘는데(`NSURLErrorCancelled`,
 정책 취소면 `WebKitErrorDomain` 102) 그걸 실패로 접으면 링크 한 번 막을 때마다 화면이 오류로
@@ -150,8 +180,10 @@ setter는 non-writable이고 객체는 freeze한다. 토큰 값은 **로그에 �
 
 ### 확인하지 못한 것
 
-- **실기기** — 이 맥에 연결된 iPhone이 없다(`xcrun devicectl list devices` → No devices found).
-  위 체크리스트가 그대로 남는다.
+- **실기기** — 8단계 시점에는 이 맥에 연결된 iPhone이 없었다(`xcrun devicectl list devices` →
+  No devices found). 그 뒤 TestFlight Release 빌드를 cloudflared 터널에 붙여 실기기로 돌렸고,
+  **거기서 시뮬레이터가 숨기던 토큰 push 경합이 나왔다** (§2 「토큰 push 시점 규칙」). 고친 뒤
+  위 체크리스트의 나머지 항목은 그대로 남는다 — 이 런이 확인한 것은 결함 하나이지 전 구간이 아니다.
 - **TestFlight 서명** (§1 AC3) — **해결(2026-08-31)**. 처음엔 `No Accounts`로 막혔고(Apple ID 미로그인),
   로그인 뒤에는 자동 서명 `archive`가 `Your team has no devices from which to generate a provisioning
   profile`로 막혔다 — 팀에 등록된 기기가 0대라 개발용 프로파일을 못 만든다. 우회는 두 단계다:

@@ -181,8 +181,9 @@ cd web && npm run dev -- --host 127.0.0.1 --port 5173
 ```bash
 # 인트로가 뜨는 것까지. 브리지 버전이 URL에 실려 나가 «앱 업데이트 필요»가 뜨지 않는다.
 xcrun simctl launch --console-pty booted com.accentury.app
-# TOKEN: pushed origin=http://localhost:5173 empty=true
+# TOKEN: pushed origin=http://localhost:5173 empty=true forced=false
 # NAV: committed http://localhost:5173/?bridge=1&app=1.0
+# TOKEN: pushed origin=http://localhost:5173 empty=true forced=true
 
 # 인트로의 [시작하기]를 눌러 브리지 requestMicPermission을 흘린다 → 권한 게이트가 웹 위를 덮는다.
 xcrun simctl privacy booted reset microphone com.accentury.app
@@ -193,15 +194,22 @@ xcrun simctl launch --console-pty booted com.accentury.app -AutoStartSmoke 1
 # 시작 게이트를 끝까지 밀어 테스트 진입 URL까지 간다 (권한 허용 + 목소리 점검 자리 표시 통과).
 xcrun simctl privacy booted grant microphone com.accentury.app
 xcrun simctl launch --console-pty booted com.accentury.app -AutoStartSmoke 1 -AutoGateSmoke 1
-# TOKEN: pushed origin=http://localhost:5173 empty=false
+# TOKEN: pushed origin=http://localhost:5173 empty=false forced=false
 # NAV: committed .../?bridge=1&app=1.0&screen=test&testVersion=gn-2026.08.1&sessionId=s_debug_stub
+# TOKEN: pushed origin=http://localhost:5173 empty=false forced=true
 
 # allowlist 밖으로 나가 보고 막히는지 본다. 화면은 인트로 그대로 (오류 화면이 아니다).
 xcrun simctl launch --console-pty booted com.accentury.app -AutoNavSmoke "https://example.com"
 # NAV: cancelled https://example.com/
 ```
 
-`TOKEN:` 줄에 **토큰 값은 찍히지 않는다** — 밀어 넣었다는 사실과 origin, 비었는지만 남긴다.
+`TOKEN:` 줄에 **토큰 값은 찍히지 않는다** — 밀어 넣었다는 사실과 origin, 비었는지, 재주입인지만 남긴다.
+
+문서 하나에 `TOKEN:` 줄이 **둘** 나오는 것이 정상이다. `forced=false`가 `didCommit`의 첫 push,
+`forced=true`가 `didFinish`의 재주입이다 — `.atDocumentStart` 유저 스크립트가 `evaluateJavaScript`보다
+먼저 돈다는 보장이 없어서 유저 스크립트가 전부 돈 뒤에 한 번 더 민다(실기기 결함,
+`docs/wiki/ios-port.md` §2 「토큰 push 시점 규칙」). 재주입 줄이 안 보이면 그 문서는 토큰을 못 받았을
+수 있다.
 
 ### 백엔드가 없으면 멈추는 지점
 

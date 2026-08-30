@@ -170,4 +170,112 @@ final class WebViewHostPolicyTests: XCTestCase {
         // 도메인이 다르면 코드가 같아도 취소가 아니다.
         XCTAssertFalse(isSelfInflictedCancellation(NSError(domain: NSURLErrorDomain, code: 102)))
     }
+
+    // MARK: shouldPushToken
+
+    /// 정상 경로: 커밋된 allowlist 문서에 아직 아무것도 안 밀었다.
+    func testTokenIsPushedToACommittedAllowedDocument() {
+        XCTAssertTrue(
+            shouldPushToken(
+                hasCommitted: true,
+                forced: false,
+                pushedToken: nil,
+                sessionToken: "st_1",
+                urlAllowed: true
+            )
+        )
+    }
+
+    /// 같은 토큰을 이미 밀었으면 다시 밀지 않는다 — `updateUIView`가 갱신마다 부르는 자리다.
+    func testTheSameTokenIsNotPushedTwiceWithoutForce() {
+        XCTAssertFalse(
+            shouldPushToken(
+                hasCommitted: true,
+                forced: false,
+                pushedToken: "st_1",
+                sessionToken: "st_1",
+                urlAllowed: true
+            )
+        )
+        // 토큰이 바뀌면 민다 (세션이 뒤늦게 생기는 경로).
+        XCTAssertTrue(
+            shouldPushToken(
+                hasCommitted: true,
+                forced: false,
+                pushedToken: "",
+                sessionToken: "st_1",
+                urlAllowed: true
+            )
+        )
+    }
+
+    /// **실기기 결함의 회귀 방지.** `didCommit`의 push가 유저 스크립트보다 먼저 돌아 헛돌아도
+    /// `pushedToken`에는 "밀었다"가 남는다. `didFinish`의 재주입이 그 기억을 넘어서지 못하면
+    /// 그 문서의 토큰은 영영 빈 문자열이고, 웹의 어휘 답안 POST가 `SESSION_EXPIRED`로 떨어진다.
+    func testForcedPushIgnoresTheAlreadyPushedMemory() {
+        XCTAssertTrue(
+            shouldPushToken(
+                hasCommitted: true,
+                forced: true,
+                pushedToken: "st_1",
+                sessionToken: "st_1",
+                urlAllowed: true
+            )
+        )
+    }
+
+    /// origin 판정은 `forced`가 열지 못한다 — 여기가 보안 경계다.
+    func testTokenNeverGoesToADocumentOutsideTheAllowlist() {
+        for forced in [false, true] {
+            XCTAssertFalse(
+                shouldPushToken(
+                    hasCommitted: true,
+                    forced: forced,
+                    pushedToken: nil,
+                    sessionToken: "st_1",
+                    urlAllowed: false
+                ),
+                "forced=\(forced)"
+            )
+        }
+    }
+
+    /// 커밋된 문서가 없으면 밀 곳이 없다 — fail-closed. 여기도 `forced`가 열지 않는다.
+    func testNothingIsPushedBeforeTheFirstCommit() {
+        for forced in [false, true] {
+            XCTAssertFalse(
+                shouldPushToken(
+                    hasCommitted: false,
+                    forced: forced,
+                    pushedToken: nil,
+                    sessionToken: "st_1",
+                    urlAllowed: true
+                ),
+                "forced=\(forced)"
+            )
+        }
+    }
+
+    /// 세션이 아직 없을 때(빈 토큰)도 밀어야 한다 — 웹이 "브리지는 있는데 토큰이 없다"를
+    /// 볼 수 있어야 하고, 그 값도 문서마다 새로 세워진다.
+    func testAnEmptyTokenIsStillPushedOnce() {
+        XCTAssertTrue(
+            shouldPushToken(
+                hasCommitted: true,
+                forced: false,
+                pushedToken: nil,
+                sessionToken: "",
+                urlAllowed: true
+            )
+        )
+        XCTAssertFalse(
+            shouldPushToken(
+                hasCommitted: true,
+                forced: false,
+                pushedToken: "",
+                sessionToken: "",
+                urlAllowed: true
+            )
+        )
+    }
 }
