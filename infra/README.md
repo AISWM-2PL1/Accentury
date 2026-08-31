@@ -848,6 +848,14 @@ terraform destroy
   실제로 차면 저장 비용(GB당 월 0.10달러)이 드러나지만 모델 해시가 바뀔 때만 push하므로
   상한에 닿지 않는다. push 권한은 리포지토리 한정 정책 대신 모델 담당의 IAM 사용자
   `jaeyoung`에 AdministratorAccess를 주는 것으로 정했다 (3인 팀 규모의 사용자 결정).
+- **graceful shutdown 유예 (2026-08-31 확정, KAN-166)**: backend는 SIGTERM에 readiness를 내리고
+  (집계 `/actuator/health` 503), 웹 요청을 15초 안에 마친 뒤, 실행 중인 분석만 90초 예산 안에서
+  기다리고 대기 중(미시작) 분석은 즉시 실패로 정리한다 - 원본 음성을 저장하지 않아(FR-DP-01)
+  끊긴 분석은 재녹음뿐이라, 예산을 큐 길이만큼 늘리다 SIGKILL을 맞는 것보다 즉시 재녹음 안내가
+  낫다. 그래서 compose `stop_grace_period`는 110초(docker 기본 10초면 시작하자마자 죽는다),
+  systemd `TimeoutStopSec`는 180초(ExecStop의 compose down이 그 유예를 기다린다)다. 티켓 표의
+  웹 유예 90초는 워커 예산과 합쳐 최악 180초라 ECS stopTimeout 120초를 넘어 15초로 줄였다.
+  Fargate 전환(KAN-165)에서는 ECS stopTimeout 120초가 같은 자리다.
 - **push-images.sh 기본 PLATFORM=linux/amd64**: IMMUTABLE 태그라 arm64로 잘못
   올린 SHA는 다시 올릴 수 없다. 기본값을 운영 아키텍처로 고정해 그 사고를 막는다.
 - **오리진 구간(CloudFront -> ALB) HTTPS** (2026-08-25 확정, KAN-125): ALB

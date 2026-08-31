@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.Collection;
 
 /**
  * 분석 작업의 종결 전이 (KAN-24, API 명세서 §3.4).
@@ -73,5 +74,25 @@ public class AnalysisJobTransitions {
         } else {
             log.info("분석 실패 jobId={} status={} errorCode={}", jobId, failedStatus, errorCode);
         }
+    }
+
+    /**
+     * 여러 작업의 실패 종결을 한 문장으로 (KAN-166 종료 경로). 규칙은 {@link #fail}과 같고,
+     * 이미 종결됐거나 폐기로 지워진 작업은 건너뛴다.
+     *
+     * @return 실제로 전이된 건수
+     */
+    @Transactional
+    public int failAll(Collection<String> jobIds, AnalysisJobStatus failedStatus, String errorCode) {
+        if (failedStatus != AnalysisJobStatus.RETRYABLE_FAILED && failedStatus != AnalysisJobStatus.FAILED) {
+            throw new IllegalArgumentException("실패 전이가 아니다: " + failedStatus);
+        }
+        if (jobIds.isEmpty()) {
+            return 0;
+        }
+        int updated = repository.failAllIfProcessing(jobIds, failedStatus, errorCode, Instant.now());
+        log.info("분석 실패 일괄 종결 {}건 (요청 {}건) status={} errorCode={}",
+                updated, jobIds.size(), failedStatus, errorCode);
+        return updated;
     }
 }

@@ -55,6 +55,9 @@ ExecReload=/opt/accentury/accentury-up.sh
 ExecStop=/usr/bin/docker compose --env-file /run/accentury/compose.env down
 # 첫 기동은 이미지 pull(backend 약 600MB)이 포함된다.
 TimeoutStartSec=900
+# ExecStop의 compose down은 backend의 stop_grace_period(110초)까지 기다린다 (KAN-166). systemd 기본
+# 90초면 그 전에 compose를 죽여 graceful shutdown이 무효가 된다 - 유예 + ai 정지 + 여유.
+TimeoutStopSec=180
 
 [Install]
 WantedBy=multi-user.target

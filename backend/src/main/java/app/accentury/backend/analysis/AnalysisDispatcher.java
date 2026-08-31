@@ -52,6 +52,44 @@ public interface AnalysisDispatcher {
     }
 
     /**
+     * 종료 신호 뒤 새 전달을 받지 않는다 (KAN-166) - 이후 {@link #dispatch}는
+     * {@code TaskRejectedException}으로 끊기고, 업로드는 기존 전달 실패 경로(503
+     * {@code ANALYSIS_UNAVAILABLE}, 재녹음 유도)를 그대로 탄다. 오디오를 저장하지 않아
+     * (FR-DP-01) 종료 뒤로 넘길 수 없으므로, 받아 두고 끊는 것보다 받지 않는 쪽이 정직하다.
+     * 재전송 대기 중이던 작업도 다음 시도를 시작하지 않고 종결한다. 여러 번 불러도 안전하다.
+     */
+    default void refuseNew() {
+    }
+
+    /** {@link #refuseNew()}의 반대 - 기동 완료(readiness ACCEPTING_TRAFFIC) 시점에 불린다. */
+    default void acceptNew() {
+    }
+
+    /**
+     * 아직 실행을 시작하지 않은 대기 작업을 즉시 실패로 정리한다 (KAN-166 - 2026-08-31 결정).
+     * 종료 예산은 실행 중인 작업에만 쓴다 - 대기 작업까지 돌리면 큐 길이만큼 종료가
+     * 늘어나 강제 종료(SIGKILL)를 부르고, 그러면 실행 중이던 것까지 잃는다. 즉시 실패로
+     * 접으면 사용자는 다음 폴링에서 바로 재녹음 안내를 받는다. 정리한 작업의 오디오 버퍼는
+     * 소유권 계약대로 여기서 지운다.
+     *
+     * @return 정리한 건수
+     */
+    default int failQueued() {
+        return 0;
+    }
+
+    /**
+     * 종료 예산 안에 끝나지 못한 실행 중 작업을 실패로 정리한다 (KAN-166). 워커 스레드는
+     * 호출부가 곧 중단시키며, 늦게 도착하는 워커의 종결은 조건부 UPDATE가 버린다
+     * ({@code AnalysisJobTransitions}). 버퍼 파기는 워커의 finally가 맡는다.
+     *
+     * @return 정리한 건수
+     */
+    default int failRunning() {
+        return 0;
+    }
+
+    /**
      * AI 분석 1건에 필요한 전부 (§4.1 meta 파트와 대응).
      *
      * @param audio WAV 원본 - 클라이언트 업로드를 그대로 패스스루한다 (§4.1).

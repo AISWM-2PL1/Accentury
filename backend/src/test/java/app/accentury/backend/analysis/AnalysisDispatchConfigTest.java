@@ -38,6 +38,28 @@ class AnalysisDispatchConfigTest {
         assertInstanceOf(HttpAnalysisDispatcher.class, dispatcher);
     }
 
+    @Test
+    void 종료_예산이_ai_타임아웃_이하면_기동을_거부한다() {
+        // shutdown-budget 10s <= ai-timeout 10s - 종료 때마다 실행 중 분석이 예산 초과로 실패한다 (KAN-166).
+        AccenturyProperties props = PropertiesFixture.withAnalysis(
+                PropertiesFixture.analysis(30, "http://ai.test", Duration.ofSeconds(60), Duration.ofSeconds(10)));
+
+        assertThrows(IllegalStateException.class, () -> new AnalysisDispatchConfig().analysisDispatcher(
+                props, null, null, null, null));
+    }
+
+    @Test
+    void 개발_모드에서는_종료_예산_검증_없이_noop_디스패처를_조립한다() {
+        // ai-base-url이 없으면 전달 자체가 없다 - 예산은 의미가 없고 검증도 돌지 않는다.
+        AccenturyProperties props = PropertiesFixture.withAnalysis(
+                PropertiesFixture.analysis(30, null, Duration.ofSeconds(60), Duration.ofSeconds(1)));
+
+        AnalysisDispatcher dispatcher = new AnalysisDispatchConfig().analysisDispatcher(
+                props, null, null, null, null);
+
+        assertInstanceOf(NoopAnalysisDispatcher.class, dispatcher);
+    }
+
     /** 기본값 조합에 ai-base-url만 지정한 설정 - processing-timeout만 시나리오별로 바꾼다. */
     private static AccenturyProperties props(Duration processingTimeout) {
         return PropertiesFixture.withAnalysis(

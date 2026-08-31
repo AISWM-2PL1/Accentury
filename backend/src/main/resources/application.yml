@@ -1,4 +1,16 @@
+# 종료 처리 (KAN-166). SIGTERM(배포, 스케일인, Spot 회수)에 진행 중 요청과 분석을 마치고 나간다.
+# 순서: readiness REFUSING_TRAFFIC -> 웹 서버가 새 요청을 막고 진행 중 요청을 아래 유예 안에 마침
+# -> 분석 워커 배수(AnalysisDrainLifecycle, 예산은 accentury.analysis.shutdown-budget) -> 종료.
+# 웹 유예 15초 + 워커 예산 90초 = 105초가 컨테이너 강제 종료 상한(compose stop_grace_period 110초,
+# ECS stopTimeout 120초) 안에 들어야 한다 - 셋 중 하나를 바꾸면 나머지도 같이 본다.
+server:
+  shutdown: graceful    # 즉시 종료면 진행 중 업로드 요청이 끊긴다. 로컬과 배포가 같은 동작이어야 실증이 의미 있다.
+
 spring:
+  lifecycle:
+    # 웹 요청 유예. HTTP 요청은 전부 1초 미만(업로드 1MB, 폴링, 집계)이라 넉넉한 값이고, 티켓 표의
+    # 90초는 워커 대기와 합쳐 최악 180초라 ECS 상한을 넘어 15초로 조정했다 (2026-08-31 결정).
+    timeout-per-shutdown-phase: 15s
   # 업로드 오디오가 디스크에 닿지 않게 한다 (FR-DP-01, Codex sol 리뷰 P1)
   # file-size-threshold >= max-request-size라 모든 파트가 메모리에서 처리되고 임시파일이 생기지 않는다.
   # 이 불변식은 기동 시 VoiceTempDirectory가 강제한다 - 어긋나면 컨텍스트가 뜨지 않는다 (KAN-27).
@@ -68,6 +80,13 @@ management:
     health:
       show-details: never      # 컴포넌트(db, diskSpace)별 세부 상태를 숨긴다.
       show-components: never   # 컴포넌트 이름 목록도 숨긴다 - 종합 status만 남는다.
+      # readiness와 liveness 그룹 (KAN-166). /actuator/health/readiness, /liveness가 생기고
+      # readinessState, livenessState 지표가 집계 health에도 든다 - 종료 신호에 Boot가 readiness를
+      # REFUSING_TRAFFIC으로 내리면 집계 /actuator/health가 503이 돼 ALB가 대상을 빼기 시작한다.
+      # liveness는 종료 중에도 UP이라 오케스트레이터가 조기에 SIGKILL하지 않는다. 노출 폭은
+      # 여전히 health 하나다 - 두 그룹은 그 아래 경로이고 상세는 위 설정대로 숨겨진다.
+      probes:
+        enabled: true
 
 # 활성 테스트 버전과 점수 버전은 여기 없다 (KAN-26). 발행 입력이 DB로 확정되면서(2026-08-09,
 # 명세서 §6) 활성 버전은 active_test_version 한 행이 정본이 됐고, 점수 버전은 그 정의가
@@ -97,6 +116,9 @@ accentury:
     circuit-failure-threshold: 5     # AI 연속 실패 이 횟수에서 회로를 연다 (KAN-28) - 열린 동안 업로드는
                                      # GPU 미소모 503으로 즉시 끊기고 시도 예산(명세서 §2.5)도 깎이지 않는다.
     circuit-probe-interval: 5s       # 회로가 열린 뒤 health 프로브 간격 - 첫 프로브까지의 쿨다운도 같은 값 (KAN-28)
+    shutdown-budget: 90s             # 종료 시 실행 중 분석의 완료 대기 상한 (KAN-166). 대기 작업은 기다리지 않고
+                                     # 즉시 실패로 정리하므로 AI 호출 1회(ai-timeout)보다 길면 된다 - 기동 시 검증.
+                                     # 실모델로 ai-timeout이 오르면(KAN-172) 웹 유예 15초와 합쳐 110초 안인지 다시 본다.
   upload:
     rate-limit-per-minute: 30            # IP당 분당 업로드 상한 - 부하 테스트 후 확정 (명세서 §7, KAN-40)
     session-rate-limit-per-minute: 60    # 세션당 분당 업로드 상한 (명세서 §2.5 이중 제한, KAN-28) - 정상 5건,
