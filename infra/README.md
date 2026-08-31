@@ -81,7 +81,8 @@ EC2가 밖으로 거는 연결 (퍼블릭 서브넷이라 NAT 불필요)
   │    IMAGE_TAG (파이프라인 KAN-128)
   ├─ Secrets Manager RDS 마스터 시크릿 → backend가 연결 시점에 직접 읽음  KAN-129
   │    (awsSecretsManager 플러그인, 7일 회전을 앱이 따라감)
-  └─ ECR accentury/backend, accentury/ai (commit SHA 태그)        KAN-120
+  ├─ ECR accentury/backend, accentury/ai (commit SHA 태그)        KAN-120
+  └─ ECR accentury/ai-model (실모델 베이스 이미지, 모델 해시 태그, 사람이 push)  KAN-173
 
 배포 파이프라인 (GitHub Actions, OIDC, 환경별 역할 modules/deploy)
   이미지 deploy.yml                                                KAN-128
@@ -138,6 +139,9 @@ diff -r infra/envs/staging infra/envs/prod
 - ECR 이미지 (KAN-120): EC2가 t3.small(x86_64)이므로 이미지는 linux/amd64여야
   한다. `scripts/push-images.sh`의 기본 PLATFORM이 그 값이다 (KAN-124에서 고정).
   ECR 리포지토리 자체는 bootstrap 스택이 소유한다.
+  실모델 베이스 이미지(`accentury/ai-model`)도 같은 이유로 linux/amd64여야 한다.
+  이 리포지토리만 CI가 아니라 모델 담당이 직접 push한다 (아래 "실모델 베이스 이미지
+  push" 절, KAN-173).
 
 ## 실행 절차
 
@@ -154,15 +158,19 @@ terraform apply
 ```
 
 생성물: `accentury-tfstate-<account_id>` 버킷 (버전 관리, 암호화, 퍼블릭 차단),
-ECR 리포지토리 `accentury/backend`와 `accentury/ai` (IMMUTABLE, 라이프사이클
-정책: 태그 없는 이미지 1일, 최근 50개 유지), GitHub Actions OIDC 공급자
+ECR 리포지토리 `accentury/backend`, `accentury/ai`, `accentury/ai-model` (IMMUTABLE,
+라이프사이클 정책: 태그 없는 이미지 1일, 최근 50개 유지), GitHub Actions OIDC 공급자
 (`token.actions.githubusercontent.com`, KAN-127 - 계정에 1개뿐이라 여기서 만든다.
 envs/*의 deploy 모듈이 data 소스로 조회하므로 bootstrap apply가 먼저다).
 로컬에 남는 `terraform.tfstate`는 커밋하지 않는다 (.gitignore 처리 완료).
 
-ECR 리포지토리는 KAN-120이 콘솔에서 먼저 만들었다. `ecr.tf`의 import 블록이
-첫 plan에서 기존 리포지토리를 state로 흡수하므로 별도 import 명령이 없다.
-plan에 `scan_on_push`와 라이프사이클 정책이 갱신/생성으로 나오는 것은 정상이다.
+배포용 리포지토리 `accentury/backend`와 `accentury/ai`는 KAN-120이 콘솔에서 먼저
+만들었다. `ecr.tf`의 import 블록이 첫 plan에서 그 둘을 state로 흡수하므로 별도
+import 명령이 없다. plan에 `scan_on_push`와 라이프사이클 정책이 갱신/생성으로
+나오는 것은 정상이다. `accentury/ai-model`은 KAN-173에서 코드로 처음 만들므로
+import 대상이 아니다 (import 블록의 for_each는 배포용 2개만 돈다). 흡수가 이미 끝난
+계정에서 KAN-173을 apply하면 plan은 `accentury/ai-model` 리포지토리와 라이프사이클
+정책 생성 2건만 보여야 한다.
 버킷이 이미 있는데 로컬 state를 잃었다면:
 
 ```
@@ -307,6 +315,46 @@ output을 버리기 때문이다. prod는 승격 직후 사람이 `e2e-smoke.yml
 권한은 `infra/modules/deploy`의 `image-deploy` 정책이다. staging 역할만 ECR push를
 갖고(`ci_image_push`, 환경 간 tfvars 차이) prod 역할은 조회뿐이다. Run Command는
 자기 환경 이름이 붙은 인스턴스에만 보낼 수 있다.
+
+## 실모델 베이스 이미지 push (KAN-173)
+
+`ai/` 컨테이너는 모델 담당이 만든 이미지 `accentury-track1`(KAN-159, MFA + Whisper
+large-v3 + Praat, 약 5GB)을 `ai/Dockerfile`의 `FROM` 베이스로 쓴다 (KAN-22). 그 이미지는
+ECR `accentury/ai-model`에 두고, CI가 아니라 **모델 담당이 직접 push한다**. 배포용
+리포지토리 2개는 `scripts/push-images.sh`가 commit SHA 태그로 자동 push하는 곳이라
+손으로 올린 이미지를 섞지 않는다.
+
+- 권한: IAM 사용자 `jaeyoung`(AdministratorAccess). 콘솔에서 발급하고 Terraform 밖에
+  둔다 (다른 팀원 IAM 사용자와 같다). 리포지토리 한정 정책은 만들지 않는다
+  (2026-08-31 결정, KAN-173).
+- 태그: 모델 해시 (예: `3af5ff6`). 날짜 태그를 쓰지 않는다. IMMUTABLE이라 같은 태그는
+  다시 올릴 수 없고, 모델이 바뀌면 새 해시 태그로 올린다.
+- 플랫폼: linux/amd64. 맥에서 빌드하면 `--platform linux/amd64`를 붙인다. arm64로
+  올린 태그는 IMMUTABLE이라 되돌릴 수 없다.
+
+모델 담당 PC에서 (`aws configure`로 `jaeyoung` 액세스 키를 넣은 뒤):
+
+```
+AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.ap-northeast-2.amazonaws.com"
+LOCAL_IMAGE=accentury-track1:latest   # 로컬에서 빌드한 이미지 이름:태그
+MODEL_HASH=3af5ff6                    # 모델 해시 = ECR 태그
+
+aws ecr get-login-password --region ap-northeast-2 \
+  | docker login --username AWS --password-stdin "$REGISTRY"
+docker tag "$LOCAL_IMAGE" "${REGISTRY}/accentury/ai-model:${MODEL_HASH}"
+docker push "${REGISTRY}/accentury/ai-model:${MODEL_HASH}"
+```
+
+push한 태그를 KAN-173 코멘트로 남기면 인프라 담당이 받아서 확인한다:
+
+```
+docker pull "${REGISTRY}/accentury/ai-model:${MODEL_HASH}"
+docker image inspect "${REGISTRY}/accentury/ai-model:${MODEL_HASH}" \
+  --format '{{.Os}}/{{.Architecture}} {{.Size}}'
+```
+
+`linux/amd64`가 아니면 그 태그는 쓰지 않고 새 해시로 다시 올린다.
 
 ## EC2 컨테이너 기동 (KAN-124)
 
@@ -793,6 +841,13 @@ terraform destroy
 - **ECR 라이프사이클 최근 50개**: 롤백(KAN-128)이 이전 SHA를 다시 당기는 방식이라
   최근 이미지가 남아 있어야 한다. prod가 50번 이상 전의 Dev 커밋을 돌리게 되면
   값을 올린다.
+- **실모델 베이스 이미지는 별도 리포지토리 `accentury/ai-model`에 사람이 push**
+  (2026-08-31 확정, KAN-173): 배포용 2개는 CI가 commit SHA 태그로 자동 push하는
+  곳이라 손으로 올린 모델 이미지를 섞으면 "태그 = 커밋" 전제가 깨진다. 모델용은 태그가
+  모델 해시다. 라이프사이클은 배포용과 같은 정책을 쓴다. 이미지 하나가 약 5GB라 50개가
+  실제로 차면 저장 비용(GB당 월 0.10달러)이 드러나지만 모델 해시가 바뀔 때만 push하므로
+  상한에 닿지 않는다. push 권한은 리포지토리 한정 정책 대신 모델 담당의 IAM 사용자
+  `jaeyoung`에 AdministratorAccess를 주는 것으로 정했다 (3인 팀 규모의 사용자 결정).
 - **push-images.sh 기본 PLATFORM=linux/amd64**: IMMUTABLE 태그라 arm64로 잘못
   올린 SHA는 다시 올릴 수 없다. 기본값을 운영 아키텍처로 고정해 그 사고를 막는다.
 - **오리진 구간(CloudFront -> ALB) HTTPS** (2026-08-25 확정, KAN-125): ALB
