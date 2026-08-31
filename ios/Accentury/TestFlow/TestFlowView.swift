@@ -123,9 +123,15 @@ struct TestFlowView: View {
          * 일이고, 그동안 마이크가 열려 있는 것은 사용자에게 설명할 수 없는 상태다. 돌아와서
          * 다시 녹음하는 것은 사용자의 몫으로 둔다 — 자동으로 이어서 녹음하면 나가 있는 동안의
          * 소리가 앞부분에 붙은 것처럼 보인다.
+         *
+         * `!= .active`가 아니라 `== .background`인 이유 (PR #62 리뷰): `.inactive`는 제어 센터
+         * 내리기·앱 전환기 열기·전화 배너에서도 오는 "잠깐 가려짐"이라, 거기서 버리면 10초
+         * 녹음이나 검토 중 PCM이 안내 없이 사라진다. 홈으로 실제로 나가면 `.active → .inactive
+         * → .background` 순서로 반드시 `.background`를 지나므로, 좁혀도 "앱 전환 시 마이크
+         * 해제" AC는 그대로 지켜진다.
          */
         .onChange(of: scenePhase) { phase in
-            if phase != .active { recording.reset() }
+            if phase == .background { recording.reset() }
         }
         /*
          * 자취 없는 제출을 걷는 최후 안전망 (KAN-146). 안드로이드
