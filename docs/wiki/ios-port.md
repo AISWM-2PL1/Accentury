@@ -184,6 +184,13 @@ allowlist를 통과한 문서뿐이고, `force`는 그 문을 열지 못한다. 
   No devices found). 그 뒤 TestFlight Release 빌드를 cloudflared 터널에 붙여 실기기로 돌렸고,
   **거기서 시뮬레이터가 숨기던 토큰 push 경합이 나왔다** (§2 「토큰 push 시점 규칙」). 고친 뒤
   위 체크리스트의 나머지 항목은 그대로 남는다 — 이 런이 확인한 것은 결함 하나이지 전 구간이 아니다.
+  **추가(2026-08-31 오후)**: 토큰 수정 뒤에도 어휘 POST가 실기기에서만 죽었는데, 원인은 앱이 아니라
+  **터널 경유 웹 POST의 CORS 403**이었다 — 브라우저는 같은 출처 POST에도 `Origin` 헤더를 붙이고,
+  Vite 프록시 뒤 Spring은 자기 주소 기준으로 그걸 남의 출처로 판정한다(백엔드 CORS 인자에 터널
+  origin 추가로 해결, code wiki troubleshooting #54). 그 뒤 **iPhone(iOS 26.3, TestFlight 빌드 4)에서
+  인트로 → 권한 → 목소리 점검(실마이크) → 음성 5문항 → 어휘 5문항 → 대기 → 결과 전 구간 완주**
+  (백엔드 세션 s_0e75254f: 음성 5 + 어휘 5 + 테스트 완료). 남은 실기기 항목: 곡선 지연 100ms 수치
+  (Release엔 프로브가 없어 디버그 빌드 연결 필요), 권한 거부 분기, 인터럽션.
 - **TestFlight 서명** (§1 AC3) — **해결(2026-08-31)**. 처음엔 `No Accounts`로 막혔고(Apple ID 미로그인),
   로그인 뒤에는 자동 서명 `archive`가 `Your team has no devices from which to generate a provisioning
   profile`로 막혔다 — 팀에 등록된 기기가 0대라 개발용 프로파일을 못 만든다. 우회는 두 단계다:
