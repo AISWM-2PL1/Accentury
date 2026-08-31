@@ -57,9 +57,17 @@ public final class PropertiesFixture {
     public static AccenturyProperties.Analysis analysis(int congestionThreshold,
                                                         @Nullable String aiBaseUrl,
                                                         Duration processingTimeout) {
+        return analysis(congestionThreshold, aiBaseUrl, processingTimeout, Duration.ofSeconds(90));
+    }
+
+    /** @param shutdownBudget 종료 시 실행 중 분석의 완료 대기 상한 (KAN-166) */
+    public static AccenturyProperties.Analysis analysis(int congestionThreshold,
+                                                        @Nullable String aiBaseUrl,
+                                                        Duration processingTimeout,
+                                                        Duration shutdownBudget) {
         return new AccenturyProperties.Analysis(800, 3000, congestionThreshold, Duration.ofHours(24),
                 processingTimeout, Duration.ofMinutes(5), aiBaseUrl, Duration.ofSeconds(10), 2, 4,
-                Duration.ofSeconds(2), 5, Duration.ofSeconds(5));
+                Duration.ofSeconds(2), 5, Duration.ofSeconds(5), shutdownBudget);
     }
 
     private static AccenturyProperties.Result result() {

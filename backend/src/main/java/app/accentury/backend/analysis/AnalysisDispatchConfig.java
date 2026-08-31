@@ -36,6 +36,12 @@ class AnalysisDispatchConfig {
         executor.setCorePoolSize(properties.analysis().dispatchConcurrency());
         executor.setMaxPoolSize(properties.analysis().dispatchConcurrency());
         executor.setQueueCapacity(QUEUE_CAPACITY);
+        // 종료 처리 (KAN-166). 이 값이 true면 Spring은 컨텍스트 close 이벤트에서 풀을 일시정지하거나
+        // 조기 종료하지 않고(lateShutdown) 빈 파괴 시점에 shutdown만 한다 - 그래서 웹 서버가 멎은
+        // 뒤에 도는 AnalysisDrainLifecycle이 큐 취소와 예산 대기를 통제할 수 있다. awaitTermination은
+        // 일부러 걸지 않는다 - 배수가 예산을 다 쓴 뒤 파괴 시점에 같은 예산을 또 기다리면 컨테이너
+        // 유예(110초)를 넘긴다 (Codex sol 리뷰 P1). 대기는 AnalysisDrainLifecycle의 마감시각 하나다.
+        executor.setWaitForTasksToCompleteOnShutdown(true);
         return executor;
     }
 
@@ -60,6 +66,14 @@ class AnalysisDispatchConfig {
                     + properties.analysis().processingTimeout() + ")이 AI 재전송 최악 소요("
                     + worstCaseMs + "ms)보다 짧다 - ai-timeout, ai-retries와 함께 조정해야 한다");
         }
+        // 종료 예산(shutdown-budget)은 AI 호출 1회보다 길어야 한다 (KAN-166) - 짧으면 종료 때마다
+        // 실행 중이던 분석이 예산 초과로 실패해 그 사용자는 매번 재녹음한다. 대기 작업은 기다리지
+        // 않으므로 재전송 횟수는 여기 들어가지 않는다.
+        if (properties.analysis().shutdownBudget().compareTo(properties.analysis().aiTimeout()) <= 0) {
+            throw new IllegalStateException("shutdown-budget("
+                    + properties.analysis().shutdownBudget() + ")이 ai-timeout("
+                    + properties.analysis().aiTimeout() + ") 이하다 - 종료 때마다 실행 중 분석이 실패한다");
+        }
         // Boot의 RestClient.Builder 자동 구성은 webmvc 스타터에 없다 - 내부 호출 하나라 정적 빌더로 충분하다.
         RestClient restClient = restClient(aiBaseUrl, properties.analysis().aiTimeout());
         // 회로 복구 프로브는 추론을 태우지 않으므로 훨씬 짧게 기다린다 (KAN-28) -
@@ -74,6 +88,19 @@ class AnalysisDispatchConfig {
                 new RestAiAnalysisClient(restClient, healthRestClient, objectMapper),
                 analysisExecutor, transitions, backlog, circuitBreaker,
                 properties.analysis().aiRetries());
+    }
+
+    /**
+     * 종료 시 워커 배수 (KAN-166). 개발 모드({@link NoopAnalysisDispatcher})에서도 조립한다 -
+     * 풀이 비어 있어 즉시 끝나지만 종료 순서 로그는 같은 모양으로 남는다.
+     */
+    @Bean
+    AnalysisDrainLifecycle analysisDrainLifecycle(AnalysisDispatcher analysisDispatcher,
+                                                  ThreadPoolTaskExecutor analysisExecutor,
+                                                  AnalysisBacklog backlog,
+                                                  AccenturyProperties properties) {
+        return new AnalysisDrainLifecycle(analysisDispatcher, analysisExecutor, backlog,
+                properties.analysis().shutdownBudget());
     }
 
     private static RestClient restClient(String baseUrl, Duration timeout) {

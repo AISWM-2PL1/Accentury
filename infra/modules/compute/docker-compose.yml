@@ -82,6 +82,11 @@ services:
     # 25%로 메타스페이스, 스레드 스택, 코드 캐시, 네이티브 버퍼를 감당한다. ai 스텁(약 35MB)과
     # OS, docker가 남은 1GB를 쓴다. 실모델이 들어오면 ai에도 한도를 잡는다 (KAN-22).
     mem_limit: 1g
+    # SIGTERM 뒤 SIGKILL까지의 유예 (KAN-166). backend는 웹 요청 15초 + 분석 워커 예산 90초 안에
+    # 스스로 나가므로(application.yml) 그보다 조금 긴 값이다. docker 기본 10초면 graceful shutdown이
+    # 시작하자마자 죽는다. compose down과 up -d 재생성 양쪽에 적용된다. ai는 backend가 먼저 멎은 뒤
+    # (depends_on 역순) 정지되므로 기본값이면 된다.
+    stop_grace_period: 110s
     logging: *log
     healthcheck:
       # JRE 이미지에도 curl이 없다 - bash의 /dev/tcp로 직접 HTTP를 말한다 (KAN-131).

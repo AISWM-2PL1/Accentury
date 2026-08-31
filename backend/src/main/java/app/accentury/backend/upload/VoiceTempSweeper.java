@@ -7,6 +7,8 @@ import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.event.ContextClosedEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -59,6 +61,7 @@ public class VoiceTempSweeper {
     private final AtomicLong oldestResidualSeconds = new AtomicLong();
     private final Counter deleteFailures;
     private final Counter scanFailures;
+    private volatile boolean shuttingDown;
 
     VoiceTempSweeper(VoiceTempDirectory tempDirectory, AccenturyProperties properties,
                      MeterRegistry meterRegistry) {
@@ -118,6 +121,13 @@ public class VoiceTempSweeper {
      */
     @Scheduled(initialDelay = 5, fixedDelay = 5, timeUnit = TimeUnit.MINUTES)
     public void sweep() {
+        if (shuttingDown) {
+            // 종료 중에는 디렉터리를 되살리거나 파일을 훑지 않는다 (KAN-166). 스케줄러 풀은
+            // 컨텍스트 close 이벤트에서 조기 종료되므로 보통은 여기까지 오지 않지만, 이미
+            // 시작된 실행이나 테스트의 직접 호출까지 같은 규칙으로 막는다.
+            log.info("종료 중이라 업로드 임시파일 스윕을 건너뛴다");
+            return;
+        }
         heal();
         SweepResult result = sweep(tempDirectory.directory(), Instant.now(), retention);
         publish(result);
@@ -128,6 +138,16 @@ public class VoiceTempSweeper {
                     result.deleted(), result.deletedBytes(), result.deleteFailures(),
                     result.scanFailures(), result.remaining(), result.oldestRemainingSeconds());
         }
+    }
+
+    /**
+     * 종료가 시작되면 스윕을 멈춘다 (KAN-166). 컨텍스트 close 이벤트는 웹 서버 정지와 워커
+     * 배수보다 먼저 오므로, 이 뒤에 도는 스윕은 없다 - 종료 중에 임시 디렉터리를 새로
+     * 만들면 다음 기동의 잔여물 정리가 볼 것만 늘어난다.
+     */
+    @EventListener
+    public void onContextClosed(ContextClosedEvent event) {
+        shuttingDown = true;
     }
 
     /** 복구 실패로 청소까지 멈추지는 않는다 - 다음 주기에 다시 시도한다. */

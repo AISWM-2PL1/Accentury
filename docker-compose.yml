@@ -76,6 +76,9 @@ services:
     #   768m -> 아래 값. E2E(KAN-138)가 도는 자리라 여유를 둔다.
     # 운영 인스턴스 크기 산정(KAN-124)은 BE에 최소 1GB를 잡는 편이 안전하다.
     mem_limit: 768m
+    # SIGTERM 뒤 SIGKILL까지의 유예 (KAN-166) - 운영 compose(infra/modules/compute)와 같은 값.
+    # 로컬에서 종료 순서(readiness 하강, 요청 차단, 워커 배수)를 그대로 재현하기 위해서다.
+    stop_grace_period: 110s
     healthcheck:
       # JRE 이미지에도 curl이 없다 - bash의 /dev/tcp로 직접 HTTP를 말한다 (KAN-131).
       # 상태줄의 200까지 확인해야 "포트만 열리고 컨텍스트는 못 뜬" 기동 실패를 healthy로

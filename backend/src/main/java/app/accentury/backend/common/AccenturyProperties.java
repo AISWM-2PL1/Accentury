@@ -90,6 +90,13 @@ public record AccenturyProperties(Session session,
      *                             첫 프로브까지의 대기(쿨다운)도 같은 값이다. 사용자 요청을
      *                             프로브로 쓰지 않는다 - 오디오는 재전송할 수 없어(FR-DP-01)
      *                             프로브로 뽑힌 사용자만 실패를 떠안기 때문이다.
+     * @param shutdownBudget       종료 신호 뒤 실행 중인 분석의 완료를 기다리는 상한 (KAN-166).
+     *                             대기 중(미시작) 작업은 기다리지 않고 즉시 실패로 정리하므로,
+     *                             이 값은 "AI 호출 1회가 끝나는 데 걸리는 최악 시간"만 덮으면
+     *                             된다 - aiTimeout보다 길어야 한다 (기동 시 검증). 웹 요청
+     *                             유예(spring.lifecycle.timeout-per-shutdown-phase)와 합쳐
+     *                             컨테이너 강제 종료 상한(compose stop_grace_period, ECS
+     *                             stopTimeout 120초) 안에 들어야 한다.
      */
     public record Analysis(@DefaultValue("800") long pollAfterMs,
                            @DefaultValue("3000") long congestedPollAfterMs,
@@ -103,7 +110,8 @@ public record AccenturyProperties(Session session,
                            @DefaultValue("4") int dispatchConcurrency,
                            @DefaultValue("2s") Duration aiHealthTimeout,
                            @DefaultValue("5") int circuitFailureThreshold,
-                           @DefaultValue("5s") Duration circuitProbeInterval) {
+                           @DefaultValue("5s") Duration circuitProbeInterval,
+                           @DefaultValue("90s") Duration shutdownBudget) {
     }
 
     /**

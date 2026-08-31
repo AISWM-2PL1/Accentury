@@ -1,10 +1,14 @@
 package app.accentury.backend.upload;
 
 import app.accentury.backend.IntegrationTest;
+import app.accentury.backend.common.AccenturyProperties;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.context.event.ContextClosedEvent;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -43,6 +47,12 @@ class VoiceTempSweeperTest extends IntegrationTest {
 
     @Autowired
     private MeterRegistry meterRegistry;
+
+    @Autowired
+    private AccenturyProperties properties;
+
+    @Autowired
+    private ConfigurableApplicationContext context;
 
     // === 삭제 규칙 ===
 
@@ -249,6 +259,31 @@ class VoiceTempSweeperTest extends IntegrationTest {
             assertEquals("rwx------",
                     PosixFilePermissions.toString(Files.getPosixFilePermissions(dir)));
         }
+    }
+
+    @Test
+    void 종료_중에는_스윕이_디렉터리를_되살리지_않는다() throws IOException {
+        // 컨텍스트 빈의 플래그를 세우면 뒤에 도는 테스트까지 스윕이 멎으므로, 같은 결선의 별도
+        // 인스턴스에 종료 이벤트를 준다 (KAN-166). 미터는 공용 레지스트리에 겹쳐 등록하지 않는다.
+        VoiceTempSweeper closing = new VoiceTempSweeper(tempDirectory, properties, new SimpleMeterRegistry());
+        closing.onContextClosed(new ContextClosedEvent(context));
+        Path dir = tempDirectory.directory();
+        try (Stream<Path> entries = Files.list(dir)) {
+            for (Path entry : entries.toList()) {
+                Files.deleteIfExists(entry);
+            }
+        }
+        Files.deleteIfExists(dir);
+        assumeTrue(!Files.isDirectory(dir));
+        try {
+            closing.sweep();
+
+            assertFalse(Files.isDirectory(dir));
+        } finally {
+            // 되살리기는 살아 있는 스윕의 몫이다 - 다른 테스트가 디렉터리를 전제하므로 복구해 둔다.
+            sweeper.sweep();
+        }
+        assertTrue(Files.isDirectory(dir));
     }
 
     @Test

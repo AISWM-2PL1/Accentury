@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -120,6 +121,22 @@ public interface AnalysisJobRepository extends JpaRepository<AnalysisJob, String
                          @Param("failedStatus") AnalysisJobStatus failedStatus,
                          @Param("errorCode") String errorCode,
                          @Param("finishedAt") Instant finishedAt);
+
+    /**
+     * 종료 시 대기, 실행 중 작업의 일괄 실패 종결 (KAN-166) - 한 문장으로 끝내 DB 왕복이 건수에
+     * 비례하지 않게 한다 (Codex sol 리뷰 P1 - 큐 용량 200건을 건별로 돌리면 종료 예산을 넘긴다).
+     * 조건은 건별 문장과 같다 - 이미 종결된 작업은 건드리지 않는다.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update AnalysisJob j
+               set j.status = :failedStatus, j.errorCode = :errorCode, j.finishedAt = :finishedAt
+             where j.id in :ids and j.status = app.accentury.backend.analysis.AnalysisJobStatus.PROCESSING
+            """)
+    int failAllIfProcessing(@Param("ids") Collection<String> ids,
+                            @Param("failedStatus") AnalysisJobStatus failedStatus,
+                            @Param("errorCode") String errorCode,
+                            @Param("finishedAt") Instant finishedAt);
 
     /**
      * 실행 잔류 일괄 정리 (KAN-24 타임아웃) - 실행을 시작하고도 종결을 못 남긴 작업
