@@ -28,9 +28,14 @@ variable "db_instance_identifier" {
   description = "RDS 인스턴스 식별자 (DBInstanceIdentifier 차원)"
 }
 
-variable "ec2_instance_id" {
+variable "ecs_cluster_name" {
   type        = string
-  description = "backend와 ai가 도는 EC2 인스턴스 ID (InstanceId 차원)"
+  description = "backend가 도는 ECS 클러스터 이름 (AWS/ECS 지표의 ClusterName 차원, KAN-165). fargate 모듈 출력 cluster_name."
+}
+
+variable "ecs_service_name" {
+  type        = string
+  description = "backend ECS 서비스 이름 (AWS/ECS 지표의 ServiceName 차원, KAN-165). fargate 모듈 출력 service_name."
 }
 
 variable "alb_5xx_threshold" {
@@ -61,26 +66,59 @@ variable "rds_free_storage_threshold_bytes" {
   default     = 2147483648
 }
 
-variable "ec2_surplus_credit_threshold" {
+variable "backend_cpu_threshold" {
   type        = number
-  description = "EC2 초과(surplus) CPU 크레딧 상한. t3.small은 시간당 24개를 벌고 576개가 쌓이면 초과분이 과금되기 시작한다. 기본 144는 여섯 시간치 벌이만큼 빚을 진 상태로, 과금 시작선의 4분의 1이다."
-  default     = 144
+  description = "backend ECS 서비스 CPU 평균(%) 상한 (KAN-165). Fargate 0.5 vCPU는 버스트가 없어 지속 80%면 요청이 느려지는 구간이다."
+  default     = 80
 
   validation {
-    condition     = var.ec2_surplus_credit_threshold > 0
-    error_message = "ec2_surplus_credit_threshold는 0보다 커야 합니다. 0으로 두면 기동 직후의 짧은 스파이크에도 경보가 섭니다."
+    condition     = var.backend_cpu_threshold > 0 && var.backend_cpu_threshold <= 100
+    error_message = "backend_cpu_threshold는 0 초과 100 이하의 퍼센트여야 합니다."
+  }
+}
+
+variable "backend_cpu_evaluation_periods" {
+  type        = number
+  description = "backend-cpu-high가 요구하는 연속 위반 분 수. 기동 직후 JIT 스파이크와 스모크 한 바퀴로는 서지 않을 만큼."
+  default     = 5
+
+  validation {
+    condition     = var.backend_cpu_evaluation_periods >= 1
+    error_message = "backend_cpu_evaluation_periods는 1 이상이어야 합니다."
+  }
+}
+
+variable "backend_memory_threshold" {
+  type        = number
+  description = "backend ECS 서비스 메모리 평균(%) 상한 (KAN-165). 힙 상한이 태스크 메모리의 75%라 그 위는 네이티브 영역까지 차오른 상태다."
+  default     = 85
+
+  validation {
+    condition     = var.backend_memory_threshold > 0 && var.backend_memory_threshold <= 100
+    error_message = "backend_memory_threshold는 0 초과 100 이하의 퍼센트여야 합니다."
+  }
+}
+
+variable "backend_memory_evaluation_periods" {
+  type        = number
+  description = "backend-mem-high가 요구하는 연속 위반 분 수. GC 뒤에도 내려가지 않는 상태를 보려는 값이다."
+  default     = 3
+
+  validation {
+    condition     = var.backend_memory_evaluation_periods >= 1
+    error_message = "backend_memory_evaluation_periods는 1 이상이어야 합니다."
   }
 }
 
 variable "ai_metric_namespace" {
   type        = string
-  description = "AI 호스트가 Healthy 지표를 올리는 CloudWatch 네임스페이스 (KAN-36). compute 모듈(ai 역할)의 metric_namespace와 같아야 한다."
+  description = "AI 호스트가 Healthy 지표를 올리는 CloudWatch 네임스페이스 (KAN-36). ai-host 모듈의 metric_namespace와 같아야 한다."
   default     = "accentury/ai"
 }
 
 variable "backend_metric_namespace" {
   type        = string
-  description = "backend가 Micrometer로 지표를 올리는 CloudWatch 네임스페이스 (KAN-36). application-deploy.yml의 management.cloudwatch.metrics.export.namespace와 compute 모듈(backend 역할)의 metric_namespace가 같은 값이다."
+  description = "backend가 Micrometer로 지표를 올리는 CloudWatch 네임스페이스 (KAN-36). application-deploy.yml의 management.cloudwatch.metrics.export.namespace와 fargate 모듈의 metric_namespace가 같은 값이다."
   default     = "accentury/backend"
 }
 

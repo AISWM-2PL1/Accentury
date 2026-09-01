@@ -10,7 +10,7 @@ variable "private_subnet_ids" {
 
 variable "rds_sg_id" {
   type        = string
-  description = "rds-sg (ec2-sg만 5432 허용)"
+  description = "rds-sg (backend-sg만 5432 허용, KAN-165)"
 }
 
 variable "instance_class" {

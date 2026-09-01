@@ -1,8 +1,8 @@
 # internal ALB + CloudFront VPC 오리진 + S3 정적 호스팅 (KAN-125, KAN-126).
 #
-# ALB의 목적은 부하 분산이 아니다 (대상은 환경당 EC2 1대). 헬스체크와, EC2를
-# 교체해도 바뀌지 않는 고정 오리진 지점이 목적이다. 스킴은 internal - 퍼블릭 IP가
-# 없어 CloudFront를 우회해 ALB에 도달하는 경로 자체가 없다 (2026-08-19 멘토링).
+# 대상은 backend Fargate 태스크다 (target_type ip, KAN-165). 태스크가 교체되고 늘어도(KAN-168)
+# 바뀌지 않는 고정 오리진 지점, 헬스체크, 그리고 태스크 간 분산이 목적이다. 스킴은 internal -
+# 퍼블릭 IP가 없어 CloudFront를 우회해 ALB에 도달하는 경로 자체가 없다 (2026-08-19 멘토링).
 
 locals {
   name = "accentury-${var.env}"
@@ -23,25 +23,39 @@ resource "aws_lb" "this" {
   # 상태는 폴링이라 장시간 연결이 없다.
 }
 
+# 대상은 ECS 서비스가 등록하는 태스크 IP다 (KAN-165). target_type은 교체 강제 속성이라 instance(KAN-125)에서
+# ip로 바꾸며 그룹이 새로 만들어졌고, 리스너가 옛 그룹을 가리키는 동안 옛 그룹을 지울 수 없으므로(ResourceInUse)
+# create_before_destroy로 새 그룹 -> 리스너 전환 -> 옛 그룹 삭제 순서를 만든다. 대상 그룹 이름은 VPC 안에서
+# 유일해야 해서 옛 이름(-be)을 못 쓴다 - 그래서 -backend다.
 resource "aws_lb_target_group" "backend" {
-  name        = "${local.name}-be"
+  name        = "${local.name}-backend"
   port        = 8080
   protocol    = "HTTP"
   vpc_id      = var.vpc_id
-  target_type = "instance"
+  target_type = "ip"
+
+  # 종료 예산 (KAN-166, KAN-165): 대상이 빠진 뒤 진행 중 요청을 마무리할 시간. backend의 HTTP 요청은 전부 1초
+  # 미만이고 readiness 하강(집계 health 503)이 이 등록 해제와 겹쳐 돌므로 기본 300초는 롤링 배포와 스케일인만
+  # 늦춘다. ECS는 이 시간이 지나야 태스크에 SIGTERM을 보낸다.
+  deregistration_delay = 30
 
   health_check {
-    # KAN-131이 인증 없이 종합 status 한 줄만 노출하는 경로.
-    # 여기에 인증이 걸리면 ALB가 대상을 계속 비정상 판정한다 (KAN-125 주의사항).
+    # KAN-131이 인증 없이 종합 status 한 줄만 노출하는 경로. readiness 하강(KAN-166)이 여기 반영되므로
+    # 종료 중인 태스크는 새 요청을 받지 않는다. 여기에 인증이 걸리면 ALB가 대상을 계속 비정상 판정한다
+    # (KAN-125 주의사항).
     path    = "/actuator/health"
     matcher = "200"
+    # 기본값(30초 x 5회 = 2분 30초)이면 새 태스크가 healthy로 잡히는 데 그만큼 걸려 롤링 배포와 회로 차단기
+    # 판정이 늦다. 10초 x 3회 = 30초로 줄인다 - 실패 판정도 30초라 ECS가 죽은 태스크를 빨리 교체한다.
+    interval            = 10
+    timeout             = 5
+    healthy_threshold   = 3
+    unhealthy_threshold = 3
   }
-}
 
-resource "aws_lb_target_group_attachment" "backend" {
-  target_group_arn = aws_lb_target_group.backend.arn
-  target_id        = var.instance_id
-  port             = 8080
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # 오리진 구간(CloudFront -> ALB)도 HTTPS다 (KAN-125, 2026-08-25 확정). 처음에는 HTTP 80으로

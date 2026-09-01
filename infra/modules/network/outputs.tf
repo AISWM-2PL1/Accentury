@@ -14,8 +14,9 @@ output "alb_sg_id" {
   value = aws_security_group.alb.id
 }
 
-output "ec2_sg_id" {
-  value = aws_security_group.ec2.id
+output "backend_sg_id" {
+  value       = aws_security_group.backend.id
+  description = "backend Fargate 태스크 SG - alb-sg에서 오는 8080만 허용 (KAN-165). fargate 모듈 network_configuration에 넣는다."
 }
 
 output "rds_sg_id" {
@@ -24,7 +25,7 @@ output "rds_sg_id" {
 
 output "ai_sg_id" {
   value       = aws_security_group.ai.id
-  description = "AI 호스트 SG - ec2-sg에서 오는 8000만 허용 (KAN-36)"
+  description = "AI 호스트 SG - backend-sg에서 오는 8000만 허용 (KAN-36, KAN-165)"
 }
 
 output "private_zone_id" {

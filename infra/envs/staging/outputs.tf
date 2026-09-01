@@ -18,12 +18,28 @@ output "web_bucket" {
   value = module.edge.web_bucket
 }
 
-output "ec2_instance_id" {
-  value = module.compute.instance_id
+output "ecs_cluster_name" {
+  value       = module.fargate.cluster_name
+  description = "backend ECS 클러스터 (KAN-165). 서비스 상태: aws ecs describe-services --cluster <이 값> --services backend"
+}
+
+output "ecs_service_name" {
+  value       = module.fargate.service_name
+  description = "backend ECS 서비스 이름 (KAN-165)"
+}
+
+output "backend_task_definition_family" {
+  value       = module.fargate.task_definition_family
+  description = "backend 태스크 정의 패밀리 (KAN-165). 파이프라인이 리비전을 올린다."
+}
+
+output "backend_log_group" {
+  value       = module.fargate.log_group_name
+  description = "backend 컨테이너 로그 (KAN-165). aws logs tail <이 값> --follow"
 }
 
 output "ai_asg_name" {
-  value       = module.ai_compute.asg_name
+  value       = module.ai_host.asg_name
   description = "AI 호스트 ASG (KAN-36). 인스턴스 조회: aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names <이 값>"
 }
 
@@ -63,5 +79,5 @@ output "alerts_topic_arn" {
 
 output "alarm_names" {
   value       = module.monitoring.alarm_names
-  description = "생성된 CloudWatch 경보 6종 (KAN-134의 4종 + KAN-36의 AI 2종)"
+  description = "생성된 CloudWatch 경보 7종 (KAN-134의 ALB, RDS 3종 + KAN-165의 backend 서비스 2종 + KAN-36의 AI 2종)"
 }
