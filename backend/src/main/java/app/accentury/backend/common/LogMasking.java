@@ -64,6 +64,12 @@ public final class LogMasking {
      * {@code Authorization}과 같은 등급의 자격증명인데 {@link #AUTHORIZATION}은 이름으로
      * 잡으므로 걸리지 않는다 - 새 시크릿 헤더를 늘리면 여기도 같이 늘려야 한다.
      * <p>
+     * AI 내부 호출 토큰(KAN-36)도 같은 네 갈래다 - 헤더 {@code X-Accentury-Internal-Token}, 설정 키
+     * {@code ai-token}과 {@code accentury.analysis.ai-token}, 바인딩된 필드 {@code aiToken}, 환경 변수
+     * {@code ACCENTURY_ANALYSIS_AITOKEN}/{@code ACCENTURY_ANALYSIS_AI_TOKEN}. AI 서버 쪽 이름
+     * {@code ACCENTURY_AI_INTERNAL_TOKEN}도 같은 값이라 함께 넣는다 (compose 설정이 backend 로그에
+     * 덤프될 수 있다).
+     * <p>
      * 따옴표로 열린 값은 <b>닫는 따옴표까지</b> 통째로 받는다 - 공백을 만나면 멈추게 두면
      * {@code "opaque value"} 같은 값의 뒷부분이 로그에 그대로 남고, 열린 따옴표만 닫혀
      * JSON 한 줄이 깨진다. 따옴표가 없으면 예전처럼 공백에서 끊는다 -
@@ -71,7 +77,9 @@ public final class LogMasking {
      */
     private static final Pattern NAMED_SECRET = Pattern.compile(
             "(?i)\\b(sessionToken|X-Admin-Token|adminToken|admin-token|accentury\\.admin\\.token"
-                    + "|ACCENTURY_ADMIN_?TOKEN|ACCENTURY_ANALYTICS_ADMIN_?TOKEN)\\b"
+                    + "|ACCENTURY_ADMIN_?TOKEN|ACCENTURY_ANALYTICS_ADMIN_?TOKEN"
+                    + "|X-Accentury-Internal-Token|aiToken|ai-token|accentury\\.analysis\\.ai-token"
+                    + "|ACCENTURY_ANALYSIS_AI_?TOKEN|ACCENTURY_AI_INTERNAL_?TOKEN)\\b"
                     + "(\"?\\s*[=:]\\s*)(?:\"([^\"\\r\\n]*)\"|([^\\s\",;}]+))");
 
     /**

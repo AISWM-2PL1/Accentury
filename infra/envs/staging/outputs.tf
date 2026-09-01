@@ -22,6 +22,21 @@ output "ec2_instance_id" {
   value = module.compute.instance_id
 }
 
+output "ai_asg_name" {
+  value       = module.ai_compute.asg_name
+  description = "AI 호스트 ASG (KAN-36). 인스턴스 조회: aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names <이 값>"
+}
+
+output "ai_dns_name" {
+  value       = module.network.ai_dns_name
+  description = "backend가 AI를 부르는 프라이빗 이름 (KAN-36). VPC 안에서만 풀린다."
+}
+
+output "private_zone_id" {
+  value       = module.network.private_zone_id
+  description = "내부 호출용 프라이빗 호스팅 영역 (KAN-36). A 레코드는 AI 인스턴스가 부팅 시 UPSERT한다."
+}
+
 output "rds_endpoint" {
   value = module.data.endpoint
 }
@@ -48,5 +63,5 @@ output "alerts_topic_arn" {
 
 output "alarm_names" {
   value       = module.monitoring.alarm_names
-  description = "생성된 CloudWatch 경보 4종 (KAN-134)"
+  description = "생성된 CloudWatch 경보 6종 (KAN-134의 4종 + KAN-36의 AI 2종)"
 }

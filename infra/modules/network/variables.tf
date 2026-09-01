@@ -42,3 +42,14 @@ variable "private_subnet_cidrs" {
     error_message = "private_subnet_cidrs는 정확히 2개여야 합니다."
   }
 }
+
+variable "private_zone_name" {
+  type        = string
+  description = "backend -> ai 내부 호출용 Route 53 프라이빗 호스팅 영역 이름 (KAN-36). 두 환경이 같은 값이다 - VPC별로 풀린다."
+  default     = "accentury.internal"
+
+  validation {
+    condition     = !endswith(var.private_zone_name, ".")
+    error_message = "private_zone_name은 끝에 점이 없어야 합니다 (ai.<영역> 형태로 이름을 조립한다)."
+  }
+}

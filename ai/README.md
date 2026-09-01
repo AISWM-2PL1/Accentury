@@ -22,7 +22,23 @@ BE(Spring Boot)만 호출하는 **사설망 전용** 분석 서버입니다 (API
 - 기동 시 디렉터리에 남아 있던 파일은 나이와 무관하게 전부 지웁니다(앞선 프로세스의 잔여물뿐입니다).
 - 이후 청소 잡이 5분마다 돌면서 30분 이상 잔존한 파일을 지웁니다. 삭제는 멱등합니다.
 - `GET /internal/v0/metrics`가 잔존 파일 수와 최장 잔존 시간을 돌려줍니다 (KAN-38이 소비).
-- `GET /internal/v0/health` (§4.2) - 프로세스 생존만 알립니다.
+- `GET /internal/v0/health` (§4.2) - 기동 중(워밍업 전)에는 503 `{"status": "STARTING"}`,
+  준비가 끝나면 200 `{"status": "UP"}`입니다. BE는 200 + `UP`만 살아 있는 것으로 읽습니다.
+
+## 내부 호출 인증과 준비 상태 (KAN-36)
+
+AI 서버는 backend와 다른 EC2에서 돕니다 (KAN-36 A단계). 같은 compose 네트워크라는 전제가
+사라졌으므로 두 가지가 더해졌습니다.
+
+- **공유 시크릿 헤더** `X-Accentury-Internal-Token` (`app/auth.py`). `ACCENTURY_AI_INTERNAL_TOKEN`이
+  설정된 서버는 `/internal/v0/health`를 뺀 모든 요청에서 이 헤더를 설정값과 대조하고, 없거나
+  다르면 401 `{"status": "FAILED"}`로 끊습니다. 검사는 미들웨어라 multipart 본문을 임시파일로
+  내려놓기 전에 돕니다. backend는 같은 값을 `accentury.analysis.ai-token`으로 받아 헤더를 붙입니다
+  (배포에서는 Terraform `infra/modules/config`가 한 난수를 두 SSM 이름으로 싣습니다). 값이 없으면
+  검사를 건너뛰고 기동 로그에 경고를 남깁니다 - 로컬 개발 편의이고 배포에서는 있을 수 없는 상태입니다.
+- **준비 상태 게이트**. lifespan이 엔진의 `warm_up()`(있으면)을 기다린 뒤에야 health가 UP이 됩니다.
+  실모델(KAN-22)은 가중치 적재를 `async def warm_up(self) -> None`에 두면 그동안 backend의 회로
+  복구 프로브와 compose healthcheck가 503을 보고 요청을 보내지 않습니다. 스텁은 워밍업이 없습니다.
 
 ## 분석 엔진 어댑터 (KAN-135)
 
@@ -98,9 +114,9 @@ BE(Spring Boot)만 호출하는 **사설망 전용** 분석 서버입니다 (API
 | 항목 | 담당 |
 | --- | --- |
 | 실제 추론 (F0 추출, guideF0 정렬, 점수 산출) - `AnalysisEngine` 구현 하나로 들어옵니다 | KAN-22 |
-| `GET /internal/v0/models` (모델 버전, 워밍업 상태) | KAN-22 |
+| `GET /internal/v0/models` (모델 버전) | KAN-22 |
 | `correlationId` 기반 멱등 캐시 (§4.1) | KAN-22 - 지금은 스텁이 무상태이고 결정적이라 재요청 결과가 같습니다 |
-| GPU 배포, 컨테이너 이미지 | KAN-36 |
+| 실모델 컨테이너 이미지 (`accentury/ai-model` 베이스) | KAN-22 (전용 EC2 배치는 KAN-36 A단계 완료, GPU는 KAN-57 판정 후) |
 
 ## 실행
 
@@ -127,3 +143,4 @@ pytest
 | `ACCENTURY_AI_STUB_SCORE` | `75` | `fixed` 모드의 억양 점수 (0~100, 문항 20점 환산은 BE). 범위 밖이면 기동이 실패합니다 |
 | `ACCENTURY_AI_STUB_DELAY_MS` | `1500` | 추론 지연 흉내 |
 | `ACCENTURY_AI_STUB_FAIL_ITEM` | (없음) | 이 itemId면 422 판정 실패를 돌려줍니다 |
+| `ACCENTURY_AI_INTERNAL_TOKEN` | (없음) | backend와 나눠 갖는 내부 호출 시크릿 (KAN-36). 있으면 health를 뺀 모든 요청에 `X-Accentury-Internal-Token` 헤더를 요구합니다 |

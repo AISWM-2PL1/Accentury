@@ -18,7 +18,8 @@ import java.util.regex.Pattern;
  * application.yml은 로컬 전제라 기본값만으로도 서버가 뜬다. 그래서 배포에서 환경 변수를 빼먹으면
  * 에러 없이 <b>조용히</b> 오동작한다 - trusted-proxies가 비면 전원이 ALB IP 하나로 묶여 서로의
  * 요청 제한을 깎고(§2.5), ai-base-url이 비면 분석을 전달하지 않는 개발 모드로 뜨며
- * ({@code NoopAnalysisDispatcher}), admin token이 비면 관리자 API가 404다. 헬스체크는 셋 다 UP이라
+ * ({@code NoopAnalysisDispatcher}), ai-token이 비면 AI가 모든 분석을 401로 끊어 회로가 열리며(KAN-36),
+ * admin token이 비면 관리자 API가 404다. 헬스체크는 전부 UP이라
  * 부하 테스트나 실사용자 불만에서야 드러난다. 배포 프로파일에서는 빠진 값을 <b>전부 나열하고</b>
  * 기동을 세운다.
  * <p>
@@ -63,13 +64,14 @@ class DeploymentConfigGuard {
     static final SsmName DATASOURCE_USERNAME = new SsmName("spring.datasource.username", "SPRING_DATASOURCE_USERNAME");
     static final SsmName DATASOURCE_PASSWORD = new SsmName("spring.datasource.password", "SPRING_DATASOURCE_PASSWORD");
     static final SsmName AI_BASE_URL = new SsmName("accentury.analysis.ai-base-url", "ACCENTURY_ANALYSIS_AIBASEURL");
+    static final SsmName AI_TOKEN = new SsmName("accentury.analysis.ai-token", "ACCENTURY_ANALYSIS_AITOKEN");
     static final SsmName TRUSTED_PROXIES = new SsmName("accentury.trusted-proxies", "ACCENTURY_TRUSTEDPROXIES");
     static final SsmName ADMIN_TOKEN = new SsmName("accentury.admin.token", "ACCENTURY_ADMIN_TOKEN");
     static final SsmName WEB_TEST_URL = new SsmName("accentury.result.web-test-url", "ACCENTURY_RESULT_WEBTESTURL");
 
     /** 배포에서 값이 와야 하는 프로퍼티 전부 (자격 증명 둘은 Secrets Manager URL이면 비어 있어도 된다). */
     static final List<SsmName> SSM_NAMES = List.of(DATASOURCE_URL, DATASOURCE_USERNAME, DATASOURCE_PASSWORD,
-            AI_BASE_URL, TRUSTED_PROXIES, ADMIN_TOKEN, WEB_TEST_URL);
+            AI_BASE_URL, AI_TOKEN, TRUSTED_PROXIES, ADMIN_TOKEN, WEB_TEST_URL);
 
     /**
      * JDBC URL에 이 파라미터가 <b>값과 함께</b> 있으면 자격 증명은 AWS Advanced JDBC Wrapper의
@@ -113,6 +115,10 @@ class DeploymentConfigGuard {
         }
         if (isBlank(binder, AI_BASE_URL.property())) {
             missing.add(AI_BASE_URL.label());
+        }
+        // 없으면 헤더 없이 부르고 AI가 전부 401로 끊는다 - 회로가 열린 채 "AI 장애"로 보여 원인이 묻힌다 (KAN-36).
+        if (isBlank(binder, AI_TOKEN.property())) {
+            missing.add(AI_TOKEN.label());
         }
         // 목록이라 단순 getProperty로는 못 읽는다 - yml의 배열과 환경 변수의 쉼표 한 줄을 똑같이 받는다.
         List<String> trustedProxies = binder

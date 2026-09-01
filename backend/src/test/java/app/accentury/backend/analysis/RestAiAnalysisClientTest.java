@@ -17,6 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.headerDoesNotExist;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
@@ -41,14 +42,19 @@ class RestAiAnalysisClientTest {
         server = MockRestServiceServer.bindTo(builder).build();
         // 분석과 health가 같은 서버를 보게 한다 - 타임아웃만 다른 두 클라이언트다.
         RestClient restClient = builder.build();
-        client = new RestAiAnalysisClient(restClient, restClient, new ObjectMapper());
+        client = new RestAiAnalysisClient(restClient, restClient, new ObjectMapper(), TOKEN);
     }
+
+    /** 내부 호출 시크릿 (KAN-36) - AI가 요청마다 대조하는 값. */
+    private static final String TOKEN = "shared-secret-0123456789abcdef0123456789abcdef";
 
     @Test
     void 성공_응답을_Completed로_매핑한다() {
         server.expect(requestTo("http://ai.test/internal/v0/analyze"))
                 .andExpect(method(POST))
                 .andExpect(header("X-Correlation-Id", "c_test"))
+                // AI가 전용 호스트라 요청마다 공유 시크릿을 대조한다 (KAN-36) - 없으면 401로 끊긴다.
+                .andExpect(header("X-Accentury-Internal-Token", TOKEN))
                 .andExpect(content().contentTypeCompatibleWith(MediaType.MULTIPART_FORM_DATA))
                 .andRespond(withSuccess("""
                         { "status": "OK", "intonationScore": 78, "confidence": 0.86,
@@ -224,9 +230,38 @@ class RestAiAnalysisClientTest {
     void health가_UP이면_살아_있는_것으로_본다() {
         server.expect(requestTo("http://ai.test/internal/v0/health"))
                 .andExpect(method(GET))
+                .andExpect(header("X-Accentury-Internal-Token", TOKEN))
                 .andRespond(withSuccess("{ \"status\": \"UP\" }", MediaType.APPLICATION_JSON));
 
         assertTrue(client.healthy());
+    }
+
+    @Test
+    void 토큰이_없으면_헤더를_붙이지_않는다() {
+        // 로컬 개발(토큰 미설정) - 배포 프로파일은 값을 요구하므로(DeploymentConfigGuard) 여기만 지나는 경로다.
+        RestClient.Builder builder = RestClient.builder().baseUrl("http://ai.test");
+        MockRestServiceServer local = MockRestServiceServer.bindTo(builder).build();
+        RestClient restClient = builder.build();
+        RestAiAnalysisClient noToken = new RestAiAnalysisClient(restClient, restClient, new ObjectMapper(), null);
+        local.expect(requestTo("http://ai.test/internal/v0/health"))
+                .andExpect(headerDoesNotExist("X-Accentury-Internal-Token"))
+                .andRespond(withSuccess("{ \"status\": \"UP\" }", MediaType.APPLICATION_JSON));
+
+        assertTrue(noToken.healthy());
+    }
+
+    @Test
+    void 인증_거절_401은_계약_위반으로_접혀_회로에_실패로_센다() {
+        // 토큰이 어긋난 배포는 설정 버그다 - 재전송해도 같은 답이라 비재시도이되, 회로를 열어 경보(KAN-36)로 드러낸다.
+        server.expect(requestTo("http://ai.test/internal/v0/analyze"))
+                .andRespond(withStatus(HttpStatus.UNAUTHORIZED).body("""
+                        { "status": "FAILED", "detail": "내부 호출 토큰이 없거나 다르다" }
+                        """).contentType(MediaType.APPLICATION_JSON));
+
+        AiAnalysisClient.Rejected rejected =
+                assertInstanceOf(AiAnalysisClient.Rejected.class, client.analyze(request(), "c_test"));
+        assertEquals(AiAnalysisClient.Rejected.Cause.CONTRACT_VIOLATION, rejected.cause());
+        assertFalse(rejected.retryable());
     }
 
     @Test

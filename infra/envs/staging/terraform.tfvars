@@ -14,6 +14,11 @@ private_subnet_cidrs = ["10.1.10.0/24", "10.1.11.0/24"]
 instance_type     = "t3.small"
 db_instance_class = "db.t4g.micro"
 
+# AI 추론 호스트 (KAN-36). A단계 스텁 모드부터 c7i.xlarge (2026-09-01 결정). 루트 볼륨은 실모델
+# 전환(B단계)에서 40으로 올린다.
+ai_instance_type    = "c7i.xlarge"
+ai_root_volume_size = 20
+
 ssm_prefix = "/accentury/staging"
 
 # 이미지는 staging 파이프라인만 만든다 (KAN-128 승격 모델). prod는 그 SHA를 고르기만 한다.

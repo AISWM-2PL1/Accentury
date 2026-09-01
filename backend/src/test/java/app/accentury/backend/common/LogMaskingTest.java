@@ -95,6 +95,33 @@ class LogMaskingTest extends IntegrationTest {
     }
 
     @Test
+    void AI_내부_호출_토큰도_이름_네_형태_모두에서_지운다() {
+        // AI 호출마다 실리는 공유 시크릿 (KAN-36). RestClient가 예외 메시지에 요청 헤더를 끼워 넣거나
+        // 설정이 덤프되면 backend와 AI 양쪽을 여는 값이 평문으로 남는 자리다 (§2.6 - 새 시크릿 헤더는
+        // 마스킹 이름 목록도 같이 늘린다).
+        assertEquals("X-Accentury-Internal-Token: ***",
+                LogMasking.mask("X-Accentury-Internal-Token: s3cr3t-internal-value"),
+                "요청 헤더로 찍힌 경우");
+        assertEquals("accentury.analysis.ai-token=***",
+                LogMasking.mask("accentury.analysis.ai-token=s3cr3t-internal-value"),
+                "설정 키로 찍힌 경우");
+        assertEquals("""
+                {"aiToken": "***"}""",
+                LogMasking.mask("""
+                        {"aiToken": "s3cr3t-internal-value"}"""),
+                "바인딩된 필드로 찍힌 경우");
+        assertEquals("ACCENTURY_ANALYSIS_AITOKEN=***",
+                LogMasking.mask("ACCENTURY_ANALYSIS_AITOKEN=s3cr3t-internal-value"),
+                "환경 변수(backend 쪽)로 찍힌 경우");
+        assertEquals("ACCENTURY_AI_INTERNAL_TOKEN=***",
+                LogMasking.mask("ACCENTURY_AI_INTERNAL_TOKEN=s3cr3t-internal-value"),
+                "환경 변수(AI 쪽)로 찍힌 경우 - 같은 값이다");
+        assertEquals("aiTimeout=10s",
+                LogMasking.mask("aiTimeout=10s"),
+                "이름이 비슷한 다른 설정은 그대로여야 한다");
+    }
+
+    @Test
     void 값에_공백이_있어도_따옴표_끝까지_지운다() {
         // 공백에서 끊으면 뒷부분이 로그에 그대로 남고, 열린 따옴표만 닫혀 JSON 한 줄이
         // 깨진다 - 마스킹이 유출과 로그 수집 실패를 동시에 만드는 자리다.

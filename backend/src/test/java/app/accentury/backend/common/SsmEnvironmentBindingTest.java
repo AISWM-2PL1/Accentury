@@ -50,7 +50,8 @@ class SsmEnvironmentBindingTest {
         ssm.put("SPRING_PROFILES_ACTIVE", "deploy");
         ssm.put(DeploymentConfigGuard.DATASOURCE_URL.ssmName(),
                 "jdbc:aws-wrapper:postgresql://db.internal:5432/accentury?secretsManagerSecretId=arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:rds!db-x");
-        ssm.put(DeploymentConfigGuard.AI_BASE_URL.ssmName(), "http://ai:8000");
+        ssm.put(DeploymentConfigGuard.AI_BASE_URL.ssmName(), "http://ai.accentury.internal:8000");
+        ssm.put(DeploymentConfigGuard.AI_TOKEN.ssmName(), "shared-secret-0123456789abcdef0123456789abcdef");
         ssm.put(DeploymentConfigGuard.TRUSTED_PROXIES.ssmName(), "10.1.0.0/16");
         ssm.put(DeploymentConfigGuard.ADMIN_TOKEN.ssmName(), "0123456789abcdef0123456789abcdef");
         ssm.put(DeploymentConfigGuard.WEB_TEST_URL.ssmName(), "https://staging.accentury.app/t?c=kko_share");

@@ -45,7 +45,18 @@ variable "private_subnet_cidrs" {
 
 variable "instance_type" {
   type        = string
-  description = "EC2 인스턴스 타입"
+  description = "backend EC2 인스턴스 타입 (t3.small)"
+}
+
+variable "ai_instance_type" {
+  type        = string
+  description = "AI 추론 호스트 인스턴스 타입 (KAN-36). 2026-09-01 결정으로 A단계 스텁 모드부터 c7i.xlarge - 실모델(RSS 7.1GB, 지속 추론)에 t 계열은 탈락이고, 단계 전환에 인스턴스 교체를 없앤다. P95 미달 시 c7i.2xlarge 또는 g4dn.xlarge (KAN-57 실측 후)."
+}
+
+variable "ai_root_volume_size" {
+  type        = number
+  description = "AI 호스트 루트 볼륨 GiB (KAN-36). 스텁 20, 실모델 전환(B단계)에서 40 - 가중치 포함 이미지 약 8.5GB x SHA 태그 2개 공존."
+  default     = 20
 }
 
 variable "db_instance_class" {

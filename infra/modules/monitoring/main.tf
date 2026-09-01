@@ -11,6 +11,9 @@
 #   선택 (티켓 "선택" 항목, 2026-08-28 두 환경 모두 포함으로 확정)
 #     rds-free-storage  RDS 여유 스토리지 하한
 #     ec2-cpu-surplus   EC2 초과 CPU 크레딧 상한 (크레딧을 다 쓰고 빌리기 시작)
+#   AI 전용 호스트 (KAN-36)
+#     ai-unhealthy      AI 호스트의 health 프로브 실패 (호스트 타이머가 올리는 커스텀 지표)
+#     ai-circuit-open   backend의 AI 회로가 열렸다 (backend가 Micrometer로 올리는 커스텀 지표)
 #
 # 전부 ap-northeast-2다. WAF 로그 그룹(KAN-149)만 us-east-1인데 그것은 CLOUDFRONT 스코프
 # 웹 ACL의 제약이고, 여기서 보는 ALB, RDS, EC2 지표는 리소스와 같은 서울 리전에 있다.
@@ -215,4 +218,66 @@ resource "aws_cloudwatch_metric_alarm" "ec2_cpu_surplus_credit" {
   ok_actions    = local.alarm_actions
 
   tags = { Name = "${local.name}-ec2-cpu-surplus" }
+}
+
+# ---- AI 호스트 경보 1: health 프로브 실패 (KAN-36) ----
+
+# AI 호스트는 ALB 뒤가 아니라 대상 그룹 health가 없다. 대신 호스트의 systemd 타이머
+# (compute 모듈 ai-health-metric.sh)가 1분마다 /internal/v0/health를 찔러 Healthy 0|1을
+# 올린다 (네임스페이스 accentury/ai, 차원 env). 워밍업 중(503 STARTING)도 0이다.
+#
+# treat_missing_data = "breaching": 지표가 끊겼다는 것은 타이머가 도는 호스트 자체가 없거나
+# (ASG 교체 중, 스택 철거) 지표를 못 올리는 상태라 그것도 장애로 센다. 대가로 apply 직후와
+# 인스턴스 교체 직후 몇 분은 한 번 운다 - unhealthy-hosts와 같은 성격이고 OK 알림이 따라온다.
+# 3회 연속을 요구해 reload 한 번(컨테이너 재생성 수십 초)으로는 서지 않는다.
+resource "aws_cloudwatch_metric_alarm" "ai_unhealthy" {
+  alarm_name        = "${local.name}-ai-unhealthy"
+  alarm_description = "accentury ${var.env}: AI 호스트의 health 프로브가 ${var.ai_unhealthy_evaluation_periods}분 연속 실패했습니다. ai 컨테이너, ASG 인스턴스, 준비 상태(STARTING)를 확인하세요. (KAN-36)"
+
+  namespace   = var.ai_metric_namespace
+  metric_name = "Healthy"
+  dimensions  = { env = var.env }
+
+  statistic           = "Minimum"
+  period              = 60
+  evaluation_periods  = var.ai_unhealthy_evaluation_periods
+  comparison_operator = "LessThanThreshold"
+  threshold           = 1
+  treat_missing_data  = "breaching"
+
+  alarm_actions = local.alarm_actions
+  ok_actions    = local.alarm_actions
+
+  tags = { Name = "${local.name}-ai-unhealthy" }
+}
+
+# ---- AI 호스트 경보 2: backend의 AI 회로 열림 (KAN-36) ----
+
+# backend가 Micrometer CloudWatch 레지스트리로 회로 상태 게이지(accentury.ai.circuit.state,
+# 0 닫힘 / 1 반열림 / 2 열림)를 1분마다 올린다 (AnalysisDispatchConfig, application-deploy.yml).
+# 레지스트리는 게이지 이름에 .value를 붙여 내보낸다. 회로가 열리면 업로드가 전부 503이므로
+# ai-unhealthy보다 사용자에게 가까운 신호다 - AI가 떠 있어도 추론만 죽은 장애(계약 위반,
+# 타임아웃 연속)는 이 경보만 잡는다.
+#
+# treat_missing_data = "notBreaching": backend가 죽으면 지표가 끊기는데 그것은 unhealthy-hosts가
+# 잡는다. 2회 연속을 요구해 반열림 시험 1건이 오가는 순간(1)으로는 서지 않는다.
+resource "aws_cloudwatch_metric_alarm" "ai_circuit_open" {
+  alarm_name        = "${local.name}-ai-circuit-open"
+  alarm_description = "accentury ${var.env}: backend의 AI 회로가 열려 있습니다. 업로드가 503으로 끊기는 중입니다. AI 호스트 상태와 backend 로그(AI 회로 열림 사유)를 확인하세요. (KAN-36)"
+
+  namespace   = var.backend_metric_namespace
+  metric_name = "accentury.ai.circuit.state.value"
+  dimensions  = { env = var.env }
+
+  statistic           = "Maximum"
+  period              = 60
+  evaluation_periods  = 2
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = local.alarm_actions
+  ok_actions    = local.alarm_actions
+
+  tags = { Name = "${local.name}-ai-circuit-open" }
 }

@@ -74,6 +74,9 @@ class Settings:
     stub_delay_ms: int = 1500
     #: 이 itemId면 판정 실패(422)를 돌려준다 - 실패 종료 경로 시험용
     stub_fail_item: str | None = None
+    #: backend와 나눠 갖는 내부 호출 시크릿 (KAN-36, :mod:`app.auth`). 비어 있으면 검사를
+    #: 건너뛴다 - 로컬 개발 편의이고, 배포에서는 Terraform이 언제나 채운다
+    internal_token: str | None = None
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "Settings":
@@ -102,4 +105,5 @@ class Settings:
             stub_intonation_score=int(source.get("ACCENTURY_AI_STUB_SCORE", 75)),
             stub_delay_ms=int(source.get("ACCENTURY_AI_STUB_DELAY_MS", 1500)),
             stub_fail_item=source.get("ACCENTURY_AI_STUB_FAIL_ITEM") or None,
+            internal_token=source.get("ACCENTURY_AI_INTERNAL_TOKEN") or None,
         )

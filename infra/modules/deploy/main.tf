@@ -99,9 +99,10 @@ resource "aws_iam_role_policy" "web_deploy" {
 # staging 역할만 갖는다(승격 모델) - prod 역할로는 새 이미지를 만들 수 없고 staging이 검증한
 # SHA를 고를 수만 있다.
 #
-# Run Command 대상은 인스턴스 ID가 아니라 tag:Name=accentury-{env}다. user_data가 바뀌면 인스턴스가
-# 교체되는데(compute 모듈), ID를 변수로 따라가면 그때마다 GitHub 변수를 고쳐야 한다. 신뢰 정책과
-# 마찬가지로 이 환경 이름이 붙은 인스턴스에만 보낼 수 있다.
+# Run Command 대상은 인스턴스 ID가 아니라 tag:Name이다. user_data가 바뀌면 인스턴스가 교체되는데
+# (compute 모듈), ID를 변수로 따라가면 그때마다 GitHub 변수를 고쳐야 한다. 신뢰 정책과 마찬가지로
+# 이 환경 이름이 붙은 인스턴스에만 보낼 수 있다. 호스트가 둘이다 (KAN-36): backend 호스트
+# accentury-{env}와 ai 호스트 accentury-{env}-ai. 파이프라인은 ai를 먼저, backend를 다음에 reload한다.
 
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
@@ -138,7 +139,7 @@ data "aws_iam_policy_document" "image_deploy" {
     condition {
       test     = "StringEquals"
       variable = "ssm:resourceTag/Name"
-      values   = [local.name]
+      values   = [local.name, "${local.name}-ai"]
     }
   }
 

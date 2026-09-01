@@ -22,16 +22,17 @@ class DeploymentConfigGuardTest {
             "jdbc:aws-wrapper:postgresql://db.internal:5432/accentury?secretsManagerSecretId=arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:rds!db-x";
 
     @Test
-    void 아무것도_없으면_필수값_다섯_가지를_SSM_이름과_함께_전부_나열한다() {
+    void 아무것도_없으면_필수값_여섯_가지를_SSM_이름과_함께_전부_나열한다() {
         // 한 번에 다 나와야 한다 - 하나씩 고치고 다시 띄우는 왕복이 배포마다 반복되면 안 된다.
         List<String> missing = DeploymentConfigGuard.missing(new MockEnvironment());
 
-        assertEquals(5, missing.size(), missing.toString());
+        assertEquals(6, missing.size(), missing.toString());
         assertTrue(missing.get(0).contains("SPRING_DATASOURCE_URL"));
         assertTrue(missing.get(1).contains("ACCENTURY_ANALYSIS_AIBASEURL"));
-        assertTrue(missing.get(2).contains("ACCENTURY_TRUSTEDPROXIES"));
-        assertTrue(missing.get(3).contains("ACCENTURY_ADMIN_TOKEN"));
-        assertTrue(missing.get(4).contains("ACCENTURY_RESULT_WEBTESTURL"));
+        assertTrue(missing.get(2).contains("ACCENTURY_ANALYSIS_AITOKEN"));
+        assertTrue(missing.get(3).contains("ACCENTURY_TRUSTEDPROXIES"));
+        assertTrue(missing.get(4).contains("ACCENTURY_ADMIN_TOKEN"));
+        assertTrue(missing.get(5).contains("ACCENTURY_RESULT_WEBTESTURL"));
     }
 
     @Test
@@ -98,7 +99,8 @@ class DeploymentConfigGuardTest {
     private static MockEnvironment complete() {
         return new MockEnvironment()
                 .withProperty("spring.datasource.url", SECRETS_URL)
-                .withProperty("accentury.analysis.ai-base-url", "http://ai:8000")
+                .withProperty("accentury.analysis.ai-base-url", "http://ai.accentury.internal:8000")
+                .withProperty("accentury.analysis.ai-token", "shared-secret-0123456789abcdef0123456789abcdef")
                 .withProperty("accentury.trusted-proxies", "10.1.0.0/16")
                 .withProperty("accentury.admin.token", "0123456789abcdef0123456789abcdef")
                 .withProperty("accentury.result.web-test-url", "https://staging.accentury.app/t?c=kko_share");

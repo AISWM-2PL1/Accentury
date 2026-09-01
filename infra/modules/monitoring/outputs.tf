@@ -14,6 +14,8 @@ output "alarm_names" {
     aws_cloudwatch_metric_alarm.alb_5xx.alarm_name,
     aws_cloudwatch_metric_alarm.rds_free_storage.alarm_name,
     aws_cloudwatch_metric_alarm.ec2_cpu_surplus_credit.alarm_name,
+    aws_cloudwatch_metric_alarm.ai_unhealthy.alarm_name,
+    aws_cloudwatch_metric_alarm.ai_circuit_open.alarm_name,
   ]
-  description = "생성된 경보 이름. describe-alarms로 상태를 확인할 때 쓴다."
+  description = "생성된 경보 이름 (KAN-134의 4종 + KAN-36의 AI 2종). describe-alarms로 상태를 확인할 때 쓴다."
 }
