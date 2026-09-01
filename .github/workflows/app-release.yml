@@ -1,0 +1,271 @@
+# 안드로이드 릴리스 빌드 (KAN-163)
+#
+# 서명된 AAB·APK를 만들어 실행 아티팩트로 남긴다. 스토어 업로드는 아직 사람이 한다 - 실행 페이지에서
+# 아티팩트를 내려받아 Play Console에 올린다. 자동 업로드(서비스 계정 + 트랙 승격)는 이 티켓 범위 밖이다.
+#
+# ── deploy.yml과 따로 있는 이유 ──────────────────────────────────────────────
+# 저쪽이 다루는 것은 서버 이미지다: 한 번 빌드해 ECR에 올리고 staging에서 검증한 그 SHA를 prod로
+# 승격한다. 앱은 승격할 대상이 없다 - 산출물이 사용자 기기로 가고, 그 배포 경로는 Play Console이라
+# 우리 파이프라인 밖이다. 검증-승격 모델도, OIDC 자격 증명도, DEPLOY_PAUSED 게이트도 여기서는
+# 쓸 데가 없어서 한 파일에 섞지 않는다.
+#
+# ── 트리거 ───────────────────────────────────────────────────────────────────
+# Release 브랜치 푸시 + 수동 실행. 푸시 쪽은 paths로 앱에 영향을 주는 파일로 좁혔다 - 웹·백엔드만
+# 바뀐 Release 병합까지 앱을 다시 빌드하면 매번 스토어에 올리지 않을 산출물이 쌓이고, 서명 시크릿을
+# 필요 없이 자주 꺼내 쓰게 된다. 수동 실행에 입력값을 두지 않은 것은 UI에서 브랜치·태그를 고르는
+# 것으로 충분해서다 (특정 커밋으로 다시 빌드하고 싶으면 그 태그를 골라 돌린다).
+# push 이벤트라 워크플로 레벨 paths를 써도 된다 - required check 잠김 문제(test.yml 주석)는
+# pull_request 검사에만 해당한다. 겹친 실행은 뒤쪽이 기다린다 (취소하지 않는다: 같은 커밋을 두 번
+# 서명해도 해로울 것이 없고, 중간에 끊긴 실행이 남기는 반쯤 만들어진 아티팩트가 더 헷갈린다).
+#
+# ── 시크릿 (저장소 시크릿, 박유현이 등록) ───────────────────────────────────
+#   RELEASE_KEYSTORE_BASE64    키스토어(.jks)를 base64 한 줄로
+#   RELEASE_KEYSTORE_PASSWORD  키스토어 비밀번호
+#   RELEASE_KEY_ALIAS          키 alias
+#   RELEASE_KEY_PASSWORD       키 비밀번호
+#   KAKAO_NATIVE_APP_KEY       카카오 네이티브 앱 키 (KAN-30)
+# 이름과 값을 뽑는 방법은 scripts/make-release-keystore.sh가 생성 직후 그대로 출력한다.
+#
+# ── 왜 -P가 아니라 환경변수인가 ─────────────────────────────────────────────
+# gradle -P로 넘긴 값은 실행 로그의 명령줄에 그대로 남고 같은 머신의 다른 프로세스도 `ps`로 읽는다.
+# 그래서 app/build.gradle.kts의 releaseSigning()에는 -P 경로가 아예 없다 (그 함수 주석). 여기서도
+# 서명 재료와 카카오 키는 전부 `env:`로만 준다. 반대로 -PrequireKakaoNativeAppKey=true는 비밀이
+# 아니라 스위치라 명령줄로 준다.
+#
+# 키스토어는 체크아웃 밖 $RUNNER_TEMP에 푼다. 레포 안에 두면 실수로 아티팩트 업로드나 후속 스텝에
+# 딸려 나갈 수 있다. 러너는 실행마다 새로 만들어지고 끝나면 통째로 버려지므로 따로 지우지 않는다.
+#
+# ── AC 대응 ─────────────────────────────────────────────────────────────────
+#   AC1  서명된 산출물: apksigner verify로 확인하고, 인증서 SHA-256 지문을 실행 요약에 적는다.
+#        지문은 비밀이 아니다 - App Links(KAN-32)의 assetlinks.json에 공개로 박히는 값이다.
+#   AC2  카카오 키 주입: 빌드 시점의 -PrequireKakaoNativeAppKey=true가 설정 단계에서 빈 키를 막고,
+#        빌드 뒤 생성된 BuildConfig를 한 번 더 확인한다 (빗장 두 개).
+#   AC4  로그에 시크릿 없음: 값을 echo하는 곳이 없다. 존재 검사는 -z로만 하고, 실패 메시지에도
+#        이름만 적는다. base64 디코딩은 명령줄 인자가 아니라 환경변수를 파이프로 넘긴다.
+
+name: App Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [Release]
+    paths:
+      - 'app/**'
+      - 'gradle/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
+      - '.github/workflows/app-release.yml'
+
+concurrency:
+  group: app-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # test.yml의 app-test와 같은 21이다. 두 곳이 갈리면 PR에서 통과한 빌드가 여기서 깨진다.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+
+      # 아티팩트 이름과 요약에 쓸 짧은 SHA. deploy.yml의 이미지 태그와 같은 7자리 규칙이다.
+      - name: 커밋 정보
+        id: meta
+        run: |
+          echo "sha7=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+
+      # 시크릿이 없으면 빌드는 미서명 APK를 뱉으며 "성공"한다 (releaseSigning()의 "없는 것이 정상
+      # 상태다"). 릴리스 워크플로에서는 그게 곧 스토어에 올릴 수 없는 파일을 성공으로 보고하는
+      # 것이라, 20분짜리 빌드를 태우기 전에 여기서 먼저 끊는다.
+      - name: 시크릿 존재 검사
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          KAKAO_NATIVE_APP_KEY: ${{ secrets.KAKAO_NATIVE_APP_KEY }}
+        run: |
+          # 값은 절대 찍지 않는다. 이름만 모아 보고한다 (AC4).
+          missing=""
+          for name in RELEASE_KEYSTORE_BASE64 RELEASE_KEYSTORE_PASSWORD RELEASE_KEY_ALIAS RELEASE_KEY_PASSWORD KAKAO_NATIVE_APP_KEY; do
+            if [ -z "${!name}" ]; then missing="$missing $name"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error title=시크릿 누락::등록되지 않은 저장소 시크릿:$missing - 저장소 Settings > Secrets and variables > Actions에 박유현이 등록합니다. 이름과 값을 뽑는 방법은 scripts/make-release-keystore.sh가 키스토어 생성 직후 출력합니다." >&2
+            exit 1
+          fi
+          echo "시크릿 5개 확인"
+
+      # 레포 밖($RUNNER_TEMP)에 푼다. base64 값은 명령줄이 아니라 환경변수로 받아 파이프로 넘긴다 -
+      # 인자로 주면 실행 명령에 그대로 남는다.
+      - name: 키스토어 복원
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          dest="$RUNNER_TEMP/release.jks"
+          if ! printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 -d > "$dest"; then
+            echo "::error title=키스토어 복원 실패::RELEASE_KEYSTORE_BASE64를 base64 디코딩하지 못했습니다. 값이 잘렸거나 base64가 아닙니다 - scripts/make-release-keystore.sh가 안내하는 'base64 -i <키스토어> | tr -d \"\\n\"' 결과 전체를 등록했는지 확인하세요." >&2
+            exit 1
+          fi
+          chmod 600 "$dest"
+          if [ ! -s "$dest" ]; then
+            echo "::error title=키스토어 복원 실패::디코딩 결과가 빈 파일입니다 ($dest)." >&2
+            exit 1
+          fi
+          # releaseSigning()이 읽는 값. 절대 경로라 레포 루트 기준 해석을 타지 않는다.
+          echo "RELEASE_KEYSTORE_PATH=$dest" >> "$GITHUB_ENV"
+          echo "키스토어 복원 완료 ($(wc -c < "$dest") bytes)"
+
+      # AAB와 APK를 한 번의 gradle 호출로 만든다. 따로 부르면 설정 단계와 컴파일이 두 벌 돈다.
+      # 서명 재료와 카카오 키는 env로만 준다 (헤더 주석 "왜 -P가 아니라 환경변수인가").
+      # requireKakaoNativeAppKey만 -P다 - 비밀이 아니라 스위치다.
+      #
+      # 설정 캐시(gradle.properties의 org.gradle.configuration-cache=true)와 System.getenv는
+      # 함께 써도 된다. Gradle이 설정 단계의 환경변수 읽기를 캐시 입력으로 기록해 값이 바뀌면
+      # 캐시를 버린다. --no-daemon은 러너가 일회용이라 데몬을 띄울 이유가 없어서다.
+      - name: 릴리스 빌드 (AAB + APK)
+        env:
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          KAKAO_NATIVE_APP_KEY: ${{ secrets.KAKAO_NATIVE_APP_KEY }}
+        run: |
+          ./gradlew :app:bundleRelease :app:assembleRelease \
+            -PrequireKakaoNativeAppKey=true \
+            --no-daemon --console=plain
+
+      # AC1. 빌드가 "성공"해도 서명이 안 붙으면 파일 이름이 app-release-unsigned.apk로 나온다 -
+      # 그 상태를 여기서 잡는다. 지문은 assetlinks.json(KAN-32)과 카카오 키 해시(KAN-30)의 뿌리라
+      # 실행마다 요약에 남겨 두면 키스토어가 바뀐 것을 바로 알아챈다.
+      - name: 서명 확인 (apksigner)
+        id: sign
+        run: |
+          apk=app/build/outputs/apk/release/app-release.apk
+          aab=app/build/outputs/bundle/release/app-release.aab
+          if [ ! -f "$apk" ]; then
+            if [ -f app/build/outputs/apk/release/app-release-unsigned.apk ]; then
+              echo "::error title=미서명 APK::서명되지 않은 app-release-unsigned.apk가 나왔습니다. 키스토어 복원은 됐는데 gradle이 서명 설정을 못 읽은 경우입니다 - RELEASE_KEYSTORE_PATH가 env로 넘어갔는지 확인하세요." >&2
+            else
+              echo "::error title=APK 없음::$apk 가 없습니다." >&2
+            fi
+            ls -la app/build/outputs/apk/release/ || true
+            exit 1
+          fi
+          if [ ! -f "$aab" ]; then
+            echo "::error title=AAB 없음::$aab 가 없습니다. bundleRelease가 산출물을 남기지 않았습니다." >&2
+            ls -la app/build/outputs/bundle/release/ || true
+            exit 1
+          fi
+
+          # ubuntu-latest에는 Android SDK가 이미 깔려 있다. 버전이 여러 개면 가장 높은 것을 쓴다.
+          signer=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)
+          if [ -z "$signer" ]; then
+            echo "::notice::러너에 build-tools가 없어 설치합니다."
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;35.0.0" > /dev/null
+            signer=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)
+          fi
+          if [ -z "$signer" ]; then
+            echo "::error title=apksigner 없음::러너의 Android SDK에서 apksigner를 찾지 못했습니다 (ANDROID_HOME=$ANDROID_HOME)." >&2
+            exit 1
+          fi
+          echo "apksigner: $signer"
+
+          "$signer" verify --verbose "$apk"
+          certs=$("$signer" verify --print-certs "$apk")
+          echo "$certs"
+
+          # apksigner는 콜론 없는 소문자 hex로 찍는다. assetlinks.json과 콘솔이 쓰는 형식은
+          # 대문자 콜론 구분이라 그 형태로 바꿔 요약에 넣는다.
+          raw=$(echo "$certs" | sed -n 's/^Signer #1 certificate SHA-256 digest: *//p' | head -1)
+          if [ -z "$raw" ]; then
+            echo "::error title=지문 추출 실패::--print-certs 출력에서 SHA-256 지문을 찾지 못했습니다." >&2
+            exit 1
+          fi
+          fingerprint=$(echo "$raw" | tr 'a-z' 'A-Z' | sed 's/../&:/g; s/:$//')
+          echo "sha256=$fingerprint" >> "$GITHUB_OUTPUT"
+          echo "인증서 SHA-256: $fingerprint"
+
+      # AC2의 두 번째 빗장. 빌드 시점의 -PrequireKakaoNativeAppKey=true가 이미 빈 키를 막지만,
+      # 그건 gradle 쪽 조건이라 그 조건문이 잘못되면 조용히 통과한다. 실제로 생성된 BuildConfig를
+      # 본다. 값은 찍지 않고 grep -q로 "비어 있지 않다"만 확인한다 - 카카오 키는 어차피 APK에
+      # 박히는 값이라 엄밀한 비밀은 아니지만 로그에 굳이 흘릴 이유도 없다.
+      - name: 카카오 키 주입 확인
+        run: |
+          bc=app/build/generated/source/buildConfig/release/com/accentury/app/BuildConfig.java
+          if [ ! -f "$bc" ]; then
+            echo "::error title=BuildConfig 없음::$bc 가 없습니다. 생성 경로가 바뀌었는지 확인하세요 (namespace com.accentury.app)." >&2
+            exit 1
+          fi
+          if ! grep -qE 'KAKAO_NATIVE_APP_KEY = "[^"]+"' "$bc"; then
+            echo "::error title=카카오 키 비어 있음::릴리스 BuildConfig의 KAKAO_NATIVE_APP_KEY가 빈 문자열입니다. 이대로 배포하면 결과 공유가 OS 공유 시트로만 갑니다 (KAN-30). KAKAO_NATIVE_APP_KEY 시크릿을 확인하세요." >&2
+            exit 1
+          fi
+          echo "카카오 키 주입 확인"
+
+      # 필수 산출물. 하나라도 없으면 실패다 - 앞 단계가 이미 존재를 확인했으므로 여기서 걸리면
+      # 경로 규칙이 바뀐 것이다.
+      - name: 아티팩트 업로드 (AAB + APK)
+        uses: actions/upload-artifact@v4
+        with:
+          name: accentury-app-release-${{ steps.meta.outputs.sha7 }}
+          path: |
+            app/build/outputs/bundle/release/app-release.aab
+            app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 90
+
+      # 매핑 파일은 선택이다. 지금 release는 optimization.enable = false라(app/build.gradle.kts)
+      # R8이 돌지 않아 생기지 않는다. 나중에 축소를 켜면 크래시 역난독화에 필요해지므로 미리
+      # 챙겨 두되, 없다고 실패시키지는 않는다. 필수 산출물과 조건이 달라 스텝을 나눴다.
+      - name: 아티팩트 업로드 (매핑, 있으면)
+        uses: actions/upload-artifact@v4
+        with:
+          name: accentury-app-release-${{ steps.meta.outputs.sha7 }}-mapping
+          path: app/build/outputs/mapping/release/
+          if-no-files-found: ignore
+          retention-days: 90
+
+      # 스토어 업로드가 수동이라 사람이 이 표를 보고 판단한다. 버전은 gradle 값을 그대로 믿지 않고
+      # 실제 산출물의 output-metadata.json에서 읽는다.
+      - name: 실행 요약
+        env:
+          SHA7: ${{ steps.meta.outputs.sha7 }}
+          FINGERPRINT: ${{ steps.sign.outputs.sha256 }}
+        run: |
+          meta=app/build/outputs/apk/release/output-metadata.json
+          version_name=$(jq -r '.elements[0].versionName // "?"' "$meta")
+          version_code=$(jq -r '.elements[0].versionCode // "?"' "$meta")
+          apk=app/build/outputs/apk/release/app-release.apk
+          aab=app/build/outputs/bundle/release/app-release.aab
+          apk_size=$(du -h "$apk" | cut -f1)
+          aab_size=$(du -h "$aab" | cut -f1)
+          {
+            echo "## 안드로이드 릴리스 빌드"
+            echo ""
+            echo "| 항목 | 값 |"
+            echo "| --- | --- |"
+            echo "| 커밋 | \`$SHA7\` (\`$GITHUB_SHA\`) |"
+            echo "| ref | \`$GITHUB_REF_NAME\` |"
+            echo "| 트리거 | $GITHUB_EVENT_NAME |"
+            echo "| 버전 | $version_name (versionCode $version_code) |"
+            echo "| 아티팩트 | accentury-app-release-$SHA7 |"
+            echo "| APK 크기 | $apk_size |"
+            echo "| AAB 크기 | $aab_size |"
+            echo "| 인증서 SHA-256 | \`$FINGERPRINT\` |"
+            echo ""
+            echo "스토어 업로드는 수동입니다. 위 아티팩트를 내려받아 \`app-release.aab\`를 Play Console에 올리세요."
+            echo ""
+            echo "인증서 지문이 이전 실행과 다르면 키스토어가 바뀐 것입니다 - App Links의 assetlinks.json(KAN-32)과"
+            echo "카카오 콘솔 키 해시(KAN-30)를 함께 갱신하지 않으면 딥링크 검증과 카카오 공유가 동시에 깨집니다."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=릴리스 빌드::$SHA7 서명 완료 ($version_name / versionCode $version_code)"
