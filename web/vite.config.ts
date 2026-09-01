@@ -1,6 +1,7 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { configDefaults } from 'vitest/config'
 
 export default defineConfig({
   plugins: [react()],
@@ -27,5 +28,14 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
+    /*
+     * e2e/는 vitest가 줍지 않는다 (KAN-181). 파일 이름 규칙(`*.spec.ts`)이 겹쳐서 그냥 두면
+     * `npm test`가 Playwright 스펙까지 실어 `test`를 못 찾고 죽는다 - 두 러너는 이름만 같지
+     * 서로의 API를 모른다.
+     *
+     * 기본 제외 목록을 펼쳐서 더한다. exclude는 덮어쓰기라, 배열을 그냥 주면 node_modules와
+     * dist가 제외 대상에서 빠져 빌드 산출물 안의 테스트까지 돌게 된다.
+     */
+    exclude: [...configDefaults.exclude, 'e2e/**'],
   },
 })

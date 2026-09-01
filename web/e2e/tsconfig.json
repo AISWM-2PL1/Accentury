@@ -1,0 +1,19 @@
+{
+  // e2e 전용 타입체크 설정. 앱 tsconfig의 include는 ["src", "vite.config.ts"]라 이 디렉터리를
+  // 잡지 않는데, 그건 의도다 - 앱 번들에 들어가지 않는 코드를 앱 빌드가 검사할 이유가 없고,
+  // 무엇보다 types가 다르다. 앱은 브라우저(vite/client)에서 돌고 스펙은 Node에서 돈다.
+  //
+  // 대신 검사 자체는 빼지 않는다. package.json의 build가 이 설정으로도 한 번 돌리므로
+  // (`tsc -p e2e --noEmit`), 스펙이 타입이 깨진 채로 커밋되면 CI가 잡는다 - Playwright는
+  // 실행 시 esbuild로 타입을 지우고 넘어가기만 해서 스스로는 잡아 주지 않는다.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    // vite/client 대신 Node. `node:path`·`node:url`·`process`가 여기서 온다.
+    "types": ["node"],
+    // 이 설정은 검사만 한다 - 산출물은 Playwright가 자기 esbuild로 만든다.
+    "noEmit": true
+  },
+  // playwright.config.ts를 함께 넣는다. web/ 바닥에 있어야 Playwright가 찾지만 실행 환경은
+  // 스펙과 같은 Node라, 같은 설정으로 봐야 타입이 맞는다.
+  "include": [".", "../playwright.config.ts"]
+}
