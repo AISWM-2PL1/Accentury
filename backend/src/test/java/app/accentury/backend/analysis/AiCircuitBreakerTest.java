@@ -349,6 +349,33 @@ class AiCircuitBreakerTest {
         assertTrue(breaker.admitsUpload(TRIAL), "시험 자리 제한도 없다");
     }
 
+    @Test
+    void 지표용_상태_값은_닫힘_0_반열림_1_열림_2다() {
+        // CloudWatch 경보(ai-circuit-open, KAN-36)는 2(열림)에만 선다 - 반열림 1은 트래픽이 없으면
+        // 시험 없이 오래 머무는 대기 상태라 경보 대상이 아니다. 매핑이 어긋나면 경보가 침묵하거나 밤새 운다.
+        SteppingClock clock = new SteppingClock();
+        AiCircuitBreaker breaker = breaker(1, clock);
+        assertEquals(0, breaker.stateValue(), "닫힘");
+
+        breaker.recordFailure(STRAGGLER);
+        assertEquals(2, breaker.stateValue(), "열림");
+
+        clock.advance(PROBE_INTERVAL);
+        breaker.probeSucceeded(breaker.claimProbe().orElseThrow());
+        assertEquals(1, breaker.stateValue(), "반열림 - 시험 대기");
+        assertEquals(1, breaker.stateValue(), "요청이 없으면 반열림에 그대로 머문다");
+
+        assertTrue(breaker.admitsUpload(TRIAL));
+        breaker.recordFailure(TRIAL);
+        assertEquals(2, breaker.stateValue(), "시험 실패는 곧바로 열림");
+
+        clock.advance(PROBE_INTERVAL.multipliedBy(2));
+        breaker.probeSucceeded(breaker.claimProbe().orElseThrow());
+        assertTrue(breaker.admitsUpload(TRIAL));
+        breaker.recordSuccess(TRIAL);
+        assertEquals(0, breaker.stateValue(), "시험 성공은 닫힘");
+    }
+
     private static AiCircuitBreaker breaker(int failureThreshold, SteppingClock clock) {
         return new AiCircuitBreaker(failureThreshold, PROBE_INTERVAL, TRIAL_TIMEOUT, clock);
     }

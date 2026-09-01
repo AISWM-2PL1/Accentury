@@ -12,7 +12,7 @@
 # 부른 뒤, 그 호스트의 컨테이너가 healthy가 될 때까지 기다린다. 호스트는 둘이다 (KAN-36): ai 호스트
 # (tag:Name=accentury-{env}-ai)를 먼저, backend 호스트(accentury-{env})를 다음에 reload한다 - backend가
 # 새 AI 계약을 전제로 할 수 있어 AI가 먼저 올라와야 한다. 어느 호스트든 healthy에 못 미치면 IMAGE_TAG를
-# 직전 값으로 되돌려 두 호스트를 같은 순서로 다시 reload한다 (AC "반영 실패 시 기존 컨테이너 유지"를
+# 직전 값으로 되돌려 두 호스트를 역순(backend, ai)으로 다시 reload한다 (AC "반영 실패 시 기존 컨테이너 유지"를
 # 자동 롤백으로 만족). 컨테이너 자체는 compose가 교체하므로 "기존 컨테이너"가 아니라 "기존 이미지"가
 # 유지되는 것이다.
 #
@@ -290,6 +290,7 @@ jobs:
           cat > apply.sh <<'APPLY'
           set -uo pipefail
           tag="$1"
+          order="${2:-forward}"
           # 태그 쓰기가 실패하면 여기서 끝낸다 - 넘어가면 옛 태그로 reload가 돌고 healthy가 나와 새 태그가
           # 반영된 것처럼 보인다 (Codex P1).
           if ! aws ssm put-parameter --name "$SSM_PREFIX/IMAGE_TAG" --type String --value "$tag" --overwrite >/dev/null; then
@@ -330,9 +331,11 @@ jobs:
               case "$status" in
                 Success|Failed|TimedOut|Cancelled|Undeliverable|Terminated) break ;;
               esac
-              # 조회는 성공했는데 invocation이 없는 상태(None)가 60초 이어지면 대상 인스턴스가 없는 것이다.
-              if [ "$i" -ge 12 ] && [ "$status" = None ]; then
-                echo "60초가 지나도 대상 인스턴스가 없습니다 (tag:Name=$host, SSM 에이전트 미등록 또는 ASG 교체 중?)"; return 1
+              # 조회는 성공했는데 invocation이 없는 상태(None)가 send-command의 전달 창(--timeout-seconds 120)을
+              # 넘겨 이어지면 대상 인스턴스가 없는 것이다. ASG 교체 직후 SSM 에이전트 등록에 1.5분에서 2분이
+              # 걸리므로(2026-09-01 실측) 그 창 안에서는 포기하지 않는다 (리뷰 반영 - 60초는 짧았다).
+              if [ "$i" -ge 26 ] && [ "$status" = None ]; then
+                echo "130초가 지나도 대상 인스턴스가 없습니다 (tag:Name=$host, SSM 에이전트 미등록 또는 ASG 교체 중?)"; return 1
               fi
               sleep 5
             done
@@ -346,9 +349,16 @@ jobs:
             echo "--- 상태 ($host): $status ---"
             [ "$status" = Success ]
           }
-          # ai 호스트 먼저, backend 호스트 다음 (KAN-36). 앞 호스트가 실패하면 뒤 호스트는 건드리지 않는다 -
-          # 롤백이 두 호스트를 같은 순서로 직전 태그로 되돌린다.
-          for host in "accentury-$TARGET_ENV-ai" "accentury-$TARGET_ENV"; do
+          # 정방향은 ai 호스트 먼저, backend 호스트 다음 (KAN-36) - 새 backend가 새 AI 계약을 전제로 할 수
+          # 있고, 새 AI는 옛 backend 호출을 받아야 한다(하위 호환). 롤백은 그 역순(backend 먼저, ai 다음)이다 -
+          # 같은 순서로 되돌리면 "옛 AI + 새 backend" 창이 생기는데 그 조합은 아무도 보장하지 않는다 (리뷰).
+          # 앞 호스트가 실패하면 뒤 호스트는 건드리지 않는다.
+          if [ "$order" = reverse ]; then
+            hosts="accentury-$TARGET_ENV accentury-$TARGET_ENV-ai"
+          else
+            hosts="accentury-$TARGET_ENV-ai accentury-$TARGET_ENV"
+          fi
+          for host in $hosts; do
             reload_host "$host"; rc=$?
             if [ "$rc" != 0 ]; then exit "$rc"; fi
           done
@@ -383,8 +393,8 @@ jobs:
             echo "::error::되돌릴 직전 태그가 없습니다. 인스턴스가 실패 상태로 남았습니다 - 수동 실행으로 유효한 태그를 반영하세요."
             exit 1
           fi
-          echo "직전 태그 $PREVIOUS_TAG 로 되돌립니다."
-          if bash apply.sh "$PREVIOUS_TAG"; then
+          echo "직전 태그 $PREVIOUS_TAG 로 되돌립니다 (backend 호스트 먼저, ai 호스트 다음)."
+          if bash apply.sh "$PREVIOUS_TAG" reverse; then
             echo "::error::롤백 완료 ($PREVIOUS_TAG). 새 태그 $IMAGE_TAG 는 반영되지 않았습니다."
           else
             echo "::error::롤백도 실패했습니다. SSM Session Manager로 접속해 journalctl -u accentury 를 확인하세요."

@@ -318,10 +318,12 @@ reviewers에 팀원을 넣으면 Release 병합이 만든 실행이 승인 전�
 컨테이너(ai 호스트는 ai, backend 호스트는 backend)의 docker healthcheck가 healthy가 될 때까지
 최대 5분 기다린다. ai를 먼저 올리는 이유는 backend가 새 AI 계약을 전제로 할 수 있어서다.
 어느 호스트든 unhealthy거나 시간을 넘기면 IMAGE_TAG를 직전 값으로 되돌려 두 호스트를
-같은 순서로 다시 돌리고 실행을 실패로 끝낸다. 그래서 "반영 실패 시 기존 이미지 유지"가
+역순(backend, ai)으로 다시 돌리고 실행을 실패로 끝낸다 - 같은 순서로 되돌리면 "옛 AI + 새
+backend" 창이 생기는데 그 조합은 아무도 보장하지 않는다. 그래서 "반영 실패 시 기존 이미지 유지"가
 성립한다 (컨테이너는 compose가 교체하므로 이미지 기준이다). 직전 값이 없는 첫 배포가
 실패하면 호스트는 실패 상태로 남고, 유효한 태그를 수동 실행으로 넣는다. ai 호스트가 ASG
-교체 중이라 대상이 없으면 60초 뒤 실패로 끝나므로 교체가 끝난 뒤 다시 실행한다.
+교체 중이라 대상이 없으면 130초(SSM 전달 창 120초보다 길게 - 에이전트 등록 실측 1.5분에서 2분)
+뒤 실패로 끝나므로 교체가 끝난 뒤 다시 실행한다.
 
 컨테이너가 healthy가 된 뒤에는 공개 경로(`https://도메인/v0/...`)가 게이트웨이 오류
 (502, 503, 504) 대신 백엔드 응답을 돌려줄 때까지 최대 6분 더 기다린다. ALB 대상 그룹
@@ -398,7 +400,11 @@ docker image inspect "${REGISTRY}/accentury/ai-model:${MODEL_HASH}" \
 systemd 유닛 `accentury.service`를 놓는다. 두 환경의 호스트 구성은 완전히 같고, 환경별
 값은 전부 SSM Parameter Store에서 온다. compose 파일이나 스크립트를 고치면 user_data가
 바뀌어 **인스턴스가 교체된다** (backend: `user_data_replace_on_change`, ai: 시작 템플릿 새
-버전 + ASG instance refresh). 그래도 되는 이유가 무상태다.
+버전 + ASG instance refresh). 그래도 되는 이유가 무상태다. 다만 backend 교체는 destroy 뒤
+create라(`create_before_destroy` 없음 - ALB 대상과 Name 태그가 하나다) 새 인스턴스가 healthy가
+될 때까지 **수 분 동안 전면 503**이다. 살아 있는 환경에 compose나 스크립트 변경을 apply할 때는
+그 창을 알리고 한다. ai 교체는 분석만 끊기고 회로가 열렸다 닫힌다. user_data는 raw 16KB 상한이
+있어 compute 모듈의 precondition이 plan에서 크기를 검사한다 (ai 역할 약 15.6KB).
 
 | | backend 호스트 `accentury-{env}` | ai 호스트 `accentury-{env}-ai` |
 | --- | --- | --- |
@@ -444,7 +450,7 @@ docker compose exec ai python -c "import urllib.request; urllib.request.urlopen(
 | SSM 파라미터 (`/accentury/{env}/` 아래) | 가는 곳 | 용도 |
 | --- | --- | --- |
 | `IMAGE_TAG` | compose.env (두 호스트) | `image:` 보간. 두 서비스가 같은 SHA 태그를 쓴다. **없으면 기동 실패.** 파이프라인(KAN-128)이 쓴다 |
-| `ai/ACCENTURY_AI_*` | ai.env (ai 호스트만) | ai 컨테이너 환경 변수. 지금은 내부 호출 토큰 하나 (KAN-36). 실모델 설정은 KAN-22가 더한다 |
+| `ai/*` (하위 경로 전부) | ai.env (ai 호스트만) | ai 컨테이너 환경 변수. 지금은 내부 호출 토큰 하나 (KAN-36). 실모델 설정은 KAN-22가 이 경로 아래 어떤 이름으로든 더한다 - 라우팅은 이름이 아니라 호스트 역할 기준이다 |
 | 그 외 전부 | backend.env (backend 호스트만) | backend 컨테이너 환경 변수. `modules/config`가 만든다 (아래 표, KAN-129) |
 
 backend 환경 변수는 전부 Terraform `modules/config`가 만든다 - 값이 다른 모듈의
@@ -620,7 +626,7 @@ RDS, EC2가 이미 내보내는 표준 지표라 backend와 ai 코드는 손대�
 | `rds-free-storage` | `FreeStorageSpace` | 5분 최소 < 2GiB | `missing` |
 | `ec2-cpu-surplus` | `CPUSurplusCreditBalance` (backend 호스트) | 5분 최대 > 144가 2회 연속 | `missing` |
 | `ai-unhealthy` (KAN-36) | `accentury/ai` `Healthy` (차원 env, ai 호스트 타이머가 올린다) | 1분 최소 < 1이 3회 연속 | `breaching` |
-| `ai-circuit-open` (KAN-36) | `accentury/backend` `accentury.ai.circuit.state.value` (차원 env, backend Micrometer) | 1분 최대 >= 1이 2회 연속 | `notBreaching` |
+| `ai-circuit-open` (KAN-36) | `accentury/backend` `accentury.ai.circuit.state.value` (차원 env, backend Micrometer) | 1분 최대 >= 2(열림)가 2회 연속 | `notBreaching` |
 
 앞의 둘이 KAN-134의 필수 2종이고 다음 둘은 "선택" 항목인데 두 환경 모두 넣기로 했다
 (2026-08-28). 마지막 둘은 AI 전용 호스트 분리(KAN-36)가 더한 것이다 - AI 호스트는 ALB 뒤가
@@ -657,8 +663,10 @@ OK 양쪽을 알린다. 해제 알림이 없으면 아직 죽어 있는지를 �
   `accentury/ai`로만 허용). 워밍업 중(503 STARTING)도 0이다. 결측을 장애로 세므로 apply 직후와
   ASG 교체 직후 몇 분은 한 번 운다 - `unhealthy-hosts`와 같은 성격이다. 회로 상태는 backend의
   Micrometer CloudWatch 레지스트리(`CloudWatchMetricsConfig`, 배포 프로파일에서만)가 `accentury.*`
-  지표만 1분마다 올린다 - 게이지라 이름에 `.value`가 붙는다 (0 닫힘, 1 반열림, 2 열림). JVM이나
-  HTTP 지표는 올리지 않는다 - 이름당 월 0.30달러다. 두 지표의 환경 구분은 차원 `env`다.
+  지표만 1분마다 올린다 - 게이지라 이름에 `.value`가 붙는다 (0 닫힘, 1 반열림, 2 열림). 경보는
+  2(열림)에만 선다 - 반열림은 "다음 업로드로 시험한다"는 대기라 트래픽이 없으면 밤새 1에 머물고, 1 이상으로
+  걸면 잠깐 죽었다 복구된 AI가 아침까지 ALARM으로 남는다. JVM이나 HTTP 지표는 올리지 않는다 - 이름당
+  월 0.30달러다. 두 지표의 환경 구분은 차원 `env`다.
 - **그 경보가 `CPUCreditBalance`가 아니라 `CPUSurplusCreditBalance`를 보는
   이유.** unlimited 인스턴스는 잔액 0으로 시작해 시간당 24개씩 쌓는다. 잔액
   하한으로 경보를 걸면 **새로 뜬 인스턴스가 임계값에 닿을 때까지 몇 시간 동안
@@ -925,7 +933,9 @@ terraform destroy
   (`ai/app/auth.py`, backend `RestAiAnalysisClient`). 난수 하나를 SSM 두 이름으로 싣고, ai 쪽은 하위
   경로 `/accentury/{env}/ai/`에 두어 ai 호스트 역할이 backend 시크릿(DB URL, 관리자 토큰)을 읽을 수
   없게 한다. health는 예외다 - compose healthcheck와 호스트 타이머가 토큰 없이 두드린다. 토큰이 어긋난
-  배포는 backend가 계약 위반으로 접어 회로를 열고 `ai-circuit-open` 경보로 드러난다.
+  배포는 backend가 429와 같은 추론 전 거절(UNREACHED)로 접어 사용자 시도 상한을 깎지 않고, 회로를
+  열어 `ai-circuit-open` 경보로 드러낸다. ai 쪽은 운영 compose가 `ACCENTURY_AI_INTERNAL_TOKEN_REQUIRED=true`를
+  주므로 토큰 없이는 기동하지 않는다 (fail-closed, backend 가드와 대칭).
 - **ai 컨테이너의 인터넷과 IMDS 차단은 호스트 iptables (KAN-36)**: 같은 호스트 시절의 internal
   네트워크는 8000을 발행해야 하는 전용 호스트에서 쓸 수 없고, 보안 그룹 egress는 호스트와 컨테이너를
   못 가른다(호스트는 ECR, SSM, Route 53, CloudWatch에 나가야 한다). 그래서 `DOCKER-USER` 체인에
@@ -938,9 +948,10 @@ terraform destroy
   레지스트리를 자동 구성하지 않아 `CloudWatchMetricsConfig`가 직접 조립하고, `accentury.*` 지표만
   내보내 이름당 요금을 묶는다. 대안(회로 열림을 KAN-38로 미루기)은 "AI가 떠 있어도 추론만 죽은
   장애를 아무도 모른다"는 이유로 기각됐다.
-- **파이프라인은 ai 호스트를 먼저 reload한다 (KAN-36)**: backend가 새 AI 계약을 전제로 할 수 있어
-  AI가 먼저 올라와야 한다. 롤백도 같은 순서다. Run Command 대상은 두 호스트의 Name 태그이고 deploy
-  모듈이 그 둘만 허용한다.
+- **파이프라인은 ai 호스트를 먼저 reload하고 롤백은 역순이다 (KAN-36)**: backend가 새 AI 계약을 전제로
+  할 수 있어 AI가 먼저 올라와야 하고(새 AI는 옛 backend 호출을 받아야 한다), 롤백은 backend를 먼저
+  되돌려 "옛 AI + 새 backend" 창을 만들지 않는다. Run Command 대상은 두 호스트의 Name 태그이고
+  deploy 모듈이 그 둘만 허용한다.
 - **compose 파일은 Terraform user_data로 배치** (2026-08-25 확정): 별도 전달
   채널(S3, Run Command) 없이 "재부팅 자동 기동"과 "두 환경 같은 파일" AC가
   성립한다. 대가는 compose 변경 시 인스턴스 교체인데, 호스트가 무상태라 감수한다.

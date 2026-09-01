@@ -17,11 +17,11 @@
 # "호스트 디스크에 평문 0"은 아니다 (Codex P2, KAN-129에서 판단).
 #
 # 파라미터 이름의 마지막 조각이 환경 변수 이름이다 (예: /accentury/staging/SPRING_DATASOURCE_URL).
-# 라우팅:
+# 라우팅은 역할 기준이다 (이름 접두사가 아니다 - 리뷰 반영):
 #   IMAGE_TAG        -> compose.env  (image: 보간 전용, 컨테이너에 안 들어간다)
-#   ACCENTURY_AI_*   -> ai.env       (ai 호스트만 쓴다)
-#   그 외 전부        -> backend.env  (backend 호스트만 쓴다)
-# 여기에 env.conf의 ACCENTURY_ENV를 두 env 파일에 더한다 - 지표 차원(env)으로 쓴다 (KAN-36).
+#   그 외 전부        -> 이 호스트 역할의 env 파일 (ai 호스트는 ai.env, backend 호스트는 backend.env)
+# ai 호스트가 읽는 것은 /ai 하위 경로뿐이라 그 아래 어떤 이름이든(KAN-22의 모델 설정 포함) ai 컨테이너에
+# 들어간다. 여기에 env.conf의 ACCENTURY_ENV를 더한다 - 지표 차원(env)으로 쓴다 (KAN-36).
 # 값에 탭이나 개행이 들어가면 안 된다 (aws --output text가 그 둘로 행을 나눈다).
 set -euo pipefail
 
@@ -111,12 +111,12 @@ else
   retry fetch_params
 fi
 
+if [ "$ROLE" = ai ]; then role_env="$tmp_ai"; else role_env="$tmp_backend"; fi
 while IFS=$'\t' read -r name value; do
   key="${name##*/}"
   case "$key" in
-    IMAGE_TAG)      printf 'IMAGE_TAG=%s\n' "$value" >> "$tmp_compose" ;;
-    ACCENTURY_AI_*) printf '%s=%s\n' "$key" "$value" >> "$tmp_ai" ;;
-    *)              printf '%s=%s\n' "$key" "$value" >> "$tmp_backend" ;;
+    IMAGE_TAG) printf 'IMAGE_TAG=%s\n' "$value" >> "$tmp_compose" ;;
+    *)         printf '%s=%s\n' "$key" "$value" >> "$role_env" ;;
   esac
 done < "$params"
 rm -f "$params"

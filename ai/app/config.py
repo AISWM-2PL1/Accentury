@@ -77,6 +77,10 @@ class Settings:
     #: backend와 나눠 갖는 내부 호출 시크릿 (KAN-36, :mod:`app.auth`). 비어 있으면 검사를
     #: 건너뛴다 - 로컬 개발 편의이고, 배포에서는 Terraform이 언제나 채운다
     internal_token: str | None = None
+    #: 토큰이 없으면 기동을 거부한다 (KAN-36, 리뷰 반영). 배포 compose가 켠다 - SSM에서 토큰이 빠진
+    #: 채 뜨면 검사를 건너뛰고(fail-open) health는 200이라 경보도 없기 때문이다. backend의
+    #: DeploymentConfigGuard와 대칭인 fail-closed다
+    internal_token_required: bool = False
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "Settings":
@@ -106,4 +110,10 @@ class Settings:
             stub_delay_ms=int(source.get("ACCENTURY_AI_STUB_DELAY_MS", 1500)),
             stub_fail_item=source.get("ACCENTURY_AI_STUB_FAIL_ITEM") or None,
             internal_token=source.get("ACCENTURY_AI_INTERNAL_TOKEN") or None,
+            internal_token_required=_truthy(source.get("ACCENTURY_AI_INTERNAL_TOKEN_REQUIRED")),
         )
+
+
+def _truthy(value: str | None) -> bool:
+    """환경 변수의 불리언 - ``true``, ``1``, ``yes``(대소문자 무시)만 참이다."""
+    return (value or "").strip().lower() in ("true", "1", "yes")
