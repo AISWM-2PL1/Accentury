@@ -36,9 +36,15 @@ AI 서버는 backend와 다른 EC2에서 돕니다 (KAN-36 A단계). 같은 comp
   내려놓기 전에 돕니다. backend는 같은 값을 `accentury.analysis.ai-token`으로 받아 헤더를 붙입니다
   (배포에서는 Terraform `infra/modules/config`가 한 난수를 두 SSM 이름으로 싣습니다). 값이 없으면
   검사를 건너뛰고 기동 로그에 경고를 남깁니다 - 로컬 개발 편의이고 배포에서는 있을 수 없는 상태입니다.
-- **준비 상태 게이트**. lifespan이 엔진의 `warm_up()`(있으면)을 기다린 뒤에야 health가 UP이 됩니다.
-  실모델(KAN-22)은 가중치 적재를 `async def warm_up(self) -> None`에 두면 그동안 backend의 회로
-  복구 프로브와 compose healthcheck가 503을 보고 요청을 보내지 않습니다. 스텁은 워밍업이 없습니다.
+- **준비 상태 게이트**. 기동 직후 엔진의 `warm_up()`(있으면)을 백그라운드로 돌리고, 끝나야 health가
+  UP이 됩니다. uvicorn은 lifespan이 끝나야 포트를 열므로 워밍업을 lifespan 안에서 기다리면 그동안은
+  503이 아니라 연결 거부입니다 - 그래서 뒤에서 돌립니다. 실모델(KAN-22)은 가중치 적재를 정확히 이
+  이름의 `async def warm_up(self) -> None`(동기 `def`도 됩니다 - 스레드로 넘깁니다)에 두면 그동안
+  backend의 회로 복구 프로브와 compose healthcheck가 503 `STARTING`을 보고 요청을 보내지 않습니다.
+  이름이 다르면 조용히 건너뛰므로 기동 로그의 `warmUp=있음`으로 확인합니다. 워밍업이 실패하면
+  준비 전에 머물러 컨테이너가 unhealthy로 남고 파이프라인이 롤백합니다. 스텁은 워밍업이 없습니다.
+- **배포에서는 토큰이 없으면 기동하지 않습니다.** 운영 compose가 `ACCENTURY_AI_INTERNAL_TOKEN_REQUIRED=true`를
+  주므로 SSM에서 토큰이 빠진 채 뜨는 fail-open 상태가 없습니다 (backend `DeploymentConfigGuard`와 대칭).
 
 ## 분석 엔진 어댑터 (KAN-135)
 
@@ -144,3 +150,4 @@ pytest
 | `ACCENTURY_AI_STUB_DELAY_MS` | `1500` | 추론 지연 흉내 |
 | `ACCENTURY_AI_STUB_FAIL_ITEM` | (없음) | 이 itemId면 422 판정 실패를 돌려줍니다 |
 | `ACCENTURY_AI_INTERNAL_TOKEN` | (없음) | backend와 나눠 갖는 내부 호출 시크릿 (KAN-36). 있으면 health를 뺀 모든 요청에 `X-Accentury-Internal-Token` 헤더를 요구합니다 |
+| `ACCENTURY_AI_INTERNAL_TOKEN_REQUIRED` | `false` | `true`면 위 토큰이 없을 때 기동이 실패합니다 (KAN-36). 운영 compose가 켭니다 |

@@ -201,6 +201,12 @@ locals {
   # 첫 부팅의 accentury-up.sh가 SSM을 읽을 때 config 모듈의 파라미터가 이미 있어야 한다 (KAN-129).
   # 역할별로 "반드시 있어야 하는 이름" 하나를 본다 - 접두사 일치까지 함께 검사되는 셈이다.
   required_parameter = local.is_backend ? "${var.ssm_prefix}/SPRING_PROFILES_ACTIVE" : "${var.ssm_prefix}/ai/ACCENTURY_AI_INTERNAL_TOKEN"
+
+  # EC2 user_data 상한은 raw 16KB다. Terraform length()는 글자 수라 한글 주석의 바이트를 못 세므로
+  # base64 길이로 환산한다. 2026-09-01 기준 ai 역할 약 15.6KB, backend 약 12.3KB - 실모델 전환(B단계)에서
+  # compose가 자라면 여기서 plan이 먼저 멈춘다 (AWS 오류보다 이유가 분명하다).
+  user_data_bytes     = floor(length(base64encode(local.user_data)) * 3 / 4)
+  user_data_max_bytes = 16384
 }
 
 # ---- backend: 고정 인스턴스 1대 ----
@@ -248,6 +254,11 @@ resource "aws_instance" "this" {
     precondition {
       condition     = contains(var.config_parameter_names, local.required_parameter)
       error_message = "config 모듈의 SSM 파라미터 ${local.required_parameter}가 config_parameter_names에 있어야 합니다 (KAN-129)."
+    }
+
+    precondition {
+      condition     = local.user_data_bytes <= local.user_data_max_bytes
+      error_message = "backend 역할 user_data가 EC2 상한 ${local.user_data_max_bytes} 바이트를 넘습니다 (약 ${local.user_data_bytes} 바이트). compose나 스크립트의 주석을 줄이거나 S3 배치로 옮기세요."
     }
   }
 
@@ -331,6 +342,11 @@ resource "aws_launch_template" "ai" {
     precondition {
       condition     = contains(var.config_parameter_names, local.required_parameter)
       error_message = "config 모듈의 SSM 파라미터 ${local.required_parameter}가 config_parameter_names에 있어야 합니다 (KAN-36)."
+    }
+
+    precondition {
+      condition     = local.user_data_bytes <= local.user_data_max_bytes
+      error_message = "ai 역할 user_data가 EC2 상한 ${local.user_data_max_bytes} 바이트를 넘습니다 (약 ${local.user_data_bytes} 바이트). compose나 스크립트의 주석을 줄이거나 S3 배치로 옮기세요 (KAN-36 B단계 compose 확장 시 주의)."
     }
   }
 

@@ -251,17 +251,26 @@ class RestAiAnalysisClientTest {
     }
 
     @Test
-    void 인증_거절_401은_계약_위반으로_접혀_회로에_실패로_센다() {
-        // 토큰이 어긋난 배포는 설정 버그다 - 재전송해도 같은 답이라 비재시도이되, 회로를 열어 경보(KAN-36)로 드러낸다.
+    void 인증_거절_401과_403은_예산에서_빠지는_일시_장애로_구분된다() {
+        // 토큰이 어긋난 배포는 서버 설정 문제다 - 계약 위반(비재시도 FAILED)으로 접으면 토큰 회전 중의
+        // 몇 초가 사용자 문항과 시도 상한을 태운다 (리뷰 P1). 429와 같이 추론 전 거절이라 UNREACHED다 -
+        // 회로는 실패로 세어 열리고, 소진 시 ANALYSIS_UNAVAILABLE로 재업로드를 열어 둔다.
         server.expect(requestTo("http://ai.test/internal/v0/analyze"))
                 .andRespond(withStatus(HttpStatus.UNAUTHORIZED).body("""
                         { "status": "FAILED", "detail": "내부 호출 토큰이 없거나 다르다" }
                         """).contentType(MediaType.APPLICATION_JSON));
+        AiAnalysisClient.AiUnavailableException unauthorized =
+                assertThrows(AiAnalysisClient.AiUnavailableException.class,
+                        () -> client.analyze(request(), "c_test"));
+        assertEquals(AiAnalysisClient.AiUnavailableException.Kind.UNREACHED, unauthorized.kind());
 
-        AiAnalysisClient.Rejected rejected =
-                assertInstanceOf(AiAnalysisClient.Rejected.class, client.analyze(request(), "c_test"));
-        assertEquals(AiAnalysisClient.Rejected.Cause.CONTRACT_VIOLATION, rejected.cause());
-        assertFalse(rejected.retryable());
+        server.reset();
+        server.expect(requestTo("http://ai.test/internal/v0/analyze"))
+                .andRespond(withStatus(HttpStatus.FORBIDDEN));
+        AiAnalysisClient.AiUnavailableException forbidden =
+                assertThrows(AiAnalysisClient.AiUnavailableException.class,
+                        () -> client.analyze(request(), "c_test"));
+        assertEquals(AiAnalysisClient.AiUnavailableException.Kind.UNREACHED, forbidden.kind());
     }
 
     @Test

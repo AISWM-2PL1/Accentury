@@ -239,6 +239,12 @@ class AnalysisEngine(Protocol):
 
     구현체는 이 프로토콜을 상속할 필요가 없다 - 구조만 맞으면 된다. 테스트의 가짜 엔진이
     바로 그 경우다 (KAN-135 AC).
+
+    선택 메서드 ``warm_up`` (KAN-36): 정확히 이 이름으로 ``async def warm_up(self) -> None``
+    (또는 동기 ``def warm_up(self) -> None`` - 앱이 스레드로 넘긴다)을 두면 앱이 기동 뒤 그것을
+    먼저 돌리고, 끝나야 health가 UP이 된다. 실모델(KAN-22)은 가중치 적재를 여기 둔다. 이름이
+    다르면 조용히 건너뛰므로 기동 로그의 ``warmUp=있음``으로 확인한다. Protocol은 선택 메서드를
+    표현하지 못해 여기 적어 둔다.
     """
 
     @property

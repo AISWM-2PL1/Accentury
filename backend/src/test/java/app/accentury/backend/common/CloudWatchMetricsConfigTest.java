@@ -5,8 +5,12 @@ import io.micrometer.core.instrument.Meter;
 import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.config.MeterFilterReply;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.env.YamlPropertySourceLoader;
+import org.springframework.core.env.StandardEnvironment;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.mock.env.MockEnvironment;
 
+import java.io.IOException;
 import java.time.Duration;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -42,6 +46,25 @@ class CloudWatchMetricsConfigTest {
         assertEquals(Duration.ofSeconds(30), config.step());
         // 프로퍼티가 없는 키는 Micrometer 기본값으로 떨어진다 (CloudWatch PutMetricData 상한인 1000).
         assertEquals(1000, config.batchSize());
+    }
+
+    @Test
+    void 배포_프로파일_yml이_레지스트리가_요구하는_키를_전부_준다() throws IOException {
+        // 부팅 테스트는 전부 export를 끄고 돈다(올릴 곳도 자격 증명도 없다) - 그래서 키 이름 하나가 어긋나도
+        // CI는 초록이고 배포 기동에서야 죽는다 (리뷰). yml 자체를 읽어 조립 경로를 한 번 지나게 한다.
+        StandardEnvironment environment = new StandardEnvironment();
+        new YamlPropertySourceLoader()
+                .load("deploy", new ClassPathResource("application-deploy.yml"))
+                .forEach(environment.getPropertySources()::addLast);
+
+        assertEquals("true", environment.getProperty(CloudWatchMetricsConfig.PROPERTY_PREFIX + "enabled"));
+        assertEquals("ap-northeast-2", environment.getRequiredProperty(CloudWatchMetricsConfig.PROPERTY_PREFIX + "region"));
+        CloudWatchConfig config = CloudWatchMetricsConfig.config(environment);
+        // 네임스페이스는 compute 모듈 IAM 조건과 경보(infra/modules/monitoring)가 보는 이름과 같아야 한다.
+        assertEquals("accentury/backend", config.namespace());
+        assertEquals(Duration.ofMinutes(1), config.step());
+        assertEquals("staging", environment.resolvePlaceholders("${ACCENTURY_ENV:staging}"),
+                "env 태그는 기동 스크립트가 넣는 ACCENTURY_ENV 자리표시자다");
     }
 
     private static Meter.Id id(String name) {

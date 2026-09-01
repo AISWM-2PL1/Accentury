@@ -149,6 +149,15 @@ class RestAiAnalysisClient implements AiAnalysisClient {
             throw new AiUnavailableException("AI 과부하 응답: 429",
                     AiUnavailableException.Kind.UNREACHED, null);
         }
+        if (statusCode == HttpStatus.UNAUTHORIZED.value() || statusCode == HttpStatus.FORBIDDEN.value()) {
+            // 내부 호출 토큰 거절 (KAN-36). 추론 전에 거절된 배포 설정 문제라 429와 같은 예산 취급이다 -
+            // 사용자 시도 상한(§2.5)을 깎지 않고, 재전송 예산이 다하면 ANALYSIS_UNAVAILABLE로 종결해 재업로드를
+            // 열어 둔다. 계약 위반으로 접으면 비재시도 FAILED가 되어 토큰 회전 중의 어긋남 몇 초가 사용자
+            // 문항을 태우고, health는 인증 예외라 반열림 시험마다 사용자 요청을 하나씩 더 태운다 (리뷰 P1).
+            // 회로에는 실패로 세이므로 연속되면 열리고 ai-circuit-open 경보로 드러난다.
+            throw new AiUnavailableException("AI 인증 거절: " + statusCode,
+                    AiUnavailableException.Kind.UNREACHED, null);
+        }
 
         AnalyzeResponse parsed;
         try {

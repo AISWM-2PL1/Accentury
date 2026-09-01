@@ -259,11 +259,16 @@ resource "aws_cloudwatch_metric_alarm" "ai_unhealthy" {
 # ai-unhealthy보다 사용자에게 가까운 신호다 - AI가 떠 있어도 추론만 죽은 장애(계약 위반,
 # 타임아웃 연속)는 이 경보만 잡는다.
 #
+# 임계값은 2(열림)다. 반열림(1)은 health가 UP이라 "다음 업로드 1건으로 시험한다"는 대기 상태이고,
+# 트래픽이 없으면 시험이 없어 밤새 1에 머문다 - 1 이상으로 걸면 잠깐 죽었다 복구된 AI가 아침까지
+# ALARM으로 남는다 (리뷰 P2). 사용자 요청이 503으로 끊기는 것은 열림(2)뿐이고, 추론이 죽은 채
+# 시험이 반복 실패하는 장애는 쿨다운(최대 80초)마다 2로 돌아와 1분 최대값이 2를 유지한다.
+#
 # treat_missing_data = "notBreaching": backend가 죽으면 지표가 끊기는데 그것은 unhealthy-hosts가
-# 잡는다. 2회 연속을 요구해 반열림 시험 1건이 오가는 순간(1)으로는 서지 않는다.
+# 잡는다. 2회 연속을 요구해 반열림 시험 실패로 잠깐 다시 열린 1분으로는 서지 않는다.
 resource "aws_cloudwatch_metric_alarm" "ai_circuit_open" {
   alarm_name        = "${local.name}-ai-circuit-open"
-  alarm_description = "accentury ${var.env}: backend의 AI 회로가 열려 있습니다. 업로드가 503으로 끊기는 중입니다. AI 호스트 상태와 backend 로그(AI 회로 열림 사유)를 확인하세요. (KAN-36)"
+  alarm_description = "accentury ${var.env}: backend의 AI 회로가 열려 있습니다(상태 2). 업로드가 503으로 끊기는 중입니다. AI 호스트 상태와 backend 로그(AI 회로 열림 사유)를 확인하세요. (KAN-36)"
 
   namespace   = var.backend_metric_namespace
   metric_name = "accentury.ai.circuit.state.value"
@@ -273,7 +278,7 @@ resource "aws_cloudwatch_metric_alarm" "ai_circuit_open" {
   period              = 60
   evaluation_periods  = 2
   comparison_operator = "GreaterThanOrEqualToThreshold"
-  threshold           = 1
+  threshold           = 2
   treat_missing_data  = "notBreaching"
 
   alarm_actions = local.alarm_actions
