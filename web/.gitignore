@@ -1,2 +1,10 @@
 node_modules/
 dist/
+
+# Playwright E2E 산출물 (KAN-181). 셋 다 실행할 때마다 새로 만들어지는 것이라 커밋 대상이 아니다.
+# test-results/  - 실패한 실행의 trace·스크린샷. 한 번에 수십 MB가 될 수 있다.
+# playwright-report/ - HTML 리포트.
+# playwright/.cache/ - Playwright가 스펙을 esbuild로 변환한 결과를 재사용하는 캐시.
+test-results/
+playwright-report/
+playwright/.cache/
