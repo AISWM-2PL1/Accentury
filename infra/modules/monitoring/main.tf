@@ -1,22 +1,24 @@
-# 최소 알림: SNS 이메일 + CloudWatch 경보 (KAN-134).
+# 최소 알림: SNS 이메일 + CloudWatch 경보 (KAN-134), AI 호스트 경보 (KAN-36), Fargate 전환 재구성 (KAN-165).
 #
 # 목적은 하나다. prod를 무인으로 운영하니 서버가 죽은 것을 사용자보다 먼저 알아야 한다.
 # KAN-38(전체 관측성: 지표 수집, 대시보드, correlation ID 규약)의 최소 선행분만 앞당긴
-# 것이고, KAN-38 본체는 그대로 남는다. 이 모듈이 만드는 것은 경보 4종뿐이며 지표를
-# 새로 수집하지 않는다 - 전부 AWS가 이미 내보내는 표준 지표다.
+# 것이고, KAN-38 본체는 그대로 남는다. 지표를 새로 수집하지 않는다 - AI 지표 2종을 빼면
+# 전부 AWS가 이미 내보내는 표준 지표다.
 #
-#   필수 (티켓 Requirements)
-#     unhealthy-hosts   대상 그룹에 비정상 대상이 있다 = backend가 죽었거나 헬스체크 실패
+#   필수 (KAN-134 Requirements)
+#     no-healthy-target 대상 그룹에 healthy 대상이 없다 = backend가 죽었거나 헬스체크 실패 (KAN-165에서 지표 교체)
 #     alb-5xx           사용자가 본 5xx가 연속으로 임계치를 넘었다
-#   선택 (티켓 "선택" 항목, 2026-08-28 두 환경 모두 포함으로 확정)
+#   선택 (KAN-134 "선택" 항목, 2026-08-28 두 환경 모두 포함으로 확정)
 #     rds-free-storage  RDS 여유 스토리지 하한
-#     ec2-cpu-surplus   EC2 초과 CPU 크레딧 상한 (크레딧을 다 쓰고 빌리기 시작)
+#   backend Fargate 서비스 (KAN-165, EC2 크레딧 경보 ec2-cpu-surplus의 자리)
+#     backend-cpu-high  서비스 CPU 평균이 지속적으로 높다 - 0.5 vCPU는 버스트가 없어 크기 상향 신호
+#     backend-mem-high  서비스 메모리 평균이 높다 - JVM OOM(ExitOnOutOfMemoryError로 태스크 사망) 전 조기 신호
 #   AI 전용 호스트 (KAN-36)
 #     ai-unhealthy      AI 호스트의 health 프로브 실패 (호스트 타이머가 올리는 커스텀 지표)
 #     ai-circuit-open   backend의 AI 회로가 열렸다 (backend가 Micrometer로 올리는 커스텀 지표)
 #
 # 전부 ap-northeast-2다. WAF 로그 그룹(KAN-149)만 us-east-1인데 그것은 CLOUDFRONT 스코프
-# 웹 ACL의 제약이고, 여기서 보는 ALB, RDS, EC2 지표는 리소스와 같은 서울 리전에 있다.
+# 웹 ACL의 제약이고, 여기서 보는 ALB, RDS, ECS 지표는 리소스와 같은 서울 리전에 있다.
 
 locals {
   name = "accentury-${var.env}"
@@ -56,39 +58,43 @@ locals {
   alarm_actions = [aws_sns_topic.alerts.arn]
 }
 
-# ---- 필수 경보 1: 대상 그룹 비정상 (backend 다운) ----
+# ---- 필수 경보 1: healthy 대상 없음 (backend 다운) ----
 
-# backend 컨테이너가 죽으면 /actuator/health(KAN-131)가 응답하지 않아 ALB가 대상을 비정상으로
-# 판정하고 UnHealthyHostCount가 1이 된다. 대상은 환경당 EC2 1대뿐이라(KAN-124) 1 = 전면 장애다.
+# KAN-134의 unhealthy-hosts(UnHealthyHostCount >= 1)를 KAN-165에서 HealthyHostCount < 1로 바꿨다. EC2 대상은
+# 컨테이너가 죽어도 인스턴스가 등록된 채 unhealthy로 남아 그 지표가 1이 됐지만, Fargate 태스크는 죽는 순간
+# ECS가 대상 그룹에서 등록 해제해 UnHealthyHostCount가 0에 머문다 - 헬스체크만 실패하는 태스크도 ECS가
+# 곧 교체해 unhealthy 구간이 1분 안팎이라 "2회 연속"에 못 미친다. 사용자 관점의 장애는 "받아 줄 healthy
+# 대상이 없다"이고, 그것은 대상이 교체 중이든 등록 해제됐든 HealthyHostCount 0으로 나타난다. 오토스케일링
+# (KAN-168) 뒤에는 "여럿 중 하나가 죽었다"는 이 경보에 안 잡히지만 그것은 부분 장애라 ECS가 알아서 교체한다.
 #
-# 1분 × 2회 + CloudWatch 평가 지연으로 약 3분 안에 메일이 나간다 (티켓 AC "수 분 내").
+# 1분 x 2회 + CloudWatch 평가 지연으로 약 3분 안에 메일이 나간다 (티켓 AC "수 분 내"). 태스크 교체(이미지
+# pull + JVM 기동 + healthy)가 2분에서 3분이라 교체 한 번은 경보 직전에 끝나거나 한 번 울리고 OK가 따라온다.
 #
-# treat_missing_data = "breaching": 이 지표는 대상 그룹에 등록된 대상이 있는 한 계속 나온다.
-# 데이터가 끊겼다는 것은 ALB나 대상 그룹 자체가 사라졌다는 뜻이라 그것도 장애로 센다.
-# 대가로, 스택을 새로 apply한 직후 EC2가 아직 부팅 중인 몇 분 동안 한 번 울린다. 이때는
-# 대상이 실제로 비정상이므로 경보가 맞고, 뜨고 나면 OK 알림이 따라온다.
-resource "aws_cloudwatch_metric_alarm" "unhealthy_hosts" {
-  alarm_name        = "${local.name}-unhealthy-hosts"
-  alarm_description = "accentury ${var.env}: ALB 대상 그룹에 비정상 대상이 있습니다. backend 컨테이너 또는 EC2를 확인하세요. (KAN-134)"
+# treat_missing_data = "breaching": 이 지표는 대상 그룹에 등록된 대상이 있는 한 계속 나온다. 데이터가
+# 끊겼다는 것은 등록된 대상이 하나도 없거나(서비스가 태스크를 못 띄움) ALB나 대상 그룹 자체가 사라졌다는
+# 뜻이라 그것도 장애로 센다. 대가로 스택을 새로 apply한 직후 첫 태스크가 뜨는 몇 분 동안 한 번 울린다.
+resource "aws_cloudwatch_metric_alarm" "no_healthy_target" {
+  alarm_name        = "${local.name}-no-healthy-target"
+  alarm_description = "accentury ${var.env}: ALB 대상 그룹에 healthy 대상이 없습니다. backend ECS 서비스의 태스크와 배포 상태를 확인하세요. (KAN-134, KAN-165)"
 
   namespace   = "AWS/ApplicationELB"
-  metric_name = "UnHealthyHostCount"
+  metric_name = "HealthyHostCount"
   dimensions = {
     TargetGroup  = var.target_group_arn_suffix
     LoadBalancer = var.alb_arn_suffix
   }
 
-  statistic           = "Maximum"
+  statistic           = "Minimum"
   period              = 60
   evaluation_periods  = 2
-  comparison_operator = "GreaterThanOrEqualToThreshold"
+  comparison_operator = "LessThanThreshold"
   threshold           = 1
   treat_missing_data  = "breaching"
 
   alarm_actions = local.alarm_actions
   ok_actions    = local.alarm_actions
 
-  tags = { Name = "${local.name}-unhealthy-hosts" }
+  tags = { Name = "${local.name}-no-healthy-target" }
 }
 
 # ---- 필수 경보 2: ALB 5xx 급증 ----
@@ -102,7 +108,7 @@ resource "aws_cloudwatch_metric_alarm" "unhealthy_hosts" {
 #
 # treat_missing_data = "notBreaching": 트래픽이 없으면 이 지표는 아예 나오지 않는다.
 # 무인 프로토타입에서 새벽에 요청이 0인 것은 정상이고, 그때 5xx 경보를 울릴 이유가 없다.
-# 서버가 죽은 것은 위의 unhealthy-hosts가 트래픽과 무관하게 잡는다.
+# 서버가 죽은 것은 위의 no-healthy-target이 트래픽과 무관하게 잡는다.
 resource "aws_cloudwatch_metric_alarm" "alb_5xx" {
   alarm_name        = "${local.name}-alb-5xx"
   alarm_description = "accentury ${var.env}: 5xx 응답이 ${var.alb_5xx_evaluation_periods}분 연속 분당 ${var.alb_5xx_threshold}건을 넘었습니다. ALB 자체 5xx와 backend 5xx의 합입니다. (KAN-134)"
@@ -149,7 +155,7 @@ resource "aws_cloudwatch_metric_alarm" "alb_5xx" {
   tags = { Name = "${local.name}-alb-5xx" }
 }
 
-# ---- 선택 경보 1: RDS 여유 스토리지 ----
+# ---- 선택 경보: RDS 여유 스토리지 ----
 
 # gp3 20GiB 고정에 자동 확장이 없다(KAN-122). 다 차면 인스턴스가 storage-full 상태로 멈추고
 # 복구는 스토리지 증설뿐이라 미리 알아야 한다.
@@ -177,58 +183,78 @@ resource "aws_cloudwatch_metric_alarm" "rds_free_storage" {
   tags = { Name = "${local.name}-rds-free-storage" }
 }
 
-# ---- 선택 경보 2: EC2 CPU 크레딧 소진 ----
+# ---- backend Fargate 서비스 경보 2종 (KAN-165) ----
 
-# t3.small은 버스트 인스턴스다. 기준 성능(vCPU당 20%)을 넘겨 쓰면 쌓아 둔 크레딧을 깎고,
-# 그것마저 떨어지면 초과 크레딧을 빌려 쓴다.
+# KAN-134의 ec2-cpu-surplus(t3.small 초과 CPU 크레딧)는 backend EC2와 함께 사라졌다. ai EC2(c7i.xlarge)는
+# 버스트 계열이 아니라 크레딧 지표 자체가 없어 옮길 곳이 없다. 그 자리에 ECS 서비스의 표준 지표 둘을 둔다 -
+# 둘 다 Container Insights 없이 AWS/ECS 네임스페이스에 서비스 단위 평균으로 나온다.
 #
-# compute 모듈이 credit_specification을 지정하지 않으므로 T3 기본값인 unlimited로 뜬다
-# (2026-08-28 실측 확인). unlimited에서는 크레딧이 0이 돼도 스로틀이 걸리지 않고 빌린 만큼이
-# vCPU 시간당 요금으로 청구된다. 그래서 이 경보는 "느려진다"가 아니라 "부하가 기준선을 넘겨
-# 요금이 붙기 시작한다"는 신호다. 프로토타입에서 그 상태는 인스턴스 크기를 올릴 때가 됐다는
-# 뜻이기도 하다.
+# CPU: Fargate 0.5 vCPU는 버스트가 없다. t3.small은 순간 2 vCPU까지 끌어 썼지만 여기서는 항상 정확히 0.5라,
+# 평균이 지속적으로 높으면 요청이 느려지고 있다는 뜻이자 크기(태스크 cpu) 상향 신호다. 오토스케일링(KAN-168)은
+# CPU가 아니라 요청 수로 늘리므로 이 경보와 겹치지 않는다. 5분 연속을 요구해 기동 직후 JVM JIT 스파이크와
+# 스모크 한 바퀴로는 서지 않는다.
 #
-# 지표는 CPUCreditBalance가 아니라 CPUSurplusCreditBalance다. unlimited 인스턴스는 잔액 0으로
-# 시작해 시간당 24개씩 쌓으므로, 잔액 하한으로 경보를 걸면 새로 뜬 인스턴스가 임계값에 닿을
-# 때까지 몇 시간 동안 무조건 운다. 2026-08-28 staging 실증에서 실제로 그렇게 됐다
-# (CPUCreditBalance 0.0, 기동 직후 ALARM). 반대로 초과 크레딧은 정상 부하에서 0 근처에
-# 머물다가 기준선을 넘겨 쓴 만큼만 쌓이므로, 기동 시점에 오탐이 없고 "크레딧을 다 쓰고
-# 빚을 지기 시작했다"는 뜻이 그대로 지표가 된다.
-#
-# 임계값 144: 시간당 24개를 버니 여섯 시간치 벌이만큼 빚진 상태다. 576을 넘으면 실제 과금이
-# 시작되므로 그 4분의 1 지점에서 먼저 알린다. 기동 직후의 짧은 스파이크(실측 0.5)는 한참
-# 아래다. 5분 × 2회를 요구해 순간 스파이크로는 서지 않는다.
-# treat_missing_data는 RDS와 같은 이유로 missing이다 (중지된 인스턴스는 지표를 내지 않는다).
-resource "aws_cloudwatch_metric_alarm" "ec2_cpu_surplus_credit" {
-  alarm_name        = "${local.name}-ec2-cpu-surplus"
-  alarm_description = "accentury ${var.env}: EC2가 초과 CPU 크레딧을 ${var.ec2_surplus_credit_threshold}개 넘게 빌렸습니다. 벌어들이는 크레딧보다 많이 쓰는 상태이고, 576을 넘으면 초과분이 과금됩니다. (KAN-134)"
+# treat_missing_data = "notBreaching": 태스크가 하나도 없으면 지표가 끊기는데 그것은 no-healthy-target이 잡는다.
+resource "aws_cloudwatch_metric_alarm" "backend_cpu_high" {
+  alarm_name        = "${local.name}-backend-cpu-high"
+  alarm_description = "accentury ${var.env}: backend 서비스 CPU 평균이 ${var.backend_cpu_evaluation_periods}분 연속 ${var.backend_cpu_threshold}%를 넘었습니다. Fargate 0.5 vCPU는 버스트가 없습니다 - 태스크 크기 상향 또는 오토스케일링(KAN-168)을 검토하세요. (KAN-165)"
 
-  namespace   = "AWS/EC2"
-  metric_name = "CPUSurplusCreditBalance"
-  dimensions  = { InstanceId = var.ec2_instance_id }
+  namespace   = "AWS/ECS"
+  metric_name = "CPUUtilization"
+  dimensions = {
+    ClusterName = var.ecs_cluster_name
+    ServiceName = var.ecs_service_name
+  }
 
-  statistic           = "Maximum"
-  period              = 300
-  evaluation_periods  = 2
-  comparison_operator = "GreaterThanThreshold"
-  threshold           = var.ec2_surplus_credit_threshold
-  treat_missing_data  = "missing"
+  statistic           = "Average"
+  period              = 60
+  evaluation_periods  = var.backend_cpu_evaluation_periods
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = var.backend_cpu_threshold
+  treat_missing_data  = "notBreaching"
 
   alarm_actions = local.alarm_actions
   ok_actions    = local.alarm_actions
 
-  tags = { Name = "${local.name}-ec2-cpu-surplus" }
+  tags = { Name = "${local.name}-backend-cpu-high" }
+}
+
+# 메모리: JVM 힙은 태스크 2 GB의 75%(1.5 GB)이고 힙이 마르면 ExitOnOutOfMemoryError로 즉시 죽어 ECS가 태스크를
+# 교체한다 (backend/Dockerfile). 그 사망은 no-healthy-target으로 사후에 알지만, 이 경보는 그 전에 "차오르고
+# 있다"를 알린다 - 메모리 누수와 크기 부족을 재기동 반복 전에 잡는다. 3분 연속이면 GC 뒤에도 안 내려가는 상태다.
+resource "aws_cloudwatch_metric_alarm" "backend_memory_high" {
+  alarm_name        = "${local.name}-backend-mem-high"
+  alarm_description = "accentury ${var.env}: backend 서비스 메모리 평균이 ${var.backend_memory_evaluation_periods}분 연속 ${var.backend_memory_threshold}%를 넘었습니다. 힙이 마르면 태스크가 죽고 교체됩니다 - 누수 또는 태스크 메모리 상향을 검토하세요. (KAN-165)"
+
+  namespace   = "AWS/ECS"
+  metric_name = "MemoryUtilization"
+  dimensions = {
+    ClusterName = var.ecs_cluster_name
+    ServiceName = var.ecs_service_name
+  }
+
+  statistic           = "Average"
+  period              = 60
+  evaluation_periods  = var.backend_memory_evaluation_periods
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = var.backend_memory_threshold
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = local.alarm_actions
+  ok_actions    = local.alarm_actions
+
+  tags = { Name = "${local.name}-backend-mem-high" }
 }
 
 # ---- AI 호스트 경보 1: health 프로브 실패 (KAN-36) ----
 
 # AI 호스트는 ALB 뒤가 아니라 대상 그룹 health가 없다. 대신 호스트의 systemd 타이머
-# (compute 모듈 ai-health-metric.sh)가 1분마다 /internal/v0/health를 찔러 Healthy 0|1을
+# (ai-host 모듈 ai-health-metric.sh)가 1분마다 /internal/v0/health를 찔러 Healthy 0|1을
 # 올린다 (네임스페이스 accentury/ai, 차원 env). 워밍업 중(503 STARTING)도 0이다.
 #
 # treat_missing_data = "breaching": 지표가 끊겼다는 것은 타이머가 도는 호스트 자체가 없거나
 # (ASG 교체 중, 스택 철거) 지표를 못 올리는 상태라 그것도 장애로 센다. 대가로 apply 직후와
-# 인스턴스 교체 직후 몇 분은 한 번 운다 - unhealthy-hosts와 같은 성격이고 OK 알림이 따라온다.
+# 인스턴스 교체 직후 몇 분은 한 번 운다 - no-healthy-target과 같은 성격이고 OK 알림이 따라온다.
 # 3회 연속을 요구해 reload 한 번(컨테이너 재생성 수십 초)으로는 서지 않는다.
 resource "aws_cloudwatch_metric_alarm" "ai_unhealthy" {
   alarm_name        = "${local.name}-ai-unhealthy"
@@ -257,14 +283,15 @@ resource "aws_cloudwatch_metric_alarm" "ai_unhealthy" {
 # 0 닫힘 / 1 반열림 / 2 열림)를 1분마다 올린다 (AnalysisDispatchConfig, application-deploy.yml).
 # 레지스트리는 게이지 이름에 .value를 붙여 내보낸다. 회로가 열리면 업로드가 전부 503이므로
 # ai-unhealthy보다 사용자에게 가까운 신호다 - AI가 떠 있어도 추론만 죽은 장애(계약 위반,
-# 타임아웃 연속)는 이 경보만 잡는다.
+# 타임아웃 연속)는 이 경보만 잡는다. 태스크가 여럿이면(KAN-168) 회로는 태스크별이라 이 지표는
+# 그중 최대값이다 - 하나라도 열리면 경보다.
 #
 # 임계값은 2(열림)다. 반열림(1)은 health가 UP이라 "다음 업로드 1건으로 시험한다"는 대기 상태이고,
 # 트래픽이 없으면 시험이 없어 밤새 1에 머문다 - 1 이상으로 걸면 잠깐 죽었다 복구된 AI가 아침까지
 # ALARM으로 남는다 (리뷰 P2). 사용자 요청이 503으로 끊기는 것은 열림(2)뿐이고, 추론이 죽은 채
 # 시험이 반복 실패하는 장애는 쿨다운(최대 80초)마다 2로 돌아와 1분 최대값이 2를 유지한다.
 #
-# treat_missing_data = "notBreaching": backend가 죽으면 지표가 끊기는데 그것은 unhealthy-hosts가
+# treat_missing_data = "notBreaching": backend가 죽으면 지표가 끊기는데 그것은 no-healthy-target이
 # 잡는다. 2회 연속을 요구해 반열림 시험 실패로 잠깐 다시 열린 1분으로는 서지 않는다.
 resource "aws_cloudwatch_metric_alarm" "ai_circuit_open" {
   alarm_name        = "${local.name}-ai-circuit-open"

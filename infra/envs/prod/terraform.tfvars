@@ -11,7 +11,7 @@ azs                  = ["ap-northeast-2a", "ap-northeast-2c"]
 public_subnet_cidrs  = ["10.0.0.0/24", "10.0.1.0/24"]
 private_subnet_cidrs = ["10.0.10.0/24", "10.0.11.0/24"]
 
-instance_type     = "t3.small"
+# backend는 EC2가 아니라 Fargate 서비스다 (KAN-165). 태스크 크기(0.5 vCPU / 2 GB)는 두 환경이 같아 모듈 기본값이다.
 db_instance_class = "db.t4g.micro"
 
 # AI 추론 호스트 (KAN-36). A단계 스텁 모드부터 c7i.xlarge (2026-09-01 결정). 루트 볼륨은 실모델

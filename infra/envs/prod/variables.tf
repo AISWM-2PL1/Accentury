@@ -35,17 +35,12 @@ variable "azs" {
 
 variable "public_subnet_cidrs" {
   type        = list(string)
-  description = "퍼블릭 서브넷 CIDR 2개 (EC2)"
+  description = "퍼블릭 서브넷 CIDR 2개 (backend 태스크, ai 호스트)"
 }
 
 variable "private_subnet_cidrs" {
   type        = list(string)
   description = "사설 서브넷 CIDR 2개 (internal ALB, RDS)"
-}
-
-variable "instance_type" {
-  type        = string
-  description = "backend EC2 인스턴스 타입 (t3.small)"
 }
 
 variable "ai_instance_type" {

@@ -70,51 +70,11 @@ module "config" {
   ai_dns_name                = module.network.ai_dns_name
 }
 
-# 커스텀 지표 네임스페이스 (KAN-36). 호스트 역할의 PutMetricData 조건과 경보가 같은 이름을 봐야 하므로
+# 커스텀 지표 네임스페이스 (KAN-36). 지표를 올리는 역할의 PutMetricData 조건과 경보가 같은 이름을 봐야 하므로
 # 한 곳에서 정한다. backend 것은 application-deploy.yml의 management.cloudwatch.metrics.export.namespace와도 같다.
 locals {
   backend_metric_namespace = "accentury/backend"
   ai_metric_namespace      = "accentury/ai"
-}
-
-# backend 호스트 - 고정 EC2 1대, ALB 대상 (KAN-124).
-module "compute" {
-  source = "../../modules/compute"
-
-  role                       = "backend"
-  env                        = var.env
-  subnet_ids                 = module.network.public_subnet_ids
-  security_group_id          = module.network.ec2_sg_id
-  instance_type              = var.instance_type
-  ssm_prefix                 = var.ssm_prefix
-  rds_master_user_secret_arn = module.data.master_user_secret_arn
-  metric_namespace           = local.backend_metric_namespace
-  # 인스턴스가 SSM 파라미터 생성 뒤에 첫 부팅하도록 순서를 잡는다 (compute/main.tf precondition).
-  # IMAGE_TAG는 Terraform 밖이라 재구축 시 이전 값이 남아 있을 수 있어 이 순서가 실제로 문제가 된다.
-  config_parameter_names = module.config.parameter_names
-}
-
-# ai 호스트 - ASG(min 1, max 1)의 전용 추론 EC2 (KAN-36 A단계, 스텁 모드). 인스턴스 유형은 2026-09-01
-# 결정으로 처음부터 c7i.xlarge이고, 루트 볼륨만 실모델 전환(B단계)에서 tfvars로 40GB가 된다.
-module "ai_compute" {
-  source = "../../modules/compute"
-
-  role              = "ai"
-  env               = var.env
-  subnet_ids        = module.network.public_subnet_ids
-  security_group_id = module.network.ai_sg_id
-  instance_type     = var.ai_instance_type
-  root_volume_size  = var.ai_root_volume_size
-  ssm_prefix        = var.ssm_prefix
-  metric_namespace  = local.ai_metric_namespace
-  # ai 호스트 역할은 자기 하위 경로(/ai)와 IMAGE_TAG만 읽는다 - 내부 호출 토큰이 먼저 있어야 한다.
-  config_parameter_names = module.config.ai_parameter_names
-
-  ai = {
-    private_zone_id = module.network.private_zone_id
-    dns_name        = module.network.ai_dns_name
-    vpc_cidr        = var.vpc_cidr
-  }
 }
 
 # CloudFront 앞단 WAF (KAN-149). CLOUDFRONT 스코프 웹 ACL과 그 로그 그룹은 us-east-1에만
@@ -131,6 +91,7 @@ module "waf" {
   rate_limit = var.waf_rate_limit
 }
 
+# internal ALB(대상 그룹 ip), VPC 오리진, CloudFront, S3. 대상 등록은 ECS 서비스가 한다 (KAN-165).
 module "edge" {
   source = "../../modules/edge"
 
@@ -139,11 +100,53 @@ module "edge" {
   vpc_id              = module.network.vpc_id
   private_subnet_ids  = module.network.private_subnet_ids
   alb_sg_id           = module.network.alb_sg_id
-  instance_id         = module.compute.instance_id
   acm_certificate_arn = data.aws_acm_certificate.cloudfront.arn
   alb_certificate_arn = data.aws_acm_certificate.alb.arn
   zone_id             = data.aws_route53_zone.this.zone_id
   web_acl_arn         = module.waf.web_acl_arn
+}
+
+# backend - ECS Fargate 서비스 (KAN-165). 0.5 vCPU / 2 GB 온디맨드 1개, 오토스케일링은 KAN-168.
+# 이미지 태그는 SSM IMAGE_TAG(파이프라인 소유)를 읽으므로 첫 apply 전에 그 파라미터가 있어야 한다 (README).
+module "fargate" {
+  source = "../../modules/fargate"
+
+  env                        = var.env
+  subnet_ids                 = module.network.public_subnet_ids
+  security_group_id          = module.network.backend_sg_id
+  ssm_prefix                 = var.ssm_prefix
+  rds_master_user_secret_arn = module.data.master_user_secret_arn
+  metric_namespace           = local.backend_metric_namespace
+  target_group_arn           = module.edge.target_group_arn
+  alb_listener_arn           = module.edge.https_listener_arn
+  # 태스크 정의 secrets로 전부 주입한다 - 실행 역할도 이 목록만 읽는다.
+  config_parameter_names = module.config.parameter_names
+}
+
+# ai 호스트 - ASG(min 1, max 1)의 전용 추론 EC2 (KAN-36 A단계, 스텁 모드). 인스턴스 유형은 2026-09-01
+# 결정으로 처음부터 c7i.xlarge이고, 루트 볼륨만 실모델 전환(B단계)에서 tfvars로 40GB가 된다.
+module "ai_host" {
+  source = "../../modules/ai-host"
+
+  env               = var.env
+  subnet_ids        = module.network.public_subnet_ids
+  security_group_id = module.network.ai_sg_id
+  instance_type     = var.ai_instance_type
+  root_volume_size  = var.ai_root_volume_size
+  ssm_prefix        = var.ssm_prefix
+  metric_namespace  = local.ai_metric_namespace
+  # ai 호스트 역할은 자기 하위 경로(/ai)와 IMAGE_TAG만 읽는다 - 내부 호출 토큰이 먼저 있어야 한다.
+  config_parameter_names = module.config.ai_parameter_names
+  private_zone_id        = module.network.private_zone_id
+  dns_name               = module.network.ai_dns_name
+  vpc_cidr               = var.vpc_cidr
+}
+
+# KAN-36에서는 compute 모듈을 role = "ai"로 부른 module.ai_compute였다 (backend 역할 호출 module.compute는
+# KAN-165에서 Fargate 서비스로 대체돼 사라진다). 살아 있는 state에서 주소만 옮긴다.
+moved {
+  from = module.ai_compute
+  to   = module.ai_host
 }
 
 # 배포 파이프라인 역할 (KAN-127). GitHub Actions가 OIDC로 맡는다. 공급자는 bootstrap 소유.
@@ -158,10 +161,18 @@ module "deploy" {
   ci_image_push               = var.ci_image_push
   web_bucket_arn              = module.edge.web_bucket_arn
   cloudfront_distribution_arn = module.edge.distribution_arn
+
+  ecs = {
+    cluster_arn                = module.fargate.cluster_arn
+    service_arn                = module.fargate.service_arn
+    task_definition_family_arn = module.fargate.task_definition_family_arn
+    task_role_arn              = module.fargate.task_role_arn
+    execution_role_arn         = module.fargate.execution_role_arn
+  }
 }
 
-# 최소 알림 (KAN-134) + AI 호스트 경보 2종 (KAN-36). ALB, RDS, EC2 표준 지표 4종에 backend의 회로 상태
-# 게이지와 ai 호스트의 health 커스텀 지표를 더한다. 전체 관측성은 KAN-38.
+# 최소 알림 (KAN-134) + backend 서비스 경보 2종 (KAN-165) + AI 호스트 경보 2종 (KAN-36). ALB, RDS, ECS 표준
+# 지표에 backend의 회로 상태 게이지와 ai 호스트의 health 커스텀 지표를 더한다. 전체 관측성은 KAN-38.
 module "monitoring" {
   source = "../../modules/monitoring"
 
@@ -170,7 +181,8 @@ module "monitoring" {
   alb_arn_suffix           = module.edge.alb_arn_suffix
   target_group_arn_suffix  = module.edge.target_group_arn_suffix
   db_instance_identifier   = module.data.instance_identifier
-  ec2_instance_id          = module.compute.instance_id
+  ecs_cluster_name         = module.fargate.cluster_name
+  ecs_service_name         = module.fargate.service_name
   ai_metric_namespace      = local.ai_metric_namespace
   backend_metric_namespace = local.backend_metric_namespace
 }

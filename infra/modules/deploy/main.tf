@@ -92,17 +92,18 @@ resource "aws_iam_role_policy" "web_deploy" {
   policy = data.aws_iam_policy_document.web_deploy.json
 }
 
-# ---- 이미지 배포 (KAN-128) ----
+# ---- 이미지 배포 (KAN-128, Fargate 전환 KAN-165) ----
 #
 # 파이프라인(.github/workflows/deploy.yml)이 하는 일과 1:1로 대응한다. 태그 조회와 SSM IMAGE_TAG
-# 갱신, Run Command로 EC2에 reload 지시, 결과 조회, 스모크용 관리자 토큰 읽기. ECR push는
-# staging 역할만 갖는다(승격 모델) - prod 역할로는 새 이미지를 만들 수 없고 staging이 검증한
-# SHA를 고를 수만 있다.
+# 갱신, Run Command로 ai 호스트에 reload 지시와 결과 조회, backend 태스크 정의 리비전 등록과
+# update-service, 배포 상태 조회, 스모크용 관리자 토큰 읽기. ECR push는 staging 역할만 갖는다
+# (승격 모델) - prod 역할로는 새 이미지를 만들 수 없고 staging이 검증한 SHA를 고를 수만 있다.
 #
-# Run Command 대상은 인스턴스 ID가 아니라 tag:Name이다. user_data가 바뀌면 인스턴스가 교체되는데
-# (compute 모듈), ID를 변수로 따라가면 그때마다 GitHub 변수를 고쳐야 한다. 신뢰 정책과 마찬가지로
-# 이 환경 이름이 붙은 인스턴스에만 보낼 수 있다. 호스트가 둘이다 (KAN-36): backend 호스트
-# accentury-{env}와 ai 호스트 accentury-{env}-ai. 파이프라인은 ai를 먼저, backend를 다음에 reload한다.
+# Run Command 대상은 인스턴스 ID가 아니라 tag:Name이다. ASG 교체로 인스턴스가 바뀌는데(ai-host 모듈)
+# ID를 변수로 따라가면 그때마다 GitHub 변수를 고쳐야 한다. 신뢰 정책과 마찬가지로 이 환경 이름이
+# 붙은 ai 호스트(accentury-{env}-ai)에만 보낼 수 있다. backend는 EC2가 아니라 ECS 서비스라(KAN-165)
+# Run Command 대상이 아니고, 아래 ECS 문장들이 그 자리다. 파이프라인은 ai를 먼저, backend를 다음에
+# 반영한다.
 
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
@@ -139,7 +140,7 @@ data "aws_iam_policy_document" "image_deploy" {
     condition {
       test     = "StringEquals"
       variable = "ssm:resourceTag/Name"
-      values   = [local.name, "${local.name}-ai"]
+      values   = ["${local.name}-ai"]
     }
   }
 
@@ -154,6 +155,62 @@ data "aws_iam_policy_document" "image_deploy" {
     sid       = "ReadCommandResult"
     actions   = ["ssm:ListCommandInvocations", "ssm:GetCommandInvocation"]
     resources = ["*"]
+  }
+
+  # ---- backend Fargate 서비스 (KAN-165) ----
+  # 서비스가 도는 태스크 정의를 읽어(DescribeTaskDefinition) image만 바꾼 리비전을 등록하고
+  # (RegisterTaskDefinition) update-service로 굴린 뒤 rolloutState를 본다(DescribeServices). 실패한 리비전과
+  # 지난 실행의 잔존 리비전은 지운다(ListTaskDefinitions로 찾고 DeregisterTaskDefinition) - Terraform이 패밀리의
+  # 최신 ACTIVE 리비전을 읽으므로(track_latest) 남기면 drift다. AWS 서비스 권한 레퍼런스 기준(2026-09-02 확인)
+  # RegisterTaskDefinition만 task-definition 리소스 수준 권한을 지원해 이 환경 패밀리로 좁히고, Describe와
+  # Deregister와 List는 지원하지 않아 *다 - staging 역할이 prod 패밀리의 리비전을 deregister할 수 있는 표면이
+  # 남는데(등록은 못 함), 삭제가 아니라 INACTIVE 전환이고 도는 서비스에는 영향이 없어 수용한다. 서비스 둘은
+  # 이 환경 서비스 ARN으로, 태스크 조회는 클러스터 조건으로 좁힌다.
+  statement {
+    sid       = "EcsRegisterBackendTaskDefinition"
+    actions   = ["ecs:RegisterTaskDefinition"]
+    resources = [var.ecs.task_definition_family_arn, "${var.ecs.task_definition_family_arn}:*"]
+  }
+
+  statement {
+    sid = "EcsTaskDefinitions"
+    actions = [
+      "ecs:DeregisterTaskDefinition",
+      "ecs:DescribeTaskDefinition",
+      "ecs:ListTaskDefinitions",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "EcsDeployBackendService"
+    actions   = ["ecs:UpdateService", "ecs:DescribeServices"]
+    resources = [var.ecs.service_arn]
+  }
+
+  statement {
+    sid       = "EcsInspectBackendTasks"
+    actions   = ["ecs:ListTasks", "ecs:DescribeTasks"]
+    resources = ["*"]
+
+    condition {
+      test     = "ArnEquals"
+      variable = "ecs:cluster"
+      values   = [var.ecs.cluster_arn]
+    }
+  }
+
+  # 리비전 등록은 태스크 정의에 적힌 두 역할을 ECS에 넘긴다(PassRole). 그 둘만, ECS 태스크 서비스에만.
+  statement {
+    sid       = "PassBackendTaskRoles"
+    actions   = ["iam:PassRole"]
+    resources = [var.ecs.task_role_arn, var.ecs.execution_role_arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["ecs-tasks.amazonaws.com"]
+    }
   }
 
   statement {

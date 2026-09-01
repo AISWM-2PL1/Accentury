@@ -37,3 +37,14 @@ variable "cloudfront_distribution_arn" {
   type        = string
   description = "이 환경의 CloudFront 배포 ARN (edge 모듈 출력). 무효화 권한을 이 배포 하나로 한정한다."
 }
+
+variable "ecs" {
+  type = object({
+    cluster_arn                = string # ecs:cluster 조건 값 (태스크 조회)
+    service_arn                = string # UpdateService, DescribeServices 리소스
+    task_definition_family_arn = string # RegisterTaskDefinition 리소스 (리비전 없는 패밀리 ARN)
+    task_role_arn              = string # RegisterTaskDefinition의 PassRole 대상
+    execution_role_arn         = string # RegisterTaskDefinition의 PassRole 대상
+  })
+  description = "backend Fargate 서비스 (KAN-165, fargate 모듈 출력). 파이프라인이 리비전 등록과 update-service를 이 서비스에만 할 수 있게 한정한다."
+}

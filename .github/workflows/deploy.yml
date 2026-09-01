@@ -1,20 +1,26 @@
-# BE, AI 이미지 배포 파이프라인 (KAN-128)
+# BE, AI 이미지 배포 파이프라인 (KAN-128, backend Fargate 전환 KAN-165)
 #
 # 승격 모델 (2026-08-17 확정): 이미지는 한 번만 빌드하고 staging에서 검증된 바로 그 SHA를 prod로
 # 올린다. prod에서 재빌드하면 staging 검증이 무의미해진다.
 #
-#   Dev 푸시     -> build(현재 커밋 SHA로 두 이미지를 ECR에 push) -> deploy(staging, ai 호스트 -> backend 호스트) -> smoke
+#   Dev 푸시     -> build(현재 커밋 SHA로 두 이미지를 ECR에 push) -> deploy(staging, ai 호스트 -> backend 서비스) -> smoke
 #   Release 푸시 -> deploy(prod): 재빌드 없이 Dev 이력에서 ECR에 실재하는 최신 SHA를 승격
 #   수동 실행    -> environment와 image_tag를 고른다. 롤백 = 이전 SHA를 image_tag에 넣고 같은 절차
 #
-# 반영 절차는 EC2 기동 스크립트(infra/modules/compute/accentury-up.sh)와 짝이다: SSM
-# /accentury/{env}/IMAGE_TAG를 새 SHA로 바꾸고 SSM Run Command로 `systemctl reload accentury`를
-# 부른 뒤, 그 호스트의 컨테이너가 healthy가 될 때까지 기다린다. 호스트는 둘이다 (KAN-36): ai 호스트
-# (tag:Name=accentury-{env}-ai)를 먼저, backend 호스트(accentury-{env})를 다음에 reload한다 - backend가
-# 새 AI 계약을 전제로 할 수 있어 AI가 먼저 올라와야 한다. 어느 호스트든 healthy에 못 미치면 IMAGE_TAG를
-# 직전 값으로 되돌려 두 호스트를 역순(backend, ai)으로 다시 reload한다 (AC "반영 실패 시 기존 컨테이너 유지"를
-# 자동 롤백으로 만족). 컨테이너 자체는 compose가 교체하므로 "기존 컨테이너"가 아니라 "기존 이미지"가
-# 유지되는 것이다.
+# 반영은 두 갈래다 (KAN-165). 먼저 SSM /accentury/{env}/IMAGE_TAG를 새 SHA로 바꾼다 - ai 호스트가 읽고,
+# Terraform이 backend 태스크 정의의 image로 읽는 정본이다 (infra/modules/fargate).
+#   ai 호스트 (EC2)    SSM Run Command로 `systemctl reload accentury`를 부른 뒤 컨테이너의 docker healthcheck가
+#                      healthy가 될 때까지 기다린다 (infra/modules/ai-host/accentury-up.sh와 짝).
+#   backend (Fargate)  서비스가 도는 태스크 정의 리비전을 복제해 image 태그만 바꾼 새 리비전을 등록하고
+#                      `ecs update-service`로 롤링 배포한다. 완료 판정은 ECS 배포의 rolloutState(COMPLETED)다 -
+#                      ECS가 새 태스크의 컨테이너 healthcheck와 ALB 대상 health를 보고 판정한다. 회로 차단기
+#                      (연속 실패 3회)가 FAILED로 접으면 ECS가 직전 COMPLETED 배포로 스스로 되돌린다.
+# 순서는 ai 먼저, backend 다음이다 - backend가 새 AI 계약을 전제로 할 수 있어 AI가 먼저 올라와야 한다(새 AI는
+# 옛 backend 호출을 받아야 한다). 어느 쪽이든 실패하면 역순(backend, ai)으로 직전 SHA로 되돌린다 - 같은 순서로
+# 되돌리면 "옛 AI + 새 backend" 창이 생기는데 그 조합은 아무도 보장하지 않는다. backend 롤백은 ECS가 이미
+# 되돌렸으면 그 배포의 완료만 확인하고, 아니면(시간 초과 등) 직전 태스크 정의로 update-service 한다. 실패한
+# 리비전은 deregister한다 - Terraform이 패밀리의 최신 ACTIVE 리비전을 읽으므로(track_latest) 남겨 두면
+# plan에 drift로 나온다.
 #
 # staging 검증 표시 (Codex P1 반영): staging 반영과 E2E 스모크가 모두 통과한 SHA에만 ECR에서 같은
 # 이미지에 verified-<sha> 태그를 하나 더 붙인다 (IMMUTABLE은 기존 태그 덮어쓰기만 막고 새 태그 추가는
@@ -120,19 +126,22 @@ jobs:
           fi
           scripts/push-images.sh
 
-  # ---- 반영: SSM IMAGE_TAG 갱신 + Run Command reload + healthy 대기, 실패 시 자동 롤백 ----
+  # ---- 반영: SSM IMAGE_TAG 갱신 + ai 호스트 reload + backend update-service, 실패 시 자동 롤백 ----
   deploy:
     needs: [build]
     # build가 skipped(Release 푸시, prod 수동, 태그 지정 수동)여도 돈다. build 실패나 철거 중이면 멈춘다.
     if: >-
       !cancelled() && needs.build.result != 'failure' && needs.build.outputs.paused != 'true'
     runs-on: ubuntu-latest
-    # 반영 최대 15분 + 롤백 최대 15분 + 스모크.
-    timeout-minutes: 45
+    # 반영 최대 (ai 15분 + backend 20분) + 롤백 최대 (backend 10분 + ai 15분) + 스모크.
+    timeout-minutes: 75
     environment: ${{ inputs.environment || (github.ref_name == 'Release' && 'prod' || 'staging') }}
     env:
       TARGET_ENV: ${{ inputs.environment || (github.ref_name == 'Release' && 'prod' || 'staging') }}
       SSM_PREFIX: /accentury/${{ inputs.environment || (github.ref_name == 'Release' && 'prod' || 'staging') }}
+      # backend ECS 서비스 (infra/modules/fargate). 이름은 환경 이름에서 결정되므로 GitHub 변수가 아니다.
+      ECS_CLUSTER: accentury-${{ inputs.environment || (github.ref_name == 'Release' && 'prod' || 'staging') }}
+      ECS_SERVICE: backend
     steps:
       - uses: actions/checkout@v4
         with:
@@ -221,12 +230,14 @@ jobs:
           echo "how=$how" >> "$GITHUB_OUTPUT"
           echo "반영 태그 $tag ($how)"
 
-      - name: 직전 태그 기록
+      # 롤백의 근거 둘을 기록한다. 직전 IMAGE_TAG(ai 호스트와 backend 이미지의 이전 값)와 backend 서비스가 지금
+      # 도는 태스크 정의(ECS 롤백 대상). 태그의 "없음"은 ParameterNotFound일 때만 인정하고, 스로틀링이나 권한
+      # 오류는 실패로 세운다 - 빈 값으로 넘어가면 반영 실패 시 롤백할 곳이 없어진다 (Codex P2). 서비스가 없으면
+      # (Terraform apply 전) 여기서 실패한다 - backend 반영은 살아 있는 서비스를 전제한다.
+      - name: 직전 태그와 태스크 정의 기록
         id: prev
         if: steps.gate.outputs.paused != 'true'
         run: |
-          # 롤백의 근거가 되는 값이다. "없음"은 ParameterNotFound일 때만 인정하고, 스로틀링이나 권한
-          # 오류는 실패로 세운다 - 빈 값으로 넘어가면 반영 실패 시 롤백할 곳이 없어진다 (Codex P2).
           set +e
           out=$(aws ssm get-parameter --name "$SSM_PREFIX/IMAGE_TAG" --query Parameter.Value --output text 2>&1)
           rc=$?
@@ -241,11 +252,26 @@ jobs:
           fi
           echo "previous_tag=$prev" >> "$GITHUB_OUTPUT"
           echo "직전 태그: ${prev:-(없음, 첫 배포)}"
+          # 롤백 대상은 "마지막으로 COMPLETED였던 배포"의 태스크 정의다. services[0].taskDefinition은 update-service
+          # 시점에 바뀌므로, 결과 불명으로 끝난 직전 실행 직후 재실행하면 검증 안 된 리비전을 직전 값으로 잘못
+          # 기록할 수 있다 (리뷰 반영).
+          prev_td=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --query "services[0].deployments[?rolloutState=='COMPLETED'] | [0].taskDefinition" --output text)
+          if [ -z "$prev_td" ] || [ "$prev_td" = None ]; then
+            prev_td=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+              --query 'services[0].taskDefinition' --output text)
+            if [ -z "$prev_td" ] || [ "$prev_td" = None ]; then
+              echo "::error::ECS 서비스 $ECS_CLUSTER/$ECS_SERVICE 가 없습니다. Terraform apply(infra/envs/$TARGET_ENV)가 먼저입니다." >&2
+              exit 1
+            fi
+            echo "경고: COMPLETED 배포가 없어 서비스의 현재 태스크 정의를 기록합니다. 배포가 진행 중이면 안정화 뒤 재실행하세요."
+          fi
+          echo "previous_task_definition=$prev_td" >> "$GITHUB_OUTPUT"
+          echo "직전 태스크 정의: $prev_td"
 
-      # 원격 절차 한 벌 - 두 호스트가 같은 스크립트를 돈다. 인스턴스는 tag:Name으로 고른다 - user_data
-      # 변경이나 ASG 교체로 인스턴스가 바뀌어도 ID를 변수로 따라갈 필요가 없다. reload는 accentury-up.sh를
-      # 다시 태우고(SSM 재조회, pull, compose up), 그 뒤 그 호스트 compose에 정의된 서비스 전부의 docker
-      # healthcheck가 healthy가 될 때까지 기다린다 (backend 호스트는 backend, ai 호스트는 ai - KAN-36).
+      # ai 호스트의 원격 절차. 인스턴스는 tag:Name으로 고른다 - ASG 교체로 인스턴스가 바뀌어도 ID를 변수로 따라갈
+      # 필요가 없다. reload는 accentury-up.sh를 다시 태우고(SSM 재조회, pull, compose up), 그 뒤 compose에 정의된
+      # 서비스 전부(ai 하나)의 docker healthcheck가 healthy가 될 때까지 기다린다.
       - name: 원격 반영 스크립트 준비
         if: steps.gate.outputs.paused != 'true'
         run: |
@@ -286,11 +312,15 @@ jobs:
           done
           echo "IMAGE_TAG=$current"
           REMOTE
-          # 반영 함수: 태그를 SSM에 쓰고 Run Command를 보내 끝날 때까지 기다린다. 결과 0/1 반환.
+          # 반영 함수: 태그를 SSM에 쓰고 ai 호스트와 backend 서비스에 차례로 반영한다. 종료 코드 0 성공, 1 실패
+          # (원격 결과가 확인됨, 롤백 가능), 2 알 수 없음(조회 API가 계속 실패해 원격이 아직 도는지 모름 - 롤백을
+          # 겹쳐 보내면 안 되므로 자동 롤백하지 않는다, Codex 3차 P2).
           cat > apply.sh <<'APPLY'
           set -uo pipefail
           tag="$1"
           order="${2:-forward}"
+          # backend 롤백(reverse)이 지울 리비전. forward가 등록하면서 적는다.
+          NEW_TD_FILE=backend-new-taskdef
           # 태그 쓰기가 실패하면 여기서 끝낸다 - 넘어가면 옛 태그로 reload가 돌고 healthy가 나와 새 태그가
           # 반영된 것처럼 보인다 (Codex P1).
           if ! aws ssm put-parameter --name "$SSM_PREFIX/IMAGE_TAG" --type String --value "$tag" --overwrite >/dev/null; then
@@ -300,9 +330,20 @@ jobs:
           # 원격 실행 상한 840초 (accentury-up.sh 재시도 약 4분 + pull + healthy 대기 5분 + 전파 재시도).
           # 아래 대기 루프는 이보다 길어야(900초) 명령이 아직 도는데 롤백을 겹쳐 보내는 일이 없다 (Codex P2).
           jq -n --rawfile s "remote-$tag.sh" '{commands: [$s], executionTimeout: ["840"]}' > params.json
-          # 호스트 하나를 reload하고 결과를 기다린다. 종료 코드: 0 성공, 1 실패(원격 결과가 확인됨, 롤백 가능),
-          # 2 알 수 없음(조회 API가 계속 실패해 원격이 아직 도는지 모름 - 롤백을 겹쳐 보내면 안 되므로 자동
-          # 롤백하지 않는다, Codex 3차 P2).
+
+          # 조회 재시도: 성공하면 stdout을 그대로 내보내고, n회 모두 실패하면 1을 돌려준다. 반영 전후의 단발
+          # describe가 일시 스로틀 한 번으로 실행 전체를 "결과 불명"으로 만들지 않게 한다 (리뷰 반영).
+          retry_capture() {
+            local n="$1" i out; shift
+            for i in $(seq 1 "$n"); do
+              if out=$("$@" 2>/dev/null); then printf '%s\n' "$out"; return 0; fi
+              echo "조회 실패 ($i/$n): $*" >&2
+              sleep 5
+            done
+            return 1
+          }
+
+          # ---- ai 호스트: Run Command reload + healthy 대기 ----
           reload_host() {
             local host="$1" cmd status api_errors i out
             cmd=$(aws ssm send-command \
@@ -349,27 +390,171 @@ jobs:
             echo "--- 상태 ($host): $status ---"
             [ "$status" = Success ]
           }
-          # 정방향은 ai 호스트 먼저, backend 호스트 다음 (KAN-36) - 새 backend가 새 AI 계약을 전제로 할 수
-          # 있고, 새 AI는 옛 backend 호출을 받아야 한다(하위 호환). 롤백은 그 역순(backend 먼저, ai 다음)이다 -
-          # 같은 순서로 되돌리면 "옛 AI + 새 backend" 창이 생기는데 그 조합은 아무도 보장하지 않는다 (리뷰).
-          # 앞 호스트가 실패하면 뒤 호스트는 건드리지 않는다.
+
+          # ---- backend Fargate 서비스: 리비전 등록 + update-service + rolloutState 대기 ----
+          # PRIMARY 배포 하나를 JSON으로 읽는다 (id, rolloutState, rolloutStateReason, taskDefinition, runningCount, failedTasks).
+          primary_deployment() {
+            aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+              --query 'services[0].deployments[?status==`PRIMARY`] | [0]' --output json
+          }
+          service_task_definition() {
+            aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+              --query 'services[0].taskDefinition' --output text
+          }
+          # 배포 하나가 COMPLETED가 될 때까지 기다린다. 종료 코드: 0 완료, 1 실패(FAILED, PRIMARY가 다른 배포로
+          # 바뀜 = 회로 차단기 롤백, 또는 시간 초과), 2 알 수 없음(조회 API 연속 실패).
+          wait_rollout() {
+            local deployment="$1" limit="$2" i line id state reason running failed new_td api_errors=0
+            for i in $(seq 1 "$limit"); do
+              if line=$(primary_deployment 2>&1); then
+                api_errors=0
+              else
+                api_errors=$((api_errors + 1))
+                echo "조회 실패 ($api_errors/10): $line"
+                if [ "$api_errors" -ge 10 ]; then
+                  echo "배포 상태를 확인할 수 없습니다 ($deployment). 자동 롤백하지 않습니다."; return 2
+                fi
+                sleep 10; continue
+              fi
+              id=$(jq -r '.id // ""' <<<"$line")
+              state=$(jq -r '.rolloutState // ""' <<<"$line")
+              reason=$(jq -r '.rolloutStateReason // ""' <<<"$line")
+              running=$(jq -r '.runningCount // 0' <<<"$line")
+              failed=$(jq -r '.failedTasks // 0' <<<"$line")
+              if [ "$id" != "$deployment" ]; then
+                # 어디로 바뀌었는지 본다. 직전 리비전이면 ECS 회로 차단기의 롤백이고(실패 처리), 그 밖이면 이 실행
+                # 밖의 배포(terraform apply의 태스크 정의 변경 등)가 끼어든 것이라 그 위에 자동 롤백을 덮어쓰지
+                # 않는다 (리뷰 반영).
+                new_td=$(jq -r '.taskDefinition // ""' <<<"$line")
+                if [ "$new_td" = "${PREVIOUS_TASK_DEF:-}" ]; then
+                  echo "PRIMARY 배포가 $deployment 에서 $id 로 바뀌었습니다 - ECS 회로 차단기가 직전 리비전으로 되돌렸습니다."; return 1
+                fi
+                echo "PRIMARY 배포가 이 실행 밖의 리비전($new_td)으로 바뀌었습니다 - 다른 배포가 끼어들어 자동 롤백하지 않습니다."; return 2
+              fi
+              case "$state" in
+                COMPLETED) echo "배포 $deployment 완료 (running $running)"; return 0 ;;
+                FAILED)    echo "배포 $deployment 실패: $reason (실패 태스크 $failed)"; return 1 ;;
+              esac
+              if (( i % 6 == 0 )); then echo "대기 중 ($((i * 10))초): $state, running $running, 실패 태스크 $failed"; fi
+              sleep 10
+            done
+            echo "배포 $deployment 가 $((limit * 10))초 안에 끝나지 않았습니다 (마지막 상태 $state, 실패 태스크 $failed)."
+            return 1
+          }
+          # 최근 태스크의 정지 사유 - 실패 원인이 로그에 남게 한다 (이미지 pull 실패, exec format error, OOM 등).
+          print_stopped_tasks() {
+            local arns
+            arns=$(aws ecs list-tasks --cluster "$ECS_CLUSTER" --service-name "$ECS_SERVICE" --desired-status STOPPED \
+              --query 'taskArns[:5]' --output text 2>/dev/null | tr '\t' ' ')
+            if [ -n "$arns" ] && [ "$arns" != None ]; then
+              aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks $arns \
+                --query 'tasks[].[stoppedAt,stopCode,stoppedReason,containers[0].reason]' --output text 2>/dev/null | tail -5
+            fi
+          }
+          deploy_backend() {
+            local current image new dep family rev arn
+            # 아직 아무것도 바꾸지 않은 조회다 - 일시 오류는 재시도하고, 그래도 실패하면 1을 돌려 롤백(ai 호스트
+            # 복귀)이 돌게 한다. rc=2는 "원격 상태를 모른다"는 뜻인데 여기서는 update-service 전이라 롤백이
+            # 안전하다 (리뷰 반영).
+            current=$(retry_capture 5 service_task_definition) || return 1
+            retry_capture 5 aws ecs describe-task-definition --task-definition "$current" --query taskDefinition > td.json || return 1
+            # 지난 실행이 실패 리비전을 못 지운 채 죽었으면(취소, 결과 불명, deregister 실패) 그것이 최신 ACTIVE로
+            # 남아 Terraform(track_latest)이 읽고, 무관한 apply가 그 이미지를 서비스에 다시 얹는다. 서비스가 도는
+            # 리비전보다 새로운 ACTIVE 리비전을 여기서 걷어낸다 - 정상 흐름에서는 0개다 (리뷰 반영).
+            family="${current##*/}"; family="${family%:*}"; rev="${current##*:}"
+            for arn in $(retry_capture 3 aws ecs list-task-definitions --family-prefix "$family" --status ACTIVE --query 'taskDefinitionArns[]' --output text | tr '\t' ' '); do
+              [ "${arn##*:}" -gt "$rev" ] 2>/dev/null || continue
+              if aws ecs deregister-task-definition --task-definition "$arn" >/dev/null; then
+                echo "지난 실행의 잔존 리비전 $arn deregister"
+              else
+                echo "잔존 리비전 $arn deregister 실패 - terraform plan에 drift로 남습니다"
+              fi
+            done
+            image=$(jq -r '.containerDefinitions[] | select(.name == "backend") | .image' td.json)
+            # 컨테이너 이름이 바뀌면 select가 빈 값을 내고, 그대로 진행하면 이미지 교체 없는 리비전이 등록돼 옛
+            # 이미지가 스모크를 통과하고 verified 표시까지 받는다 - 조용히 성공하는 최악이라 여기서 세운다 (리뷰 반영).
+            if [ -z "$image" ]; then
+              echo "태스크 정의 $current 에서 backend 컨테이너를 찾지 못했습니다 - 멈춥니다."; return 1
+            fi
+            if [ "${image##*:}" = "$tag" ]; then
+              # 같은 태그 재실행 - 리비전을 쌓지 않고 같은 정의로 새 배포만 강제한다.
+              echo "서비스가 이미 $tag 이미지의 리비전 $current 를 가리킵니다 - 새 배포를 강제합니다."
+              new="$current"
+              dep=$(aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --force-new-deployment \
+                --query 'service.deployments[?status==`PRIMARY`] | [0].id' --output text) || { echo "update-service 실패"; return 1; }
+            else
+              # 서비스가 도는 리비전을 그대로 복제하고 image 태그만 바꾼다. cpu, secrets, stopTimeout 같은 형태는
+              # Terraform(infra/modules/fargate)이 정하므로 여기서 건드리지 않는다. describe 출력의 읽기 전용 필드는 뺀다.
+              jq --arg tag "$tag" '
+                .containerDefinitions |= map(if .name == "backend" then .image |= sub(":[^:/]+$"; ":" + $tag) else . end)
+                | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy, .deregisteredAt)
+              ' td.json > td-new.json
+              new=$(aws ecs register-task-definition --cli-input-json file://td-new.json \
+                --query 'taskDefinition.taskDefinitionArn' --output text) || { echo "태스크 정의 등록 실패"; return 1; }
+              echo "$new" > "$NEW_TD_FILE"
+              echo "태스크 정의 $new 등록 (복제 원본 $current, image 태그 $tag)"
+              dep=$(aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "$new" \
+                --query 'service.deployments[?status==`PRIMARY`] | [0].id' --output text) || { echo "update-service 실패"; return 1; }
+            fi
+            echo "ECS 배포 $dep 시작 - rolloutState COMPLETED 대기 (최대 20분)"
+            wait_rollout "$dep" 120; local rc=$?
+            if [ "$rc" = 1 ]; then print_stopped_tasks; fi
+            return "$rc"
+          }
+          # 롤백: ECS가 회로 차단기로 이미 직전 태스크 정의에 돌아가 있으면 그 배포의 완료만 기다리고, 아니면(시간
+          # 초과, update-service 실패 등) 직전 태스크 정의로 update-service 한다. 끝으로 실패한 리비전을 deregister
+          # 한다 - Terraform이 패밀리의 최신 ACTIVE 리비전을 읽으므로(track_latest) 남기면 plan에 drift로 나온다.
+          rollback_backend() {
+            local failed="" current dep i
+            if [ -f "$NEW_TD_FILE" ]; then failed=$(cat "$NEW_TD_FILE"); fi
+            current=$(retry_capture 5 service_task_definition) || return 2
+            if [ "$current" = "$PREVIOUS_TASK_DEF" ]; then
+              echo "서비스가 이미 직전 태스크 정의 $current 를 가리킵니다 (ECS 회로 차단기 롤백). 그 배포의 완료를 확인합니다."
+              # 단발 조회가 스로틀 한 번에 dep=""가 되면 성공한 롤백을 실패로 보고하고 ai 호스트 복귀까지
+              # 건너뛰게 된다 - 재시도한다 (리뷰 반영).
+              for i in 1 2 3 4 5; do
+                dep=$(primary_deployment 2>/dev/null | jq -r '.id // ""')
+                [ -n "$dep" ] && break
+                echo "PRIMARY 배포 조회 실패 ($i/5)"; sleep 5
+              done
+              if [ -z "$dep" ]; then echo "PRIMARY 배포를 확인할 수 없습니다 - 자동 처리를 멈춥니다."; return 2; fi
+            else
+              echo "직전 태스크 정의 $PREVIOUS_TASK_DEF 로 update-service 합니다 (현재 $current)."
+              dep=$(aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --task-definition "$PREVIOUS_TASK_DEF" \
+                --query 'service.deployments[?status==`PRIMARY`] | [0].id' --output text) || { echo "update-service 실패"; return 1; }
+            fi
+            wait_rollout "$dep" 60; local rc=$?
+            if [ -n "$failed" ] && [ "$failed" != "$PREVIOUS_TASK_DEF" ]; then
+              if aws ecs deregister-task-definition --task-definition "$failed" >/dev/null; then
+                echo "실패한 리비전 $failed deregister"
+              else
+                echo "리비전 $failed deregister 실패 - terraform plan에 drift로 남습니다. 손으로 deregister 하세요."
+              fi
+            fi
+            return "$rc"
+          }
+
+          # 정방향은 ai 호스트 먼저, backend 서비스 다음 (KAN-36). 롤백은 그 역순 (backend 먼저, ai 다음).
+          # 앞 단계가 실패하면 뒤 단계는 건드리지 않는다.
           if [ "$order" = reverse ]; then
-            hosts="accentury-$TARGET_ENV accentury-$TARGET_ENV-ai"
-          else
-            hosts="accentury-$TARGET_ENV-ai accentury-$TARGET_ENV"
-          fi
-          for host in $hosts; do
-            reload_host "$host"; rc=$?
+            rollback_backend; rc=$?
             if [ "$rc" != 0 ]; then exit "$rc"; fi
-          done
+            reload_host "accentury-$TARGET_ENV-ai"; rc=$?
+            exit "$rc"
+          fi
+          reload_host "accentury-$TARGET_ENV-ai"; rc=$?
+          if [ "$rc" != 0 ]; then exit "$rc"; fi
+          deploy_backend; rc=$?
+          exit "$rc"
           APPLY
           chmod +x apply.sh
 
-      - name: 반영 (SSM IMAGE_TAG 갱신 + reload + healthy 대기)
+      - name: 반영 (SSM IMAGE_TAG 갱신 + ai reload + backend update-service)
         id: apply
         if: steps.gate.outputs.paused != 'true'
         env:
           IMAGE_TAG: ${{ steps.resolve.outputs.image_tag }}
+          PREVIOUS_TASK_DEF: ${{ steps.prev.outputs.previous_task_definition }}
         run: |
           set +e
           bash apply.sh "$IMAGE_TAG"; rc=$?
@@ -379,7 +564,7 @@ jobs:
             1) echo "result=failed" >> "$GITHUB_OUTPUT"
                echo "::error::$TARGET_ENV 반영 실패 (태그 $IMAGE_TAG). 자동 롤백을 시도합니다." ;;
             *) echo "result=unknown" >> "$GITHUB_OUTPUT"
-               echo "::error::$TARGET_ENV 반영 결과를 확인하지 못했습니다 (태그 $IMAGE_TAG). 원격이 아직 도는 중일 수 있어 자동 롤백하지 않습니다. Session Manager로 journalctl -u accentury 를 확인한 뒤 필요하면 수동 실행으로 이전 태그를 넣으세요."
+               echo "::error::$TARGET_ENV 반영 결과를 확인하지 못했습니다 (태그 $IMAGE_TAG). 원격이 아직 도는 중일 수 있어 자동 롤백하지 않습니다. ECS 서비스 이벤트와 ai 호스트의 journalctl -u accentury 를 확인한 뒤 필요하면 수동 실행으로 이전 태그를 넣으세요."
                exit 1 ;;
           esac
 
@@ -388,16 +573,17 @@ jobs:
         env:
           IMAGE_TAG: ${{ steps.resolve.outputs.image_tag }}
           PREVIOUS_TAG: ${{ steps.prev.outputs.previous_tag }}
+          PREVIOUS_TASK_DEF: ${{ steps.prev.outputs.previous_task_definition }}
         run: |
           if [ -z "$PREVIOUS_TAG" ] || [ "$PREVIOUS_TAG" = "$IMAGE_TAG" ]; then
-            echo "::error::되돌릴 직전 태그가 없습니다. 인스턴스가 실패 상태로 남았습니다 - 수동 실행으로 유효한 태그를 반영하세요."
+            echo "::error::되돌릴 직전 태그가 없습니다. ai 호스트가 실패 상태로 남을 수 있습니다 - 수동 실행으로 유효한 태그를 반영하세요."
             exit 1
           fi
-          echo "직전 태그 $PREVIOUS_TAG 로 되돌립니다 (backend 호스트 먼저, ai 호스트 다음)."
+          echo "직전 태그 $PREVIOUS_TAG 로 되돌립니다 (backend 서비스 먼저, ai 호스트 다음)."
           if bash apply.sh "$PREVIOUS_TAG" reverse; then
             echo "::error::롤백 완료 ($PREVIOUS_TAG). 새 태그 $IMAGE_TAG 는 반영되지 않았습니다."
           else
-            echo "::error::롤백도 실패했습니다. SSM Session Manager로 접속해 journalctl -u accentury 를 확인하세요."
+            echo "::error::롤백도 실패했습니다. ECS 서비스 이벤트(aws ecs describe-services)와 ai 호스트의 journalctl -u accentury 를 확인하세요."
           fi
           exit 1
 
@@ -408,14 +594,17 @@ jobs:
           HOW: ${{ steps.resolve.outputs.how }}
           PREVIOUS_TAG: ${{ steps.prev.outputs.previous_tag }}
         run: |
+          # 배포는 이미 성공했다 - 요약용 조회의 일시 오류가 step을 실패시켜 스모크와 verified 표시를 건너뛰게
+          # 하면 안 된다 (리뷰 반영).
+          td=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --query 'services[0].taskDefinition' --output text 2>/dev/null || echo unknown)
           {
-            echo "| 환경 | 반영 태그 | 출처 | 직전 태그 | 워크플로 커밋 |"
-            echo "| --- | --- | --- | --- | --- |"
-            echo "| $TARGET_ENV | $IMAGE_TAG | $HOW | ${PREVIOUS_TAG:-(없음)} | ${GITHUB_SHA:0:7} |"
+            echo "| 환경 | 반영 태그 | 출처 | 직전 태그 | backend 태스크 정의 | 워크플로 커밋 |"
+            echo "| --- | --- | --- | --- | --- | --- |"
+            echo "| $TARGET_ENV | $IMAGE_TAG | $HOW | ${PREVIOUS_TAG:-(없음)} | ${td##*/} | ${GITHUB_SHA:0:7} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # 컨테이너 healthy와 ALB 대상 healthy 사이에는 수십 초 간극이 있고(대상 그룹 헬스체크 주기), 첫 배포나
-      # 오래 unhealthy였던 뒤에는 CloudFront 경유 요청이 그동안 502/503을 낸다. 스모크는 첫 응답의 게이트웨이
+      # 배포 COMPLETED와 CloudFront 경유 응답 사이에는 간극이 있을 수 있고(옛 태스크 등록 해제 30초, 첫 배포나
+      # 오래 unhealthy였던 뒤), 그동안 CloudFront 경유 요청이 502/503을 낸다. 스모크는 첫 응답의 게이트웨이
       # 오류를 재시도하지 않으므로 공개 경로가 백엔드 응답(404 JSON도 응답이다)을 돌려줄 때까지 기다린다
       # (Codex 4차 P2). 두 환경 모두 - prod도 "대상까지 살아났다"가 반영 완료의 기준이다.
       - name: 공개 경로 준비 대기 (ALB 대상 healthy)
@@ -431,7 +620,7 @@ jobs:
               *) echo "공개 경로 응답 확인: HTTP $code"; exit 0 ;;
             esac
           done
-          echo "::error::6분 안에 $APP_DOMAIN 이 백엔드 응답을 돌려주지 않았습니다. 컨테이너는 healthy이므로 ALB 대상 그룹 상태와 보안 그룹 사슬을 확인하세요." >&2
+          echo "::error::6분 안에 $APP_DOMAIN 이 백엔드 응답을 돌려주지 않았습니다. 배포는 COMPLETED이므로 ALB 대상 그룹 상태와 보안 그룹 사슬을 확인하세요." >&2
           exit 1
 
       # staging에만 E2E 스모크를 돌린다 (KAN-138). 관리자 토큰은 이 환경 SSM에서 읽어 합성 트래픽으로

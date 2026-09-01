@@ -14,7 +14,7 @@ AWS_REGION="${AWS_REGION:-ap-northeast-2}"
 AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-$(aws sts get-caller-identity --query Account --output text)}"
 REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 
-# 빌드 대상 아키텍처. 운영 EC2는 t3.small(x86_64)로 확정됐다 (KAN-124) - 기본값을 linux/amd64로
+# 빌드 대상 아키텍처. 운영은 x86_64다 (backend Fargate 태스크 X86_64, ai c7i.xlarge. KAN-124, KAN-165) - 기본값을 linux/amd64로
 # 고정한다. 빌드 머신을 따르면 애플 실리콘에서 arm64 이미지가 나오는데, 태그가 IMMUTABLE이라
 # 잘못 올린 SHA는 다시 올릴 수 없다 (그 커밋은 영영 배포 불가). 로컬 arm64 확인용이면
 # PLATFORM=linux/arm64 로 넘긴다.

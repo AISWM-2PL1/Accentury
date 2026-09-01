@@ -23,11 +23,6 @@ variable "alb_sg_id" {
   description = "alb-sg. CloudFront VPC 오리진 서비스 SG 인바운드 규칙을 이 모듈이 추가한다."
 }
 
-variable "instance_id" {
-  type        = string
-  description = "대상 그룹에 붙일 EC2 인스턴스"
-}
-
 variable "acm_certificate_arn" {
   type        = string
   description = "us-east-1 와일드카드 인증서 - CloudFront 뷰어 구간용 (KAN-119, data 소스로만 참조)"

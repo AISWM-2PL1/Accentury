@@ -10,12 +10,13 @@ output "email_subscription_arn" {
 
 output "alarm_names" {
   value = [
-    aws_cloudwatch_metric_alarm.unhealthy_hosts.alarm_name,
+    aws_cloudwatch_metric_alarm.no_healthy_target.alarm_name,
     aws_cloudwatch_metric_alarm.alb_5xx.alarm_name,
     aws_cloudwatch_metric_alarm.rds_free_storage.alarm_name,
-    aws_cloudwatch_metric_alarm.ec2_cpu_surplus_credit.alarm_name,
+    aws_cloudwatch_metric_alarm.backend_cpu_high.alarm_name,
+    aws_cloudwatch_metric_alarm.backend_memory_high.alarm_name,
     aws_cloudwatch_metric_alarm.ai_unhealthy.alarm_name,
     aws_cloudwatch_metric_alarm.ai_circuit_open.alarm_name,
   ]
-  description = "생성된 경보 이름 (KAN-134의 4종 + KAN-36의 AI 2종). describe-alarms로 상태를 확인할 때 쓴다."
+  description = "생성된 경보 이름 7종 (KAN-134의 ALB, RDS 3종 + KAN-165의 backend 서비스 2종 + KAN-36의 AI 2종). describe-alarms로 상태를 확인할 때 쓴다."
 }
