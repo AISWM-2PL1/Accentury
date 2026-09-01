@@ -13,6 +13,7 @@ jobs:
       app: ${{ steps.filter.outputs.app }}
       backend: ${{ steps.filter.outputs.backend }}
       web: ${{ steps.filter.outputs.web }}
+      web-e2e: ${{ steps.filter.outputs.web-e2e }}
       ai: ${{ steps.filter.outputs.ai }}
     steps:
       # pull_request 이벤트에서는 checkout 없이 GitHub API로 변경 파일을 조회한다
@@ -35,6 +36,14 @@ jobs:
               - '.github/workflows/test.yml'
             ai:
               - 'ai/**'
+              - '.github/workflows/test.yml'
+            # 브라우저 E2E(KAN-181)는 compose 스택 위에서 돈다 - 스택 정의가 바뀌면 웹이 그대로여도
+            # 다시 봐야 한다. backend/**·ai/**는 e2e-smoke.yml의 compose job과 같은 이유로
+            # 넣지 않는다 - 두 이미지를 매번 빌드하는 값이 대부분의 PR에서 과하고, 서버 변경의
+            # 상시 검증은 위 단위/통합 테스트가 맡는다.
+            web-e2e:
+              - 'web/**'
+              - 'docker-compose.yml'
               - '.github/workflows/test.yml'
 
   app-test:
@@ -93,7 +102,7 @@ jobs:
   # 아직 required check로 올리지 않는다 (티켓 - 안정화 후 별도 결정).
   web-e2e:
     needs: changes
-    if: needs.changes.outputs.web == 'true'
+    if: needs.changes.outputs.web-e2e == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
