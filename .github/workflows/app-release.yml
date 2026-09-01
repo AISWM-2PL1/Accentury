@@ -39,7 +39,8 @@
 #   AC1  서명된 산출물: apksigner verify로 확인하고, 인증서 SHA-256 지문을 실행 요약에 적는다.
 #        지문은 비밀이 아니다 - App Links(KAN-32)의 assetlinks.json에 공개로 박히는 값이다.
 #   AC2  카카오 키 주입: 빌드 시점의 -PrequireKakaoNativeAppKey=true가 설정 단계에서 빈 키를 막고,
-#        빌드 뒤 생성된 BuildConfig를 한 번 더 확인한다 (빗장 두 개).
+#        빌드 뒤 생성된 BuildConfig를 한 번 더 확인하고, 마지막으로 서명된 APK의 DEX에 그 키가
+#        실제로 들어갔는지 본다 (빗장 셋 - 앞의 둘은 빌드 입력이고 마지막만 산출물 자체다).
 #   AC4  로그에 시크릿 없음: 값을 echo하는 곳이 없다. 존재 검사는 -z로만 하고, 실패 메시지에도
 #        이름만 적는다. base64 디코딩은 명령줄 인자가 아니라 환경변수를 파이프로 넘긴다.
 
@@ -168,11 +169,17 @@ jobs:
           fi
 
           # ubuntu-latest에는 Android SDK가 이미 깔려 있다. 버전이 여러 개면 가장 높은 것을 쓴다.
-          signer=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)
+          # pipefail + set -e 아래에서 `ls | sort | tail`은 매치 없을 때 스텝을 죽인다 (ls가 2로 끝나고
+          # pipefail이 그 실패를 파이프라인 종료 코드로 올려 대입문에서 바로 종료 - 아래 설치 대비가
+          # 영영 실행되지 않는다). find는 디렉터리가 없어도 1로 끝나므로 `|| true`로 받아 넘긴다.
+          signer=$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -name apksigner -type f 2>/dev/null | sort -V | tail -1 || true)
           if [ -z "$signer" ]; then
             echo "::notice::러너에 build-tools가 없어 설치합니다."
-            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;35.0.0" > /dev/null
-            signer=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)
+            # `yes |`를 붙이지 않는다 - 패키지 설치는 --licenses와 달리 동의 입력을 받지 않고
+            # (러너는 라이선스가 미리 수락된 상태), sdkmanager가 stdin을 먼저 닫으면 yes가 SIGPIPE로
+            # 141에 죽어 pipefail이 스텝을 실패시킨다.
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;35.0.0" > /dev/null
+            signer=$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -name apksigner -type f 2>/dev/null | sort -V | tail -1 || true)
           fi
           if [ -z "$signer" ]; then
             echo "::error title=apksigner 없음::러너의 Android SDK에서 apksigner를 찾지 못했습니다 (ANDROID_HOME=$ANDROID_HOME)." >&2
@@ -195,11 +202,24 @@ jobs:
           echo "sha256=$fingerprint" >> "$GITHUB_OUTPUT"
           echo "인증서 SHA-256: $fingerprint"
 
-      # AC2의 두 번째 빗장. 빌드 시점의 -PrequireKakaoNativeAppKey=true가 이미 빈 키를 막지만,
+      # AC2의 두 번째·세 번째 빗장. 빌드 시점의 -PrequireKakaoNativeAppKey=true가 이미 빈 키를 막지만,
       # 그건 gradle 쪽 조건이라 그 조건문이 잘못되면 조용히 통과한다. 실제로 생성된 BuildConfig를
       # 본다. 값은 찍지 않고 grep -q로 "비어 있지 않다"만 확인한다 - 카카오 키는 어차피 APK에
       # 박히는 값이라 엄밀한 비밀은 아니지만 로그에 굳이 흘릴 이유도 없다.
+      #
+      # 다만 BuildConfig.java는 빌드 입력이지 사용자에게 가는 파일이 아니다. 그래서 마지막으로
+      # 서명된 APK의 DEX 안에 그 키가 실제로 들어 있는지 본다 - 이건 산출물 자체라, 컴파일 뒤
+      # 패키징 단계에서 값이 갈리거나 빠졌으면 여기서 잡힌다. 상수 문자열은 DEX에 MUTF-8로 들어가고
+      # ASCII 키는 바이트가 그대로라 -F 고정 문자열 검색이 통한다. -a는 바이너리를 텍스트로 다루게
+      # 한다.
+      #
+      # grep -q를 쓰지 않는 이유: 매치 즉시 grep이 끝나 파이프를 닫으면 25MB를 아직 쏟고 있던 unzip이
+      # SIGPIPE로 죽고(141), pipefail이 그 141을 파이프라인 결과로 올린다 - 키가 멀쩡히 들어 있는데도
+      # 검사가 실패한다(로컬 재현 10/10). -c는 입력을 끝까지 읽어 그 경합이 없고, 출력이 매치 줄이
+      # 아니라 개수라 키가 로그에 새지도 않는다 (AC4).
       - name: 카카오 키 주입 확인
+        env:
+          KAKAO_NATIVE_APP_KEY: ${{ secrets.KAKAO_NATIVE_APP_KEY }}
         run: |
           bc=app/build/generated/source/buildConfig/release/com/accentury/app/BuildConfig.java
           if [ ! -f "$bc" ]; then
@@ -210,7 +230,14 @@ jobs:
             echo "::error title=카카오 키 비어 있음::릴리스 BuildConfig의 KAKAO_NATIVE_APP_KEY가 빈 문자열입니다. 이대로 배포하면 결과 공유가 OS 공유 시트로만 갑니다 (KAN-30). KAKAO_NATIVE_APP_KEY 시크릿을 확인하세요." >&2
             exit 1
           fi
-          echo "카카오 키 주입 확인"
+
+          apk=app/build/outputs/apk/release/app-release.apk
+          hits=$(unzip -p "$apk" 'classes*.dex' | grep -caF -- "$KAKAO_NATIVE_APP_KEY" || true)
+          if [ "${hits:-0}" -eq 0 ]; then
+            echo "::error title=APK에 카카오 키 없음::BuildConfig에는 키가 있는데 서명된 APK의 DEX에서 그 값을 찾지 못했습니다. 컴파일 뒤 패키징 단계에서 값이 갈렸거나 상수가 다른 곳으로 옮겨간 경우입니다 - 이대로는 실기기에서 카카오 공유가 죽습니다 (KAN-30)." >&2
+            exit 1
+          fi
+          echo "카카오 키 주입 확인 (BuildConfig + APK DEX)"
 
       # 필수 산출물. 하나라도 없으면 실패다 - 앞 단계가 이미 존재를 확인했으므로 여기서 걸리면
       # 경로 규칙이 바뀐 것이다.

@@ -88,7 +88,7 @@ kakaoNativeAppKey=...
 깨진다) ③ setup-gradle ④ 짧은 SHA ⑤ **시크릿 존재 검사**(`-z`로 이름만, 20분 빌드를 태우기 전에)
 ⑥ 키스토어를 `$RUNNER_TEMP`에 base64 디코딩(체크아웃 밖 — 레포 안에 두면 아티팩트에 딸려 나갈 수
 있다) ⑦ `:app:bundleRelease :app:assembleRelease` 한 번 호출 ⑧ **apksigner verify** + 지문 추출
-⑨ 생성된 `BuildConfig`의 카카오 키 재확인 ⑩ 아티팩트 업로드 ⑪ 매핑 업로드(있으면) ⑫ 실행 요약.
+⑨ 카카오 키 재확인(생성된 `BuildConfig` grep + 서명된 APK의 DEX 검사) ⑩ 아티팩트 업로드 ⑪ 매핑 업로드(있으면) ⑫ 실행 요약.
 
 시크릿은 저장소 시크릿이다.
 
@@ -131,7 +131,7 @@ SHA-256 지문**이 표로 뜬다. 지문을 실행마다 남기는 이유는 �
 | AC | 내용 | 어떻게 확인하는가 |
 |---|---|---|
 | AC1 | 서명된 산출물 | 워크플로의 `apksigner verify --verbose`. 미서명이면 파일명이 `app-release-unsigned.apk`라 스텝이 실패한다. 지문은 실행 요약에 기록 |
-| AC2 | 카카오 키 주입 | 빗장 둘 — 빌드 시점 `-PrequireKakaoNativeAppKey=true`(설정 단계), 빌드 뒤 생성된 `BuildConfig.java`를 `grep -q`로 재확인 |
+| AC2 | 카카오 키 주입 | 빗장 셋 — 빌드 시점 `-PrequireKakaoNativeAppKey=true`(설정 단계), 빌드 뒤 생성된 `BuildConfig.java` grep, 서명된 APK의 DEX에 그 키가 들어갔는지 검사(앞의 둘은 빌드 입력이고 이것만 산출물 자체다) |
 | AC3 | 실기기 카카오 공유 | **미확인.** 아티팩트의 릴리스 APK를 실기기에 설치 → 결과 화면 [친구에게 공유하기] → 카톡 친구 선택 화면이 뜨는지 |
 | AC4 | 로그에 시크릿 없음 | 값을 `echo`하는 곳이 없다. 존재 검사는 `-z`로만, 실패 메시지에도 이름만. base64 디코딩은 명령줄 인자가 아니라 환경변수를 파이프로 넘긴다 |
 
