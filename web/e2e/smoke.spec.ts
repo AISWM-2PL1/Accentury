@@ -13,7 +13,9 @@
  * 3. **백엔드가 실제로 세션을 준다.** `POST /v0/sessions`가 `/v0` 프록시를 거쳐 로컬
  *    백엔드로 나가고, 받은 토큰이 저장소를 건너 다음 문서까지 닿아야 이 스펙이 통과한다.
  *
- * 전 구간(문항 응답 → 분석 대기 → 결과)은 2단계 몫이다.
+ * 게이트를 걷는 절차 자체는 [startTest]가 갖는다 (KAN-181 2단계에 완주 스펙이 붙으면서
+ * 같은 길을 두 번 적게 됐다). 이 스펙에 남은 것은 **인트로 화면 고유의 확인**이다 —
+ * 게이트 통과만 보는 것이라면 완주 스펙이 이미 매번 지나간다.
  */
 
 import { expect, test } from '@playwright/test'
@@ -22,13 +24,7 @@ import {
   VOCABULARY_ITEM_COUNT,
   VOICE_ITEM_COUNT,
 } from '../src/intro/introText'
-
-/**
- * 목소리 점검에 줄 여유. 화면 자체의 듣기 상한은 10초이고
- * (`VOICE_CHECK_MAX_DURATION_MS`), 그 뒤 [다시 시도]로 한 번 더 들을 수 있으므로
- * 한 번의 시도가 실패해도 스펙이 곧바로 죽지는 않게 잡았다.
- */
-const VOICE_CHECK_TIMEOUT_MS = 25_000
+import { startTest } from './helpers/testFlow'
 
 test('웹 단독 진입 - 인트로에서 가짜 마이크로 목소리 점검을 통과해 문항 화면까지 간다', async ({
   page,
@@ -44,63 +40,20 @@ test('웹 단독 진입 - 인트로에서 가짜 마이크로 목소리 점검�
   })
 
   /*
-   * `bridge` 파라미터 없이 연다 — 그러면 `window.AccenturyBridge`도 없으므로 웹 단독 실행이
-   * 되고(`bridge.ts`의 `isStandaloneWeb`), 스큐 게이트를 건너뛰고 인트로가 뜬다.
+   * 인트로의 숫자 카드는 게이트를 걷기 **전에** 본다 — [시작하기]를 누르면 화면이 갈리므로
+   * 나중에는 확인할 수 없다.
+   *
+   * 값을 적어 두지 않고 상수에서 조립하는 이유: KAN-10 연동으로 문항 수가 서버 값으로
+   * 바뀌면 이 스펙도 같이 따라가야 하는데, 여기에 10을 적어 두면 그때 화면과 스펙이 조용히
+   * 갈라진다.
    */
   await page.goto('/')
-
-  // 인트로. 제목은 역할로 잡는다 — 문구는 카피 조정으로 바뀌지만 "h1이 하나 있다"는 배치의 약속이다.
-  await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
-  /*
-   * 숫자 카드는 상수에서 조립한다. KAN-10 연동으로 문항 수가 서버 값으로 바뀌면 이 스펙도
-   * 같이 따라가야 하는데, 값을 여기에 적어 두면 그때 화면과 스펙이 조용히 갈라진다.
-   */
   await expect(
     page.getByText(`${VOICE_ITEM_COUNT + VOCABULARY_ITEM_COUNT}문항`),
   ).toBeVisible()
   await expect(page.getByText(`~${ESTIMATED_MINUTES}분`)).toBeVisible()
 
-  /*
-   * 버튼 이름만 문자열 그대로다. 라벨이 컴포넌트 JSX 안에 있어 상수로 꺼내 있지 않은데,
-   * 그것을 읽으려고 화면 모듈을 import하면 React와 그 모듈이 딸고 오는 것들이 전부 이
-   * 테스트 프로세스로 들어온다 — 상수 하나 얻자고 치를 값이 아니다. 카피가 바뀌면 이 줄이
-   * 실패하고, 그때 같이 고치는 것이 맞다.
-   */
-  const start = page.getByRole('button', { name: '시작하기' })
-  await expect(start).toBeEnabled()
-
-  /*
-   * [시작하기]가 곧 마이크 권한 요청이다. `--use-fake-ui-for-media-stream`이 대화상자를
-   * 자동 승인하므로 여기서 멈추지 않고, 승인되면 App이 목소리 점검 화면으로 갈아 끼운다
-   * (문서 리로드가 아니라 같은 문서 안의 상태 전환이다 — 리로드하면 방금 받은 권한을
-   * 다시 물어야 한다, `App.tsx`의 `IntroRoute`).
-   */
   const startedAt = Date.now()
-  await start.click()
-
-  await expect(page.getByRole('heading', { name: '목소리를 확인할게요' })).toBeVisible()
-
-  /*
-   * 여기가 이 스펙의 심장이다. [다음] 버튼은 판정기가 `ready`가 됐을 때만 그려지므로
-   * (`VoiceCheckScreen`), 이 버튼이 보인다는 것은 가짜 마이크의 소리로 **중심 음높이가
-   * 잠기고 볼륨 조건까지 통과했다**는 뜻이다 — 화면이 떴다는 것과는 다른 사실이다.
-   */
-  const next = page.getByRole('button', { name: '다음' })
-  await expect(next).toBeVisible({ timeout: VOICE_CHECK_TIMEOUT_MS })
-  console.log(`목소리 점검 통과까지 ${Date.now() - startedAt}ms`)
-
-  /*
-   * [다음]이 세션 생성(`POST /v0/sessions`)과 화면 전환을 함께 건다. 응답을 기다렸다가
-   * 이동을 확인하는 이유는 실패를 갈라 보기 위해서다 — 세션이 201을 냈는데 URL이 안 바뀌면
-   * 이동 쪽 문제이고, 201 자체가 안 오면 백엔드나 프록시 쪽이다.
-   */
-  const session = page.waitForResponse(
-    (response) => response.url().includes('/v0/sessions') && response.request().method() === 'POST',
-  )
-  await next.click()
-  expect((await session).status()).toBe(201)
-
-  // 문항 진행 화면의 정식 진입 쿼리 (`entryUrl.ts`의 `buildTestUrl`).
-  await expect(page).toHaveURL(/screen=test/)
-  await expect(page).toHaveURL(/sessionId=/)
+  await startTest(page)
+  console.log(`시작 게이트 통과까지 ${Date.now() - startedAt}ms`)
 })
