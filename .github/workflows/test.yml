@@ -86,6 +86,76 @@ jobs:
       # tsc --noEmit + vite build - 타입 오류와 번들 실패를 PR에서 잡는다
       - run: npm run build
 
+  # 브라우저 E2E (KAN-181). web-test와 갈라 둔 이유는 값이 다르기 때문이다 - 이쪽은 풀스택을
+  # 띄우고 Chromium을 받아야 해서 몇 분이 걸리고, 저쪽은 1분 안에 끝나 대부분의 PR에서 먼저
+  # 답을 준다. 한 job에 묶으면 타입 오류 하나를 보려고 매번 스택 기동을 기다리게 된다.
+  #
+  # 아직 required check로 올리지 않는다 (티켓 - 안정화 후 별도 결정).
+  web-e2e:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # 풀스택(DB + AI + BE). 러너에는 BuildKit이 있어 backend 이미지가 그대로 빌드된다
+      # (로컬 macOS에서는 buildx가 없어 gradlew로 우회한다 - web/README.md).
+      # backend가 127.0.0.1:8080에 붙으므로 vite의 /v0 프록시가 그대로 닿는다.
+      - name: 로컬 풀스택 기동
+        run: docker compose up -d --build --wait
+
+      - run: npm ci
+        working-directory: web
+      # --with-deps가 Chromium이 필요로 하는 시스템 라이브러리까지 넣는다. 러너 이미지에
+      # 없는 것들이라 빼면 브라우저가 뜨다가 죽는다.
+      - run: npx playwright install --with-deps chromium
+        working-directory: web
+
+      # CI=1은 러너가 자동으로 넣는다 - playwright.config.ts가 그 값을 보고 재시도 1회와
+      # github reporter(주석 형태의 실패 표시)를 켠다.
+      - name: E2E - 정상 스택
+        run: npm run test:e2e
+        working-directory: web
+
+      # 실패 갈래용으로 AI만 갈아 끼운다. --no-deps라 DB·BE는 그대로 살아 있어 재기동이 없다.
+      #
+      # 값을 export하지 않고 명령마다 인라인으로 주는 것이 중요하다 - export하면 이후 모든
+      # 명령이 같은 값을 물려받아, 이 스택을 되돌리는 명령까지 실패 설정을 다시 심는다
+      # (scripts/e2e-smoke-local.sh가 같은 이유로 인라인을 쓴다).
+      - name: AI 스텁을 실패 갈래로 교체
+        run: E2E_FAIL_ITEM=v3 docker compose up -d --no-deps --wait ai
+
+      # 같은 스펙 묶음이 반대 조건으로 돈다 - full-run은 건너뛰고 retake가 깨어난다
+      # (두 스펙의 대칭 스킵, web/e2e/retake.spec.ts 헤더).
+      - name: E2E - 실패 갈래 스택
+        run: E2E_FAIL_ITEM=v3 npm run test:e2e
+        working-directory: web
+
+      # 실패한 실행의 trace에는 요청·콘솔·DOM 스냅샷이 들어 있다. 오디오가 얽힌 실패는
+      # 로그 몇 줄로 재구성이 안 되므로, 러너가 사라지기 전에 건져 둔다.
+      - name: 실패 증거 업로드
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-evidence
+          path: |
+            web/test-results/
+            web/playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # 화면이 아니라 스택이 무너진 경우가 있다 - 그때는 trace에 실패한 요청만 남고
+      # 이유는 컨테이너 로그에만 있다.
+      - name: 스택 로그
+        if: failure()
+        run: docker compose logs --tail=100
+
   ai-test:
     needs: changes
     if: needs.changes.outputs.ai == 'true'
