@@ -42,6 +42,13 @@ dependencies {
 	runtimeOnly('software.amazon.awssdk:secretsmanager') {
 		exclude group: 'software.amazon.awssdk', module: 'netty-nio-client'
 	}
+	// CloudWatch 지표 내보내기 (KAN-36, CloudWatchMetricsConfig). Boot 4는 이 레지스트리를 자동 구성하지
+	// 않아 직접 조립한다. 버전은 Boot가 관리하는 Micrometer BOM을 따른다. 비동기 클라이언트라 netty
+	// HTTP 클라이언트가 필요하다 - secretsmanager에서 뺀 것을 여기서 다시 넣는 셈이고, 이미지 크기보다
+	// "회로 열림을 밖에서 본다"가 우선이다 (KAN-36 사용자 결정).
+	implementation 'io.micrometer:micrometer-registry-cloudwatch2'
+	runtimeOnly 'software.amazon.awssdk:cloudwatch'
+	runtimeOnly 'software.amazon.awssdk:netty-nio-client'
 	annotationProcessor 'org.projectlombok:lombok'
 	testImplementation 'org.springframework.boot:spring-boot-starter-actuator-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-data-jpa-test'

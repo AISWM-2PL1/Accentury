@@ -1,6 +1,8 @@
 package app.accentury.backend.analysis;
 
 import app.accentury.backend.common.AccenturyProperties;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
@@ -45,12 +47,16 @@ class AnalysisDispatchConfig {
         return executor;
     }
 
+    /** 회로 상태 게이지 이름 (KAN-36). CloudWatch에는 레지스트리가 .value를 붙여 내보내고 경보가 그 이름을 본다 (infra/modules/monitoring). */
+    static final String CIRCUIT_STATE_METRIC = "accentury.ai.circuit.state";
+
     @Bean
     AnalysisDispatcher analysisDispatcher(AccenturyProperties properties,
                                           ThreadPoolTaskExecutor analysisExecutor,
                                           AnalysisJobTransitions transitions,
                                           AnalysisBacklog backlog,
-                                          ObjectMapper objectMapper) {
+                                          ObjectMapper objectMapper,
+                                          MeterRegistry meterRegistry) {
         String aiBaseUrl = properties.analysis().aiBaseUrl();
         if (aiBaseUrl == null || aiBaseUrl.isBlank()) {
             return new NoopAnalysisDispatcher();
@@ -84,8 +90,15 @@ class AnalysisDispatchConfig {
                 properties.analysis().circuitProbeInterval(),
                 // 반열림 시험의 슬롯 해제 한도 - 분석 1건의 실행 잔류 한도와 같은 값이다.
                 properties.analysis().processingTimeout(), Clock.systemUTC());
+        // 회로 상태를 지표로 낸다 (KAN-36). 배포에서는 CloudWatch 레지스트리(application-deploy.yml)가 1분마다
+        // 읽어 올리고 경보(ai-circuit-open)가 본다 - AI가 떠 있어도 추론만 죽은 장애는 이 지표만 잡는다.
+        // 게이지는 약한 참조라 회로 차단기를 디스패처가 붙들고 있는 동안만 산다 - 그 수명이 곧 앱 수명이다.
+        Gauge.builder(CIRCUIT_STATE_METRIC, circuitBreaker, AiCircuitBreaker::stateValue)
+                .description("AI 회로 차단기 상태 - 0 닫힘, 1 반열림, 2 열림 (KAN-28, KAN-36)")
+                .register(meterRegistry);
         return new HttpAnalysisDispatcher(
-                new RestAiAnalysisClient(restClient, healthRestClient, objectMapper),
+                new RestAiAnalysisClient(restClient, healthRestClient, objectMapper,
+                        properties.analysis().aiToken()),
                 analysisExecutor, transitions, backlog, circuitBreaker,
                 properties.analysis().aiRetries());
     }

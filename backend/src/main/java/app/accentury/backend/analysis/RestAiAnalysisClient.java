@@ -39,6 +39,13 @@ class RestAiAnalysisClient implements AiAnalysisClient {
 
     static final String HEALTH_PATH = "/internal/v0/health";
 
+    /**
+     * AI 서버와 나눠 갖는 내부 호출 시크릿을 싣는 헤더 (KAN-36). AI가 전용 호스트로 갈라져 보안 그룹만으로는
+     * "backend만 부른다"를 보장할 수 없어, AI가 요청마다 이 값을 대조한다 ({@code ai/app/auth.py}). 이름은
+     * 양쪽 코드에 상수로만 있고 설정이 아니다. health에도 붙인다 - AI는 health를 예외로 두지만 붙여서 손해가 없다.
+     */
+    static final String INTERNAL_TOKEN_HEADER = "X-Accentury-Internal-Token";
+
     private final RestClient restClient;
 
     /**
@@ -50,10 +57,15 @@ class RestAiAnalysisClient implements AiAnalysisClient {
 
     private final ObjectMapper objectMapper;
 
-    RestAiAnalysisClient(RestClient restClient, RestClient healthRestClient, ObjectMapper objectMapper) {
+    /** 내부 호출 시크릿 - 미설정(null)이면 헤더를 붙이지 않는다 (로컬 개발, {@code accentury.analysis.ai-token}). */
+    private final @Nullable String internalToken;
+
+    RestAiAnalysisClient(RestClient restClient, RestClient healthRestClient, ObjectMapper objectMapper,
+                         @Nullable String internalToken) {
         this.restClient = restClient;
         this.healthRestClient = healthRestClient;
         this.objectMapper = objectMapper;
+        this.internalToken = internalToken != null && !internalToken.isBlank() ? internalToken : null;
     }
 
     @Override
@@ -71,6 +83,7 @@ class RestAiAnalysisClient implements AiAnalysisClient {
             return restClient.post()
                     .uri(ANALYZE_PATH)
                     .header(CorrelationIdFilter.HEADER, correlationId)
+                    .headers(this::attachInternalToken)
                     .contentType(MediaType.MULTIPART_FORM_DATA)
                     .body(body)
                     .exchange((httpRequest, httpResponse) ->
@@ -94,6 +107,7 @@ class RestAiAnalysisClient implements AiAnalysisClient {
         try {
             return Boolean.TRUE.equals(healthRestClient.get()
                     .uri(HEALTH_PATH)
+                    .headers(this::attachInternalToken)
                     .exchange((httpRequest, httpResponse) -> {
                         if (!httpResponse.getStatusCode().is2xxSuccessful()) {
                             return false;
@@ -107,6 +121,12 @@ class RestAiAnalysisClient implements AiAnalysisClient {
             // 프로브는 실패해도 회로를 열린 채로 두는 것이 전부라 던질 이유가 없다.
             log.debug("AI health 프로브 실패: {}", e.toString());
             return false;
+        }
+    }
+
+    private void attachInternalToken(HttpHeaders headers) {
+        if (internalToken != null) {
+            headers.set(INTERNAL_TOKEN_HEADER, internalToken);
         }
     }
 

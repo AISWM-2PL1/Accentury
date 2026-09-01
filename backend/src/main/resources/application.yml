@@ -87,6 +87,11 @@ management:
       # 여전히 health 하나다 - 두 그룹은 그 아래 경로이고 상세는 위 설정대로 숨겨진다.
       probes:
         enabled: true
+  # CloudWatch 지표 내보내기 (KAN-36, CloudWatchMetricsConfig). 로컬과 테스트는 끈다 - 배포 프로파일이 켠다.
+  cloudwatch:
+    metrics:
+      export:
+        enabled: false
 
 # 활성 테스트 버전과 점수 버전은 여기 없다 (KAN-26). 발행 입력이 DB로 확정되면서(2026-08-09,
 # 명세서 §6) 활성 버전은 active_test_version 한 행이 정본이 됐고, 점수 버전은 그 정의가
@@ -106,8 +111,12 @@ accentury:
     queued-timeout: 5m               # 큐 유실 한도 - 실행을 시작 못 한 채 이 시간이 지나면 정리 (프로세스 사망 대비).
                                      # 정상 큐 소진(수 분)보다 길고, 세션 TTL(30분) 안에 복구가 보이도록 그보다 짧다.
     # ai-base-url: http://localhost:8000    # AI 서버(FastAPI, 명세서 §4.1) - 미설정이면 전달하지 않는 개발 모드 (KAN-22).
-                                            # 배포에서는 SSM ACCENTURY_ANALYSIS_AIBASEURL=http://ai:8000이 넣고, deploy 프로파일은
-                                            # 이 값이 없으면 기동을 세운다 (DeploymentConfigGuard, KAN-129).
+                                            # 배포에서는 SSM ACCENTURY_ANALYSIS_AIBASEURL이 넣고(전용 AI 호스트의 프라이빗 이름
+                                            # http://ai.accentury.internal:8000, KAN-36), deploy 프로파일은 이 값이 없으면 기동을
+                                            # 세운다 (DeploymentConfigGuard, KAN-129).
+    # ai-token: <공유 시크릿>        # AI 내부 호출 시크릿 (KAN-36) - 요청마다 X-Accentury-Internal-Token 헤더로 싣는다.
+                                     # 미설정이면 헤더를 붙이지 않는다 (로컬 개발). 배포에서는 SSM ACCENTURY_ANALYSIS_AITOKEN이
+                                     # 넣고 deploy 프로파일은 이 값이 없으면 기동을 세운다 (DeploymentConfigGuard).
     ai-timeout: 10s                  # AI 호출 연결과 읽기 타임아웃 - 추론 P95 3초의 여유 배수
     ai-retries: 2                    # AI 일시 장애(연결 실패, 5xx) 재전송 횟수 - 전달 시점에만 가능 (FR-DP-01)
     dispatch-concurrency: 4          # 분석 전달 워커 수 - GPU 동시 슬롯을 넘지 않게 (명세서 §5.3)

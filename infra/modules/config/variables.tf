@@ -33,3 +33,8 @@ variable "rds_master_user_secret_arn" {
   type        = string
   description = "RDS 관리형 마스터 시크릿 ARN (Secrets Manager). backend가 연결 시점에 읽는다. 값은 SSM에 복사하지 않는다."
 }
+
+variable "ai_dns_name" {
+  type        = string
+  description = "backend가 AI를 부르는 프라이빗 DNS 이름 (network 모듈 출력 ai_dns_name, KAN-36). ACCENTURY_ANALYSIS_AIBASEURL = http://<이 값>:8000"
+}

@@ -2,12 +2,14 @@ package app.accentury.backend.analysis;
 
 import app.accentury.backend.PropertiesFixture;
 import app.accentury.backend.common.AccenturyProperties;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -25,17 +27,20 @@ class AnalysisDispatchConfigTest {
         AnalysisDispatchConfig config = new AnalysisDispatchConfig();
         // 검증이 조립보다 먼저 실행되므로 협력자는 쓰이지 않는다.
         assertThrows(IllegalStateException.class, () -> config.analysisDispatcher(
-                props(Duration.ofSeconds(30)), null, null, null, null));
+                props(Duration.ofSeconds(30)), null, null, null, null, null));
     }
 
     @Test
     void 기본_설정_조합은_검증을_통과해_실제_디스패처를_조립한다() {
         // 기본값 60s > 30.9s - 기본 설정이 스스로 어긋나면 여기서 잡힌다.
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
         AnalysisDispatcher dispatcher = new AnalysisDispatchConfig().analysisDispatcher(
                 props(Duration.ofSeconds(60)), new ThreadPoolTaskExecutor(), null,
-                new AnalysisBacklog(), new ObjectMapper());
+                new AnalysisBacklog(), new ObjectMapper(), meterRegistry);
 
         assertInstanceOf(HttpAnalysisDispatcher.class, dispatcher);
+        // 회로 상태 게이지가 등록되고 닫힘(0)으로 시작한다 (KAN-36) - CloudWatch 경보 ai-circuit-open의 입력이다.
+        assertEquals(0.0, meterRegistry.get(AnalysisDispatchConfig.CIRCUIT_STATE_METRIC).gauge().value());
     }
 
     @Test
@@ -45,7 +50,7 @@ class AnalysisDispatchConfigTest {
                 PropertiesFixture.analysis(30, "http://ai.test", Duration.ofSeconds(60), Duration.ofSeconds(10)));
 
         assertThrows(IllegalStateException.class, () -> new AnalysisDispatchConfig().analysisDispatcher(
-                props, null, null, null, null));
+                props, null, null, null, null, null));
     }
 
     @Test
@@ -55,7 +60,7 @@ class AnalysisDispatchConfigTest {
                 PropertiesFixture.analysis(30, null, Duration.ofSeconds(60), Duration.ofSeconds(1)));
 
         AnalysisDispatcher dispatcher = new AnalysisDispatchConfig().analysisDispatcher(
-                props, null, null, null, null);
+                props, null, null, null, null, null);
 
         assertInstanceOf(NoopAnalysisDispatcher.class, dispatcher);
     }

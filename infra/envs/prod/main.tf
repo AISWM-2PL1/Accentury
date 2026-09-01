@@ -58,7 +58,7 @@ module "data" {
   skip_final_snapshot = var.db_skip_final_snapshot
 }
 
-# backend 컨테이너 환경 변수 (KAN-129). 값이 network, data 모듈 출력이라 여기서 조립한다.
+# backend, ai 컨테이너 환경 변수 (KAN-129, KAN-36). 값이 network, data 모듈 출력이라 여기서 조립한다.
 module "config" {
   source = "../../modules/config"
 
@@ -67,20 +67,54 @@ module "config" {
   vpc_cidr                   = var.vpc_cidr
   rds_endpoint               = module.data.endpoint
   rds_master_user_secret_arn = module.data.master_user_secret_arn
+  ai_dns_name                = module.network.ai_dns_name
 }
 
+# 커스텀 지표 네임스페이스 (KAN-36). 호스트 역할의 PutMetricData 조건과 경보가 같은 이름을 봐야 하므로
+# 한 곳에서 정한다. backend 것은 application-deploy.yml의 management.cloudwatch.metrics.export.namespace와도 같다.
+locals {
+  backend_metric_namespace = "accentury/backend"
+  ai_metric_namespace      = "accentury/ai"
+}
+
+# backend 호스트 - 고정 EC2 1대, ALB 대상 (KAN-124).
 module "compute" {
   source = "../../modules/compute"
 
+  role                       = "backend"
   env                        = var.env
-  subnet_id                  = module.network.public_subnet_ids[0]
-  ec2_sg_id                  = module.network.ec2_sg_id
+  subnet_ids                 = module.network.public_subnet_ids
+  security_group_id          = module.network.ec2_sg_id
   instance_type              = var.instance_type
   ssm_prefix                 = var.ssm_prefix
   rds_master_user_secret_arn = module.data.master_user_secret_arn
+  metric_namespace           = local.backend_metric_namespace
   # 인스턴스가 SSM 파라미터 생성 뒤에 첫 부팅하도록 순서를 잡는다 (compute/main.tf precondition).
   # IMAGE_TAG는 Terraform 밖이라 재구축 시 이전 값이 남아 있을 수 있어 이 순서가 실제로 문제가 된다.
   config_parameter_names = module.config.parameter_names
+}
+
+# ai 호스트 - ASG(min 1, max 1)의 전용 추론 EC2 (KAN-36 A단계, 스텁 모드). 인스턴스 유형은 2026-09-01
+# 결정으로 처음부터 c7i.xlarge이고, 루트 볼륨만 실모델 전환(B단계)에서 tfvars로 40GB가 된다.
+module "ai_compute" {
+  source = "../../modules/compute"
+
+  role              = "ai"
+  env               = var.env
+  subnet_ids        = module.network.public_subnet_ids
+  security_group_id = module.network.ai_sg_id
+  instance_type     = var.ai_instance_type
+  root_volume_size  = var.ai_root_volume_size
+  ssm_prefix        = var.ssm_prefix
+  metric_namespace  = local.ai_metric_namespace
+  # ai 호스트 역할은 자기 하위 경로(/ai)와 IMAGE_TAG만 읽는다 - 내부 호출 토큰이 먼저 있어야 한다.
+  config_parameter_names = module.config.ai_parameter_names
+
+  ai = {
+    private_zone_id = module.network.private_zone_id
+    dns_name        = module.network.ai_dns_name
+    vpc_cidr        = var.vpc_cidr
+  }
 }
 
 # CloudFront 앞단 WAF (KAN-149). CLOUDFRONT 스코프 웹 ACL과 그 로그 그룹은 us-east-1에만
@@ -126,15 +160,17 @@ module "deploy" {
   cloudfront_distribution_arn = module.edge.distribution_arn
 }
 
-# 최소 알림 (KAN-134). ALB, RDS, EC2가 이미 내보내는 표준 지표에 경보 4종과 SNS 이메일을 건다.
-# 지표를 새로 수집하지 않으므로 backend와 ai 코드에는 영향이 없다. 전체 관측성은 KAN-38.
+# 최소 알림 (KAN-134) + AI 호스트 경보 2종 (KAN-36). ALB, RDS, EC2 표준 지표 4종에 backend의 회로 상태
+# 게이지와 ai 호스트의 health 커스텀 지표를 더한다. 전체 관측성은 KAN-38.
 module "monitoring" {
   source = "../../modules/monitoring"
 
-  env                     = var.env
-  alert_email             = var.alert_email
-  alb_arn_suffix          = module.edge.alb_arn_suffix
-  target_group_arn_suffix = module.edge.target_group_arn_suffix
-  db_instance_identifier  = module.data.instance_identifier
-  ec2_instance_id         = module.compute.instance_id
+  env                      = var.env
+  alert_email              = var.alert_email
+  alb_arn_suffix           = module.edge.alb_arn_suffix
+  target_group_arn_suffix  = module.edge.target_group_arn_suffix
+  db_instance_identifier   = module.data.instance_identifier
+  ec2_instance_id          = module.compute.instance_id
+  ai_metric_namespace      = local.ai_metric_namespace
+  backend_metric_namespace = local.backend_metric_namespace
 }

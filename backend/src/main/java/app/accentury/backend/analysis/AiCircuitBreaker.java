@@ -118,6 +118,19 @@ class AiCircuitBreaker {
     }
 
     /**
+     * 지표용 상태 값 (KAN-36) - 0 닫힘, 1 반열림, 2 열림. Micrometer 게이지가 1분마다 읽어
+     * CloudWatch로 내보내고({@code AnalysisDispatchConfig}), 경보는 1 이상이 2분 연속이면 선다 -
+     * 반열림 시험 1건이 오가는 순간은 걸러진다. 순서가 심각도다: 값이 클수록 사용자 요청이 더 많이 막힌다.
+     */
+    synchronized int stateValue() {
+        return switch (state) {
+            case CLOSED -> 0;
+            case HALF_OPEN -> 1;
+            case OPEN -> 2;
+        };
+    }
+
+    /**
      * 이 작업으로 새 업로드를 받아도 되는가 (§3.3의 503 판정).
      * <p>
      * 반열림에서는 <b>한 건만</b> 통과하고, 그 한 건이 복구 판정용 시험이다. 자리를 잡는

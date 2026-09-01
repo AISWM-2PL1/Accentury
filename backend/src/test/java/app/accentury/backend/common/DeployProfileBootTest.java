@@ -47,6 +47,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 @SpringBootTest(properties = {
         "accentury.analysis.ai-base-url=http://ai.test:8000",
+        // AI 내부 호출 시크릿 (KAN-36) - 배포 프로파일 필수값.
+        "accentury.analysis.ai-token=deploy-profile-boot-test-internal-token-0123456789",
+        // CloudWatch 내보내기(KAN-36)는 배포 프로파일이 켜지만 테스트에는 올릴 곳도 자격 증명도 없다.
+        "management.cloudwatch.metrics.export.enabled=false",
         // SSM ACCENTURY_TRUSTEDPROXIES와 같은 한 줄 형태 - staging VPC CIDR.
         "accentury.trusted-proxies=10.1.0.0/16",
         "accentury.admin.token=deploy-profile-boot-test-token-0123456789",

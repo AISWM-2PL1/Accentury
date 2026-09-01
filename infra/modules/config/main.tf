@@ -11,7 +11,8 @@
 #
 # 여기 없는 것:
 #   IMAGE_TAG        - 배포 파이프라인(KAN-128)이 쓴다. Terraform이 소유하면 배포마다 drift다.
-#   ACCENTURY_AI_*   - 스텁은 설정 없이 뜬다 (KAN-22 실모델 때 추가).
+#   ACCENTURY_AI_*   - 스텁은 설정 없이 뜬다 (KAN-22 실모델 때 추가). 예외 하나가 아래 내부 호출
+#                      토큰인데, 그것은 ai 호스트 전용 하위 경로 {prefix}/ai/ 에 둔다 (KAN-36).
 #   DB 비밀번호      - SSM에 두지 않는다. RDS 관리형 시크릿은 7일마다 회전되므로 복사본은 첫
 #                      회전에서 죽는다. backend가 URL의 secretsManagerSecretId로 Secrets Manager에서
 #                      직접 읽는다 (application-deploy.yml, awsSecretsManager 플러그인).
@@ -34,11 +35,14 @@ resource "aws_ssm_parameter" "spring_profiles_active" {
   value = "deploy"
 }
 
-# compose 내부 네트워크의 ai 서비스 - 포트를 발행하지 않으므로 backend만 닿는다 (KAN-124).
+# 전용 EC2의 ai 서비스 (KAN-36 A단계). 값은 인스턴스 주소가 아니라 프라이빗 영역의 이름이다 -
+# ASG가 인스턴스를 교체해도 새 인스턴스가 같은 이름의 A 레코드를 갱신하므로 이 값은 안 바뀐다.
+# 이름 자체는 network 모듈이 정하고(ai.accentury.internal, 두 환경 같은 값) 여기는 조립만 한다.
+# 배포 갱신은 systemctl reload accentury(backend 호스트)로 backend.env에 반영된다.
 resource "aws_ssm_parameter" "ai_base_url" {
   name  = "${var.ssm_prefix}/ACCENTURY_ANALYSIS_AIBASEURL"
   type  = "String"
-  value = "http://ai:8000"
+  value = "http://${var.ai_dns_name}:8000"
 }
 
 # ---- 환경별 값 ----
@@ -87,4 +91,28 @@ resource "aws_ssm_parameter" "admin_token" {
   name  = "${var.ssm_prefix}/ACCENTURY_ADMIN_TOKEN"
   type  = "SecureString" # AWS 관리 키(aws/ssm) - EC2 역할에 별도 kms 권한이 필요 없다 (compute IAM 주석).
   value = random_password.admin_token.result
+}
+
+# backend -> ai 내부 호출의 공유 시크릿 (KAN-36). 두 서비스가 다른 호스트로 갈라지면서 "같은
+# compose 네트워크라 backend만 부를 수 있다"는 전제가 사라졌으므로, SG 한 겹 뒤에 헤더 검사를 한 겹
+# 더 둔다. 난수 하나를 두 이름으로 싣는다 - backend 쪽은 Spring 프로퍼티 이름 규칙
+# (accentury.analysis.ai-token -> ACCENTURY_ANALYSIS_AITOKEN), ai 쪽은 FastAPI 설정 이름
+# (ACCENTURY_AI_INTERNAL_TOKEN)이고, ai 것은 ai 호스트 역할만 읽는 하위 경로 {prefix}/ai/ 에 둔다
+# (compute 모듈 IAM). backend 호스트의 기동 스크립트는 하위 경로를 읽지 않는다 (--recursive 없음).
+# 재발급은 admin_token과 같은 방식이고, 두 호스트 모두 reload해야 한다.
+resource "random_password" "ai_internal_token" {
+  length  = 48
+  special = false
+}
+
+resource "aws_ssm_parameter" "ai_token_backend" {
+  name  = "${var.ssm_prefix}/ACCENTURY_ANALYSIS_AITOKEN"
+  type  = "SecureString"
+  value = random_password.ai_internal_token.result
+}
+
+resource "aws_ssm_parameter" "ai_token_ai" {
+  name  = "${var.ssm_prefix}/ai/ACCENTURY_AI_INTERNAL_TOKEN"
+  type  = "SecureString"
+  value = random_password.ai_internal_token.result
 }

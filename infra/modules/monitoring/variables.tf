@@ -71,3 +71,26 @@ variable "ec2_surplus_credit_threshold" {
     error_message = "ec2_surplus_credit_threshold는 0보다 커야 합니다. 0으로 두면 기동 직후의 짧은 스파이크에도 경보가 섭니다."
   }
 }
+
+variable "ai_metric_namespace" {
+  type        = string
+  description = "AI 호스트가 Healthy 지표를 올리는 CloudWatch 네임스페이스 (KAN-36). compute 모듈(ai 역할)의 metric_namespace와 같아야 한다."
+  default     = "accentury/ai"
+}
+
+variable "backend_metric_namespace" {
+  type        = string
+  description = "backend가 Micrometer로 지표를 올리는 CloudWatch 네임스페이스 (KAN-36). application-deploy.yml의 management.cloudwatch.metrics.export.namespace와 compute 모듈(backend 역할)의 metric_namespace가 같은 값이다."
+  default     = "accentury/backend"
+}
+
+variable "ai_unhealthy_evaluation_periods" {
+  type        = number
+  description = "ai-unhealthy 경보가 요구하는 연속 실패 분 수 (KAN-36). reload 한 번의 컨테이너 재생성(수십 초)으로는 서지 않을 만큼."
+  default     = 3
+
+  validation {
+    condition     = var.ai_unhealthy_evaluation_periods >= 1
+    error_message = "ai_unhealthy_evaluation_periods는 1 이상이어야 합니다."
+  }
+}

@@ -67,7 +67,7 @@ public final class PropertiesFixture {
                                                         Duration shutdownBudget) {
         return new AccenturyProperties.Analysis(800, 3000, congestionThreshold, Duration.ofHours(24),
                 processingTimeout, Duration.ofMinutes(5), aiBaseUrl, Duration.ofSeconds(10), 2, 4,
-                Duration.ofSeconds(2), 5, Duration.ofSeconds(5), shutdownBudget);
+                Duration.ofSeconds(2), 5, Duration.ofSeconds(5), shutdownBudget, null);
     }
 
     private static AccenturyProperties.Result result() {

@@ -3,15 +3,18 @@
 # 승격 모델 (2026-08-17 확정): 이미지는 한 번만 빌드하고 staging에서 검증된 바로 그 SHA를 prod로
 # 올린다. prod에서 재빌드하면 staging 검증이 무의미해진다.
 #
-#   Dev 푸시     -> build(현재 커밋 SHA로 두 이미지를 ECR에 push) -> deploy(staging) -> smoke
+#   Dev 푸시     -> build(현재 커밋 SHA로 두 이미지를 ECR에 push) -> deploy(staging, ai 호스트 -> backend 호스트) -> smoke
 #   Release 푸시 -> deploy(prod): 재빌드 없이 Dev 이력에서 ECR에 실재하는 최신 SHA를 승격
 #   수동 실행    -> environment와 image_tag를 고른다. 롤백 = 이전 SHA를 image_tag에 넣고 같은 절차
 #
 # 반영 절차는 EC2 기동 스크립트(infra/modules/compute/accentury-up.sh)와 짝이다: SSM
 # /accentury/{env}/IMAGE_TAG를 새 SHA로 바꾸고 SSM Run Command로 `systemctl reload accentury`를
-# 부른 뒤, 두 컨테이너가 healthy가 될 때까지 기다린다. healthy에 못 미치면 IMAGE_TAG를 직전 값으로
-# 되돌려 다시 reload한다 (AC "반영 실패 시 기존 컨테이너 유지"를 자동 롤백으로 만족). 컨테이너 자체는
-# compose가 교체하므로 "기존 컨테이너"가 아니라 "기존 이미지"가 유지되는 것이다.
+# 부른 뒤, 그 호스트의 컨테이너가 healthy가 될 때까지 기다린다. 호스트는 둘이다 (KAN-36): ai 호스트
+# (tag:Name=accentury-{env}-ai)를 먼저, backend 호스트(accentury-{env})를 다음에 reload한다 - backend가
+# 새 AI 계약을 전제로 할 수 있어 AI가 먼저 올라와야 한다. 어느 호스트든 healthy에 못 미치면 IMAGE_TAG를
+# 직전 값으로 되돌려 두 호스트를 같은 순서로 다시 reload한다 (AC "반영 실패 시 기존 컨테이너 유지"를
+# 자동 롤백으로 만족). 컨테이너 자체는 compose가 교체하므로 "기존 컨테이너"가 아니라 "기존 이미지"가
+# 유지되는 것이다.
 #
 # staging 검증 표시 (Codex P1 반영): staging 반영과 E2E 스모크가 모두 통과한 SHA에만 ECR에서 같은
 # 이미지에 verified-<sha> 태그를 하나 더 붙인다 (IMMUTABLE은 기존 태그 덮어쓰기만 막고 새 태그 추가는
@@ -239,9 +242,10 @@ jobs:
           echo "previous_tag=$prev" >> "$GITHUB_OUTPUT"
           echo "직전 태그: ${prev:-(없음, 첫 배포)}"
 
-      # 원격 절차 한 벌. 인스턴스는 tag:Name으로 고른다 - user_data 변경으로 인스턴스가 교체돼도
-      # ID를 변수로 따라갈 필요가 없다. reload는 accentury-up.sh를 다시 태우고(SSM 재조회, pull,
-      # compose up), 그 뒤 두 컨테이너의 docker healthcheck가 healthy가 될 때까지 기다린다.
+      # 원격 절차 한 벌 - 두 호스트가 같은 스크립트를 돈다. 인스턴스는 tag:Name으로 고른다 - user_data
+      # 변경이나 ASG 교체로 인스턴스가 바뀌어도 ID를 변수로 따라갈 필요가 없다. reload는 accentury-up.sh를
+      # 다시 태우고(SSM 재조회, pull, compose up), 그 뒤 그 호스트 compose에 정의된 서비스 전부의 docker
+      # healthcheck가 healthy가 될 때까지 기다린다 (backend 호스트는 backend, ai 호스트는 ai - KAN-36).
       - name: 원격 반영 스크립트 준비
         if: steps.gate.outputs.paused != 'true'
         run: |
@@ -267,7 +271,7 @@ jobs:
             echo "IMAGE_TAG 불일치: 실제 $current, 기대 $EXPECTED_TAG"; exit 1
           fi
           cd /opt/accentury
-          for svc in ai backend; do
+          for svc in $(docker compose --env-file /run/accentury/compose.env config --services); do
             cid=$(docker compose --env-file /run/accentury/compose.env ps -q "$svc")
             if [ -z "$cid" ]; then echo "컨테이너 없음: $svc"; exit 1; fi
             st=starting
@@ -291,53 +295,63 @@ jobs:
           if ! aws ssm put-parameter --name "$SSM_PREFIX/IMAGE_TAG" --type String --value "$tag" --overwrite >/dev/null; then
             echo "SSM $SSM_PREFIX/IMAGE_TAG 쓰기 실패 - 반영하지 않습니다."; exit 1
           fi
+          sed "s/__EXPECTED_TAG__/$tag/" remote.sh > "remote-$tag.sh"
           # 원격 실행 상한 840초 (accentury-up.sh 재시도 약 4분 + pull + healthy 대기 5분 + 전파 재시도).
           # 아래 대기 루프는 이보다 길어야(900초) 명령이 아직 도는데 롤백을 겹쳐 보내는 일이 없다 (Codex P2).
-          sed "s/__EXPECTED_TAG__/$tag/" remote.sh > "remote-$tag.sh"
           jq -n --rawfile s "remote-$tag.sh" '{commands: [$s], executionTimeout: ["840"]}' > params.json
-          cmd=$(aws ssm send-command \
-            --document-name AWS-RunShellScript \
-            --targets "Key=tag:Name,Values=accentury-$TARGET_ENV" \
-            --parameters file://params.json \
-            --timeout-seconds 120 \
-            --comment "deploy $tag" \
-            --query Command.CommandId --output text)
-          if [ -z "$cmd" ] || [ "$cmd" = None ]; then echo "send-command 실패"; exit 1; fi
-          echo "Run Command $cmd (태그 $tag)"
-          # 종료 코드: 0 성공, 1 실패(원격 결과가 확인됨, 롤백 가능), 2 알 수 없음(조회 API가 계속 실패해
-          # 원격이 아직 도는지 모름 - 롤백을 겹쳐 보내면 안 되므로 자동 롤백하지 않는다, Codex 3차 P2).
-          status=Pending
-          api_errors=0
-          for i in $(seq 1 180); do
-            if out=$(aws ssm list-command-invocations --command-id "$cmd" --query 'CommandInvocations[0].Status' --output text 2>&1); then
-              api_errors=0
-              status="$out"
-            else
-              api_errors=$((api_errors + 1))
-              echo "조회 실패 ($api_errors/10): $out"
-              if [ "$api_errors" -ge 10 ]; then
-                echo "명령 상태를 확인할 수 없습니다 ($cmd). 원격이 아직 도는 중일 수 있어 자동 롤백하지 않습니다."; exit 2
+          # 호스트 하나를 reload하고 결과를 기다린다. 종료 코드: 0 성공, 1 실패(원격 결과가 확인됨, 롤백 가능),
+          # 2 알 수 없음(조회 API가 계속 실패해 원격이 아직 도는지 모름 - 롤백을 겹쳐 보내면 안 되므로 자동
+          # 롤백하지 않는다, Codex 3차 P2).
+          reload_host() {
+            local host="$1" cmd status api_errors i out
+            cmd=$(aws ssm send-command \
+              --document-name AWS-RunShellScript \
+              --targets "Key=tag:Name,Values=$host" \
+              --parameters file://params.json \
+              --timeout-seconds 120 \
+              --comment "deploy $tag $host" \
+              --query Command.CommandId --output text)
+            if [ -z "$cmd" ] || [ "$cmd" = None ]; then echo "send-command 실패 ($host)"; return 1; fi
+            echo "Run Command $cmd (태그 $tag, 호스트 $host)"
+            status=Pending
+            api_errors=0
+            for i in $(seq 1 180); do
+              if out=$(aws ssm list-command-invocations --command-id "$cmd" --query 'CommandInvocations[0].Status' --output text 2>&1); then
+                api_errors=0
+                status="$out"
+              else
+                api_errors=$((api_errors + 1))
+                echo "조회 실패 ($api_errors/10): $out"
+                if [ "$api_errors" -ge 10 ]; then
+                  echo "명령 상태를 확인할 수 없습니다 ($cmd, $host). 원격이 아직 도는 중일 수 있어 자동 롤백하지 않습니다."; return 2
+                fi
+                sleep 5; continue
               fi
-              sleep 5; continue
-            fi
+              case "$status" in
+                Success|Failed|TimedOut|Cancelled|Undeliverable|Terminated) break ;;
+              esac
+              # 조회는 성공했는데 invocation이 없는 상태(None)가 60초 이어지면 대상 인스턴스가 없는 것이다.
+              if [ "$i" -ge 12 ] && [ "$status" = None ]; then
+                echo "60초가 지나도 대상 인스턴스가 없습니다 (tag:Name=$host, SSM 에이전트 미등록 또는 ASG 교체 중?)"; return 1
+              fi
+              sleep 5
+            done
             case "$status" in
-              Success|Failed|TimedOut|Cancelled|Undeliverable|Terminated) break ;;
+              Success|Failed|TimedOut|Cancelled|Undeliverable|Terminated) ;;
+              *) echo "900초 안에 끝나지 않았습니다 ($host, 마지막 상태 $status). 자동 롤백하지 않습니다."; return 2 ;;
             esac
-            # 조회는 성공했는데 invocation이 없는 상태(None)가 60초 이어지면 대상 인스턴스가 없는 것이다.
-            if [ "$i" -ge 12 ] && [ "$status" = None ]; then
-              echo "60초가 지나도 대상 인스턴스가 없습니다 (tag:Name=accentury-$TARGET_ENV, SSM 에이전트 미등록?)"; exit 1
-            fi
-            sleep 5
+            echo "--- 원격 출력 ($host) ---"
+            aws ssm list-command-invocations --command-id "$cmd" --details \
+              --query 'CommandInvocations[0].CommandPlugins[0].Output' --output text | tail -80
+            echo "--- 상태 ($host): $status ---"
+            [ "$status" = Success ]
+          }
+          # ai 호스트 먼저, backend 호스트 다음 (KAN-36). 앞 호스트가 실패하면 뒤 호스트는 건드리지 않는다 -
+          # 롤백이 두 호스트를 같은 순서로 직전 태그로 되돌린다.
+          for host in "accentury-$TARGET_ENV-ai" "accentury-$TARGET_ENV"; do
+            reload_host "$host"; rc=$?
+            if [ "$rc" != 0 ]; then exit "$rc"; fi
           done
-          case "$status" in
-            Success|Failed|TimedOut|Cancelled|Undeliverable|Terminated) ;;
-            *) echo "900초 안에 끝나지 않았습니다 (마지막 상태 $status). 자동 롤백하지 않습니다."; exit 2 ;;
-          esac
-          echo "--- 원격 출력 ---"
-          aws ssm list-command-invocations --command-id "$cmd" --details \
-            --query 'CommandInvocations[0].CommandPlugins[0].Output' --output text | tail -80
-          echo "--- 상태: $status ---"
-          [ "$status" = Success ]
           APPLY
           chmod +x apply.sh
 

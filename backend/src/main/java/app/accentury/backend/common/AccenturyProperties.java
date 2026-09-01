@@ -90,6 +90,11 @@ public record AccenturyProperties(Session session,
      *                             첫 프로브까지의 대기(쿨다운)도 같은 값이다. 사용자 요청을
      *                             프로브로 쓰지 않는다 - 오디오는 재전송할 수 없어(FR-DP-01)
      *                             프로브로 뽑힌 사용자만 실패를 떠안기 때문이다.
+     * @param aiToken              AI 서버와 나눠 갖는 내부 호출 시크릿 (KAN-36). AI가 전용 호스트로
+     *                             갈라지면서 "같은 compose 네트워크라 backend만 부른다"는 전제가 사라져,
+     *                             보안 그룹 한 겹 뒤에 요청마다 {@code X-Accentury-Internal-Token} 헤더로
+     *                             대조한다. 미설정이면 헤더를 붙이지 않는다 - 로컬 개발 편의이고, 배포
+     *                             프로파일은 값을 요구한다 ({@code DeploymentConfigGuard}).
      * @param shutdownBudget       종료 신호 뒤 실행 중인 분석의 완료를 기다리는 상한 (KAN-166).
      *                             대기 중(미시작) 작업은 기다리지 않고 즉시 실패로 정리하므로,
      *                             이 값은 "AI 호출 1회가 끝나는 데 걸리는 최악 시간"만 덮으면
@@ -111,7 +116,8 @@ public record AccenturyProperties(Session session,
                            @DefaultValue("2s") Duration aiHealthTimeout,
                            @DefaultValue("5") int circuitFailureThreshold,
                            @DefaultValue("5s") Duration circuitProbeInterval,
-                           @DefaultValue("90s") Duration shutdownBudget) {
+                           @DefaultValue("90s") Duration shutdownBudget,
+                           @Nullable String aiToken) {
     }
 
     /**

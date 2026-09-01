@@ -14,8 +14,10 @@ import tempfile
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from app import analyze
+from app.auth import HEALTH_PATH, InternalTokenMiddleware
 from app.config import Settings
 from app.engine import AnalysisEngine, create_engine, require_reportable_version
 from app.limits import MaxBodySizeMiddleware
@@ -39,7 +41,7 @@ def create_app(settings: Settings | None = None, engine: AnalysisEngine | None =
     store = VoiceTempStore(resolved.temp_dir, resolved.temp_retention_seconds)
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI):
+    async def lifespan(started: FastAPI):
         store.prepare()
         # 프로세스가 만드는 임시파일 전부를 전용 디렉터리로 몬다 - 웹 프레임워크가 큰
         # 업로드를 디스크로 스풀할 때도 공용 임시 디렉터리로 새지 않고, 따라서 청소 잡과
@@ -55,32 +57,55 @@ def create_app(settings: Settings | None = None, engine: AnalysisEngine | None =
         # 루프가 그동안 멈춰 진행 중인 분석 요청이 전부 밀린다 (Codex 리뷰)
         await asyncio.to_thread(store.purge_leftovers)
         sweeper = asyncio.create_task(_sweep_forever(store, resolved.sweep_interval_seconds))
-        log.info(
-            "AI 분석 서버 기동 tempDir=%s engine=%s modelVersion=%s",
-            store.directory,
-            type(resolved_engine).__name__,
-            resolved_engine.model_version,
-        )
         try:
+            # 준비 상태 게이트 (KAN-36). 엔진이 워밍업을 선언하면(가중치 적재 등, KAN-22) 그것이
+            # 끝난 뒤에야 health가 UP이 된다 - 그 전까지 backend의 회로 복구 프로브와 compose
+            # healthcheck는 503 STARTING을 보고 요청을 보내지 않는다. 스텁은 워밍업이 없다
+            warm_up = getattr(resolved_engine, "warm_up", None)
+            if callable(warm_up):
+                await warm_up()
+            started.state.ready = True
+            if resolved.internal_token is None:
+                # 배포에서는 있을 수 없는 상태다 - Terraform이 언제나 넣는다. 로컬 개발만 여기를 지난다
+                log.warning("내부 호출 토큰이 없다 - 모든 호출을 받는다 (ACCENTURY_AI_INTERNAL_TOKEN, KAN-36)")
+            log.info(
+                "AI 분석 서버 기동 tempDir=%s engine=%s modelVersion=%s",
+                store.directory,
+                type(resolved_engine).__name__,
+                resolved_engine.model_version,
+            )
             yield
         finally:
+            started.state.ready = False
             sweeper.cancel()
             with suppress(asyncio.CancelledError):
                 await sweeper
             tempfile.tempdir = previous_tempdir
 
     app = FastAPI(title="Accentury AI", version="0.1.0", lifespan=lifespan)
+    # 미들웨어는 나중에 더한 것이 바깥이다. 본문 상한이 가장 바깥에서 먼저 돌아야 인증 실패
+    # 응답 전에 읽어 버리는 본문의 양이 유한하다 (app.auth) - 그래서 인증을 먼저 더한다
+    app.add_middleware(InternalTokenMiddleware, token=resolved.internal_token)
     # 본문 상한은 multipart 파싱 전에 걸어야 의미가 있다 (Codex sol 리뷰 P2)
     app.add_middleware(MaxBodySizeMiddleware, max_bytes=resolved.max_request_bytes)
     app.state.settings = resolved
     app.state.temp_store = store
     app.state.engine = resolved_engine
+    # lifespan이 워밍업을 마치기 전까지 False - health가 503을 낸다 (KAN-36 준비 상태 게이트)
+    app.state.ready = False
     app.include_router(analyze.router)
 
-    @app.get("/internal/v0/health")
-    async def health() -> dict[str, str]:
-        """워밍업 상태 (§4.2) - 스켈레톤은 프로세스 생존만 알린다. 모델 상태는 KAN-22."""
-        return {"status": "UP"}
+    @app.get(HEALTH_PATH)
+    async def health(request: Request) -> JSONResponse:
+        """워밍업 상태 (§4.2). 토큰 없이 열려 있다 (app.auth).
+
+        프로세스가 떴어도 lifespan의 워밍업이 끝나기 전에는 503 ``STARTING``이다 - backend는
+        200 + ``UP``만 살아 있는 것으로 읽는다 (``RestAiAnalysisClient.healthy``). 모델 버전과
+        ``/internal/v0/models``는 KAN-22.
+        """
+        if not request.app.state.ready:
+            return JSONResponse(status_code=503, content={"status": "STARTING"})
+        return JSONResponse(content={"status": "UP"})
 
     @app.get("/internal/v0/metrics")
     async def metrics(request: Request) -> dict[str, float | int]:
