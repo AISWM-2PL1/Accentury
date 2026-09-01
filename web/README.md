@@ -64,10 +64,11 @@ vitest가 못 보는 것을 실제 Chromium에서 본다 — `getUserMedia`·`Au
 
 #### 스택 띄우기
 
-`docker compose up -d --build --wait` 한 줄이면 되는 것이 정석이지만, **macOS에서는 backend
-이미지가 빌드되지 않는다** — Docker Desktop 없이 쓰는 환경에 `docker buildx`가 없어
-`RUN --mount=type=cache`에서 멈춘다. 그때는 backend만 gradlew로 우회한다 (CI 러너에는
-BuildKit이 있어 compose 한 줄로 끝난다).
+`docker compose up -d --build --wait` 한 줄이면 끝나는 것이 정석이다 — Docker Desktop과
+CI 러너에는 BuildKit이 있어 그대로 된다. **`docker buildx`가 없는 Docker 환경**(Colima 기본
+설치처럼 buildx 플러그인이 빠진 엔진)에서는 backend 이미지가 `RUN --mount=type=cache`에서
+멈추므로, 그때만 아래처럼 backend를 gradlew로 우회한다. `docker buildx version`이 에러면
+이 경우다.
 
 ```bash
 # 1) DB — application.yml 기본값이 localhost:5432라 루트 compose(5433)가 아니라 이쪽이다
@@ -94,8 +95,10 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/actuator/health
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/internal/v0/health
 ```
 
-개발 서버는 따로 띄우지 않아도 된다 — Playwright가 `npm run dev`를 직접 켜고, 5173이 이미
-열려 있으면 그것을 그대로 쓴다 (`playwright.config.ts`의 `webServer`).
+개발 서버는 따로 띄우지 않아도 된다 — Playwright가 **E2E 전용 포트 5174**에 `npm run dev`를
+직접 켜고 끝나면 내린다 (`playwright.config.ts`의 `webServer`). 평소 개발용 5173은 건드리지
+않으므로 켜 둔 채 돌려도 된다. 5173을 재사용하지 않는 이유는 그 서버가 `VITE_API_BASE=`
+없이 떴을 수 있어 브라우저가 에뮬레이터용 주소(10.0.2.2:8080)를 찾다 죽기 때문이다.
 
 #### 돌리기
 
@@ -120,11 +123,12 @@ npx playwright show-trace test-results/<실패한-스펙>/trace.zip
 **대칭 스킵**으로 갈랐다 — 스택을 갈아 끼우고 두 번 돌린다.
 
 ```bash
-# ai만 갈아 끼운다. --no-deps라 DB·BE는 그대로 살아 있다.
+# 레포 루트에서. ai만 갈아 끼운다 — --no-deps라 DB·BE는 그대로 살아 있다.
 E2E_FAIL_ITEM=v3 docker compose -f docker-compose.yml -f /tmp/ai-ports.yml up -d --no-deps --wait ai
-cd web && E2E_FAIL_ITEM=v3 npm run test:e2e     # full-run이 skip되고 retake가 깨어난다
+(cd web && E2E_FAIL_ITEM=v3 npm run test:e2e)   # full-run이 skip되고 retake가 깨어난다
 
 # 복구 — 값을 비워서 다시 띄운다. 설정을 기동 시 1회만 읽으므로 재기동이 필요하다.
+# (위를 서브셸로 감싼 이유: cd가 남으면 이 줄이 web/에서 돌아 compose 파일을 못 찾는다.)
 E2E_FAIL_ITEM= docker compose -f docker-compose.yml -f /tmp/ai-ports.yml up -d --no-deps --wait ai
 ```
 
