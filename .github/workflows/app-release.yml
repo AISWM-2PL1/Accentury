@@ -18,13 +18,13 @@
 # pull_request 검사에만 해당한다. 겹친 실행은 뒤쪽이 기다린다 (취소하지 않는다: 같은 커밋을 두 번
 # 서명해도 해로울 것이 없고, 중간에 끊긴 실행이 남기는 반쯤 만들어진 아티팩트가 더 헷갈린다).
 #
-# ── 시크릿 (저장소 시크릿, 박유현이 등록) ───────────────────────────────────
+# ── 시크릿 (저장소 시크릿 4개, 박유현이 등록) ───────────────────────────────
 #   RELEASE_KEYSTORE_BASE64    키스토어(.jks)를 base64 한 줄로
 #   RELEASE_KEYSTORE_PASSWORD  키스토어 비밀번호
-#   RELEASE_KEY_ALIAS          키 alias
 #   RELEASE_KEY_PASSWORD       키 비밀번호
 #   KAKAO_NATIVE_APP_KEY       카카오 네이티브 앱 키 (KAN-30)
 # 이름과 값을 뽑는 방법은 scripts/make-release-keystore.sh가 생성 직후 그대로 출력한다.
+# 키 alias는 시크릿이 아니라 아래 빌드 스텝의 env 상수다 (그 자리 주석에 이유).
 #
 # ── 왜 -P가 아니라 환경변수인가 ─────────────────────────────────────────────
 # gradle -P로 넘긴 값은 실행 로그의 명령줄에 그대로 남고 같은 머신의 다른 프로세스도 `ps`로 읽는다.
@@ -69,6 +69,13 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # `shell:`을 비우면 GitHub는 `bash -e {0}`로만 돌린다 (pipefail 없음 - 1차 실행 로그의
+    # `shell: /usr/bin/bash -e {0}`). `shell: bash`를 명시해야
+    # `bash --noprofile --norc -eo pipefail {0}`이 되어 파이프 중간 실패(예: base64 디코딩 실패)도
+    # 스텝을 멈춘다. 아래 스텝들의 `|| true`·`grep -c`는 그 전제에서 맞춘 것이다.
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
 
@@ -92,20 +99,19 @@ jobs:
         env:
           RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
           RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
-          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
           KAKAO_NATIVE_APP_KEY: ${{ secrets.KAKAO_NATIVE_APP_KEY }}
         run: |
           # 값은 절대 찍지 않는다. 이름만 모아 보고한다 (AC4).
           missing=""
-          for name in RELEASE_KEYSTORE_BASE64 RELEASE_KEYSTORE_PASSWORD RELEASE_KEY_ALIAS RELEASE_KEY_PASSWORD KAKAO_NATIVE_APP_KEY; do
+          for name in RELEASE_KEYSTORE_BASE64 RELEASE_KEYSTORE_PASSWORD RELEASE_KEY_PASSWORD KAKAO_NATIVE_APP_KEY; do
             if [ -z "${!name}" ]; then missing="$missing $name"; fi
           done
           if [ -n "$missing" ]; then
             echo "::error title=시크릿 누락::등록되지 않은 저장소 시크릿:$missing - 저장소 Settings > Secrets and variables > Actions에 박유현이 등록합니다. 이름과 값을 뽑는 방법은 scripts/make-release-keystore.sh가 키스토어 생성 직후 출력합니다." >&2
             exit 1
           fi
-          echo "시크릿 5개 확인"
+          echo "시크릿 4개 확인"
 
       # 레포 밖($RUNNER_TEMP)에 푼다. base64 값은 명령줄이 아니라 환경변수로 받아 파이프로 넘긴다 -
       # 인자로 주면 실행 명령에 그대로 남는다.
@@ -137,7 +143,10 @@ jobs:
       - name: 릴리스 빌드 (AAB + APK)
         env:
           RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
-          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          # alias는 비밀이 아니고(스크립트 기본값이자 위키에 적힌 값), 시크릿으로 두면 GitHub가
+          # 로그의 모든 "accentury"를 가려 패키지명(com.***.app)·경로·아티팩트 이름까지 ***가 된다
+          # - 1차 실행 로그에서 실제로 확인했다. 키스토어를 다른 alias로 만들었다면 이 상수를 바꾼다.
+          RELEASE_KEY_ALIAS: accentury
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
           KAKAO_NATIVE_APP_KEY: ${{ secrets.KAKAO_NATIVE_APP_KEY }}
         run: |
@@ -169,9 +178,10 @@ jobs:
           fi
 
           # ubuntu-latest에는 Android SDK가 이미 깔려 있다. 버전이 여러 개면 가장 높은 것을 쓴다.
-          # pipefail + set -e 아래에서 `ls | sort | tail`은 매치 없을 때 스텝을 죽인다 (ls가 2로 끝나고
-          # pipefail이 그 실패를 파이프라인 종료 코드로 올려 대입문에서 바로 종료 - 아래 설치 대비가
-          # 영영 실행되지 않는다). find는 디렉터리가 없어도 1로 끝나므로 `|| true`로 받아 넘긴다.
+          # 잡의 defaults가 shell: bash라 -eo pipefail로 돈다. 그 아래에서 `ls | sort | tail`은
+          # 매치 없을 때 스텝을 죽인다 (ls가 2로 끝나고 pipefail이 그 실패를 파이프라인 종료 코드로
+          # 올려 대입문에서 바로 종료 - 아래 설치 대비가 영영 실행되지 않는다). find는 디렉터리가
+          # 없어도 1로 끝나므로 `|| true`로 받아 넘긴다.
           signer=$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -name apksigner -type f 2>/dev/null | sort -V | tail -1 || true)
           if [ -z "$signer" ]; then
             echo "::notice::러너에 build-tools가 없어 설치합니다."

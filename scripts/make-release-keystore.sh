@@ -7,9 +7,10 @@
 # 스토어는 "같은 키로 서명됐는가"만 보고 업데이트를 받아들인다. 그래서 이 키스토어나
 # 비밀번호를 잃으면 이미 올라간 앱의 업데이트를 **영원히** 올릴 수 없다. 패키지명을 바꿔
 # 새 앱으로 다시 시작하는 것 말고는 방법이 없고, 설치 기반과 리뷰는 그대로 버려진다.
-# (Play App Signing에 등록해 두면 구글이 배포용 키를 대신 들고 있어 업로드 키는 재발급받을
-# 수 있다. 다만 그건 등록해 둔 경우의 이야기고, 이 스크립트가 만드는 키는 그 등록 이전
-# 단계에서 쓰는 키다. 등록 여부와 무관하게 이 파일은 잃어버리면 안 되는 것으로 다룬다.)
+# (Play App Signing은 2021년 8월 이후 새 앱에 필수다. 거기서 이 키를 업로드 키로만 쓰면
+# 구글이 앱 서명 키를 대신 들고 있어 재발급 경로가 생긴다. 하지만 이 키스토어를 앱 서명 키로
+# 올리는 쪽을 권하고 있어서 - docs/wiki/android-release-signing.md §6 - 이 파일은 복구 경로가
+# 없는 것으로 다룬다.)
 #
 # 그러니 만든 다음:
 #   1. 레포 밖 안전한 곳에 둔다 (*.jks / *.keystore는 .gitignore에 있지만 믿지 말 것).
@@ -141,12 +142,20 @@ echo "  base64 -i \"$OUT_ABS\" | tr -d '\\n' | pbcopy"
 echo ""
 echo "(클립보드 없이 값을 보고 싶으면 | pbcopy 를 빼면 된다. 스크롤백에 남는다는 것만 알고 써라.)"
 echo ""
-echo "등록할 시크릿 이름:"
+echo "등록할 시크릿 이름 (4개):"
 echo "  RELEASE_KEYSTORE_BASE64    - 위 명령의 출력"
 echo "  RELEASE_KEYSTORE_PASSWORD  - 키스토어 비밀번호"
-echo "  RELEASE_KEY_ALIAS          - $ALIAS"
 echo "  RELEASE_KEY_PASSWORD       - 키 비밀번호"
 echo "  KAKAO_NATIVE_APP_KEY       - 카카오 네이티브 앱 키 (KAN-30)"
+echo ""
+echo "키 alias($ALIAS)는 시크릿이 아니다. .github/workflows/app-release.yml의 릴리스 빌드 스텝에"
+echo "env 상수로 박혀 있다 - 시크릿으로 두면 GitHub가 로그에서 그 문자열을 전부 가려 패키지명·경로까지"
+echo "***가 되기 때문이다."
+if [[ "$ALIAS" != "accentury" ]]; then
+  echo ""
+  echo "경고: alias를 기본값(accentury)과 다르게 줬다. app-release.yml의 RELEASE_KEY_ALIAS 상수를"
+  echo "  '$ALIAS'로 바꿔야 CI 서명이 붙는다."
+fi
 echo ""
 echo "로컬에서 서명 빌드를 해 보려면 local.properties에:"
 echo "  releaseKeystorePath=$OUT_ABS"
