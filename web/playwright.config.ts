@@ -41,6 +41,9 @@ const fakeMicWav = path.resolve(webDir, '../app/src/debug/assets/fake_mic.wav')
  */
 const externalBaseUrl = process.env.E2E_BASE_URL
 
+/** E2E 전용 개발 서버 포트. 개발용 5173과 갈라 둔 이유는 아래 `webServer` 주석 */
+const E2E_PORT = 5174
+
 export default defineConfig({
   testDir: './e2e',
   /*
@@ -55,7 +58,7 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : [['list']],
   use: {
-    baseURL: externalBaseUrl ?? 'http://localhost:5173',
+    baseURL: externalBaseUrl ?? `http://localhost:${E2E_PORT}`,
     /*
      * 실패한 실행만 증거를 남긴다. trace에는 요청·콘솔·DOM 스냅샷이 다 들어 있어
      * `npx playwright show-trace`로 실패 순간을 되감아 볼 수 있다 — 오디오가 얽힌 실패는
@@ -102,21 +105,27 @@ export default defineConfig({
   ],
   /*
    * 개발 서버는 Playwright가 띄운다 — 사람이 미리 띄워 두는 것을 전제하면 CI에서 그 단계가
-   * 통째로 빠진다. 이미 5173이 열려 있으면 그것을 그대로 쓰므로(reuseExistingServer) 로컬에서
-   * 개발 서버를 띄워 둔 채 스펙만 돌리는 흐름도 그대로 남는다.
+   * 통째로 빠진다.
    *
    * `VITE_API_BASE=`(빈 값)이 핵심이다. 빈 값이면 웹이 API를 상대 경로로 부르고, 그 요청을
    * `vite.config.ts`의 `/v0` 프록시가 로컬 백엔드로 넘긴다 — 브라우저가 보기에는 화면과 API가
    * 같은 출처라 배포(CloudFront 단일 출처)와 같은 모양이 되고, CORS 설정을 맞출 일이 없다.
    * 이 값이 없으면 개발 빌드 기본값이 `http://10.0.2.2:8080`(에뮬레이터에서 본 호스트 주소)라
    * 데스크톱 브라우저에서는 닿지 않는다 (App.tsx의 `API_BASE`).
+   *
+   * 그래서 **E2E 전용 포트(5174)를 쓰고 이미 떠 있는 서버는 재사용하지 않는다.** 처음에는
+   * 개발용 5173을 `reuseExistingServer`로 같이 썼는데, 그러면 개발자가 평소처럼 `npm run dev`를
+   * 켜 둔 상태에서 스펙이 그 서버를 잡는다 — 그 서버는 위 env 없이 떴으므로 브라우저가
+   * 10.0.2.2:8080을 찾다가 `ERR_CONNECTION_REFUSED`로 30초를 태우고 죽는다(리뷰에서 재현).
+   * 포트를 가르면 두 서버가 공존하고, `--strictPort`는 5174가 막혀 있을 때 vite가 조용히
+   * 다른 포트로 옮겨 앉아 `url` 대기가 실패하는 일을 막는다.
    */
   webServer: externalBaseUrl
     ? undefined
     : {
-        command: 'npm run dev -- --port 5173',
-        url: 'http://localhost:5173',
-        reuseExistingServer: true,
+        command: `npm run dev -- --port ${E2E_PORT} --strictPort`,
+        url: `http://localhost:${E2E_PORT}`,
+        reuseExistingServer: false,
         timeout: 60_000,
         env: { VITE_API_BASE: '' },
       },

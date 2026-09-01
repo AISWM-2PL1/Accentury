@@ -44,6 +44,8 @@ jobs:
             web-e2e:
               - 'web/**'
               - 'docker-compose.yml'
+              # 가짜 마이크 음성. 이 검사만 소비하는 파일이라 여기 없으면 바뀌어도 아무도 안 본다.
+              - 'app/src/debug/assets/fake_mic.wav'
               - '.github/workflows/test.yml'
 
   app-test:
