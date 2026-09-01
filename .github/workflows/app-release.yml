@@ -193,7 +193,9 @@ jobs:
 
           # apksigner는 콜론 없는 소문자 hex로 찍는다. assetlinks.json과 콘솔이 쓰는 형식은
           # 대문자 콜론 구분이라 그 형태로 바꿔 요약에 넣는다.
-          raw=$(echo "$certs" | sed -n 's/^Signer #1 certificate SHA-256 digest: *//p' | head -1)
+          # 줄머리는 build-tools 버전에 따라 다르다: 36까지 "Signer #1 certificate ...",
+          # 37부터 "V2 Signer: certificate ..." (첫 실제 러너 실행에서 잡힘). 둘 다 받는다.
+          raw=$(echo "$certs" | sed -n -E 's/^(Signer #1|V[0-9.]+ Signer:) certificate SHA-256 digest: *//p' | head -1)
           if [ -z "$raw" ]; then
             echo "::error title=지문 추출 실패::--print-certs 출력에서 SHA-256 지문을 찾지 못했습니다." >&2
             exit 1
