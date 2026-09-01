@@ -47,3 +47,11 @@ ios/**/.build/
 ios/**/.swiftpm/
 ios/DerivedData/
 # Package.resolved는 일부러 빼지 않는다 - 외부 의존성이 생기면 버전을 고정하는 파일이다.
+
+# === Android 릴리스 서명 (KAN-163) ===
+# 릴리스 키스토어. 이 파일 하나를 잃으면 스토어에 올라간 앱의 업데이트를 영원히 올릴 수 없다
+# (Play App Signing에 등록해 뒀다면 업로드 키 재발급으로 살릴 수 있지만 그건 등록해 둔 경우다).
+# 레포가 아니라 팀이 정한 안전한 곳에 두고, 보관 위치는 위키에 적는다.
+# CI는 이 파일을 base64 시크릿(RELEASE_KEYSTORE_BASE64)으로 받아 러너에서 푼다.
+*.jks
+*.keystore

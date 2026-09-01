@@ -1,3 +1,4 @@
+import java.io.File
 import java.util.Properties
 
 plugins {
@@ -60,6 +61,86 @@ fun debugWebUrlOverride(): String? {
     return props.getProperty("webUrl")?.takeIf { it.isNotBlank() }?.trimEnd('/')
 }
 
+/**
+ * 릴리스 서명 재료 (KAN-163). 환경변수 → local.properties 순으로 본다.
+ *
+ *   환경변수  RELEASE_KEYSTORE_PATH / RELEASE_KEYSTORE_PASSWORD / RELEASE_KEY_ALIAS / RELEASE_KEY_PASSWORD
+ *   local     releaseKeystorePath  / releaseKeystorePassword  / releaseKeyAlias  / releaseKeyPassword
+ *
+ * [kakaoNativeAppKey]와 달리 **gradle 프로퍼티(-P) 단계가 없다.** 명령줄로 넘긴 값은 CI 로그의
+ * 실행 명령에 그대로 남고 같은 머신의 다른 프로세스도 `ps`로 읽는다. 카카오 키는 어차피 APK에
+ * 박히는 값이라 그 위험이 크지 않았지만 키스토어 비밀번호는 유출되면 서명 키 자체를 잃는 값이라
+ * 명령줄로 받는 경로를 아예 만들지 않는다. CI는 환경변수로, 사람은 local.properties로만 준다.
+ *
+ * **없는 것이 정상 상태다.** 경로가 없으면 null을 돌려주고 릴리스 빌드는 서명 없이 나간다
+ * (`app-release-unsigned.apk`) - 시크릿을 모르는 로컬 확인과 PR CI의 릴리스 컴파일도 그대로
+ * 돌아가야 해서다. [kakaoNativeAppKey]의 "빈 값이 정상"과 같은 판단이다.
+ *
+ * 다만 **반쯤 설정된 상태는 실패시킨다.** 경로는 줬는데 파일이 없거나 비밀번호·alias가 비었으면
+ * 설정 단계에서 죽인다. 이 경우 조용히 미서명 APK를 뱉으면 릴리스 파이프라인이 "빌드 성공"으로
+ * 보고한 산출물이 스토어에 올릴 수 없는 파일이 되고, 그 사실은 업로드 단계까지 가서야 드러난다.
+ */
+data class ReleaseSigning(
+    val storeFile: File,
+    val storePassword: String,
+    val keyAlias: String,
+    val keyPassword: String,
+)
+
+fun releaseSigning(): ReleaseSigning? {
+    val local = Properties()
+    val localFile = rootProject.file("local.properties")
+    if (localFile.exists()) {
+        localFile.inputStream().use { local.load(it) }
+    }
+    // 빈 문자열은 "주지 않은 것"으로 본다. CI에서 시크릿이 등록되지 않은 채 워크플로가 돌면
+    // 환경변수가 ""로 들어오는데, 그걸 값으로 받으면 아래 파일 존재 검사에서 엉뚱한 메시지가 난다.
+    fun value(env: String, localKey: String): String? =
+        System.getenv(env)?.takeIf { it.isNotBlank() }
+            ?: local.getProperty(localKey)?.takeIf { it.isNotBlank() }
+
+    val path = value("RELEASE_KEYSTORE_PATH", "releaseKeystorePath") ?: return null
+
+    // 절대 경로를 권장한다. CI가 시크릿(base64)을 풀어 놓는 위치는 레포 밖 임시 디렉터리다.
+    // 상대 경로를 준 경우에만 레포 루트 기준으로 푼다.
+    val storeFile = File(path).let { if (it.isAbsolute) it else rootProject.file(path) }
+    if (!storeFile.isFile) {
+        error(
+            "릴리스 키스토어를 찾을 수 없다 (KAN-163): $storeFile\n" +
+                "  RELEASE_KEYSTORE_PATH(또는 local.properties의 releaseKeystorePath)가 가리키는 파일이 없다.\n" +
+                "  서명 없이 빌드하려면 그 값을 아예 비워라 - 그러면 app-release-unsigned.apk가 나온다.",
+        )
+    }
+
+    fun required(env: String, localKey: String): String =
+        value(env, localKey) ?: error(
+            "릴리스 키스토어 경로는 있는데 $env (또는 local.properties의 $localKey)가 비어 있다 (KAN-163).\n" +
+                "  반쯤 설정된 서명은 미서명 APK로 조용히 넘어가지 않고 여기서 실패시킨다.",
+        )
+
+    return ReleaseSigning(
+        storeFile = storeFile,
+        storePassword = required("RELEASE_KEYSTORE_PASSWORD", "releaseKeystorePassword"),
+        keyAlias = required("RELEASE_KEY_ALIAS", "releaseKeyAlias"),
+        keyPassword = required("RELEASE_KEY_PASSWORD", "releaseKeyPassword"),
+    )
+}
+
+/**
+ * 릴리스 산출물이 빈 카카오 키로 나가는 것을 막는 빗장 (KAN-163). `-PrequireKakaoNativeAppKey=true`.
+ *
+ * [kakaoNativeAppKey]의 "빈 값이 정상"은 로컬·PR CI 이야기고, 스토어로 나가는 빌드에서는 키가
+ * 빠진 것이 곧 공유 기능이 죽은 채 배포되는 것이다. 그래서 평소에는 끄고(기본 false) 릴리스
+ * 워크플로만 이 플래그를 켜서 설정 단계에서 잡는다.
+ *
+ * 이건 명령줄(-P)로 받아도 된다. 비밀이 아니라 스위치라 로그에 남아도 잃을 것이 없다.
+ * 값 없이 `-PrequireKakaoNativeAppKey`만 줘도 켜진 것으로 본다 - gradle이 ""를 넘겨서다.
+ */
+fun requireKakaoNativeAppKey(): Boolean {
+    val raw = project.findProperty("requireKakaoNativeAppKey") as String? ?: return false
+    return raw.isEmpty() || raw.toBoolean()
+}
+
 android {
     namespace = "com.accentury.app"
     compileSdk {
@@ -87,7 +168,30 @@ android {
 
         // 결과 공유의 카카오 경로 스위치 (KAN-30). debug/release가 같은 값을 쓰므로 여기 둔다 -
         // 카카오 앱 키는 빌드 타입이 아니라 "주입됐는가"로 갈리는 값이다 (kakaoNativeAppKey 주석).
-        buildConfigField("String", "KAKAO_NATIVE_APP_KEY", "\"${kakaoNativeAppKey()}\"")
+        val kakaoKey = kakaoNativeAppKey()
+        if (kakaoKey.isBlank() && requireKakaoNativeAppKey()) {
+            error(
+                "카카오 네이티브 앱 키가 비어 있다 (KAN-163, -PrequireKakaoNativeAppKey=true).\n" +
+                    "  릴리스 산출물은 빈 키로 나갈 수 없다 - 이 상태로 배포하면 결과 공유가 OS 공유 시트로만 간다.\n" +
+                    "  CI라면 KAKAO_NATIVE_APP_KEY 시크릿이 등록됐는지, 로컬이라면 local.properties의\n" +
+                    "  kakaoNativeAppKey= 값이 있는지 확인해라.",
+            )
+        }
+        buildConfigField("String", "KAKAO_NATIVE_APP_KEY", "\"$kakaoKey\"")
+    }
+
+    // 릴리스 서명 (KAN-163). 재료가 없으면 signingConfigs에 "release"를 아예 만들지 않고,
+    // 아래 release 블록의 signingConfig도 null로 남아 미서명 APK가 나온다.
+    val releaseSigningMaterial = releaseSigning()
+    signingConfigs {
+        if (releaseSigningMaterial != null) {
+            create("release") {
+                storeFile = releaseSigningMaterial.storeFile
+                storePassword = releaseSigningMaterial.storePassword
+                keyAlias = releaseSigningMaterial.keyAlias
+                keyPassword = releaseSigningMaterial.keyPassword
+            }
+        }
     }
 
     buildTypes {
@@ -104,6 +208,13 @@ android {
             buildConfigField("String", "FAKE_MIC_ASSET", "\"${fakeMicAsset()}\"")
         }
         release {
+            // 이 키스토어 하나가 앱 정체성의 뿌리다 (KAN-163). 여기서 나오는 인증서 지문이
+            // App Links(KAN-32)의 assetlinks.json에 박히는 SHA-256이고, 카카오 콘솔에 등록하는
+            // 키 해시(base64(sha1(cert)))도 같은 인증서에서 나온다. 키스토어를 바꾸면 그 두 곳을
+            // 함께 갱신하지 않는 한 딥링크 검증과 카카오 공유가 동시에 깨진다.
+            // 지문 뽑는 법은 scripts/make-release-keystore.sh가 출력한다.
+            signingConfig = signingConfigs.findByName("release")
+
             // FAKE_MIC_ASSET은 여기에 없다. 이 필드를 읽는 코드가 src/debug에만 있어서다
             // (audio/PcmSources.kt) - 릴리스에는 파일 재생 경로가 상수 ""로 죽어 있는 게
             // 아니라 아예 존재하지 않는다.
