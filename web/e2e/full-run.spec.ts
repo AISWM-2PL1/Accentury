@@ -29,6 +29,18 @@ import { answerAllItems, startTest, TOTAL_ITEMS } from './helpers/testFlow'
 test.setTimeout(120_000)
 
 /**
+ * 실패 갈래용 스택에서는 건너뛴다 (KAN-181 3단계).
+ *
+ * `E2E_FAIL_ITEM`이 켜져 있으면 AI 스텁이 그 문항을 반드시 실패시키므로 완주가 성립하지
+ * 않는다. 한 스택이 "전부 성공"과 "하나는 실패"를 동시에 만족할 수 없어, `retake.spec.ts`와
+ * 조건을 뒤집어 짝지었다 — 스택을 두 번 띄우면 두 스펙이 각각 자기 무대에서 돈다.
+ */
+test.skip(
+  process.env.E2E_FAIL_ITEM !== undefined && process.env.E2E_FAIL_ITEM !== '',
+  'E2E_FAIL_ITEM이 켜진 스택에서는 완주할 수 없다 (retake.spec.ts가 그 무대를 쓴다)',
+)
+
+/**
  * 등급 이름. **서버가 정하는 값이다** — 화면은 `tier.name`을 그대로 그리고 클라이언트에는
  * 등급 표가 없다 (`tierAssets.ts` 헤더의 KAN-29 결정).
  *
