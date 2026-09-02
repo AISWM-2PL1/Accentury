@@ -206,6 +206,24 @@ describe('429 — Retry-After를 지킨다 (요구 6항)', () => {
     expect(callsTo(fetchImpl, '/analyses')).toBe(2)
   })
 
+  it('봉투 없는 429도 헤더의 Retry-After를 지킨다 — 프록시가 본문 없이 돌려줘도 대기 시간이 타이머까지 닿는다', async () => {
+    const fetchImpl = fetchFor({
+      analyses: () => jsonResponse(429, 'Too Many Requests', { 'Retry-After': '9' }),
+    })
+    renderHook(() => useAnalysisPolling(options(fetchImpl, noJitter)))
+    await act(async () => {})
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(8999)
+    })
+    expect(callsTo(fetchImpl, '/analyses')).toBe(1)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1)
+    })
+    expect(callsTo(fetchImpl, '/analyses')).toBe(2)
+  })
+
   it('지터는 Retry-After를 앞당기지 않는다 — 늘리는 쪽으로만 준다', async () => {
     const fetchImpl = fetchFor({
       analyses: () =>
@@ -378,6 +396,23 @@ describe('재시도로 고쳐지지 않는 실패', () => {
       kind: 'FAILED',
       message: '세션이 만료되었습니다. 테스트를 다시 시작해 주세요.',
     })
+  })
+
+  it('봉투 없는 403은 첫 회차에 바로 FAILED로 멈춘다 — WAF 기본 응답은 60초를 두드려도 같은 답이다', async () => {
+    const fetchImpl = fetchFor({ analyses: () => jsonResponse(403, 'Forbidden') })
+    const { result } = renderHook(() => useAnalysisPolling(options(fetchImpl)))
+    await act(async () => {})
+
+    expect(result.current.status).toEqual({
+      kind: 'FAILED',
+      message: '분석 상태를 확인하지 못했습니다 (HTTP 403)',
+    })
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(POLL_BUDGET_MS)
+    })
+    expect(callsTo(fetchImpl, '/analyses')).toBe(1)
+    expect(callsTo(fetchImpl, '/complete')).toBe(0)
   })
 })
 
