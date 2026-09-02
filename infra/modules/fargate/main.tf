@@ -23,6 +23,8 @@
 # 남겨 두면 최신 ACTIVE의 image가 SSM 태그와 어긋나 drift로 나온다.
 # 첫 구축(prod)에서는 IMAGE_TAG가 먼저 있어야 plan이 선다 - ai 호스트가 같은 파라미터 없이는 기동하지 않는
 # 것과 같은 전제다 (README "prod 최초 구축").
+# 이 값은 plan 시점에 읽히므로 plan과 apply 사이에 파이프라인이 배포하면 apply가 옛 이미지로 되돌린다 -
+# 인프라 apply와 이미지 배포를 겹치지 않게 하고 저장한 plan을 재사용하지 않는다 (README, 2차 리뷰 반영).
 
 locals {
   name           = "accentury-${var.env}"
