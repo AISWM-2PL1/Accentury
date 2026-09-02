@@ -37,11 +37,17 @@ public struct TestEntry: Equatable, Sendable {
 ///   버전(``bridgeContractVersion``)이고, **이 인자를 넘기는 곳은 디버그 스모크 하나뿐이다**
 ///   (`-BridgeVersionOverride`, KAN-108 §8). 웹의 스큐 판정은 낮은 버전을 실어 보내야만 볼 수
 ///   있는데, 그걸 보려고 상수를 잠깐 고쳐 빌드하면 그 검증이 커밋에 남지 않는다.
+/// - Parameter campaignToken: Universal Link로 들어온 공유 유입 계측 코드 (``parseAppLink(_:allowedOrigins:)``,
+///   KAN-32). 있으면 `c`로 딸려 보내 웹이 만드는 첫 세션에 같은 코드가 실리게 한다 — 웹은 진입
+///   쿼리의 `?c=`를 `session/campaign.ts`로 읽고 `navigation/entryUrl.ts`가 화면을 옮겨도 그
+///   값을 보존한다. 앱이 값을 해석하지 않고 그대로 넘기는 자리라, 링크에서 실려 온 유입 경로가
+///   세션까지 이어진다.
 public func buildWebUrl(
     base: String,
     appVersionName: String,
     testEntry: TestEntry? = nil,
-    bridgeVersion: Int = bridgeContractVersion
+    bridgeVersion: Int = bridgeContractVersion,
+    campaignToken: String? = nil
 ) -> String {
     let separator: Character = base.contains("?") ? "&" : "?"
     var query = "bridge=\(bridgeVersion)&app=\(encodeQueryValue(appVersionName))"
@@ -49,6 +55,9 @@ public func buildWebUrl(
         query += "&screen=test"
         query += "&testVersion=\(encodeQueryValue(testEntry.testVersion))"
         query += "&sessionId=\(encodeQueryValue(testEntry.sessionId))"
+    }
+    if let campaignToken {
+        query += "&c=\(encodeQueryValue(campaignToken))"
     }
     return "\(base)\(separator)\(query)"
 }
