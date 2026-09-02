@@ -27,6 +27,7 @@
 
 import { readErrorEnvelope, readJson } from '../analysis/errorEnvelope'
 import { newIdempotencyKey } from '../net/idempotencyKey'
+import { isRetryableStatus } from '../net/retryableStatus'
 import type { FetchLike } from '../progress/fetchTestDefinition'
 import type { Recording } from './recordingBuffer'
 
@@ -162,7 +163,7 @@ export async function uploadRecording(
     throw new UploadError(envelope.message, envelope.code, envelope.retryable, envelope.retryAfterMs)
   }
   // 봉투가 없으면 서버가 재시도 여부를 알려주지 않은 것이다 — 상태 코드로 판단한다
-  // (네이티브 `isRetryableStatus`와 같은 규칙).
+  // (`net/retryableStatus`가 네이티브와 같은 규칙을 담고 있다).
   throw new UploadError(
     `녹음을 보내지 못했어요 (HTTP ${response.status})`,
     null,
@@ -177,9 +178,4 @@ function readAnalysisJobId(body: unknown): string | null {
   const { analysisJobId } = body as Record<string, unknown>
   if (typeof analysisJobId !== 'string' || analysisJobId.trim() === '') return null
   return analysisJobId
-}
-
-/** 408·429·5xx는 잠시 뒤 같은 요청이 통할 수 있는 실패다. 4xx 나머지는 다시 보내도 같다 */
-function isRetryableStatus(status: number): boolean {
-  return status >= 500 || status === 408 || status === 429
 }
