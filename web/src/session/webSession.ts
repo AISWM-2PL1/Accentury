@@ -22,6 +22,7 @@
 
 import { readErrorEnvelope, readJson } from '../analysis/errorEnvelope'
 import { newIdempotencyKey } from '../net/idempotencyKey'
+import { isRetryableStatus } from '../net/retryableStatus'
 import type { FetchLike } from '../progress/fetchTestDefinition'
 import { sanitizeCampaignToken } from './campaign'
 
@@ -147,7 +148,7 @@ export async function createWebSession(
     throw new WebSessionError(envelope.message, envelope.code, envelope.retryable, envelope.retryAfterMs)
   }
   // 봉투가 없으면 서버가 재시도 여부를 알려주지 않은 것이다 — 상태 코드로 판단한다
-  // (`uploadRecording`과 같은 규칙).
+  // (`net/retryableStatus`가 그 판정의 유일한 정의다).
   throw new WebSessionError(
     `테스트를 시작하지 못했어요 (HTTP ${response.status})`,
     null,
@@ -264,9 +265,4 @@ function isPositiveNumber(value: unknown): boolean {
 
 function isFilledString(value: unknown): boolean {
   return typeof value === 'string' && value.trim() !== ''
-}
-
-/** 408·429·5xx는 잠시 뒤 같은 요청이 통할 수 있는 실패다 (`uploadRecording`과 같은 판정) */
-function isRetryableStatus(status: number): boolean {
-  return status >= 500 || status === 408 || status === 429
 }
