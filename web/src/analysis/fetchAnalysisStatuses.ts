@@ -15,6 +15,7 @@
  * 대기 화면에 중간 점수가 새는 경로는 이 파일에서 시작할 수 없다 (KAN-12).
  */
 
+import { isRetryableStatus } from '../net/retryableStatus'
 import type { FetchLike } from '../progress/fetchTestDefinition'
 import { AnalysisApiError, readErrorEnvelope, readJson, retryAfterMsFromHeader } from './errorEnvelope'
 
@@ -125,7 +126,10 @@ export async function fetchAnalysisStatuses(
   return parsed
 }
 
-/** 실패 응답을 봉투로 읽어 오류로 바꾼다. 봉투가 없으면 상태 코드 폴백 */
+/**
+ * 실패 응답을 봉투로 읽어 오류로 바꾼다. 봉투가 없으면 재시도 여부는 상태 코드
+ * (`net/retryableStatus`)로, 429의 대기 시간은 `Retry-After` 헤더로 판정한다.
+ */
 async function toApiError(response: Response): Promise<AnalysisApiError> {
   const envelope = readErrorEnvelope(response, await readJson(response))
   if (envelope !== null) {
@@ -136,7 +140,7 @@ async function toApiError(response: Response): Promise<AnalysisApiError> {
     })
   }
   return new AnalysisApiError(`분석 상태를 확인하지 못했습니다 (HTTP ${response.status})`, {
-    retryable: true,
+    retryable: isRetryableStatus(response.status),
     retryAfterMs: retryAfterMsFromHeader(response),
   })
 }

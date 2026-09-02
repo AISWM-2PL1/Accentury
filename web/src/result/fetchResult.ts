@@ -23,6 +23,7 @@
  * [다시 시도]를 띄우게 한다.
  */
 
+import { isRetryableStatus } from '../net/retryableStatus'
 import type { FetchLike } from '../progress/fetchTestDefinition'
 import type { TestResultView } from './testResult'
 
@@ -66,8 +67,9 @@ export class ResultFetchError extends Error {
 /**
  * 확정된 최종 결과를 받아온다.
  *
- * @throws ResultFetchError 네트워크 실패 / 봉투가 말한 오류 / 봉투를 못 읽은 HTTP 오류 /
- *   200인데 본문이 계약과 다른 경우
+ * @throws ResultFetchError 네트워크 실패 / 봉투가 말한 오류 / 봉투를 못 읽은 HTTP 오류
+ *   (재시도 여부를 상태 코드로 판정한다 — `net/retryableStatus`) / 200인데 본문이 계약과
+ *   다른 경우
  */
 export async function fetchResult(
   query: ResultQuery,
@@ -108,7 +110,13 @@ export async function fetchResult(
     if (envelope !== null) {
       throw new ResultFetchError(envelope.message, envelope.code, envelope.retryable)
     }
-    throw new ResultFetchError(`결과를 불러오지 못했습니다 (HTTP ${response.status})`, null, true)
+    // 봉투가 없으면 서버가 재시도 여부를 알려주지 않은 것이다 — 상태 코드로 판단한다
+    // (`net/retryableStatus`가 그 판정의 유일한 정의다).
+    throw new ResultFetchError(
+      `결과를 불러오지 못했습니다 (HTTP ${response.status})`,
+      null,
+      isRetryableStatus(response.status),
+    )
   }
 
   let parsed: unknown

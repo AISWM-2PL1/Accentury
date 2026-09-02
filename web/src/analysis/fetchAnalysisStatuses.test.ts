@@ -238,7 +238,18 @@ describe('실패 응답 — 분기는 봉투의 code로 한다', () => {
     const error = (await fetchAnalysisStatuses(query(), fetchImpl).catch((e: unknown) => e)) as AnalysisApiError
 
     expect(error.code).toBeNull()
+    expect(error.retryable).toBe(true)
     expect(error.retryAfterMs).toBe(5000)
+  })
+
+  it('봉투 없는 403은 재시도 불가다 — WAF 기본 응답은 다시 보내도 같은 답이 온다', async () => {
+    const fetchImpl = vi.fn<FetchLike>(async () => jsonResponse(403, 'Forbidden'))
+
+    await expect(fetchAnalysisStatuses(query(), fetchImpl)).rejects.toMatchObject({
+      code: null,
+      retryable: false,
+      message: '분석 상태를 확인하지 못했습니다 (HTTP 403)',
+    })
   })
 
   it('봉투를 못 읽은 HTTP 오류는 상태 코드 폴백으로 간다', async () => {

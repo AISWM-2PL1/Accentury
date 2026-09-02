@@ -219,6 +219,28 @@ describe('실패 응답 — 분기는 봉투의 code로 한다', () => {
     })
   })
 
+  it('봉투 없는 403은 재시도 불가다 — WAF 기본 응답은 다시 보내도 같은 답이 온다', async () => {
+    const fetchImpl = vi.fn<FetchLike>(async () => jsonResponse(403, 'Forbidden'))
+
+    await expect(completeSession(request(), fetchImpl)).rejects.toMatchObject({
+      code: null,
+      retryable: false,
+      message: '테스트를 마치지 못했습니다 (HTTP 403)',
+    })
+  })
+
+  it('봉투 없는 429는 재시도 가능이고 헤더의 대기 시간을 건진다 — 잠시 뒤면 통한다', async () => {
+    const fetchImpl = vi.fn<FetchLike>(async () =>
+      jsonResponse(429, 'Too Many Requests', { 'Retry-After': '2' }),
+    )
+
+    const error = (await completeSession(request(), fetchImpl).catch((e: unknown) => e)) as AnalysisApiError
+
+    expect(error.code).toBeNull()
+    expect(error.retryable).toBe(true)
+    expect(error.retryAfterMs).toBe(2000)
+  })
+
   it('네트워크 실패는 재시도 가능이다 — 완료는 자연 멱등이라 다시 보내도 안전하다', async () => {
     const fetchImpl = vi.fn<FetchLike>(async () => {
       throw new TypeError('Failed to fetch')

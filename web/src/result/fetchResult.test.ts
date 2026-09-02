@@ -184,6 +184,23 @@ describe('오류 분기 — 상태 코드가 아니라 봉투의 code로 가른�
     expect(error.retryable).toBe(true)
   })
 
+  it('봉투 없는 403은 재시도 불가다 — WAF 기본 응답은 다시 보내도 같은 답이 온다', async () => {
+    const fetchImpl: FetchLike = async () =>
+      ({
+        ok: false,
+        status: 403,
+        json: async () => {
+          throw new SyntaxError('Unexpected token <')
+        },
+      }) as unknown as Response
+
+    const error = (await fetchResult(query(), fetchImpl).catch((e: unknown) => e)) as ResultFetchError
+
+    expect(error.code).toBeNull()
+    expect(error.message).toContain('403')
+    expect(error.retryable).toBe(false)
+  })
+
   it('fetch 거부는 재시도 가능한 네트워크 오류다', async () => {
     const fetchImpl: FetchLike = async () => {
       throw new TypeError('Failed to fetch')
