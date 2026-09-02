@@ -13,6 +13,8 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.hamcrest.Matchers.hasSize;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -44,7 +46,7 @@ class AnalysisStatusApiTest extends IntegrationTest {
     private AnalysisJobTransitions transitions;
 
     @Autowired
-    private AnalysisBacklog backlog;
+    private AnalysisCongestion congestion;
 
     @Autowired
     private AccenturyProperties properties;
@@ -194,21 +196,32 @@ class AnalysisStatusApiTest extends IntegrationTest {
 
     // === 혼잡 시 폴링 간격 (§5.3 규칙 1, KAN-24 AC) ===
 
+    /**
+     * KAN-167 AC - 혼잡 판정은 <b>전체</b> PROCESSING 건수를 반영한다. 밀린 작업을 폴링하는 세션이
+     * 아니라 다른 세션에 심는다 - 다른 인스턴스가 접수한 작업과 같은 위치다 (어느 태스크가
+     * 접수했든 행은 같은 DB에 있다). 이 인스턴스의 인메모리 카운터는 건드리지 않으므로, 판정이
+     * 그 카운터로 되돌아가면 이 테스트가 깨진다.
+     */
     @Test
     void 혼잡하면_모든_상태_응답의_pollAfterMs가_상향된다() throws Exception {
-        // 판정 규칙 자체는 PollIntervalsTest가 검증한다 - 여기서는 백로그부터 API 응답까지의
+        // 판정 규칙 자체는 PollIntervalsTest가 검증한다 - 여기서는 DB 건수부터 API 응답까지의
         // 배선을 확인한다. 이 배선이 끊기면 서버가 간격을 올려도 클라이언트에 전달되지 않아
         // 혼잡 시 폴링 증폭(§5.3 - 요청 20배)을 막을 수 없다.
         SessionHandle session = createSession();
         AnalysisJob job = saveJob(session, "v1", 1, Instant.now());
         // 임계치와 간격은 설정이 정본이다 - 값을 복사하면 설정 변경 시 엉뚱한 이유로 깨진다.
-        // 공유 빈을 직접 올리므로 이 테스트는 다른 테스트와 병렬 실행하면 안 된다 (finally 복원).
         int threshold = properties.analysis().congestionThreshold();
         int congested = (int) properties.analysis().congestedPollAfterMs();
         int base = (int) properties.analysis().pollAfterMs();
-        for (int i = 0; i < threshold; i++) {
-            backlog.started();
+        // 이 세션의 작업 1건이 이미 PROCESSING이므로 나머지를 다른 세션에 채운다. 문항 5개에
+        // 시도 번호를 돌려 멱등 키(문항 + 시도)가 겹치지 않게 한다.
+        SessionHandle other = createSession();
+        List<AnalysisJob> backlog = new ArrayList<>();
+        for (int i = 0; i < threshold - 1; i++) {
+            backlog.add(saveJob(other, "v" + (i % 5 + 1), i / 5 + 1, Instant.now()));
         }
+        // 판정 캐시(TTL 1초)가 심기 전의 값을 들고 있을 수 있다 - 비워서 이번 폴링이 다시 세게 한다.
+        congestion.invalidate();
         try {
             mockMvc.perform(statuses(session))
                     .andExpect(status().isOk())
@@ -218,12 +231,12 @@ class AnalysisStatusApiTest extends IntegrationTest {
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.pollAfterMs").value(congested));
         } finally {
-            for (int i = 0; i < threshold; i++) {
-                backlog.finished();
-            }
+            // 다른 테스트가 혼잡 상태를 물려받지 않게 - 클래스 안에서는 DB를 비우지 않는다.
+            repository.deleteAll(backlog);
+            congestion.invalidate();
         }
 
-        // 밀림이 풀리면 즉시 기준 간격으로 돌아온다.
+        // 밀림이 풀리면 TTL 뒤에 기준 간격으로 돌아온다 (위에서 캐시를 비웠으므로 즉시).
         mockMvc.perform(statuses(session))
                 .andExpect(jsonPath("$.pollAfterMs").value(base));
     }

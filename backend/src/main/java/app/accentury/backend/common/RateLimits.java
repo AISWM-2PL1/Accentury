@@ -10,7 +10,7 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
- * API 요청 제한 정책의 한 자리 (API 명세서 §2.5, NFR-SC-04, KAN-28).
+ * API 요청 제한 정책의 한 자리 (API 명세서 §2.5, KAN-28. SRS에는 요청 제한 NFR이 없다 - NFR-SC-04는 내부 서비스 격리다).
  * <p>
  * 명세의 "IP 단위 + 세션 단위 이중 제한"을 범위(scope)별 한도로 편다 - 판정 로직은
  * {@link FixedWindowRateLimiter} 하나이고, 여기는 어떤 경로를 무엇으로 세는지와
@@ -26,9 +26,23 @@ import java.util.concurrent.TimeUnit;
  *   <li>업로드만 둘 다다 - 본문이 큰 유일한 경로라 파싱 비용을 IP로 먼저 끊고
  *       (multipart 해석 전 {@code UploadRateLimitFilter}), 인증 뒤에 세션으로 다시 센다.</li>
  * </ul>
- * <p>
- * 프로토타입은 인메모리로 충분하다 - 다중 인스턴스 공유 저장소(Redis)는 세션 저장소를
- * 옮기는 시점(§2.1)과 같이 간다. 임계치는 부하 테스트 후 확정한다 (§7, KAN-40).
+ *
+ * <h4>인메모리, 인스턴스별 - 의도된 것이다 (KAN-167)</h4>
+ * backend가 Fargate 태스크 여러 개로 돌면(KAN-165, KAN-168) 카운터가 태스크마다 따로 있어
+ * 실효 한도가 "설정값 x 태스크 수"로 풀린다 (ALB가 요청을 나눠 주므로 한 키의 요청이 여러
+ * 태스크에 흩어진다). 이것을 수용하고 Redis로 외부화하지 않는다:
+ * <ul>
+ *   <li>IP 축(세션 생성, 업로드)은 WAF의 rate 규칙(KAN-149)이 엣지에서 한 번 더 막는다 -
+ *       CloudFront 앞이라 태스크 수와 무관하다. 단 WAF가 Block 모드일 때 성립하는 수용이다.
+ *       지금은 Count 모드({@code waf_enforce=false})라 KAN-169, KAN-171의 Block 전환이 전제다.</li>
+ *   <li>세션 축은 토큰 하나가 낼 수 있는 요청을 태스크 수(최대 3)배까지 허용하는 것인데,
+ *       한도 자체가 정상 응시의 여유 배수라 3배여도 GPU 보호(문항당 시도 상한, §5.1)와
+ *       DB 부하 양쪽에 실질 영향이 없다.</li>
+ * </ul>
+ * Redis 전환을 다시 검토할 조건은 둘이다 - 요청 제한 우회가 실제 문제로 관측될 때(WAF 로그의
+ * IP당 요청이 한도의 태스크 수 배를 넘거나, 세션 축 남용이 GPU 비용으로 드러날 때), 또는
+ * 폴링 부하 증가로 세션 저장소를 옮길 때(§2.1). 그때 회로 차단기와 혼잡 판정 캐시도 같이 간다.
+ * 임계치는 부하 테스트 후 확정한다 (§7, KAN-40).
  */
 @Component
 public class RateLimits {

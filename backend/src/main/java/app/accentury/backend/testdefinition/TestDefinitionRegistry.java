@@ -29,8 +29,14 @@ import java.util.Set;
  * <p>
  * 기동 시 전 행을 읽어 검증하므로 유효하지 않은 정의가 하나라도 있으면 서버가 뜨지 않는다
  * (발행 거부 - KAN-10 AC, KAN-26 AC, §6). 로드 후 이 맵은 불변이라 잠금 없이 읽는다 -
- * 발행이 마이그레이션으로만 일어나므로 프로세스가 사는 동안 정의가 늘지 않는다. 바뀌는 것은
- * 활성 버전 하나뿐이고, 그것만 {@code volatile} 참조로 둔다.
+ * 발행이 마이그레이션으로만 일어나므로 프로세스가 사는 동안 정의가 늘지 않는다. 버전별 응답과
+ * ETag도 이때 미리 만들어 두므로 활성 전환의 비용은 포인터 읽기뿐이다.
+ * <p>
+ * <b>활성 버전은 메모리에 들고 있지 않는다</b> (KAN-167). KAN-26은 활성 정의를 {@code volatile}
+ * 참조로 두고 전환 서비스가 커밋 뒤에 갈아 끼웠는데, backend가 Fargate 태스크 여러 개로 돌면
+ * (KAN-165, KAN-168) 관리자 호출을 받은 태스크만 바뀌고 나머지는 재기동까지 옛 버전으로 세션을
+ * 만든다. 그래서 {@link #active()}는 부를 때마다 {@code active_test_version.CURRENT} 행을 읽어
+ * 정본을 DB 하나로 둔다. 캐시를 두지 않는 이유는 그 메서드에 적었다.
  * <p>
  * 미발행과 경북 콘텐츠는 여기 실리지 않으므로 외부에 나갈 수 없다 (KAN-10 요구).
  */
@@ -59,12 +65,8 @@ public class TestDefinitionRegistry {
 
     private final Map<String, PublishedDefinition> published = new HashMap<>();
 
-    /**
-     * 활성 정의. 활성 전환({@link ActiveVersionService})이 커밋 뒤에 갈아 끼우므로 {@code volatile}이다 -
-     * 참조 하나를 통째로 바꾸는 형태라, 세션 생성이 testVersion과 scoreVersion을 서로 다른
-     * 세대에서 집어 가는 일이 없다.
-     */
-    private volatile PublishedDefinition active;
+    /** 활성 버전 포인터의 정본 - {@link #active()}가 부를 때마다 읽는다 (KAN-167). */
+    private final ActiveTestVersionRepository activeVersions;
 
     /**
      * @param definition 정답 포함 원본 - 서버 내부용 (KAN-15 답안 저장, KAN-21 채점)
@@ -78,6 +80,7 @@ public class TestDefinitionRegistry {
                                   StoredTestDefinitionRepository definitions,
                                   ActiveTestVersionRepository activeVersions,
                                   ScorePolicyRegistry scorePolicies) {
+        this.activeVersions = activeVersions;
         for (StoredTestDefinition stored : definitions.findAllByOrderByPublishedAtAscTestVersionAsc()) {
             TestDefinition definition = read(objectMapper, stored);
             validate(definition);
@@ -109,7 +112,6 @@ public class TestDefinitionRegistry {
         // 제약 변경)까지 덮는다. 활성 버전이 없으면 세션을 만들 수 없으므로 기동 자체를 멈춘다.
         PublishedDefinition activeDefinition = published.get(activeVersion);
         require(activeDefinition != null, "활성 버전(" + activeVersion + ")의 정의가 발행되어 있지 않다");
-        this.active = activeDefinition;
 
         log.info("테스트 정의 {}종 발행 완료: {} (활성: {}, 점수 버전: {})",
                 published.size(), published.keySet(), activeVersion,
@@ -119,10 +121,33 @@ public class TestDefinitionRegistry {
     /**
      * 지금 활성인 정의 - 새 세션이 고정할 버전이다 (§3.1, §5.4).
      * <p>
+     * <b>부를 때마다 DB의 포인터 행을 읽는다</b> (KAN-167). 다중 인스턴스에서 한 태스크가 전환한
+     * 활성 버전을 다른 태스크의 새 세션이 그 즉시 고정해야 하기 때문이다. 캐시를 두지 않는 것은
+     * 소비처가 세션 생성 하나뿐이고 그 경로는 이미 세션 INSERT를 하는 쓰기 경로라, 기본 키 1행
+     * 조회를 더 얹어도 비용이 드러나지 않아서다 - 폴링마다 불리는 혼잡 판정
+     * ({@code AnalysisCongestion})과 달리 캐시가 줄여 줄 부하가 없고, 전파 지연 0이 가장 단순하다.
+     * <p>
      * 세션 생성은 이 스냅샷 하나에서 {@code testVersion}과 {@code scoreVersion}을 함께 꺼내야
      * 한다. 두 번 나눠 읽으면 그 사이에 활성 전환이 끼어들어 한 세션이 두 세대에 걸칠 수 있다.
+     * 포인터 행 읽기와 정의 조회 사이에 전환이 끼어도 문제없다 - 정의 맵은 불변이고 포인터가
+     * 가리키는 버전의 정의를 통째로 돌려주므로, 어느 쪽이든 한 세대의 짝이다.
+     *
+     * @throws IllegalStateException 포인터 행이 없거나, 가리키는 버전이 이 프로세스에 발행되어
+     *                               있지 않을 때. 후자는 새 정의의 마이그레이션이 적용된 뒤 아직
+     *                               재기동하지 않은 옛 태스크가 그 버전의 활성 전환을 만난 경우다 -
+     *                               2단계 롤아웃(새 정의 배포 완료 후 전환, {@link ActiveVersionService})을
+     *                               지키면 도달하지 않는다.
      */
     public PublishedDefinition active() {
+        String activeVersion = activeVersions.findById(ActiveTestVersion.CURRENT)
+                .map(ActiveTestVersion::testVersion)
+                .orElseThrow(() -> new IllegalStateException(
+                        "활성 버전 행(active_test_version.CURRENT)이 사라졌다"));
+        PublishedDefinition active = published.get(activeVersion);
+        if (active == null) {
+            throw new IllegalStateException("활성 버전(" + activeVersion
+                    + ")의 정의가 이 프로세스에 발행되어 있지 않다 - 새 정의를 실은 배포가 끝나기 전에 전환됐다");
+        }
         return active;
     }
 
@@ -149,19 +174,6 @@ public class TestDefinitionRegistry {
             throw new ApiException(ErrorCode.ITEM_WRONG_TYPE);
         }
         return item;
-    }
-
-    /**
-     * 활성 버전을 갈아 끼운다 - {@link ActiveVersionService}가 <b>DB 트랜잭션 커밋 뒤에만</b> 부른다.
-     * <p>
-     * 커밋 전에 바꾸면 롤백된 전환이 메모리에만 남아 DB와 갈라지고, 그 뒤에 만들어진 세션이
-     * 실제로는 활성이 아닌 버전을 고정한다. 진행 중 세션은 이 교체의 영향을 받지 않는다 -
-     * 세션은 생성 시점의 버전을 자기 행에 들고 있다 (§5.4, KAN-26 AC).
-     *
-     * @throws ApiException 발행되지 않은 버전 (404) - 호출부가 먼저 검증하므로 도달하지 않는다.
-     */
-    void applyActivation(String testVersion) {
-        this.active = get(testVersion);
     }
 
     /**

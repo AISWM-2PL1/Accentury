@@ -42,10 +42,10 @@ public class ActiveVersionService {
         this.activeVersions = activeVersions;
         this.audits = audits;
         // 전환은 자신이 커밋 지점이어야 한다 (REQUIRES_NEW) - 바깥 트랜잭션에 합류하면
-        // execute()가 돌아온 시점에도 커밋 전이라, 뒤이은 메모리 반영이 "커밋 뒤"라는 불변식을
-        // 깬다. 바깥이 롤백하면 DB는 옛 버전인데 레지스트리만 새 버전을 가리킨 채 남는다
-        // (SessionService의 카운터 증가와 같은 이유). 공용 템플릿 빈의 전파는 바꾸지 않도록
-        // 사본을 쓴다.
+        // execute()가 돌아온 시점에도 커밋 전이라, 뒤이은 로그와 응답(changed=true)이 "커밋된
+        // 전환"을 말한다는 불변식이 깨진다. 바깥이 롤백하면 운영자는 성공 응답을 받았는데 DB는
+        // 옛 버전인 채 남는다 (SessionService의 카운터 증가와 같은 이유). 공용 템플릿 빈의 전파는
+        // 바꾸지 않도록 사본을 쓴다.
         this.transactionTemplate = new TransactionTemplate(
                 Objects.requireNonNull(transactionTemplate.getTransactionManager()));
         this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
@@ -122,21 +122,24 @@ public class ActiveVersionService {
     }
 
     /**
-     * 전환의 공통 절차 - 잠금, 목적지 확정, 포인터 UPDATE와 감사 INSERT 한 트랜잭션, 커밋 뒤 메모리 반영.
+     * 전환의 공통 절차 - 잠금, 목적지 확정, 포인터 UPDATE와 감사 INSERT 한 트랜잭션, 커밋 뒤 로그.
      * <p>
      * {@code synchronized}는 같은 프로세스 안의 동시 전환을 막는다. 운영자가 이따금 부르는
-     * 저빈도 경로라 비용이 없고, 배포가 단일 인스턴스로 고정되어 있어(BE 인메모리 상태 때문,
-     * KAN-119) 실질적으로 이것만으로 충분하다. 그래도 잠금 조회를 함께 쓰는 것은 인스턴스가
-     * 둘 이상이 되는 날 이 코드가 조용히 틀리지 않게 하기 위해서다.
+     * 저빈도 경로라 비용이 없다. 인스턴스 사이의 직렬화는 이것이 아니라 포인터 행의 배타 잠금
+     * ({@link ActiveTestVersionRepository#lockById})이 맡는다 - backend는 Fargate 태스크 여러
+     * 개로 돌고(KAN-165, KAN-168), 어느 태스크가 관리자 호출을 받든 같은 행을 잠그므로 두 태스크의
+     * 전환이 겹쳐도 한쪽이 끝난 뒤 다른 쪽이 그 결과 위에서 목적지를 정한다 (KAN-167).
      * <p>
      * <b>목적지는 잠금 안에서 정한다</b> ({@code target}이 값이 아니라 함수인 이유다). 롤백은
      * 목적지가 현재 포인터에서 유도되므로, 잠금 밖에서 먼저 계산하면 읽기와 쓰기가 원자적이지
      * 않아 다른 전환이 끼어든다 ({@link #rollback} 참고). 활성 전환은 대상이 요청에 실려 오므로
      * 검증을 잠금 전에 끝내고 들어온다.
      * <p>
-     * 순서가 중요하다. <b>메모리 반영은 커밋 뒤</b>여야 한다 - 트랜잭션 안에서 바꾸면 롤백된
-     * 전환이 메모리에만 남아 그 뒤의 세션이 DB와 다른 버전을 고정한다. 로그도 같은 이유로
-     * 커밋 뒤다 (세션 폐기 로그와 같은 규칙, {@code SessionService}).
+     * 메모리 반영은 없다 (KAN-167). 새 세션이 고정할 버전은 {@link TestDefinitionRegistry#active()}가
+     * 부를 때마다 DB에서 읽으므로, 커밋된 순간 모든 태스크의 다음 세션이 새 버전을 본다 - 이
+     * 태스크의 메모리를 갱신할 것이 없고, 다른 태스크에 알릴 것도 없다. 로그는 커밋 뒤다 -
+     * 롤백된 전환을 "전환했다"고 남기지 않기 위해서다 (세션 폐기 로그와 같은 규칙,
+     * {@code SessionService}).
      */
     private synchronized ActiveVersionResponse apply(ActiveVersionAudit.Action action,
                                                      Function<ActiveTestVersion, String> target,
@@ -158,7 +161,6 @@ public class ActiveVersionService {
         }));
 
         if (outcome.changed()) {
-            registry.applyActivation(outcome.activeVersion());
             log.info("활성 테스트 버전 전환 action={} from={} to={} reason={}",
                     action, outcome.previousVersion(), outcome.activeVersion(), reason);
         }
@@ -167,7 +169,7 @@ public class ActiveVersionService {
     }
 
     /**
-     * 트랜잭션 안에서 정해진 결과를 밖으로 들고 나온다 - 로그와 메모리 반영이 커밋 뒤여야 해서다.
+     * 트랜잭션 안에서 정해진 결과를 밖으로 들고 나온다 - 로그가 커밋 뒤여야 해서다.
      *
      * @param changed 실제로 바뀌었는지. 같은 버전 재활성화는 false이고, 그때는 감사 행도 없다.
      */

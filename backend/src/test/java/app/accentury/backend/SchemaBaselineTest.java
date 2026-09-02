@@ -226,8 +226,9 @@ class SchemaBaselineTest extends IntegrationTest {
     void 인덱스_집합이_baseline과_일치한다() {
         Map<String, Set<String>> expected = Map.of(
                 "test_session", Set.of("pk_test_session", "ux_test_session_token_hash"),
+                // ix_analysis_job_processing은 KAN-167의 부분 인덱스(V4) - 혼잡 판정의 PROCESSING count가 탄다.
                 "analysis_job", Set.of("pk_analysis_job", "ux_analysis_job_idempotency",
-                        "ix_analysis_job_session_item"),
+                        "ix_analysis_job_session_item", "ix_analysis_job_processing"),
                 "vocab_answer", Set.of("pk_vocab_answer", "ux_vocab_answer_session_item"),
                 "test_result", Set.of("pk_test_result", "ux_test_result_session"),
                 "daily_counter", Set.of("pk_daily_counter", "ux_daily_counter_key"),

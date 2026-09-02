@@ -88,6 +88,28 @@ class AdminActiveVersionApiTest extends IntegrationTest {
                 .andExpect(jsonPath("$.testVersion").value(OLDER));
     }
 
+    /**
+     * KAN-167 AC - 다른 인스턴스가 건 활성 전환을 이 인스턴스의 새 세션이 그대로 고정한다.
+     * <p>
+     * "다른 인스턴스"는 이 프로세스의 서비스와 레지스트리를 거치지 않고 DB 포인터 행만 바꾸는
+     * 것으로 재현한다 - 다른 태스크의 전환이 이 태스크에 남기는 흔적이 정확히 그것뿐이기
+     * 때문이다(감사 행은 세션 생성이 읽지 않는다). 레지스트리가 활성 버전을 메모리에 다시
+     * 들게 되면 이 테스트가 옛 버전을 받아 깨진다. 캐시를 두지 않았으므로 전파 지연은 0이다.
+     */
+    @Test
+    void 다른_인스턴스가_전환한_활성_버전을_새_세션이_바로_고정한다() throws Exception {
+        assertEquals(BASELINE, activeTestVersion(), "전제: baseline이 활성이다");
+
+        jdbc.update("update active_test_version set test_version = ?, previous_test_version = ?,"
+                + " activated_at = now() where id = 'CURRENT'", OLDER, BASELINE);
+
+        mockMvc.perform(post("/v0/sessions"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.testVersion").value(OLDER));
+        // 이 인스턴스의 관리자 조회도 같은 행을 읽으므로 같은 답을 준다.
+        assertEquals(OLDER, activeVersions.current().testVersion());
+    }
+
     /** AC - 활성 버전 변경이 진행 중 세션에 영향을 주지 않는다. */
     @Test
     void 전환_전에_만들어진_세션은_자기_버전을_그대로_쓴다() throws Exception {
