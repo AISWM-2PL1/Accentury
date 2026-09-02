@@ -77,6 +77,40 @@ class WebConfigTest {
         )
     }
 
+    // --- buildWebUrl: 공유 유입 계측 코드 전달 (KAN-32) ---
+
+    @Test
+    fun `계측 코드는 인트로 URL의 맨 뒤에 붙는다`() {
+        assertEquals(
+            "https://web.example.com?bridge=$BRIDGE_CONTRACT_VERSION&app=1.0&c=kko_share",
+            buildWebUrl("https://web.example.com", "1.0", campaignToken = "kko_share"),
+        )
+    }
+
+    @Test
+    fun `테스트 진입 URL에도 계측 코드가 맨 뒤에 붙는다`() {
+        assertEquals(
+            "https://web.example.com?bridge=$BRIDGE_CONTRACT_VERSION&app=1.0" +
+                "&screen=test&testVersion=v1&sessionId=s1&c=kko_share",
+            buildWebUrl("https://web.example.com", "1.0", TestEntry("v1", "s1"), campaignToken = "kko_share"),
+        )
+    }
+
+    @Test
+    fun `계측 코드가 없으면 c 파라미터 자체가 없다`() {
+        assertFalse(buildWebUrl("https://web.example.com", "1.0").contains("c="))
+        assertEquals(
+            buildWebUrl("https://web.example.com", "1.0"),
+            buildWebUrl("https://web.example.com", "1.0", campaignToken = null),
+        )
+    }
+
+    @Test
+    fun `계측 코드도 URL 인코딩을 거친다`() {
+        // 링크에서 온 값이라 형식을 앱이 보증하지 않는다 — 쿼리 구조를 깨뜨리면 안 된다.
+        assertTrue(buildWebUrl("https://web.example.com", "1.0", campaignToken = "a b").endsWith("&c=a+b"))
+    }
+
     // --- webOrigin: allowlist 비교 입력 정규화 (§7) ---
 
     @Test

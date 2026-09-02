@@ -32,14 +32,27 @@ data class TestEntry(val testVersion: String, val sessionId: String)
  * [testEntry]가 있으면 테스트 진입 URL, 없으면 인트로 URL이다. 두 URL을 한 함수로 묶은 이유:
  * 스큐 파라미터는 어느 쪽에도 빠지면 안 되는데(빠지면 웹이 업데이트 안내를 띄운다) 조립을
  * 나누면 한쪽만 고치는 실수가 생긴다.
+ *
+ * @param campaignToken App Link로 들어온 공유 유입 계측 코드 ([parseAppLink], KAN-32). 있으면
+ *   `c`로 딸려 보내 웹이 만드는 첫 세션에 같은 코드가 실리게 한다 — 웹은 진입 쿼리의 `?c=`를
+ *   `session/campaign.ts`로 읽고 `navigation/entryUrl.ts`가 화면을 옮겨도 그 값을 보존한다.
+ *   앱이 값을 해석하지 않고 그대로 넘기는 자리라, 링크에서 실려 온 유입 경로가 세션까지 이어진다.
  */
-fun buildWebUrl(base: String, appVersionName: String, testEntry: TestEntry? = null): String {
+fun buildWebUrl(
+    base: String,
+    appVersionName: String,
+    testEntry: TestEntry? = null,
+    campaignToken: String? = null,
+): String {
     val separator = if ('?' in base) '&' else '?'
     val query = StringBuilder("bridge=$BRIDGE_CONTRACT_VERSION&app=${encodeQueryValue(appVersionName)}")
     if (testEntry != null) {
         query.append("&screen=test")
         query.append("&testVersion=${encodeQueryValue(testEntry.testVersion)}")
         query.append("&sessionId=${encodeQueryValue(testEntry.sessionId)}")
+    }
+    if (campaignToken != null) {
+        query.append("&c=${encodeQueryValue(campaignToken)}")
     }
     return "$base$separator$query"
 }

@@ -85,6 +85,46 @@ final class WebConfigTests: XCTestCase {
         )
     }
 
+    // MARK: - buildWebUrl: 공유 유입 계측 코드 전달 (KAN-32)
+
+    /// 계측 코드는 인트로 URL의 맨 뒤에 붙는다.
+    func testCampaignTokenIsAppendedAtTheEndOfTheIntroUrl() {
+        XCTAssertEqual(
+            "https://web.example.com?bridge=\(bridgeContractVersion)&app=1.0&c=kko_share",
+            buildWebUrl(base: "https://web.example.com", appVersionName: "1.0", campaignToken: "kko_share")
+        )
+    }
+
+    /// 테스트 진입 URL에도 계측 코드가 맨 뒤에 붙는다.
+    func testCampaignTokenIsAppendedAtTheEndOfTheTestEntryUrl() {
+        XCTAssertEqual(
+            "https://web.example.com?bridge=\(bridgeContractVersion)&app=1.0"
+                + "&screen=test&testVersion=v1&sessionId=s1&c=kko_share",
+            buildWebUrl(
+                base: "https://web.example.com",
+                appVersionName: "1.0",
+                testEntry: TestEntry(testVersion: "v1", sessionId: "s1"),
+                campaignToken: "kko_share"
+            )
+        )
+    }
+
+    /// 계측 코드가 없으면 c 파라미터 자체가 없다.
+    func testNoCampaignTokenMeansNoCParameterAtAll() {
+        XCTAssertFalse(buildWebUrl(base: "https://web.example.com", appVersionName: "1.0").contains("c="))
+        XCTAssertEqual(
+            buildWebUrl(base: "https://web.example.com", appVersionName: "1.0"),
+            buildWebUrl(base: "https://web.example.com", appVersionName: "1.0", campaignToken: nil)
+        )
+    }
+
+    /// 계측 코드도 URL 인코딩을 거친다.
+    func testCampaignTokenIsUrlEncodedToo() {
+        // 링크에서 온 값이라 형식을 앱이 보증하지 않는다 — 쿼리 구조를 깨뜨리면 안 된다.
+        let url = buildWebUrl(base: "https://web.example.com", appVersionName: "1.0", campaignToken: "a b")
+        XCTAssertTrue(url.hasSuffix("&c=a+b"))
+    }
+
     // MARK: - webOrigin: allowlist 비교 입력 정규화 (§7)
 
     /// http https URL에서 origin을 뽑는다.
