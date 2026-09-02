@@ -33,6 +33,13 @@ class AnalysisDispatchConfig {
 
     @Bean
     ThreadPoolTaskExecutor analysisExecutor(AccenturyProperties properties) {
+        // 워커 풀과 큐는 인스턴스별이고, 다중 인스턴스에서도 그대로 둔다 (KAN-167 결정). 원본 음성이
+        // 요청 처리 중 메모리에만 있고 어디에도 저장되지 않아(FR-DP-01) 다른 프로세스의 워커에
+        // 넘길 수 없다 - SQS는 메시지 상한 256KB에 최대 1MB WAV를 싣지 못하고, 넘기려면 S3 같은
+        // 저장소가 필요해 "저장하지 않는다"는 결정이 깨진다. 오디오를 받은 인스턴스가 자기 워커로
+        // AI를 부르고 결과를 DB에 쓰므로, 폴링은 어느 인스턴스가 받아도 DB만 보면 된다. 그래서
+        // 큐 용량과 워커 수는 인스턴스 하나의 몫이고, 태스크 수만큼 AI 동시 호출이 늘어난다 -
+        // 오토스케일링 상한(KAN-168, 최대 3)이 GPU 동시 슬롯을 넘지 않게 잡는 이유다.
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         executor.setThreadNamePrefix("analysis-");
         executor.setCorePoolSize(properties.analysis().dispatchConcurrency());

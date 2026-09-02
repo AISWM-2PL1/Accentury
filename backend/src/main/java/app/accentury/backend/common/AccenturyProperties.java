@@ -59,8 +59,14 @@ public record AccenturyProperties(Session session,
      *                             부하 상승 시 값을 올려 폴링 압력을 줄인다 (§5.3).
      * @param congestedPollAfterMs 혼잡 판정 시의 폴링 간격 - 분석이 밀리면 폴링이 부하를
      *                             증폭하므로(§5.3 - 대기 체류 20배) 서버가 스스로 간격을 올린다 (KAN-24).
-     * @param congestionThreshold  혼잡 판정 기준 - 진행 중(in-flight) 분석 전달 건수가
-     *                             이 값 이상이면 {@code congestedPollAfterMs}를 반환한다.
+     * @param congestionThreshold  혼잡 판정 기준 - 전 인스턴스의 진행 중(PROCESSING) 분석 작업 수가
+     *                             이 값 이상이면 {@code congestedPollAfterMs}를 반환한다 (KAN-167).
+     * @param congestionCacheTtl   혼잡 판정이 DB의 PROCESSING 건수를 다시 세지 않고 쓰는 시간
+     *                             (KAN-167). 판정은 모든 상태 응답 경로에 놓이므로 폴링마다 세면
+     *                             판정 자체가 폴링 증폭에 얹힌다. 기준 폴링 간격(800ms)과 같은
+     *                             자릿수인 1초면 인스턴스당 초당 count 1회로 묶이고 판정 지연은
+     *                             폴링 한 번 분량이다 - 밀림은 초 단위 추론이 수십 건 쌓여야 생겨
+     *                             그 안에 임계치를 넘나들지 않는다. 0이면 매번 센다.
      * @param retention            분석 작업 보존 기간 - 세션, 결과와 같은 24시간 (§5.5)
      * @param processingTimeout    실행 잔류 한도 - 워커가 실행을 시작하고도(startedAt) 종결을
      *                             못 남긴 작업을 이 시간 뒤 RETRYABLE_FAILED로 정리한다 (KAN-24).
@@ -106,6 +112,7 @@ public record AccenturyProperties(Session session,
     public record Analysis(@DefaultValue("800") long pollAfterMs,
                            @DefaultValue("3000") long congestedPollAfterMs,
                            @DefaultValue("30") int congestionThreshold,
+                           @DefaultValue("1s") Duration congestionCacheTtl,
                            @DefaultValue("24h") Duration retention,
                            @DefaultValue("60s") Duration processingTimeout,
                            @DefaultValue("5m") Duration queuedTimeout,
@@ -121,7 +128,7 @@ public record AccenturyProperties(Session session,
     }
 
     /**
-     * @param rateLimitPerMinute        IP당 분당 업로드 허용 횟수 (§2.5, NFR-SC-04).
+     * @param rateLimitPerMinute        IP당 분당 업로드 허용 횟수 (§2.5, KAN-28).
      *                                  임계치는 부하 테스트 후 확정한다 (§7, KAN-40).
      * @param sessionRateLimitPerMinute 세션당 분당 업로드 허용 횟수 (§2.5 - IP와 세션 이중 제한,
      *                                  KAN-28). IP 제한은 NAT 뒤 다수 사용자를 고려해 느슨하므로,

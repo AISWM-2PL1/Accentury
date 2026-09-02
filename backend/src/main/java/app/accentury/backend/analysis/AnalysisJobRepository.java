@@ -19,6 +19,20 @@ public interface AnalysisJobRepository extends JpaRepository<AnalysisJob, String
      */
     List<AnalysisJob> findBySessionIdOrderByCreatedAtAscAttemptAsc(String sessionId);
 
+    /**
+     * 전 인스턴스의 진행 중 작업 수 - 폴링 혼잡 판정의 입력이다 ({@link AnalysisCongestion}, KAN-167).
+     * {@code status = 'PROCESSING'} 부분 인덱스(V4)를 타므로 진행 중 건수에만 비례한다 - 폴링
+     * 경로에 둘 수 있는 가벼운 조회다 (§5.3 규칙 6).
+     * <p>
+     * 상태를 <b>리터럴로 박은 네이티브 문장</b>이다 (Codex sol 리뷰 P2). 파생 쿼리
+     * {@code countByStatus(status)}처럼 바인드 변수({@code status = ?})로 보내면 PostgreSQL이
+     * 서버측 프리페어드 문장의 범용 계획을 고르는 순간 매개변수가 인덱스 조건을 함의한다는 것을
+     * 증명하지 못해 부분 인덱스가 후보에서 빠지고, 24시간치 종결 행을 매초 전체 스캔하게 된다.
+     * 조건이 문장에 박혀 있으면 계획기가 항상 부분 인덱스를 본다.
+     */
+    @Query(value = "select count(*) from analysis_job where status = 'PROCESSING'", nativeQuery = true)
+    long countProcessing();
+
     /** 멱등 재전송 판별 (§5.2) - 유니크 제약과 같은 키 조합의 단건 조회 */
     Optional<AnalysisJob> findBySessionIdAndItemIdAndIdempotencyKey(
             String sessionId, String itemId, String idempotencyKey);

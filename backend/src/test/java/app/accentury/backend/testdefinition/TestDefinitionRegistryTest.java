@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -340,12 +341,15 @@ class TestDefinitionRegistryTest {
         @Test
         void 활성_교체는_새_활성만_바꾸고_나머지_발행본은_그대로_둔다() {
             // 활성 전환이 진행 중 세션에 영향을 주지 않는다는 것의 레지스트리 쪽 근거다 (KAN-26 AC) -
-            // 교체 전후로 옛 버전 조회가 같은 정의를 계속 돌려준다.
-            TestDefinitionRegistry registry = registry(
-                    List.of(row("gn-2026.08.1"), row("gn-2026.07.0")), "gn-2026.08.1");
+            // 교체 전후로 옛 버전 조회가 같은 정의를 계속 돌려준다. 전환은 포인터 행만 바꾼다
+            // (KAN-167 - 레지스트리는 활성 버전을 들고 있지 않다).
+            String[] pointer = {"gn-2026.08.1"};
+            TestDefinitionRegistry registry = new TestDefinitionRegistry(JsonMapper.builder().build(),
+                    definitions(List.of(row("gn-2026.08.1"), row("gn-2026.07.0"))),
+                    activeVersions(() -> pointer[0]), policies());
             String etagBefore = registry.get("gn-2026.08.1").etag();
 
-            registry.applyActivation("gn-2026.07.0");
+            pointer[0] = "gn-2026.07.0";
 
             assertEquals("gn-2026.07.0", registry.active().definition().testVersion());
             assertEquals(etagBefore, registry.get("gn-2026.08.1").etag());
@@ -390,12 +394,18 @@ class TestDefinitionRegistryTest {
     }
 
     private static ActiveTestVersionRepository activeVersions(@Nullable String activeVersion) {
+        return activeVersions(() -> activeVersion);
+    }
+
+    /** 포인터를 테스트가 옮길 수 있는 저장소 - 읽을 때마다 supplier를 다시 본다 (KAN-167). */
+    private static ActiveTestVersionRepository activeVersions(Supplier<@Nullable String> activeVersion) {
         return new ActiveTestVersionRepository() {
             @Override
             public Optional<ActiveTestVersion> findById(String id) {
-                return activeVersion == null
+                String current = activeVersion.get();
+                return current == null
                         ? Optional.empty()
-                        : Optional.of(new ActiveTestVersion(activeVersion, null, Instant.EPOCH));
+                        : Optional.of(new ActiveTestVersion(current, null, Instant.EPOCH));
             }
 
             @Override

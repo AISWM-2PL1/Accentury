@@ -6,11 +6,12 @@ import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 키 단위 고정 윈도우(1분) 요청 제한기 - 인메모리 (API 명세서 §2.5, NFR-SC-04).
+ * 키 단위 고정 윈도우(1분) 요청 제한기 - 인메모리 (API 명세서 §2.5, KAN-28).
  * <p>
  * 판정만 아는 부품이다 - 어떤 경로를 무엇으로 세는지, 한도가 얼마인지, 언제 정리하는지는
- * {@link RateLimits}가 정한다. 프로토타입은 인메모리로 충분하고, 다중 인스턴스 공유
- * 저장소(Redis)는 세션 저장소를 옮기는 시점(§2.1)과 같이 간다.
+ * {@link RateLimits}가 정한다. 윈도우는 프로세스 메모리에만 있어 인스턴스별로 센다 - 다중
+ * 인스턴스에서 한도가 태스크 수만큼 풀리는 것을 수용한 근거와 Redis 전환 조건은
+ * {@link RateLimits}에 있다 (KAN-167).
  */
 class FixedWindowRateLimiter {
 

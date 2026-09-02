@@ -1,0 +1,20 @@
+-- KAN-167: 폴링 혼잡 판정을 인메모리 카운터에서 DB의 PROCESSING 건수로 바꾼다.
+--
+-- backend가 Fargate 태스크 여러 개로 돌면(KAN-165, KAN-168) 태스크마다 세던 진행 중 건수는
+-- 자기 몫만 보여 전체 밀림을 과소 판정한다. 그래서 혼잡 판정(AnalysisCongestion)이 전 태스크가
+-- 공유하는 analysis_job의 PROCESSING 행 수를 센다. 이 count는 모든 상태 응답 경로에 놓이므로
+-- (§5.3 규칙 6 - 가벼운 조회만) 전체 스캔이면 안 된다 - status 컬럼에는 인덱스가 없었다.
+--
+-- 부분 인덱스로 둔다. 종결된 행(COMPLETED, *_FAILED)은 24시간 보존 동안 계속 쌓이지만 판정에는
+-- 필요 없고, PROCESSING 행은 실행 중이거나 큐에서 기다리는 몇십 건뿐이라 인덱스가 그 크기에
+-- 머문다. 작업이 종결되는 순간 인덱스에서 빠지므로 쓰기 비용도 PROCESSING 구간에만 든다.
+-- 이 인덱스를 타려면 조회 문장의 조건이 리터럴이어야 한다 - 바인드 변수(status = ?)로는 범용
+-- 계획에서 부분 인덱스가 후보에서 빠진다 (AnalysisJobRepository.countProcessing 참고).
+--
+-- CONCURRENTLY로 만들지 않는다 (Codex sol 리뷰 P2 기각). 일반 CREATE INDEX는 만드는 동안 이
+-- 테이블의 쓰기를 막지만, 행 수가 24시간 보존으로 묶여 있어(프로토타입 규모에서 수천 건) 빌드가
+-- ms 단위로 끝나고, Flyway는 새 태스크가 트래픽을 받기 전 기동 시점에 이것을 적용한다. 반면
+-- CONCURRENTLY는 트랜잭션 밖에서만 돌아 마이그레이션의 원자성을 잃고(실패 시 invalid 인덱스가
+-- 남아 손으로 지워야 한다) Flyway 스크립트 설정(executeInTransaction=false)이 하나 더 필요하다.
+-- 보존 기간을 늘리거나 행이 수백만 건이 되는 날 다시 판단한다.
+create index ix_analysis_job_processing on analysis_job (status) where status = 'PROCESSING';
