@@ -19,6 +19,7 @@
  * 판단할 수 있게 한다.
  */
 
+import { isRetryableStatus } from '../net/retryableStatus'
 import type { FetchLike } from './fetchTestDefinition'
 
 const browserFetch: FetchLike = (input, init) => globalThis.fetch(input, init)
@@ -59,8 +60,9 @@ export class VocabSubmitError extends Error {
 /**
  * 답안을 제출한다.
  *
- * @throws VocabSubmitError 네트워크 실패(retryable) / 봉투가 말한 오류(봉투의 retryable) /
- *   봉투조차 못 읽은 HTTP 오류(retryable — 키가 멱등이라 재시도가 무해하다)
+ * @throws VocabSubmitError 네트워크 실패(retryable — 키가 멱등이라 재시도가 무해하다) /
+ *   봉투가 말한 오류(봉투의 retryable) / 봉투조차 못 읽은 HTTP 오류(상태 코드로 판정한다 —
+ *   `net/retryableStatus`의 408·429·5xx만 재시도 가능이다)
  */
 export async function submitVocabAnswer(
   submission: VocabSubmission,
@@ -117,7 +119,13 @@ export async function submitVocabAnswer(
   if (envelope !== null) {
     throw new VocabSubmitError(envelope.message, envelope.code, envelope.retryable)
   }
-  throw new VocabSubmitError(`답안을 제출하지 못했습니다 (HTTP ${response.status})`, null, true)
+  // 봉투가 없으면 서버가 재시도 여부를 알려주지 않은 것이다 — 상태 코드로 판단한다
+  // (`net/retryableStatus`가 그 판정의 유일한 정의다).
+  throw new VocabSubmitError(
+    `답안을 제출하지 못했습니다 (HTTP ${response.status})`,
+    null,
+    isRetryableStatus(response.status),
+  )
 }
 
 /*

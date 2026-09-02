@@ -112,6 +112,17 @@ describe('결과 해석', () => {
     })
   })
 
+  it('봉투 없는 403은 재시도 불가다 — WAF 기본 응답은 다시 보내도 같은 답이 온다', async () => {
+    const fetchImpl: FetchLike = async () =>
+      ({ ok: false, status: 403, json: async () => { throw new Error('HTML') } }) as unknown as Response
+
+    await expect(submitVocabAnswer(submission(), fetchImpl)).rejects.toMatchObject({
+      code: null,
+      message: '답안을 제출하지 못했습니다 (HTTP 403)',
+      retryable: false,
+    })
+  })
+
   it('봉투 모양이 아닌 JSON 오류 본문도 상태 코드 폴백으로 간다', async () => {
     const fetchImpl: FetchLike = async () => jsonResponse(500, { error: 'unexpected shape' })
 

@@ -20,6 +20,7 @@
  * 않는다"를 서버 계약이 이미 보증한다).
  */
 
+import { isRetryableStatus } from '../net/retryableStatus'
 import type { FetchLike } from '../progress/fetchTestDefinition'
 import { newIdempotencyKey } from '../progress/submitVocabAnswer'
 import { AnalysisApiError, readErrorEnvelope, readJson, retryAfterMsFromHeader } from './errorEnvelope'
@@ -121,7 +122,8 @@ export async function completeSession(
 
 /**
  * 실패 응답을 오류로 바꾼다. 409·422의 문항 목록을 함께 실어 화면이 어느 문항을 다시
- * 녹음시켜야 하는지 알 수 있게 한다.
+ * 녹음시켜야 하는지 알 수 있게 한다. 봉투가 없으면 재시도 여부는 상태 코드
+ * (`net/retryableStatus`)로 판정한다.
  */
 async function toApiError(response: Response): Promise<AnalysisApiError> {
   const envelope = readErrorEnvelope(response, await readJson(response))
@@ -135,7 +137,7 @@ async function toApiError(response: Response): Promise<AnalysisApiError> {
     })
   }
   return new AnalysisApiError(`테스트를 마치지 못했습니다 (HTTP ${response.status})`, {
-    retryable: true,
+    retryable: isRetryableStatus(response.status),
     retryAfterMs: retryAfterMsFromHeader(response),
   })
 }
