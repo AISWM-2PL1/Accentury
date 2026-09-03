@@ -3,8 +3,13 @@
 
 원본은 `raw/android/<화면>.png`(에뮬레이터 캡처)와 `raw/ios/<화면>.png`(시뮬레이터 캡처)다. 그대로
 올려도 규격은 맞지만 네 장이 무슨 화면인지 스토어에서 읽히지 않는다. 그래서 화면마다 같은 틀을
-씌운다 — 크림 배경, 위쪽에 문구 두 줄(Jua), 아래에 캡처를 종이 조각처럼 앉힌 것(둥근 모서리 +
-잉크 테두리 + 오프셋 그림자). `assets/characters/build.py`의 공유 카드와 같은 구성이다.
+씌운다 — 크림 배경, 위쪽에 문구 두 줄(Jua), 아래에 캡처를 실제 기기 실루엣에 끼운 것(베젤 + 옆면
+버튼 + 오프셋 그림자). `assets/characters/build.py`의 공유 카드와 같은 Papercut 구성이다.
+
+실루엣은 플랫폼마다 다르다 — iOS 캡처는 iPhone 17 Pro(네 변 같은 얇은 베젤, 크게 둥근 모서리,
+왼쪽 3 + 오른쪽 2 버튼), Android 캡처는 Galaxy S25(더 각진 모서리, 펀치홀, 오른쪽 2 버튼).
+치수는 전부 `DEVICE_IPHONE_17_PRO` · `DEVICE_GALAXY_S25` 딕셔너리에 비율로 들어 있고,
+`PLATFORM_DEVICE`가 원본 폴더를 거기에 잇는다. **기기를 바꾸려면 딕셔너리만 고친다.**
 
 - Play 스토어      → `out/play/<화면>.png` (1080×1920) ← `raw/android/`
 - App Store 6.7"   → `out/appstore-6.7/<화면>.png` (1290×2796) ← `raw/ios/`
@@ -17,8 +22,8 @@
     /Users/iseongju/accentury/.venv/bin/python assets/screenshots/build.py
     ... --raw <원본 폴더> --out <출력 폴더>   # 임시 캡처로 배치만 확인할 때
 
-Pillow·numpy가 필요하다(위 venv에 있다). 끝에 규격 검증표를 찍는다 — 하나라도 FAIL이면 종료 코드 1,
-SKIP만 있으면 0이다.
+Pillow·numpy가 필요하다(위 venv에 있다). 끝에 규격 검증표를 찍는다 — 규격 12줄 + 플랫폼별 버튼
+여백 2줄. 하나라도 FAIL이면 종료 코드 1, SKIP만 있으면 0이다.
 """
 
 from __future__ import annotations
@@ -65,12 +70,51 @@ SIDE_MARGIN = 0.06  # W — 캡처 좌우 최소 여백
 TEXT_MAX_W = 0.88  # W — 문구가 이보다 넓으면 글자를 줄인다
 HEADLINE_FRAC = 0.058  # W
 SUB_FRAC = 0.032  # W
-MIN_CAPTURE_W = 0.62  # W — 세로로 긴 캡처를 높이에 맞추면 너무 작아진다. 이보다 좁아질 바에는
-#                            폭을 이 값으로 키우고 아래를 프레임 밖으로 흘린다(잘림).
-CORNER_R = 0.05  # 캡처 폭 대비 둥근 모서리 반지름
-OUTLINE_FRAC = 0.005  # W — 잉크 테두리 두께 (최소 4px)
+MIN_DEVICE_W = 0.62  # W — 세로로 긴 기기를 높이에 맞추면 너무 작아진다. 실루엣 폭이 이보다 좁아질
+#                          바에는 폭을 이 값으로 키우고 아래를 프레임 밖으로 흘린다(잘림).
 SHADOW_DX, SHADOW_DY = 0.0080, 0.0107  # W — 오프셋 그림자 (토큰 3:4 비율)
 SS = 4  # 마스크 안티에일리어싱 배수
+
+# --- 기기 실루엣 ----------------------------------------------------------------------------
+# 캡처를 그냥 둥근 네모에 넣으면 "어느 폰인지" 안 읽힌다. 아래 두 딕셔너리가 실루엣을 정한다 —
+# 화면 모서리 반지름·베젤 두께·옆면 버튼 위치. **기기를 갈아끼우려면 딕셔너리만 고친다.**
+# 값은 전부 비율이라 세 출력 규격에서 같은 그림이 나온다.
+BUTTON_THICK = 0.012  # 본체 폭 대비 — 버튼이 본체 밖으로 튀어나온 두께
+BUTTON_R = 0.45  # 버튼 두께 대비 모서리 반지름
+RAIL_DEPTH = 0.34  # 베젤 두께 대비 — 금속 테 띠가 앉는 깊이 (바깥에 잉크 테두리를 남긴다)
+RAIL_W = 0.0026  # 화면 폭 대비 테 띠 두께
+
+# iPhone 17 Pro — 네 변 베젤이 같고, 화면 모서리가 크게 둥글다. 왼쪽 3개(액션·볼륨 업·볼륨 다운)
+# 오른쪽 2개(전원·카메라 컨트롤). 버튼 값은 (변, 본체 높이 대비 시작, 본체 높이 대비 길이).
+DEVICE_IPHONE_17_PRO = {
+    "label": "iPhone 17 Pro",
+    "screen_radius": 0.135,  # 화면 폭 대비
+    "bezel": {"left": 0.026, "right": 0.026, "top": 0.026, "bottom": 0.026},  # 화면 폭 대비
+    "punch_hole": None,  # 다이내믹 아일랜드는 캡처 안에 이미 있다 — 그리지 않는다
+    "buttons": [
+        ("left", 0.160, 0.035),  # 액션 버튼
+        ("left", 0.220, 0.075),  # 볼륨 업
+        ("left", 0.310, 0.075),  # 볼륨 다운
+        ("right", 0.240, 0.110),  # 전원(사이드) 버튼
+        ("right", 0.580, 0.050),  # 카메라 컨트롤
+    ],
+}
+
+# Galaxy S25 — 평평한 알루미늄 테라 모서리가 훨씬 각지고, 베젤은 더 얇되 아래턱이 조금 두껍다.
+# 앞면 카메라는 화면을 뚫은 펀치홀이라 직접 그린다. 버튼은 오른쪽 두 개뿐이다.
+DEVICE_GALAXY_S25 = {
+    "label": "Galaxy S25",
+    "screen_radius": 0.070,
+    "bezel": {"left": 0.016, "right": 0.016, "top": 0.016, "bottom": 0.020},
+    "punch_hole": (0.026, 0.023),  # (화면 폭 대비 지름, 화면 높이 대비 중심 y)
+    "buttons": [
+        ("right", 0.190, 0.090),  # 볼륨 로커 (한 덩어리)
+        ("right", 0.310, 0.045),  # 전원(사이드) 키
+    ],
+}
+
+# 원본 폴더 이름 → 기기. iOS 두 규격은 같은 시뮬레이터 캡처를 쓰니 같은 실루엣을 받는다.
+PLATFORM_DEVICE = {"android": DEVICE_GALAXY_S25, "ios": DEVICE_IPHONE_17_PRO}
 
 # --- 캐릭터 스티커 -------------------------------------------------------------------------
 # 결과 화면에만 "경남 토박이"를 겹쳐 놓는다. `assets/characters/build.py` 산출물이라 없으면 건너뛴다.
@@ -126,25 +170,122 @@ def line_height(font: ImageFont.FreeTypeFont) -> int:
 
 
 # ==========================================================================================
-# 2. 프레임 한 장
+# 2. 기기 실루엣
 # ==========================================================================================
 
 
-def place(cap_w: int, cap_h: int, top: int, W: int, H: int) -> tuple[int, int, int, int]:
-    """캡처를 앉힐 (x, y, 폭, 높이). 기본은 전체가 다 보이게 맞추고, 그러면 폭이
-    MIN_CAPTURE_W보다 좁아질 때만 폭을 키워 아래를 프레임 밖으로 흘린다."""
+def geometry(device: dict, sw: int, sh: int) -> dict:
+    """화면 크기(sw × sh)에서 실루엣 치수를 전부 뽑는다. 길이는 모두 화면 폭 기준이라
+    출력 규격이 달라도 비율이 같다. 캔버스는 본체 + 좌우 버튼 돌출분이다."""
+    b = device["bezel"]
+    bl, br = max(1, round(sw * b["left"])), max(1, round(sw * b["right"]))
+    bt, bb = max(1, round(sw * b["top"])), max(1, round(sw * b["bottom"]))
+    body_w, body_h = sw + bl + br, sh + bt + bb
+    out = max(2, round(body_w * BUTTON_THICK))
+    screen_r = max(1, round(sw * device["screen_radius"]))
+    return {
+        "sw": sw,
+        "sh": sh,
+        "body_w": body_w,
+        "body_h": body_h,
+        "body_r": screen_r + bl,  # 동심 — 바깥 반지름 = 화면 반지름 + 베젤
+        "screen_r": screen_r,
+        "out": out,
+        "canvas_w": body_w + 2 * out,
+        "canvas_h": body_h,
+        "screen_xy": (out + bl, bt),
+        "bezel": bl,
+        "rail": max(1, round(sw * RAIL_W)),
+    }
+
+
+def silhouette(device: dict, g: dict) -> Image.Image:
+    """본체 + 버튼을 한 덩어리로 그린 마스크. 그림자는 이걸 그대로 옮겨 찍는다 —
+    따로 그리면 버튼 그림자가 어긋난다."""
+    W, H = g["canvas_w"], g["canvas_h"]
+    big = Image.new("L", (W * SS, H * SS), 0)
+    d = ImageDraw.Draw(big)
+    x0, x1 = g["out"] * SS, (g["out"] + g["body_w"]) * SS - 1
+    d.rounded_rectangle([x0, 0, x1, H * SS - 1], radius=g["body_r"] * SS, fill=255)
+    br = max(1, round(g["out"] * BUTTON_R)) * SS
+    for side, top_f, h_f in device["buttons"]:
+        y0 = round(top_f * g["body_h"]) * SS
+        y1 = y0 + max(1, round(h_f * g["body_h"])) * SS
+        span = [0, y0, x0 + g["out"] * SS, y1] if side == "left" else [x1 - g["out"] * SS, y0, W * SS - 1, y1]
+        d.rounded_rectangle(span, radius=br, fill=255)  # 본체 안으로 겹쳐 그려 이음매를 없앤다
+    return big.resize((W, H), Image.BOX)
+
+
+def button_extent(device: dict, g: dict) -> tuple[int, int] | None:
+    """버튼이 실제로 차지하는 x 범위(캔버스 기준). 버튼이 없는 변은 빼고 잰다 —
+    검증표에서 "가장 바깥 버튼 픽셀이 프레임 안에 있나"를 이 값으로 본다."""
+    xs: list[int] = []
+    for side, _, _ in device["buttons"]:
+        xs.append(0 if side == "left" else g["canvas_w"] - 1)
+    return (min(xs), max(xs)) if xs else None
+
+
+def draw_device(cap: Image.Image, device: dict, g: dict) -> tuple[Image.Image, Image.Image]:
+    """(기기 그림 RGBA, 실루엣 마스크). 본체는 잉크 한 색이고, 베젤 안쪽에 종이 그림자색 띠를
+    한 줄 넣어 금속 테를 암시한다. 화면에는 캡처를 그대로 앉힌다."""
+    W, H = g["canvas_w"], g["canvas_h"]
+    mask = silhouette(device, g)
+    dev = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    dev.paste(Image.new("RGB", (W, H), INK), (0, 0), mask)
+
+    # 금속 테 띠 — 베젤 안쪽 34% 깊이에 한 줄. 크림으로 넣으면 베젤이 두 겹으로 갈라져 보여서
+    # 종이 그림자색을 쓴다. 바깥에는 잉크가 남아 Papercut 테두리가 끊기지 않는다.
+    inset = max(1, round(g["bezel"] * RAIL_DEPTH))
+    ring = ImageChops.subtract(
+        rounded_mask(g["body_w"], g["body_h"], g["body_r"], inset),
+        rounded_mask(g["body_w"], g["body_h"], g["body_r"], inset + g["rail"]),
+    )
+    dev.paste(Image.new("RGB", (g["body_w"], g["body_h"]), PAPER_SHADOW), (g["out"], 0), ring)
+
+    # 화면 = 캡처. 상태바·홈 인디케이터·다이내믹 아일랜드는 캡처 안에 이미 있다.
+    sw, sh = g["sw"], g["sh"]
+    dev.paste(resize_rgba(cap, sw, sh).convert("RGB"), g["screen_xy"], rounded_mask(sw, sh, g["screen_r"]))
+
+    # 펀치홀(Galaxy) — 화면을 뚫은 앞면 카메라라 캡처 위에 찍는다.
+    if device["punch_hole"]:
+        dia_f, cy_f = device["punch_hole"]
+        dia = max(2, round(sw * dia_f))
+        cx = g["screen_xy"][0] + sw // 2
+        cy = g["screen_xy"][1] + round(sh * cy_f)
+        hole = rounded_mask(dia, dia, dia // 2)
+        dev.paste(Image.new("RGB", (dia, dia), INK), (cx - dia // 2, cy - dia // 2), hole)
+
+    return dev, mask
+
+
+# ==========================================================================================
+# 3. 프레임 한 장
+# ==========================================================================================
+
+
+def place(cap_w: int, cap_h: int, device: dict, top: int, W: int, H: int) -> tuple[int, int]:
+    """기기를 앉힐 화면 크기 (폭, 높이). 기본은 실루엣 전체가 다 보이게 맞추고, 그러면 폭이
+    MIN_DEVICE_W보다 좁아질 때만 폭을 키워 아래를 프레임 밖으로 흘린다.
+
+    베젤·버튼도 화면 폭에 비례하니, 실루엣 폭 = 화면 폭 × kw, 실루엣 높이 = 화면 폭 × kh 로
+    한 번에 풀린다. 버튼이 잘리지 않게 여백은 실루엣(=버튼 포함) 기준으로 잡는다."""
+    b = device["bezel"]
+    kw = (1 + b["left"] + b["right"]) * (1 + 2 * BUTTON_THICK)  # 화면 폭 → 실루엣 폭
+    kh = cap_h / cap_w + b["top"] + b["bottom"]  # 화면 폭 → 실루엣 높이
     dx, dy = round(W * SHADOW_DX), round(W * SHADOW_DY)
     max_w = W - 2 * round(W * SIDE_MARGIN) - dx
     avail_h = H - top - round(H * BOTTOM_PAD) - dy
 
-    scale = min(max_w / cap_w, avail_h / cap_h)
-    if scale * cap_w < W * MIN_CAPTURE_W:
-        scale = min(max_w / cap_w, W * MIN_CAPTURE_W / cap_w)
-    pw, ph = max(1, round(cap_w * scale)), max(1, round(cap_h * scale))
-    return (W - pw - dx) // 2, top, pw, ph
+    sw = min(max_w / kw, avail_h / kh)
+    if sw * kw < W * MIN_DEVICE_W:
+        sw = min(max_w / kw, W * MIN_DEVICE_W / kw)
+    return max(1, round(sw)), max(1, round(sw * cap_h / cap_w))
 
 
-def render(cap: Image.Image, screen: str, W: int, H: int, sticker: Image.Image | None) -> Image.Image:
+def render(
+    cap: Image.Image, screen: str, device: dict, W: int, H: int, sticker: Image.Image | None
+) -> tuple[Image.Image, float | None]:
+    """(프레임, 가장 바깥 버튼 픽셀의 좌우 여백 중 작은 쪽 / W). 여백은 검증표가 본다."""
     frame = Image.new("RGBA", (W, H), CREAM + (255,))
     draw = ImageDraw.Draw(frame)
 
@@ -158,17 +299,18 @@ def render(cap: Image.Image, screen: str, W: int, H: int, sticker: Image.Image |
     draw.text((W // 2, y), sub, font=sub_font, fill=MUTED, anchor="ma")
     y += line_height(sub_font) + round(H * BLOCK_GAP)
 
-    # 캡처 = 종이 조각. 그림자 → 캡처 → 잉크 테두리 순으로 얹는다.
-    x, y, pw, ph = place(cap.width, cap.height, y, W, H)
-    radius = max(1, round(pw * CORNER_R))
-    outline = max(4, round(W * OUTLINE_FRAC))
-    mask = rounded_mask(pw, ph, radius)
-    ring = ImageChops.subtract(mask, rounded_mask(pw, ph, radius, inset=outline))
-
+    # 기기 = 종이 조각. 그림자(실루엣을 통째로 옮긴 것) → 기기 순으로 얹는다.
+    sw, sh = place(cap.width, cap.height, device, y, W, H)
+    g = geometry(device, sw, sh)
+    dev, mask = draw_device(cap, device, g)
     dx, dy = round(W * SHADOW_DX), round(W * SHADOW_DY)
-    frame.paste(Image.new("RGB", (pw, ph), PAPER_SHADOW), (x + dx, y + dy), mask)
-    frame.paste(resize_rgba(cap, pw, ph).convert("RGB"), (x, y), mask)
-    frame.paste(Image.new("RGB", (pw, ph), INK), (x, y), ring)
+    x = (W - g["canvas_w"] - dx) // 2
+
+    frame.paste(Image.new("RGB", (g["canvas_w"], g["canvas_h"]), PAPER_SHADOW), (x + dx, y + dy), mask)
+    frame.alpha_composite(dev, (x, y))
+
+    span = button_extent(device, g)
+    margin = min(x + span[0], W - 1 - (x + span[1])) / W if span else None
 
     # 캐릭터 스티커 — 캡처 오른쪽 아래 모서리에 걸치게 둔다.
     if sticker is not None and screen == STICKER_SCREEN:
@@ -176,7 +318,7 @@ def render(cap: Image.Image, screen: str, W: int, H: int, sticker: Image.Image |
         fig = resize_rgba(sticker, sw, max(1, round(sticker.height * sw / sticker.width)))
         frame.alpha_composite(fig, (W - round(W * STICKER_RIGHT) - fig.width, H - round(H * STICKER_BOTTOM) - fig.height))
 
-    return frame.convert("RGB")
+    return frame.convert("RGB"), margin
 
 
 def save_png_under(img: Image.Image, path: Path, limit: int) -> int:
@@ -189,8 +331,10 @@ def save_png_under(img: Image.Image, path: Path, limit: int) -> int:
 
 
 # ==========================================================================================
-# 3. 검증
+# 4. 검증
 # ==========================================================================================
+
+BUTTON_MARGIN_MIN = 0.03  # W — 가장 바깥 버튼 픽셀이 프레임 변에서 이만큼은 떨어져 있어야 한다
 
 
 def validate(path: Path, W: int, H: int) -> tuple[str, bool | None]:
@@ -220,15 +364,32 @@ def main() -> None:
     print(f"캐릭터 스티커: {'native.webp' if sticker else '없음 (건너뜀)'}\n")
 
     rows: list[tuple[str, str, bool | None]] = []
+    margins: dict[str, list[float]] = {}
     for out_name, raw_name, W, H in OUTPUTS:
+        device = PLATFORM_DEVICE[raw_name]
         for screen in SCREENS:
             src = args.raw / raw_name / f"{screen}.png"
             dst = args.out / out_name / f"{screen}.png"
             if src.exists():
                 with Image.open(src) as cap:
-                    save_png_under(render(cap.convert("RGB"), screen, W, H, sticker), dst, MAX_BYTES)
+                    frame, margin = render(cap.convert("RGB"), screen, device, W, H, sticker)
+                save_png_under(frame, dst, MAX_BYTES)
+                if margin is not None:
+                    margins.setdefault(raw_name, []).append(margin)
             detail, ok = validate(dst if src.exists() else src, W, H)
             rows.append((f"{out_name}/{screen}", detail, ok))
+
+    # 플랫폼마다 한 줄 — 버튼이 프레임 밖으로 나가거나 변에 붙지 않았나. 실루엣이 넓어지면
+    # 여기부터 FAIL이 뜨니 MIN_DEVICE_W·SIDE_MARGIN을 줄이라는 신호다.
+    for raw_name, device in PLATFORM_DEVICE.items():
+        got = margins.get(raw_name)
+        label = f"버튼 여백/{raw_name}"
+        if not got:
+            rows.append((label, f"{device['label']} 원본 캡처 없음", None))
+            continue
+        worst = min(got)
+        detail = f"{device['label']} 가장 바깥 버튼 여백 {worst * 100:.1f}% (≥{BUTTON_MARGIN_MIN * 100:.0f}%)"
+        rows.append((label, detail, worst >= BUTTON_MARGIN_MIN))
 
     width = max(len(label) for label, _, _ in rows)
     for label, detail, ok in rows:
