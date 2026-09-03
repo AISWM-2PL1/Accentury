@@ -124,3 +124,13 @@ describe('IntroScreen — 마이크 게이트 (KAN-56)', () => {
     expect(screen.getByRole('button', { name: '시작하기' })).toBeInTheDocument()
   })
 })
+
+describe('IntroScreen — 텍스트 히어로 (KAN-178)', () => {
+  it('그림 대신 "니 사투리 몇 등급?"이 서고, 제목은 그대로 남는다', () => {
+    render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
+
+    expect(screen.getByText('니 사투리 몇 등급?')).toBeInTheDocument()
+    // 히어로는 장식이라 제목을 대신하지 않는다 — 화면 이름은 여전히 h1이 말한다
+    expect(screen.getByRole('heading', { level: 1, name: '사투리 억양 테스트' })).toBeInTheDocument()
+  })
+})
