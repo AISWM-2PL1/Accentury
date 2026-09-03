@@ -28,7 +28,8 @@ ci_image_push = false
 db_deletion_protection = true
 db_skip_final_snapshot = false
 
-# WAF (KAN-149). staging의 Count 관찰 결과가 티켓에 기록된 뒤에만 true로 바꾼다. 두 환경 같은
-# 값이다 - staging에서 본 결과가 prod에 그대로 적용되어야 관찰의 의미가 있다 (2026-08-28 확정).
-waf_enforce    = false
+# WAF (KAN-149). staging의 Count 관찰 결과(오탐 0건)와 Block 전환 실증이 KAN-169에 기록됐으므로
+# prod도 처음부터 Block이다. 두 환경 같은 값이다 - staging에서 본 결과가 prod에 그대로 적용되어야
+# 관찰의 의미가 있다 (2026-08-28 확정).
+waf_enforce    = true
 waf_rate_limit = 300
