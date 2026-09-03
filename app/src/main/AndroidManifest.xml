@@ -37,12 +37,18 @@
           화면에 닿을 수 있고 녹음·업로드는 보이지 않는 화면에서 계속 돈다. singleTask면 링크가
           살아 있는 인스턴스의 onNewIntent로 들어와 화면이 하나로 유지된다.
         -->
+        <!--
+          런처가 여는 액티비티라 창이 뜨는 순간의 테마가 곧 스플래시다 (KAN-178). 그래서 여기만
+          Theme.Accentury.Starting이고, 위 <application>의 theme은 Theme.Accentury 그대로다 —
+          앱 전체 기본값을 스플래시 테마로 바꾸면 나중에 액티비티가 늘 때 그쪽까지 스플래시를 문다.
+          첫 프레임 뒤 실제 테마로 돌리는 것은 MainActivity의 installSplashScreen()이 한다.
+        -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
             android:launchMode="singleTask"
-            android:theme="@style/Theme.Accentury"
+            android:theme="@style/Theme.Accentury.Starting"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
