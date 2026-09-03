@@ -27,6 +27,21 @@
 # 1년 걸리는 사고가 된다.
 set -euo pipefail
 
+# ── 중간에 죽었을 때 무슨 상태로 남는지 ──────────────────────────────────────
+# 두 파일은 한 번에 하나씩 올라간다. 첫 파일이 올라간 뒤 죽으면 버킷에는 새 assetlinks와
+# 옛 AASA가 섞여 남는다 — 조용한 상태라 그냥 두면 며칠 뒤 "안드로이드만 검증된다"로 드러난다.
+# `set -e`가 조용히 끝내지 않도록 어디서 죽었는지와 다시 돌리면 되는지를 여기서 말해 준다.
+CURRENT_STEP="시작"
+on_error() {
+  local code=$?
+  echo "" >&2
+  echo "실패: $CURRENT_STEP (줄 ${BASH_LINENO[0]}, 종료 코드 $code)" >&2
+  echo "  두 파일 중 하나만 올라간 채 남았을 수 있다 (버킷에 새 파일과 옛 파일이 섞인 상태)." >&2
+  echo "  원인을 고치고 같은 명령을 그대로 다시 돌려라 — 덮어쓰기뿐이라 몇 번을 돌려도 된다 (멱등)." >&2
+  exit "$code"
+}
+trap on_error ERR
+
 usage() {
   cat <<'USAGE'
 사용법: scripts/publish-well-known.sh <staging|prod>
@@ -74,6 +89,7 @@ for name in "${FILES[@]}"; do
   fi
 done
 
+CURRENT_STEP="필요한 명령 확인"
 for cmd in aws curl python3; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "오류: $cmd 가 필요하다." >&2
@@ -84,6 +100,7 @@ done
 # 올리기 전에 JSON인지 본다. 깨진 JSON은 200으로 서빙되므로 curl 검증만으로는 안 걸리고,
 # 안드로이드 검증기와 애플 CDN이 조용히 무시하는 형태로 며칠 뒤에 드러난다.
 # jq 대신 python3을 쓰는 이유는 macOS에 늘 있기 때문이다.
+CURRENT_STEP="올릴 파일의 JSON 검사"
 for name in "${FILES[@]}"; do
   if ! python3 -m json.tool "$SRC_DIR/$name" >/dev/null; then
     echo "오류: $SRC_DIR/$name 이(가) JSON으로 파싱되지 않는다. 올리지 않는다." >&2
@@ -91,6 +108,7 @@ for name in "${FILES[@]}"; do
   fi
 done
 
+CURRENT_STEP="대상 버킷·배포 확인 (terraform output)"
 # 대상은 환경변수 우선, 없으면 그 환경의 terraform output에서 읽는다.
 tf_output() {
   terraform -chdir="$REPO_ROOT/infra/envs/$ENV_NAME" output -raw "$1" 2>/dev/null
@@ -123,6 +141,7 @@ echo "배포   : $CLOUDFRONT_DISTRIBUTION_ID"
 echo ""
 
 for name in "${FILES[@]}"; do
+  CURRENT_STEP="S3 업로드: $name"
   echo "업로드: $name"
   aws s3 cp "$SRC_DIR/$name" "s3://$WEB_BUCKET/.well-known/$name" \
     --content-type 'application/json' \
@@ -131,16 +150,19 @@ for name in "${FILES[@]}"; do
 done
 
 echo ""
+CURRENT_STEP="CloudFront 무효화 생성 (두 파일 모두 업로드됨)"
 echo "CloudFront 무효화"
 invalidation_id=$(aws cloudfront create-invalidation \
   --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" \
   --paths '/.well-known/*' \
   --query Invalidation.Id --output text)
+CURRENT_STEP="CloudFront 무효화 $invalidation_id 완료 대기"
 echo "  $invalidation_id 완료 대기"
 aws cloudfront wait invalidation-completed \
   --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" --id "$invalidation_id"
 
 echo ""
+CURRENT_STEP="도메인으로 응답 확인"
 echo "도메인으로 확인"
 failed=0
 for name in "${FILES[@]}"; do

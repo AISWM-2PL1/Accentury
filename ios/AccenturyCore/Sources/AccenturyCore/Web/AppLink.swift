@@ -45,14 +45,19 @@ public struct AppLinkEntry: Equatable, Sendable {
 public func parseAppLink(_ url: String?, allowedOrigins: Set<String>) -> AppLinkEntry? {
     guard let url, let origin = webOrigin(url), allowedOrigins.contains(origin) else { return nil }
     guard let components = URLComponents(string: url) else { return nil }
-    // `components.path`는 이미 퍼센트 인코딩이 풀린 값이다 — `/%74`처럼 escape로 위장한 경로가
-    // `/t`로 통과하지 않게 디코딩된 쪽으로 비교한다 (안드로이드의 `URI.getPath()`와 같은 자리).
+    // `components.path`는 이미 퍼센트 인코딩이 풀린 값이라 `/%74`도 `/t`로 인정한다 — 안드로이드의
+    // `URI.getPath()`와 같은 자리이자 같은 판정이다. 안드로이드 매니페스트의 `android:path` 필터가
+    // 디코딩된 경로로 맞추므로 OS가 `/%74`를 앱에 넘겨 주고, 경로를 어떻게 적어 오든 앱이 읽는
+    // 값은 `c` 하나뿐이라 escape로 위장해서 얻어 갈 것이 없다.
     let path = components.path
     guard path == "/t" || path == "/t/" else { return nil }
     // 같은 이름이 여러 번 오면 앞엣것 하나만 읽는다 — `?c=a&c=b`처럼 값을 덧붙여 판정을 흔드는
     // 링크에서 앱이 읽는 값이 하나로 정해져 있어야 한다.
     // `queryItems`의 값은 `%XX`만 풀리고 `+`는 글자 그대로 남는다. 안드로이드도 form-urlencoded
     // 규칙(`+` → 공백)을 쓰지 않고 같은 해석을 하도록 맞춰 뒀다.
+    // `queryItems`는 이름도 풀어서 준다 — `?%63=kko_share`가 `?c=kko_share`와 같은 링크라는 뜻이고,
+    // 웹의 `URLSearchParams`도 같게 읽는다. 안드로이드는 손으로 푸는 쪽이라 이름 비교 전에 같은
+    // 디코딩을 한 번 더 태워 세 소비자의 해석을 맞춰 뒀다.
     let raw = components.queryItems?.first { $0.name == "c" }?.value
     return AppLinkEntry(campaignToken: raw.flatMap(validCampaignToken))
 }
