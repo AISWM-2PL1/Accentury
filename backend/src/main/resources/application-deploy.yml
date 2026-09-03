@@ -39,6 +39,9 @@ accentury:
     # staging이 SSM 값 없이 떠도 겉보기에 멀쩡한 채 공유 카드가 prod로 연결된다 (Codex P2). 비워 두고
     # DeploymentConfigGuard가 요구한다.
     web-test-url: ""
+    # SSM ACCENTURY_RESULT_ASSETBASEURL - https://<이 환경 도메인>/share (KAN-132). 등급 이미지는 이 아래
+    # <code>.png다. web-test-url과 같은 이유로 비워 두고 DeploymentConfigGuard가 요구한다.
+    asset-base-url: ""
 
 # CloudWatch 지표 내보내기 (KAN-36, CloudWatchMetricsConfig). accentury.* 지표만 1분마다 올린다 - 회로 상태
 # (accentury.ai.circuit.state)는 경보 ai-circuit-open(infra/modules/monitoring)이 본다. 네임스페이스는

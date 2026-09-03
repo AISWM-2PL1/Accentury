@@ -68,10 +68,11 @@ class DeploymentConfigGuard {
     static final SsmName TRUSTED_PROXIES = new SsmName("accentury.trusted-proxies", "ACCENTURY_TRUSTEDPROXIES");
     static final SsmName ADMIN_TOKEN = new SsmName("accentury.admin.token", "ACCENTURY_ADMIN_TOKEN");
     static final SsmName WEB_TEST_URL = new SsmName("accentury.result.web-test-url", "ACCENTURY_RESULT_WEBTESTURL");
+    static final SsmName ASSET_BASE_URL = new SsmName("accentury.result.asset-base-url", "ACCENTURY_RESULT_ASSETBASEURL");
 
     /** 배포에서 값이 와야 하는 프로퍼티 전부 (자격 증명 둘은 Secrets Manager URL이면 비어 있어도 된다). */
     static final List<SsmName> SSM_NAMES = List.of(DATASOURCE_URL, DATASOURCE_USERNAME, DATASOURCE_PASSWORD,
-            AI_BASE_URL, AI_TOKEN, TRUSTED_PROXIES, ADMIN_TOKEN, WEB_TEST_URL);
+            AI_BASE_URL, AI_TOKEN, TRUSTED_PROXIES, ADMIN_TOKEN, WEB_TEST_URL, ASSET_BASE_URL);
 
     /**
      * JDBC URL에 이 파라미터가 <b>값과 함께</b> 있으면 자격 증명은 AWS Advanced JDBC Wrapper의
@@ -132,6 +133,11 @@ class DeploymentConfigGuard {
         }
         if (isBlank(binder, WEB_TEST_URL.property())) {
             missing.add(WEB_TEST_URL.label());
+        }
+        // 등급 이미지 기준 URL (KAN-132) - web-test-url과 같은 이유로 비운다. main 기본값이 prod 도메인이라
+        // staging이 값 없이 뜨면 공유 카드 이미지가 prod 버킷을 가리킨다.
+        if (isBlank(binder, ASSET_BASE_URL.property())) {
+            missing.add(ASSET_BASE_URL.label());
         }
         return missing;
     }

@@ -73,6 +73,16 @@ resource "aws_ssm_parameter" "web_test_url" {
   value = "https://${var.domain}/t?c=kko_share"
 }
 
+# 등급 이미지의 기준 URL (§3.7 share.imageUrl, KAN-132). backend가 등급 code로 `{기준}/{code}.png`를
+# 만든다 - 값 5개 대신 1개다. 이미지는 웹 S3 버킷의 share/ 아래에 있고(scripts/publish-share-assets.sh)
+# CloudFront 기본 동작(S3 오리진)이 서빙한다. 파일명에 확장자가 있어 SPA 재작성 Function에 걸리지
+# 않는다. 도메인이 환경마다 달라 여기서 조립한다 - 코드 기본값(prod 도메인)이 staging에 새면 안 된다.
+resource "aws_ssm_parameter" "asset_base_url" {
+  name  = "${var.ssm_prefix}/ACCENTURY_RESULT_ASSETBASEURL"
+  type  = "String"
+  value = "https://${var.domain}/share"
+}
+
 # ---- 시크릿 ----
 
 # 관리자 API(§6)와 E2E 스모크(KAN-138) 합성 트래픽 표시의 공유 시크릿. AdminAuth가 32자 미만을

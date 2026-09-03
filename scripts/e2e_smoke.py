@@ -185,6 +185,38 @@ def log(message: str) -> None:
     print("[%7.2fs] %s" % (time.monotonic() - _started_at, message), flush=True)
 
 
+def verify_share_image(base_url: str, result: Dict[str, Any]) -> None:
+    """share.imageUrl이 실제로 서빙되는지 (KAN-132 AC - imageUrl이 200으로 로드된다).
+
+    값이 형태만 맞고 버킷에 파일이 없으면 결과 화면과 카카오 카드가 조용히 깨진다. 카카오가 가져가는
+    값이라 본문은 안 받는다 (HEAD). 이미지 호스트가 스모크 대상과 같을 때만 본다 - 로컬 스택
+    (127.0.0.1)은 backend 기본값인 prod 도메인을 돌려주므로, 거기까지 두드리면 로컬 검증이 공인
+    DNS와 prod 자산에 묶이고 성공해도 로컬을 검증한 것이 아니다 (Codex 리뷰 P2).
+    """
+    url = str((result.get("share") or {}).get("imageUrl") or "")
+    target_host = urllib.parse.urlparse(base_url).netloc
+    image_host = urllib.parse.urlparse(url).netloc
+    if image_host != target_host:
+        log("  share.imageUrl 호스트(%s)가 대상(%s)과 달라 이미지 확인은 건너뛴다" % (image_host, target_host))
+        return
+    expect(url.startswith("https://"),
+           "share.imageUrl이 https가 아니다 - 카카오가 이미지를 가져가지 않는다: %s" % url)
+    request = urllib.request.Request(url, method="HEAD")
+    try:
+        with urllib.request.urlopen(request, timeout=10) as raw:
+            status, content_type = raw.status, raw.headers.get("Content-Type", "")
+    except urllib.error.HTTPError as error:
+        status, content_type = error.code, error.headers.get("Content-Type", "")
+    except (urllib.error.URLError, OSError, http.client.HTTPException) as error:
+        raise SmokeFailure("share.imageUrl 연결 실패: %s (%s)" % (url, error)) from error
+    expect(status == 200, "share.imageUrl이 200이 아니다: HTTP %d %s (버킷 share/에 파일이 없거나 "
+           "SSM ACCENTURY_RESULT_ASSETBASEURL이 다른 도메인을 가리킨다. scripts/publish-share-assets.sh)"
+           % (status, url))
+    expect(content_type.startswith("image/png"),
+           "share.imageUrl의 content-type이 image/png가 아니다: %s (%s) - text/html이면 SPA 재작성에 걸린 것이다"
+           % (content_type, url))
+
+
 def expect(condition: bool, message: str) -> None:
     if not condition:
         raise SmokeFailure(message)
@@ -1052,6 +1084,7 @@ def finish_scenario(client: Client, scenario: Scenario, args: argparse.Namespace
     verify_result(scenario, result,
                   resolve_expected_intonation(scenario, args),
                   resolve_expected_vocabulary(scenario, args))
+    verify_share_image(client.base_url, result)
 
     # 결과 화면 재진입(새로고침, 앱 복귀)이 같은 답을 받는지 (KAN-25 AC).
     again = fetch_result(client, scenario)

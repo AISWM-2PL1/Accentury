@@ -184,13 +184,19 @@ public record AccenturyProperties(Session session,
      * 설정 변경만으로 문구와 이미지를 교체할 수 있다 (KAN-29, 30 소비).
      * 완결성(5개 등급 전부, 빈 값 없음)은 기동 시 {@code TierAssets}가 강제한다.
      *
-     * @param webTestUrl 공유 카드가 여는 웹 테스트 URL - 공유 유입 계측용 캠페인 파라미터가
-     *                   붙은 완성 URL을 설정값 그대로 반환한다 (2026-08-14 확정 - 전 등급
-     *                   공통 고정값 하나, KAN-30). 개인 식별 요소를 넣지 않는다.
-     * @param tiers      등급 code(소문자 키) → 자산. 키는 {@code ScorePolicyRegistry.TIER_CODES}와
-     *                   대소문자 무시 1:1이어야 한다.
+     * @param webTestUrl   공유 카드가 여는 웹 테스트 URL - 공유 유입 계측용 캠페인 파라미터가
+     *                     붙은 완성 URL을 설정값 그대로 반환한다 (2026-08-14 확정 - 전 등급
+     *                     공통 고정값 하나, KAN-30). 개인 식별 요소를 넣지 않는다.
+     * @param assetBaseUrl 등급 이미지의 기준 URL (KAN-132) - 등급 code마다 {@code {기준}/{code 소문자}.png}가
+     *                     {@code share.imageUrl}이다. 값 5개 대신 1개인 것은 환경마다 도메인만 다르고
+     *                     파일명은 등급 code로 정해져 있어서다 (자산 정본 {@code assets/share/}, KAN-162).
+     *                     배포에서는 SSM {@code ACCENTURY_RESULT_ASSETBASEURL}이 채운다. 이미지 교체는 S3
+     *                     업로드만으로 반영되고 설정과 배포는 건드리지 않는다.
+     * @param tiers        등급 code(소문자 키) → 자산. 키는 {@code ScorePolicyRegistry.TIER_CODES}와
+     *                     대소문자 무시 1:1이어야 한다.
      */
-    public record Result(@Nullable String webTestUrl, @DefaultValue Map<String, TierAsset> tiers) {
+    public record Result(@Nullable String webTestUrl, @Nullable String assetBaseUrl,
+                         @DefaultValue Map<String, TierAsset> tiers) {
     }
 
     /**
@@ -226,13 +232,12 @@ public record AccenturyProperties(Session session,
     }
 
     /**
-     * 등급 하나의 결과 화면과 공유 자산 (§3.7 - comment, share.imageUrl, share.text).
+     * 등급 하나의 결과 화면과 공유 문구 (§3.7 - comment, share.text). 공유 이미지 URL은 여기 없다 -
+     * {@link Result#assetBaseUrl()}과 등급 code로 만든다 (KAN-132).
      *
      * @param comment   등급별 진단 코멘트 - 결과 화면에 그대로 표시된다 (KAN-29).
-     * @param imageUrl  등급별 정적 공유 이미지 - 사전 제작 자산, 개인 점수 미포함 (KAN-30)
      * @param shareText 공유 카드 문구 - 이름 없는 1인칭 (KAN-30)
      */
-    public record TierAsset(@Nullable String comment, @Nullable String imageUrl,
-                            @Nullable String shareText) {
+    public record TierAsset(@Nullable String comment, @Nullable String shareText) {
     }
 }

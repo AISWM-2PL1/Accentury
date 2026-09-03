@@ -35,10 +35,18 @@
 두면 자산을 교체해도 1년 동안 옛 이미지가 그대로 나간다. 공유 자산은 웹 번들과 수명이 다르므로
 배포 경로도 다르다.
 
-## 후속 (KAN-132, Ops)
+## 게시 (KAN-132)
 
-S3의 `share/<tier>.png`로 올리고 `image-url`을 `https://accentury.app/share/<tier>.png`로 바꾸는
-것이 KAN-132 몫이다. 현재 `application.yml`의 값은 아직 붙지 않은 더미 URL이다.
+```
+scripts/publish-share-assets.sh staging     # 또는 prod
+```
+
+환경의 웹 S3 버킷 `share/<tier>.png`로 올리고 CloudFront `/share/*`를 무효화한 뒤 도메인으로
+200 `image/png`와 내용 일치를 확인한다. 백엔드는 등급마다 URL을 적지 않고 기준 URL 하나
+(`accentury.result.asset-base-url`, 배포에서는 SSM `ACCENTURY_RESULT_ASSETBASEURL` =
+`https://<도메인>/share`)에 등급 code 소문자와 `.png`를 붙여 `share.imageUrl`을 만든다 - 그래서
+위 표의 파일명이 곧 계약이다. 캐릭터가 바뀌면 다시 만들어 이 스크립트만 돌리면 되고 서버와
+앱 배포는 없다. 자세한 것은 `infra/README.md` "등급 공유 이미지".
 
 ## 재생성
 

@@ -55,6 +55,7 @@ class SsmEnvironmentBindingTest {
         ssm.put(DeploymentConfigGuard.TRUSTED_PROXIES.ssmName(), "10.1.0.0/16");
         ssm.put(DeploymentConfigGuard.ADMIN_TOKEN.ssmName(), "0123456789abcdef0123456789abcdef");
         ssm.put(DeploymentConfigGuard.WEB_TEST_URL.ssmName(), "https://staging.accentury.app/t?c=kko_share");
+        ssm.put(DeploymentConfigGuard.ASSET_BASE_URL.ssmName(), "https://staging.accentury.app/share");
 
         // OS 환경 변수와 같은 종류의 소스다 - 진짜 셸 값보다 앞에 둔다. 이름이 "-systemEnvironment"로
         // 끝나야 Boot가 환경 변수용 이름 규칙(대시 제거)을 적용한다 - 타입만 맞고 이름이 다르면 일반

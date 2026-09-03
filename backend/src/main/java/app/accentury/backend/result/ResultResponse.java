@@ -1,7 +1,5 @@
 package app.accentury.backend.result;
 
-import app.accentury.backend.common.AccenturyProperties;
-
 import java.time.Instant;
 
 /**
@@ -40,8 +38,8 @@ public record ResultResponse(Status status, Scores scores, Tier tier, String com
     public record Share(String imageUrl, String text, String webTestUrl) {
     }
 
-    /** 확정 결과 행 + 등급 자산 설정 → 응답. 자산의 빈 값 없음은 기동 검증이 보장한다 (TierAssets). */
-    static ResultResponse of(TestResult result, AccenturyProperties.TierAsset asset, String webTestUrl) {
+    /** 확정 결과 행 + 등급 자산 → 응답. 자산의 빈 값 없음과 이미지 URL은 기동 검증이 보장한다 (TierAssets, KAN-132). */
+    static ResultResponse of(TestResult result, TierAssets.Asset asset, String webTestUrl) {
         return new ResultResponse(
                 Status.READY,
                 new Scores(result.intonation(), result.vocabulary(), result.overall()),
