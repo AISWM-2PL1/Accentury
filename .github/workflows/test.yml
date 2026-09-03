@@ -15,6 +15,7 @@ jobs:
       web: ${{ steps.filter.outputs.web }}
       web-e2e: ${{ steps.filter.outputs.web-e2e }}
       ai: ${{ steps.filter.outputs.ai }}
+      infra: ${{ steps.filter.outputs.infra }}
     steps:
       # pull_request 이벤트에서는 checkout 없이 GitHub API로 변경 파일을 조회한다
       - uses: dorny/paths-filter@v3
@@ -36,6 +37,14 @@ jobs:
               - '.github/workflows/test.yml'
             ai:
               - 'ai/**'
+              - '.github/workflows/test.yml'
+            # CloudFront Function과 App Link 검증 파일 (KAN-32 4단계). AndroidManifest가 여기
+            # 끼는 이유는 락스텝 테스트가 그 파일을 직접 읽어 AASA의 경로 집합과 대조하기
+            # 때문이다 - 매니페스트만 바꾸면 app-test가 아니라 이 job이 먼저 깨져야 한다.
+            infra:
+              - 'infra/modules/edge/**'
+              - 'infra/well-known/**'
+              - 'app/src/main/AndroidManifest.xml'
               - '.github/workflows/test.yml'
             # 브라우저 E2E(KAN-181)는 compose 스택 위에서 돈다 - 스택 정의가 바뀌면 웹이 그대로여도
             # 다시 봐야 한다. backend/**·ai/**는 e2e-smoke.yml의 compose job과 같은 이유로
@@ -166,6 +175,24 @@ jobs:
       - name: 스택 로그
         if: failure()
         run: docker compose logs --tail=100
+
+  # SPA 재작성 Function과 App Link 검증 파일 (KAN-32 4단계). 의존성이 없어 setup-node만으로
+  # 돌고 몇 초 만에 끝난다 - CloudFront Function은 배포해야만 도는 코드라 이 job이 없으면
+  # `/.well-known/` 예외가 깨져도 apply 뒤 curl 전까지 아무도 모른다.
+  #
+  # 아직 required check로 올리지 않는다 (web-e2e와 같은 취급 - 안정화 후 별도 결정).
+  edge-test:
+    needs: changes
+    if: needs.changes.outputs.infra == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # 디렉터리 경로가 아니라 glob이다 - node 22.6부터 --test의 위치 인자는 glob으로 해석돼
+      # 디렉터리를 주면 그 이름의 모듈을 찾다가 MODULE_NOT_FOUND로 죽는다.
+      - run: node --test 'infra/modules/edge/*.test.mjs'
 
   ai-test:
     needs: changes
