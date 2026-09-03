@@ -119,7 +119,7 @@ PLATFORM_DEVICE = {"android": DEVICE_GALAXY_S25, "ios": DEVICE_IPHONE_17_PRO}
 # --- 캐릭터 스티커 -------------------------------------------------------------------------
 # 결과 화면에만 "경남 토박이"를 겹쳐 놓는다. `assets/characters/build.py` 산출물이라 없으면 건너뛴다.
 STICKER_SRC = REPO / "web" / "src" / "assets" / "characters" / "native.webp"
-STICKER_SCREEN = "04-result"
+STICKER_SCREEN = None  # 스티커를 얹을 화면 id. 2026-09-03 결정으로 끔(None) — 결과 화면의 캐릭터와 겹쳐 보여 뺐다. 되살리려면 "04-result"
 STICKER_W = 0.28  # W 대비 폭
 STICKER_RIGHT, STICKER_BOTTOM = 0.035, 0.028  # W·H 대비 오른쪽·아래 여백
 
