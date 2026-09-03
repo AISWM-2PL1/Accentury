@@ -215,6 +215,7 @@ def verify_share_image(base_url: str, result: Dict[str, Any]) -> None:
     expect(content_type.startswith("image/png"),
            "share.imageUrl의 content-type이 image/png가 아니다: %s (%s) - text/html이면 SPA 재작성에 걸린 것이다"
            % (content_type, url))
+    log("  공유 이미지 확인: %s -> 200 %s" % (url, content_type))
 
 
 def expect(condition: bool, message: str) -> None:
