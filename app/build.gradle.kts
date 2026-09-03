@@ -246,6 +246,9 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
+    // 스플래시 화면 (KAN-178). minSdk 29라 플랫폼 SplashScreen(API 31)만으로는 29·30에서
+    // 스플래시가 아예 없다 - 이 라이브러리가 그 두 버전에 같은 화면을 만들어 준다.
+    implementation(libs.androidx.core.splashscreen)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)

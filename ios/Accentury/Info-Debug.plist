@@ -28,8 +28,23 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- 런치 스크린 (KAN-178). 스토리보드 파일 대신 이 딕셔너리를 쓴다 — iOS 14부터
+	     UILaunchScreen이 정식 경로이고, 우리 런치 화면은 "크림 배경 + 가운데 아이콘" 한 장이라
+	     스토리보드가 들고 오는 xib 파일·오토레이아웃·씬 편집이 전부 값 두 개로 줄어든다.
+	     UIColorName·UIImageName은 **에셋 카탈로그의 이름**이지 파일명이 아니다
+	     (Assets.xcassets의 LaunchBackground.colorset · LaunchIcon.imageset).
+	     안드로이드 쪽 짝은 themes.xml의 Theme.Accentury.Starting이고, 배경색·아이콘 도상이
+	     같은 원본(assets/app-icon/source.png)에서 나온다.
+	     UIImageRespectsSafeAreaInsets는 노치·다이내믹 아일랜드에 아이콘이 물리지 않게 한다. -->
 	<key>UILaunchScreen</key>
-	<dict/>
+	<dict>
+		<key>UIColorName</key>
+		<string>LaunchBackground</string>
+		<key>UIImageName</key>
+		<string>LaunchIcon</string>
+		<key>UIImageRespectsSafeAreaInsets</key>
+		<true/>
+	</dict>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

@@ -1,6 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  생성물이다 (assets/app-icon/build.py). 손으로 고치지 마라 — 다음 실행에서 덮인다.
+
+  배경은 drawable이 아니라 색 리소스다(@color/ic_launcher_background). 단색 크림 한 장을
+  그리는 데 벡터/비트맵을 둘 이유가 없고, 색 리소스면 값이 colors.xml 한 곳에만 있다.
+  monochrome은 Android 13 테마 아이콘용 잉크 실루엣이다 — 전경을 그대로 쓰면 크림 종이까지
+  단색으로 칠해져 글자가 사라진다.
+-->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@drawable/ic_launcher_background" />
-    <foreground android:drawable="@drawable/ic_launcher_foreground" />
-    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <monochrome android:drawable="@mipmap/ic_launcher_monochrome" />
 </adaptive-icon>

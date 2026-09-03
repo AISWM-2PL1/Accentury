@@ -49,6 +49,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -127,6 +128,14 @@ class MainActivity : ComponentActivity() {
     private val appLink = MutableStateFlow<AppLinkEntry?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        /*
+         * 스플래시 (KAN-178). `super.onCreate` **앞**이어야 한다 — 이 호출이 하는 일이
+         * 창의 테마를 매니페스트의 Theme.Accentury.Starting에서 postSplashScreenTheme
+         * (Theme.Accentury)로 갈아 끼우는 것이고, 창이 만들어진 뒤에 바꾸면 늦는다.
+         * 유지 조건(setKeepOnScreenCondition)은 걸지 않는다 — 첫 화면이 웹뷰라 붙들 기준이
+         * 애매하고, 붙들면 그만큼 사용자가 아무것도 못 하는 시간이 늘어난다.
+         */
+        installSplashScreen()
         super.onCreate(savedInstanceState)
         /*
          * 시스템 바를 **항상 밝은 배경용**으로 고정한다 (KAN-161 4단계).
