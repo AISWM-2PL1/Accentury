@@ -5,13 +5,13 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 
 /** 테스트용 WAV 생성기 - 표준 44바이트 헤더 + 무음 데이터 */
-final class WavFixtures {
+public final class WavFixtures {
 
     private WavFixtures() {
     }
 
     /** 규격(§3.3) WAV - 16kHz Mono 16-bit PCM */
-    static byte[] standardWav(int durationMs) {
+    public static byte[] standardWav(int durationMs) {
         return wav(16_000, 1, 16, durationMs);
     }
 

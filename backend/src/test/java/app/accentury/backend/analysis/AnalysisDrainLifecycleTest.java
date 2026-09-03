@@ -299,7 +299,7 @@ class AnalysisDrainLifecycleTest extends IntegrationTest {
     }
 
     private static AnalysisDispatcher.AnalysisRequest request(AnalysisJob job) {
-        return new AnalysisDispatcher.AnalysisRequest(job.id(), job.sessionId(), job.itemId(),
+        return new AnalysisDispatcher.AnalysisRequest(job.id(), job.sessionId(), job.itemId(), null,
                 "gn-2026.08.1", "sv-0.3", 3000, new byte[] {1, 2, 3});
     }
 }

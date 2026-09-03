@@ -29,8 +29,30 @@ final class DefinitionFixtures {
     /** DB 행에 넣을 발행본 JSON - 저장 경로가 파일이 아니라 컬럼이 됐다 (KAN-26). */
     static String body(String testVersion, String dialect) {
         TestDefinition base = valid();
-        return JsonMapper.builder().build().writeValueAsString(new TestDefinition(
+        return body(new TestDefinition(
                 testVersion, base.scoreVersion(), dialect, base.estimatedDurationSec(), base.items()));
+    }
+
+    static String body(TestDefinition definition) {
+        return JsonMapper.builder().build().writeValueAsString(definition);
+    }
+
+    /**
+     * 음성 N + 어휘 5 풀 (KAN-182) - 앞 5쌍은 현행과 같은 교차, 6번째부터는 음성만 뒤에 붙는다.
+     * seq는 풀 기준 1..N+5 연속이다. scriptKey는 없다.
+     */
+    static TestDefinition pool(int voiceCount) {
+        List<TestDefinition.Item> items = new ArrayList<>();
+        int seq = 1;
+        for (int i = 1; i <= Math.max(voiceCount, 5); i++) {
+            if (i <= voiceCount) {
+                items.add(voice("v" + i, seq++));
+            }
+            if (i <= 5) {
+                items.add(vocabulary("w" + i, seq++));
+            }
+        }
+        return new TestDefinition("gn-2026.09.t" + voiceCount, "sv-0.3", "GYEONGNAM", 240, items);
     }
 
     static TestDefinition.Item voice(String itemId, int seq) {

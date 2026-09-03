@@ -5,20 +5,24 @@ import java.time.Instant;
 /**
  * {@code POST /v0/sessions} 201 응답 (API 명세서 §3.1).
  * <p>
- * 정확히 이 5개 필드를 반환한다. {@code sessionToken}은 이 응답에서 딱 한 번 노출되고,
+ * 정확히 이 7개 필드를 반환한다. {@code sessionToken}은 이 응답에서 딱 한 번 노출되고,
  * 서버에는 해시만 남는다 - 클라이언트가 잃어버리면 재발급이 아니라 새 세션이다.
  *
- * @param sessionId    {@code s_...} - 이후 API의 경로 파라미터
- * @param sessionToken {@code st_...} - {@code Authorization: Bearer}로 보낼 불투명 토큰
- * @param testVersion  이 세션에 고정된 테스트 정의 버전 - {@code GET /v0/tests/{testVersion}}에 그대로 넣는다 (§5.4).
- * @param scoreVersion 이 세션에 고정된 점수 산정 버전
- * @param expiresAt    토큰 만료 시각 (UTC) - 기본 30분
+ * @param sessionId     {@code s_...} - 이후 API의 경로 파라미터
+ * @param sessionToken  {@code st_...} - {@code Authorization: Bearer}로 보낼 불투명 토큰
+ * @param testVersion   이 세션에 고정된 테스트 정의 버전 - {@code GET /v0/tests/{testVersion}}에 그대로 넣는다 (§5.4).
+ * @param scoreVersion  이 세션에 고정된 점수 산정 버전
+ * @param voiceSet      이 세션에 고정된 음성 문항 세트 번호 (KAN-182) - 정의 조회의 {@code ?voiceSet=}에 그대로 넣는다.
+ * @param voiceSetCount 고정된 버전의 세트 수 - 앱의 "모든 세트 경험" UI가 쓴다.
+ * @param expiresAt     토큰 만료 시각 (UTC) - 기본 30분
  */
 public record SessionResponse(
         String sessionId,
         String sessionToken,
         String testVersion,
         String scoreVersion,
+        int voiceSet,
+        int voiceSetCount,
         Instant expiresAt
 ) {
 }

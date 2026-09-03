@@ -97,8 +97,10 @@ public class VoiceUploadService {
         // 하나가 그 여유를 혼자 쓰지 못하게 막는 두 번째 축이다 (§2.5, KAN-28).
         rateLimits.check(RateLimits.Scope.VOICE_UPLOAD_SESSION, session.id());
         String key = IdempotencyKeys.require(idempotencyKey);
-        // 반환값은 쓰지 않는다 - 없는 문항(422)과 유형 불일치(409)를 여기서 끊는 것이 목적이다.
-        registry.requireItem(session.testVersion(), itemId, TestDefinition.ItemType.VOICE);
+        // 없는 문항(422)과 유형 불일치(409)를 여기서 끊는다 - 세션 세트 밖의 음성 문항은 풀에
+        // 있어도 422다 (KAN-182). 문항의 scriptKey는 AI로 가는 meta에 싣는다 (§4.1).
+        TestDefinition.Item item = registry.requireItem(
+                session.testVersion(), session.voiceSet(), itemId, TestDefinition.ItemType.VOICE);
         VoiceUploadMeta meta = VoiceUploadMeta.parse(objectMapper, metaJson);
         byte[] audioBytes = requireAudio(audio);
 
@@ -194,8 +196,8 @@ public class VoiceUploadService {
             // durationMs는 클라이언트 신고값(meta)이 아니라 서버가 WAV에서 계산한 값을
             // 전달한다 - 신고값이 실제와 다르면 분석이 엉뚱한 메타를 받는다 (Codex sol 리뷰 P2).
             AnalysisDispatcher.AnalysisRequest analysisRequest = new AnalysisDispatcher.AnalysisRequest(
-                    job.id(), session.id(), itemId, session.testVersion(), session.scoreVersion(),
-                    wav.durationMs(), audioBytes);
+                    job.id(), session.id(), itemId, item.scriptKey(), session.testVersion(),
+                    session.scoreVersion(), wav.durationMs(), audioBytes);
             // 소유권은 반환이 아니라 호출과 함께 넘어간다 - 계약(AnalysisDispatcher)이 그렇게
             // 정의되어 있고, 예외로 끝난 경우의 파기도 구현의 몫이다. 반환 뒤에 세우면
             // "제출에는 성공하고 그 뒤에 던지는" 구현(계측 데코레이터, 향후 AOP)에서 살아

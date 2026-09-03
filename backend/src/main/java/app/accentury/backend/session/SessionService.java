@@ -9,7 +9,6 @@ import app.accentury.backend.common.ApiException;
 import app.accentury.backend.common.ErrorCode;
 import app.accentury.backend.common.RateLimits;
 import app.accentury.backend.result.TestResultRepository;
-import app.accentury.backend.testdefinition.TestDefinition;
 import app.accentury.backend.testdefinition.TestDefinitionRegistry;
 import app.accentury.backend.vocab.VocabAnswerRepository;
 import org.jspecify.annotations.Nullable;
@@ -37,6 +36,9 @@ import java.util.concurrent.TimeUnit;
 public class SessionService {
 
     private static final Logger log = LoggerFactory.getLogger(SessionService.class);
+
+    /** 세트를 모르는 클라이언트의 세트 - 생략이 곧 1이다 (KAN-182 하위 호환). */
+    static final int DEFAULT_VOICE_SET = 1;
 
     private final TestSessionRepository repository;
     private final VocabAnswerRepository vocabAnswerRepository;
@@ -92,9 +94,15 @@ public class SessionService {
      * 숫자만 늘어나고, 그 증가가 실패해도 세션 생성은 성공한다. 재응시 폐기가 있어도
      * 카운터는 되돌리지 않는다 - 이전 시도와 완주는 실제로 발생한 사실이다 (KAN-107 AC).
      * <p>
-     * 고정할 두 버전은 활성 정의 스냅샷 <b>한 번</b>에서 함께 꺼낸다 (KAN-26) - 나눠 읽으면
-     * 그사이 활성 전환이 끼어들어 한 세션이 A의 문항과 B의 채점식에 걸릴 수 있다. 활성 전환은
+     * 고정할 두 버전과 세트 수 검증은 활성 정의 스냅샷 <b>한 번</b>에서 함께 한다 (KAN-26,
+     * KAN-182) - 나눠 읽으면 그사이 활성 전환이 끼어들어 한 세션이 A의 문항과 B의 채점식에
+     * 걸리거나, A의 세트 수로 통과한 세트 번호가 B에는 없는 세션이 생긴다. 활성 전환은
      * 이 지점 뒤로는 이 세션에 영향을 주지 않는다 (§5.4, KAN-26 AC).
+     * <p>
+     * 세트 번호는 요청값이고 생략하면 1이다 (KAN-182) - 세트를 모르는 클라이언트(웹)는 변경
+     * 없이 세트 1로 동작한다. 재응시도 같은 규칙이다: 새 세션의 세트는 요청값이고 이전 세션의
+     * 세트를 물려받지 않는다. 활성 정의의 세트 수 밖이면 400 {@code VALIDATION_FAILED}다 -
+     * 정의 조회(§3.2)의 404와 달리 여기서는 "만들 수 없는 세션"이라 입력 오류로 낸다.
      * <p>
      * 검증용 스모크(KAN-138)가 {@code X-Admin-Token}으로 표시한 세션은 합성 트래픽이 되어
      * 집계가 실사용자와 갈린다. 판정은 <b>여기 한 번</b>이고 세션 행에 남아, 완주 카운터도
@@ -117,9 +125,10 @@ public class SessionService {
         Traffic traffic = syntheticTraffic.resolve(adminToken);
 
         String previousTokenHash = retakeTokenHash(authorizationHeader);
-        TestDefinition active = testDefinitions.active().definition();
-        String testVersion = active.testVersion();
-        String scoreVersion = active.scoreVersion();
+        TestDefinitionRegistry.PublishedDefinition active = testDefinitions.active();
+        String testVersion = active.definition().testVersion();
+        String scoreVersion = active.definition().scoreVersion();
+        int voiceSet = requestedVoiceSet(request, active.voiceSetCount());
         Instant now = Instant.now();
         Instant expiresAt = now.plus(properties.session().ttl());
         String sessionId = SessionTokens.newSessionId();
@@ -145,6 +154,7 @@ public class SessionService {
                     SessionTokens.hash(token),
                     testVersion,
                     scoreVersion,
+                    voiceSet,
                     client != null && client.platform() != null ? client.platform().name() : null,
                     client != null ? client.appVersion() : null,
                     request != null ? request.campaignToken() : null,
@@ -162,14 +172,29 @@ public class SessionService {
         }
 
         // 토큰은 로그에 남기지 않는다 (§2.6, NFR-SC-07).
-        log.info("세션 생성 sessionId={} platform={} testVersion={} traffic={}",
-                sessionId, client != null ? client.platform() : null, testVersion, traffic);
+        log.info("세션 생성 sessionId={} platform={} testVersion={} voiceSet={} traffic={}",
+                sessionId, client != null ? client.platform() : null, testVersion, voiceSet, traffic);
 
         // 응시 시도 1건 (KAN-106) - 폐기+생성 트랜잭션이 커밋된 뒤다.
         // 실패는 카운터 쪽에서 삼킨다 - 통계가 세션 생성을 막으면 안 된다 (FR-AN-10).
         counters.recordSessionStarted(now, testVersion, scoreVersion, traffic);
 
-        return new SessionResponse(sessionId, token, testVersion, scoreVersion, expiresAt);
+        return new SessionResponse(sessionId, token, testVersion, scoreVersion,
+                voiceSet, active.voiceSetCount(), expiresAt);
+    }
+
+    /**
+     * 요청의 세트 번호 - 생략은 1, 범위는 활성 정의의 세트 수 안이어야 한다 (KAN-182, §3.1).
+     * 범위 검사는 저장보다 먼저다 - 존재하지 않는 세트에 고정된 세션은 어느 경로로도 응시할 수 없다.
+     */
+    private static int requestedVoiceSet(@Nullable CreateSessionRequest request, int voiceSetCount) {
+        Integer requested = request != null ? request.voiceSet() : null;
+        int voiceSet = requested != null ? requested : DEFAULT_VOICE_SET;
+        if (voiceSet < 1 || voiceSet > voiceSetCount) {
+            throw new ApiException(ErrorCode.VALIDATION_FAILED,
+                    "voiceSet은 1 이상 " + voiceSetCount + " 이하여야 합니다.");
+        }
+        return voiceSet;
     }
 
     /**

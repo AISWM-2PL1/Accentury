@@ -145,7 +145,8 @@ public class CompletionService {
      * 판정 자체는 {@code /result}(KAN-25)와 공용이다 ({@link CompletionJudge}).
      */
     private Outcome verifyAndFinalize(TestSession session, long pollAfterMs) {
-        TestDefinition definition = registry.get(session.testVersion()).definition();
+        // 판정과 집계는 세션 세트의 10문항 기준이다 (KAN-182) - 미제출(missingItems)도 세트 기준이다.
+        TestDefinition definition = registry.sessionDefinition(session.testVersion(), session.voiceSet());
         CompletionJudge.Judgment judgment = judge.judge(session.id(), definition);
 
         // 우선순위: 미제출 > 실패 > 분석 중 (2026-08-13 확정) - 아래 주석은 각 갈래의 §3.6 계약
@@ -168,7 +169,7 @@ public class CompletionService {
         Instant now = Instant.now();
         Instant resultExpiresAt = now.plus(properties.analysis().retention());
         resultRepository.save(new TestResult("r_" + UUID.randomUUID(), session.id(),
-                session.testVersion(), score.scoreVersion(),
+                session.testVersion(), score.scoreVersion(), session.voiceSet(),
                 score.intonation(), score.vocabulary(), score.overall(),
                 score.tier().code(), score.tier().name(), score.tier().rank(), score.tierCount(),
                 now, resultExpiresAt));

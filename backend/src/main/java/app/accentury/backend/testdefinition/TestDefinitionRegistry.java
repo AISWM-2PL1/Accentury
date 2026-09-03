@@ -11,6 +11,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -20,7 +21,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 발행된 테스트 정의의 저장소 (KAN-10, KAN-26).
+ * 발행된 테스트 정의의 저장소 (KAN-10, KAN-26, KAN-182).
  * <p>
  * <b>발행 입력은 DB다</b> (2026-08-09 확정, 명세서 §6). 정의는 마이그레이션의 INSERT로 들어오고
  * ({@code db/migration/V2__test_definition_publish.sql}), 활성 버전은 {@link ActiveTestVersion}
@@ -29,8 +30,14 @@ import java.util.Set;
  * <p>
  * 기동 시 전 행을 읽어 검증하므로 유효하지 않은 정의가 하나라도 있으면 서버가 뜨지 않는다
  * (발행 거부 - KAN-10 AC, KAN-26 AC, §6). 로드 후 이 맵은 불변이라 잠금 없이 읽는다 -
- * 발행이 마이그레이션으로만 일어나므로 프로세스가 사는 동안 정의가 늘지 않는다. 버전별 응답과
- * ETag도 이때 미리 만들어 두므로 활성 전환의 비용은 포인터 읽기뿐이다.
+ * 발행이 마이그레이션으로만 일어나므로 프로세스가 사는 동안 정의가 늘지 않는다.
+ * <p>
+ * <b>발행본은 풀이고 세션은 세트를 본다</b> (KAN-182). 발행본 하나는 음성 문장 풀(N >= 5)과
+ * 어휘 5문항이고, 기동 시 {@link VoiceSets} 규칙으로 세트(음성 5 + 어휘 5)를 전부 유도해
+ * 세트별 공개 응답과 ETag를 미리 만들어 둔다. 활성 전환의 비용은 그대로 포인터 읽기뿐이다.
+ * 세션이 유효 문항으로 삼는 것은 자기 세트의 10문항이고, 제출 검증과 상태 조회, 완주 판정,
+ * 집계는 전부 {@link #sessionDefinition}이 주는 그 목록만 쓴다 - 열어 두면 한 세션에 음성
+ * 점수가 5개 넘게 쌓여 집계가 깨진다.
  * <p>
  * <b>활성 버전은 메모리에 들고 있지 않는다</b> (KAN-167). KAN-26은 활성 정의를 {@code volatile}
  * 참조로 두고 전환 서비스가 커밋 뒤에 갈아 끼웠는데, backend가 Fargate 태스크 여러 개로 돌면
@@ -48,8 +55,11 @@ public class TestDefinitionRegistry {
     /** MVP 대상 방언 - 경남 고정 (KAN-8 범위 제외). 경북 정의는 발행 불가 (§6) */
     static final String DIALECT_GYEONGNAM = "GYEONGNAM";
 
-    /** 문항 구성 확정(2026-07-27): 음성 5 + 어휘 5 = 10문항 */
-    static final int VOICE_COUNT = 5;
+    /**
+     * 문항 구성 확정(2026-07-27): 세션이 응시하는 것은 음성 5 + 어휘 5 = 10문항이다. 발행본의
+     * 음성은 풀이라 5개 이상이면 되고(KAN-182), 5개는 세트 하나의 크기이자 풀의 최소 크기다.
+     */
+    static final int VOICE_SET_SIZE = VoiceSets.SET_SIZE;
     static final int VOCABULARY_COUNT = 5;
 
     /** 어휘 문항은 4지선다다 (SRS 확정, KAN-13). */
@@ -69,11 +79,50 @@ public class TestDefinitionRegistry {
     private final ActiveTestVersionRepository activeVersions;
 
     /**
-     * @param definition 정답 포함 원본 - 서버 내부용 (KAN-15 답안 저장, KAN-21 채점)
-     * @param response   정답 제외 공개용 - 그대로 직렬화해 응답한다.
-     * @param etag       응답 본문 SHA-256의 강한 ETag - 버전 경로가 불변이라 재검증은 항상 304다 (§3.2).
+     * 발행본 하나 - 풀 정의와 거기서 유도한 세트 전부.
+     *
+     * @param definition 정답 포함 풀 원본 (seq 오름차순, VOICE N + VOCABULARY 5) - 서버 내부용.
+     *                   버전 단위 속성(testVersion, scoreVersion, dialect)을 읽는 자리다. 세션이
+     *                   보는 문항 목록은 아니다 - 그것은 {@link #voiceSet(int)}의 세트 정의다.
+     * @param voiceSets  세트 번호 순(1..세트 수)의 세트 - 공개 응답과 ETag를 미리 만들어 둔다.
      */
-    public record PublishedDefinition(TestDefinition definition, TestDefinitionResponse response, String etag) {
+    public record PublishedDefinition(TestDefinition definition, List<VoiceSet> voiceSets) {
+
+        /** 음성 문장 풀 크기 N */
+        public int voicePoolSize() {
+            return (int) definition.items().stream()
+                    .filter(item -> item.type() == TestDefinition.ItemType.VOICE)
+                    .count();
+        }
+
+        public int voiceSetCount() {
+            return voiceSets.size();
+        }
+
+        /**
+         * 세트 n. 세트 수를 넘으면 404 {@code RESOURCE_NOT_FOUND} - 없는 버전과 같은 취급이다
+         * (§3.2). 1 미만은 형식 오류(400)라 호출부가 먼저 거른다.
+         */
+        public VoiceSet voiceSet(int number) {
+            if (number < 1 || number > voiceSets.size()) {
+                throw new ApiException(ErrorCode.RESOURCE_NOT_FOUND);
+            }
+            return voiceSets.get(number - 1);
+        }
+    }
+
+    /**
+     * 세트 하나 - 세션이 실제로 응시하는 10문항.
+     *
+     * @param number     세트 번호 (1부터)
+     * @param definition 정답 포함 세트 정의 (VOICE 5 + VOCABULARY 5, seq 1..10 교차) - KAN-15 답안
+     *                   저장, KAN-21 채점의 정본
+     * @param response   정답 제외 공개용 - 그대로 직렬화해 응답한다.
+     * @param etag       응답 본문 SHA-256의 강한 ETag - 버전과 세트가 URL에 들어가 불변이라
+     *                   재검증은 항상 304다 (§3.2). 세트마다 본문이 다르니 ETag도 다르다.
+     */
+    public record VoiceSet(int number, TestDefinition definition, TestDefinitionResponse response,
+                           String etag) {
     }
 
     public TestDefinitionRegistry(ObjectMapper objectMapper,
@@ -91,16 +140,24 @@ public class TestDefinitionRegistry {
                     "정의가 참조하는 scoreVersion(" + definition.scoreVersion()
                             + ")의 점수 정책 seed가 없다: " + definition.testVersion());
 
-            // 응답은 seq 오름차순 고정 (KAN-10 AC - 순서 고정). 발행본의 배열 순서에 의존하지 않는다.
+            // 풀 순서는 seq 오름차순 고정 (KAN-10 AC - 순서 고정). 발행본의 배열 순서에 의존하지 않는다.
             List<TestDefinition.Item> ordered = definition.items().stream()
                     .sorted(Comparator.comparingInt(TestDefinition.Item::seq))
                     .toList();
-            TestDefinition sorted = new TestDefinition(definition.testVersion(), definition.scoreVersion(),
+            TestDefinition pool = new TestDefinition(definition.testVersion(), definition.scoreVersion(),
                     definition.dialect(), definition.estimatedDurationSec(), ordered);
 
-            TestDefinitionResponse response = TestDefinitionResponse.from(sorted);
-            String etag = strongEtag(objectMapper.writeValueAsBytes(response));
-            published.put(sorted.testVersion(), new PublishedDefinition(sorted, response, etag));
+            // 세트는 발행본에서 유도한다 (KAN-182) - 발행본에 손으로 나열하지 않는다.
+            List<TestDefinition> setDefinitions = VoiceSets.derive(pool);
+            List<VoiceSet> voiceSets = new ArrayList<>(setDefinitions.size());
+            for (int number = 1; number <= setDefinitions.size(); number++) {
+                TestDefinition setDefinition = setDefinitions.get(number - 1);
+                TestDefinitionResponse response =
+                        TestDefinitionResponse.from(setDefinition, number, setDefinitions.size());
+                String etag = strongEtag(objectMapper.writeValueAsBytes(response));
+                voiceSets.add(new VoiceSet(number, setDefinition, response, etag));
+            }
+            published.put(pool.testVersion(), new PublishedDefinition(pool, List.copyOf(voiceSets)));
         }
         require(!published.isEmpty(), "발행된 테스트 정의가 하나도 없다 - 마이그레이션이 적용되지 않았다");
 
@@ -113,9 +170,10 @@ public class TestDefinitionRegistry {
         PublishedDefinition activeDefinition = published.get(activeVersion);
         require(activeDefinition != null, "활성 버전(" + activeVersion + ")의 정의가 발행되어 있지 않다");
 
-        log.info("테스트 정의 {}종 발행 완료: {} (활성: {}, 점수 버전: {})",
+        log.info("테스트 정의 {}종 발행 완료: {} (활성: {}, 점수 버전: {}, 음성 풀 {}문항 = 세트 {}개)",
                 published.size(), published.keySet(), activeVersion,
-                activeDefinition.definition().scoreVersion());
+                activeDefinition.definition().scoreVersion(),
+                activeDefinition.voicePoolSize(), activeDefinition.voiceSetCount());
     }
 
     /**
@@ -127,10 +185,11 @@ public class TestDefinitionRegistry {
      * 조회를 더 얹어도 비용이 드러나지 않아서다 - 폴링마다 불리는 혼잡 판정
      * ({@code AnalysisCongestion})과 달리 캐시가 줄여 줄 부하가 없고, 전파 지연 0이 가장 단순하다.
      * <p>
-     * 세션 생성은 이 스냅샷 하나에서 {@code testVersion}과 {@code scoreVersion}을 함께 꺼내야
-     * 한다. 두 번 나눠 읽으면 그 사이에 활성 전환이 끼어들어 한 세션이 두 세대에 걸칠 수 있다.
-     * 포인터 행 읽기와 정의 조회 사이에 전환이 끼어도 문제없다 - 정의 맵은 불변이고 포인터가
-     * 가리키는 버전의 정의를 통째로 돌려주므로, 어느 쪽이든 한 세대의 짝이다.
+     * 세션 생성은 이 스냅샷 하나에서 {@code testVersion}과 {@code scoreVersion}, 세트 수를 함께
+     * 꺼내야 한다 (KAN-182). 두 번 나눠 읽으면 그 사이에 활성 전환이 끼어들어 한 세션이 두 세대에
+     * 걸칠 수 있다 - 예컨대 A의 세트 수로 검증한 세트 번호가 B에는 없어 세션이 조회 불가 세트에
+     * 고정된다. 포인터 행 읽기와 정의 조회 사이에 전환이 끼어도 문제없다 - 정의 맵은 불변이고
+     * 포인터가 가리키는 버전의 정의를 통째로 돌려주므로, 어느 쪽이든 한 세대의 짝이다.
      *
      * @throws IllegalStateException 포인터 행이 없거나, 가리키는 버전이 이 프로세스에 발행되어
      *                               있지 않을 때. 후자는 새 정의의 마이그레이션이 적용된 뒤 아직
@@ -161,12 +220,27 @@ public class TestDefinitionRegistry {
     }
 
     /**
-     * 세션 버전의 문항을 유형까지 검증해 찾는다 - 제출 API 공용 (KAN-23 업로드, KAN-15 답안).
-     * 버전에 없는 문항은 422 ITEM_NOT_IN_VERSION, 유형이 다르면 409 ITEM_WRONG_TYPE (§3.3).
+     * 세션의 유효 문항 = 어휘 5 + 자기 세트의 음성 5 (KAN-182, §5.4).
+     * <p>
+     * 세션이 고정한 {@code testVersion}과 {@code voiceSet}으로 세트 정의를 돌려주는 <b>하나뿐인</b>
+     * 진입점이다. 제출 검증({@link #requireItem}), 상태 일괄 조회, 진행도, 완주 판정, 집계가 전부
+     * 이것만 쓴다 - 한 곳이라도 풀 정의를 보면 세트 밖 문항이 그 경로로 새어 들어온다.
+     * 세션의 세트 번호는 생성 시점에 활성 정의의 세트 수 안에서 검증되므로 여기서 404가 나는 것은
+     * 데이터 오염이다.
      */
-    public TestDefinition.Item requireItem(String testVersion, String itemId,
+    public TestDefinition sessionDefinition(String testVersion, int voiceSet) {
+        return get(testVersion).voiceSet(voiceSet).definition();
+    }
+
+    /**
+     * 세션 세트의 문항을 유형까지 검증해 찾는다 - 제출 API 공용 (KAN-23 업로드, KAN-15 답안).
+     * 세트에 없는 문항은 <b>풀에 있어도</b> 422 ITEM_NOT_IN_VERSION, 유형이 다르면 409
+     * ITEM_WRONG_TYPE (§3.3). 풀 기준으로 열어 두면 한 세션에 음성 점수가 5개 넘게 쌓여 집계가
+     * 깨진다 (KAN-182).
+     */
+    public TestDefinition.Item requireItem(String testVersion, int voiceSet, String itemId,
                                            TestDefinition.ItemType expectedType) {
-        TestDefinition.Item item = get(testVersion).definition().items().stream()
+        TestDefinition.Item item = sessionDefinition(testVersion, voiceSet).items().stream()
                 .filter(candidate -> candidate.itemId().equals(itemId))
                 .findFirst()
                 .orElseThrow(() -> new ApiException(ErrorCode.ITEM_NOT_IN_VERSION));
@@ -213,11 +287,17 @@ public class TestDefinitionRegistry {
     }
 
     /**
-     * 발행 전 검증 (명세서 §6, KAN-10 AC, KAN-26). 실패는 {@link IllegalStateException} - 서버 기동 중단.
+     * 발행 전 검증 (명세서 §6, KAN-10 AC, KAN-26, KAN-182). 실패는 {@link IllegalStateException} -
+     * 서버 기동 중단.
      * <p>
      * 발행 입력이 DB로 바뀌어도 검증은 그대로 남는다 (KAN-26 요구 - 이 검증을 그대로 가져온다).
      * DB 제약으로 표현할 수 있는 것은 {@code testVersion} 중복(기본 키)뿐이고, 문항 구성과
      * guideF0 밴드 길이 같은 규칙은 여전히 여기서만 걸린다.
+     * <p>
+     * 문항 구성은 "음성 N (N >= 5) + 어휘 5"다 (KAN-182 - 풀 다중화로 완화). seq는 풀 기준
+     * 1..N+5 연속이어야 한다. {@code scriptKey}는 정의 단위 all-or-nothing이고 풀 안에서 중복을
+     * 거부한다. 기존 더미 정의 {@code gn-2026.08.1}(scriptKey 없음, 음성 5)은 그대로 통과한다 -
+     * 발행 후 불변(§5.4)을 지키려면 새 검증이 기존 행을 깨뜨리면 안 된다.
      */
     static void validate(TestDefinition definition) {
         require(hasText(definition.testVersion()), "testVersion이 비어 있다");
@@ -227,12 +307,14 @@ public class TestDefinitionRegistry {
         require(definition.estimatedDurationSec() > 0, "estimatedDurationSec은 양수여야 한다");
 
         List<TestDefinition.Item> items = definition.items();
-        require(items != null && items.size() == VOICE_COUNT + VOCABULARY_COUNT,
-                "문항은 음성 " + VOICE_COUNT + " + 어휘 " + VOCABULARY_COUNT + " = 10개여야 한다");
+        require(items != null && items.size() >= VOICE_SET_SIZE + VOCABULARY_COUNT,
+                "문항은 음성 " + VOICE_SET_SIZE + "개 이상 + 어휘 " + VOCABULARY_COUNT + "개여야 한다");
 
         Set<String> itemIds = new HashSet<>();
         Set<Integer> seqs = new HashSet<>();
+        Set<String> scriptKeys = new HashSet<>();
         int voice = 0;
+        int voiceWithScriptKey = 0;
         int vocabulary = 0;
         for (TestDefinition.Item item : items) {
             require(hasText(item.itemId()), "itemId가 비어 있다");
@@ -246,6 +328,12 @@ public class TestDefinitionRegistry {
                 case VOICE -> {
                     voice++;
                     validateVoice(item);
+                    if (item.scriptKey() != null) {
+                        voiceWithScriptKey++;
+                        require(hasText(item.scriptKey()), "scriptKey가 비어 있다: " + item.itemId());
+                        require(scriptKeys.add(item.scriptKey()),
+                                "scriptKey 중복 (풀 안에서 유일해야 한다): " + item.scriptKey());
+                    }
                 }
                 case VOCABULARY -> {
                     vocabulary++;
@@ -253,9 +341,13 @@ public class TestDefinitionRegistry {
                 }
             }
         }
-        require(voice == VOICE_COUNT && vocabulary == VOCABULARY_COUNT,
-                "문항 구성이 음성 " + VOICE_COUNT + ", 어휘 " + VOCABULARY_COUNT
+        require(voice >= VOICE_SET_SIZE && vocabulary == VOCABULARY_COUNT,
+                "문항 구성이 음성 " + VOICE_SET_SIZE + " 이상, 어휘 " + VOCABULARY_COUNT
                         + "이 아니다: 음성 " + voice + ", 어휘 " + vocabulary);
+        // all-or-nothing (KAN-182) - 일부만 있으면 실모델이 나머지 문항의 문장을 못 찾는다.
+        require(voiceWithScriptKey == 0 || voiceWithScriptKey == voice,
+                "scriptKey는 전 음성 문항에 있거나 전부 없어야 한다: 음성 " + voice
+                        + "개 중 " + voiceWithScriptKey + "개에만 있다");
         for (int seq = 1; seq <= items.size(); seq++) {
             require(seqs.contains(seq), "seq는 1부터 연속이어야 한다: " + seq + " 누락");
         }
@@ -279,7 +371,7 @@ public class TestDefinitionRegistry {
     }
 
     private static void validateVocabulary(TestDefinition.Item item) {
-        require(item.guideF0() == null,
+        require(item.guideF0() == null && item.scriptKey() == null,
                 "VOCABULARY 문항에 음성 필드가 있다: " + item.itemId());
 
         List<TestDefinition.Choice> choices = item.choices();

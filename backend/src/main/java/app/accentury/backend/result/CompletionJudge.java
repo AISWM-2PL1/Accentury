@@ -54,6 +54,10 @@ class CompletionJudge {
         this.vocabAnswerRepository = vocabAnswerRepository;
     }
 
+    /**
+     * @param definition 세션의 세트 정의 ({@code TestDefinitionRegistry#sessionDefinition}) - 풀 정의를
+     *                   넣으면 세트 밖 문항이 전부 미제출로 잡힌다 (KAN-182).
+     */
     Judgment judge(String sessionId, TestDefinition definition) {
         Map<String, AnalysisJob> representatives = analysisStatusService.representativeByItem(sessionId);
         Map<String, VocabAnswer> answers = vocabAnswerRepository.findBySessionId(sessionId).stream()
