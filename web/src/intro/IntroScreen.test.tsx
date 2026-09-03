@@ -126,11 +126,14 @@ describe('IntroScreen — 마이크 게이트 (KAN-56)', () => {
 })
 
 describe('IntroScreen — 텍스트 히어로 (KAN-178)', () => {
-  it('그림 대신 "사투리 좀 치나?"가 서고, 제목은 그대로 남는다', () => {
+  it('히어로 문구가 이 화면의 h1이고, 중복이던 제목은 걷혔다', () => {
     render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
 
-    expect(screen.getByText('사투리 좀 치나?')).toBeInTheDocument()
-    // 히어로는 장식이라 제목을 대신하지 않는다 — 화면 이름은 여전히 h1이 말한다
-    expect(screen.getByRole('heading', { level: 1, name: '사투리 억양 테스트' })).toBeInTheDocument()
+    // 화면 이름을 말하는 것이 히어로뿐이라 장식으로 두면 인트로가 접근 가능한 이름을 잃는다
+    expect(screen.getByRole('heading', { level: 1, name: '사투리 좀 치나?' })).toBeInTheDocument()
+    // 히어로 바로 밑에서 같은 말을 되풀이하던 제목이다
+    expect(screen.queryByText('사투리 억양 테스트')).not.toBeInTheDocument()
+    // 제목 자리를 넘겨받은 것이지 하나 더 생긴 것이 아니다 — h1은 여전히 하나다
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
   })
 })

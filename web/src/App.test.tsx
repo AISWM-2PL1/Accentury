@@ -154,7 +154,8 @@ describe('App — 스큐 판정 분기', () => {
   it('호환 버전이면 인트로가 뜨고 문항 구성·예상 시간이 정확히 표시된다 (AC 1)', () => {
     setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0`)
     render(<App />)
-    expect(screen.getByText('사투리 억양 테스트')).toBeInTheDocument()
+    // 인트로의 h1은 텍스트 히어로다 (KAN-178) — 같은 말을 되풀이하던 제목을 걷어냈다
+    expect(screen.getByRole('heading', { level: 1, name: '사투리 좀 치나?' })).toBeInTheDocument()
     // KAN-148에서 한 문장이던 표기가 숫자 칸으로 갈렸다 - 확인하는 값은 그대로다
     expect(screen.getByText('10문항')).toBeInTheDocument()
     expect(screen.getByText('~3분')).toBeInTheDocument()
@@ -345,7 +346,7 @@ describe('App — 웹 단독 실행 (KAN-31)', () => {
 
     // 네이티브 권한 게이트가 받았으므로 웹은 여기서 손을 뗀다 — 화면 전체를 앱이 갈아치운다
     expect(screen.queryByText('목소리를 확인할게요')).not.toBeInTheDocument()
-    expect(screen.getByText('사투리 억양 테스트')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: '사투리 좀 치나?' })).toBeInTheDocument()
   })
 
   it('[시작하기]가 공유 링크의 유입 코드를 실어 세션을 만들고 문항 화면으로 넘긴다', async () => {
