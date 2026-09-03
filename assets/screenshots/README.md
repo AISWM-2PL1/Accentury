@@ -28,8 +28,9 @@ out/appstore-6.1/<화면>.png  App Store 6.1" 1179×2556       (생성물)
 - 아래에 캡처. 그냥 둥근 네모가 아니라 **실제 기기 실루엣**에 끼운다(아래 표) — 잉크 베젤 + 옆면 버튼 +
   `#CFC5AA` 오프셋 그림자. 그림자는 본체와 버튼을 한 덩어리로 묶은 마스크를 그대로 옮겨 찍는다.
   `docs/wiki/design-tokens.md` §2의 Papercut 규칙(3px 4px 0)을 프레임 폭 비율로 옮긴 값이다
-- `04-result`에만 캐릭터 스티커(`web/src/assets/characters/native.webp`, 경남 토박이)를 오른쪽 아래
-  모서리에 걸쳐 놓는다. 그 파일이 없으면 스티커 없이 만든다(`assets/characters/build.py` 산출물이다)
+- 캐릭터 스티커는 **꺼져 있다**(`STICKER_SCREEN = None`, 2026-09-03 결정 — 결과 화면 안의 캐릭터와 겹쳐
+  보여 뺐다). 되살리려면 `STICKER_SCREEN = "04-result"`로 바꾸면 `web/src/assets/characters/native.webp`
+  (경남 토박이)를 오른쪽 아래 모서리에 걸쳐 놓는다. 그 파일이 없으면 스티커 없이 만든다
 
 ### 기기 실루엣
 
