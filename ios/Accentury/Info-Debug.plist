@@ -50,6 +50,18 @@
 		<string>UIInterfaceOrientationPortrait</string>
 	</array>
 
+	<!-- 번들 폰트 등록 (KAN-178). 안드로이드 `res/font/jua_regular.ttf`와 같은 파일이고
+	     그쪽 짝은 Type.kt의 `FontFamily(Font(R.font.jua_regular))`다. Jua는 어느 기기에도
+	     없는 디스플레이 폰트라 번들이 필수다 (정본 §3).
+	     값은 **번들 안의 경로**다 — XcodeGen이 이 파일을 개별 파일 참조로 넣어 폴더가 따라오지
+	     않으므로 파일명만 적는다(폴더 참조로 바뀌면 `Fonts/Jua-Regular.ttf`가 된다).
+	     등록을 빠뜨리면 `Font.custom`이 조용히 시스템 서체로 떨어진다 — 빌드도 실행도 멀쩡하고
+	     글꼴만 다르다. -->
+	<key>UIAppFonts</key>
+	<array>
+		<string>Jua-Regular.ttf</string>
+	</array>
+
 	<!-- 빌드 설정에서 흘러드는 주소. 값의 출처는 Config/Debug.xcconfig다 (AppConfig.swift가 읽는다). -->
 	<key>WEB_URL</key>
 	<string>$(WEB_URL)</string>

@@ -47,6 +47,7 @@
 		A55DCF7BD0A9B9F015E57C19 /* RecordingScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EA747EEC2F30B1AF88A6CDE /* RecordingScreen.swift */; };
 		A89A2500C13A21AE0546DBCC /* PromptCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F7164C38726AB8C4DE7255E /* PromptCard.swift */; };
 		AEBA6331A67BF471D222A388 /* WebViewHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3823E1F07E0644A73178339E /* WebViewHost.swift */; };
+		AF6D7E2053D3891597D8440E /* Jua-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B5E5CAD3722E2C7F6219757C /* Jua-Regular.ttf */; };
 		B054A9D077B1545A061FC651 /* UploadStatusBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DAD9E3E8FFB486638338FD9 /* UploadStatusBar.swift */; };
 		B1AECCF83121D9644D1171E8 /* BridgeUserScript.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFA23661AF83EC18C5D92B7B /* BridgeUserScript.swift */; };
 		B34211F2D69B414CB38A5784 /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61C285C11F1957A7F62C8E6B /* AudioRecorder.swift */; };
@@ -126,6 +127,7 @@
 		AC5E217157A2E9F6D8CCB49A /* AccenturyButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccenturyButton.swift; sourceTree = "<group>"; };
 		B1BE31A25BA4409D0D087717 /* BridgeUserScriptTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeUserScriptTests.swift; sourceTree = "<group>"; };
 		B57DE3B353CB86958672731A /* WebViewLifecycleNotifierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewLifecycleNotifierTests.swift; sourceTree = "<group>"; };
+		B5E5CAD3722E2C7F6219757C /* Jua-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Jua-Regular.ttf"; sourceTree = "<group>"; };
 		B886426FC063688254DDCEB6 /* CurveLane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurveLane.swift; sourceTree = "<group>"; };
 		B8A0F1602F0CEE2A8462704A /* TestFlowModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestFlowModel.swift; sourceTree = "<group>"; };
 		BDD3770C39CB1432FBAB3BB8 /* AccenturyTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AccenturyTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -210,6 +212,14 @@
 			path = DebugResources;
 			sourceTree = "<group>";
 		};
+		56646CD66530C4F31D1FDB0D /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				8986E69EDB9CB4030F01CDA6 /* Fonts */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
 		605E3AE14D6320E4D3D3D15C /* Components */ = {
 			isa = PBXGroup;
 			children = (
@@ -275,6 +285,14 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		8986E69EDB9CB4030F01CDA6 /* Fonts */ = {
+			isa = PBXGroup;
+			children = (
+				B5E5CAD3722E2C7F6219757C /* Jua-Regular.ttf */,
+			);
+			path = Fonts;
+			sourceTree = "<group>";
+		};
 		9AE45EECD303E885B9F07C81 = {
 			isa = PBXGroup;
 			children = (
@@ -331,6 +349,7 @@
 				539A83B31A783DF6C1B950E6 /* DebugResources */,
 				D97E4BCCC33F339EC0E7961C /* Permission */,
 				9D1ABD7BFC289CB4EE42A600 /* Recording */,
+				56646CD66530C4F31D1FDB0D /* Resources */,
 				085487D342EA3E9F1CAA5E3D /* Session */,
 				FE9CBEC2264E737FC931C04C /* TestFlow */,
 				1A34157D5CE09DBF4C01FF0B /* UI */,
@@ -455,6 +474,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A371283916C2882A4A4C7C84 /* Assets.xcassets in Resources */,
+				AF6D7E2053D3891597D8440E /* Jua-Regular.ttf in Resources */,
 				66BF29B84C335095A8902902 /* fake_mic.wav in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

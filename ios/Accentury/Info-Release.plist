@@ -50,6 +50,13 @@
 		<string>UIInterfaceOrientationPortrait</string>
 	</array>
 
+	<!-- 번들 폰트 등록 (KAN-178). Info-Debug.plist와 같은 값이다 — 디버그 전용 자산이 아니라
+	     화면 자체가 쓰는 서체라 릴리스에도 그대로 실린다 (FAKE_MIC_ASSET과 갈리는 지점). -->
+	<key>UIAppFonts</key>
+	<array>
+		<string>Jua-Regular.ttf</string>
+	</array>
+
 	<!-- 빌드 설정에서 흘러드는 주소. 값의 출처는 Config/Release.xcconfig다 (AppConfig.swift가 읽는다). -->
 	<key>WEB_URL</key>
 	<string>$(WEB_URL)</string>

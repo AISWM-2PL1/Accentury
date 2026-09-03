@@ -1,4 +1,7 @@
 import SwiftUI
+// 줄 높이를 재려고 부른다 (``Papercut/TextStyle/resolvedLineSpacing``). SwiftUI에는 서체의
+// 자연 줄 높이를 묻는 API가 없어서 UIKit 쪽 `UIFont.lineHeight`를 빌린다.
+import UIKit
 
 /// Papercut 디자인 토큰 (KAN-148·KAN-161). 정본은 `docs/wiki/design-tokens.md`이고 이 파일은
 /// 안드로이드 `ui/theme/{Color,Dimens,Type}.kt`에 대응하는 iOS 사본이다 — 값을 바꾸려면
@@ -13,10 +16,12 @@ import SwiftUI
 /// 흐린 잉크 `#6b6459`. 반투명(알파) 값은 하나도 없다: 종이를 오려 붙인 그림에는
 /// 비쳐 보이는 면이 없다. 상태를 색으로 알리지 않는다 (정본 §7) — 오류도 잉크 문구다.
 ///
-/// ## 서체가 안드로이드와 갈리는 지점
-/// 안드로이드는 Jua(디스플레이 폰트)를 번들해 제목·대사·타이머에 쓴다. iOS 번들은 §7·§8
-/// 다듬기 몫이라 여기서는 크기·행간·자간만 정본대로 맞추고 글꼴은 시스템 서체를 쓴다 —
-/// 레이아웃(줄 수·카드 높이)이 먼저 맞아야 서체를 끼울 때 화면이 흔들리지 않는다.
+/// ## 서체 (KAN-178)
+/// 안드로이드와 같은 두 벌이다 — 제목·대사·등급·타이머는 Jua, 본문·캡션은 시스템 서체다
+/// (정본 §3). KAN-108 §7·§8에서는 크기·행간·자간만 맞추고 글꼴을 시스템으로 뒀는데,
+/// 레이아웃이 먼저 맞아야 서체를 끼울 때 화면이 안 흔들리기 때문이었다. 그 레이아웃이
+/// 잠긴 지금 번들을 얹는다 — Jua는 어느 기기에도 없는 디스플레이 폰트라 번들이 필수다
+/// (``Papercut/juaFamily``).
 enum Papercut {
 
     // MARK: - 색 (정본 §2)
@@ -99,6 +104,22 @@ enum Papercut {
 
     // MARK: - 타이포 (정본 §3)
 
+    /// 번들한 Jua의 **PostScript 이름**이다 (KAN-178). 패밀리 이름 `Jua`가 아니라 이 이름을
+    /// 쓰는 이유는 `Font.custom(_:size:)`이 패밀리가 아니라 폰트 하나를 가리키는 API라서다 —
+    /// 굵기가 400 하나뿐인 폰트라 어차피 고를 것도 없다.
+    ///
+    /// 값의 출처는 폰트 파일의 name 테이블(nameID 6)이고, 파일 자체는 안드로이드가 쓰는
+    /// `app/src/main/res/font/jua_regular.ttf`를 그대로 복사한 것이다
+    /// (`Resources/Fonts/Jua-Regular.ttf`). 번들 등록은 `Info-{Debug,Release}.plist`의
+    /// `UIAppFonts`가 한다 — 파일만 넣고 등록을 빠뜨리면 `Font.custom`이 조용히 시스템 서체로
+    /// 떨어져서 화면은 뜨는데 글꼴만 다르다.
+    static let juaFamily = "Jua-Regular"
+
+    /// 주 CTA 라벨의 자간 (안드로이드 `AccenturyButton.PRIMARY_LETTER_SPACING`, 정본 §5 표).
+    /// 굵기를 못 올리는 폰트라 자간이 라벨의 무게를 대신한다 — 라벨을 굵게 만들 수 없으니
+    /// 글자 사이를 벌려 같은 일을 시킨다.
+    static let primaryLabelTracking: CGFloat = 0.4
+
     /// 정본 §3의 스케일. 이름은 정본의 토큰 이름이고, 안드로이드가 M3 슬롯에 얹은 것과
     /// 같은 값이다 — 화면 코드는 크기를 직접 적지 않고 이 열거형만 쓴다.
     enum TextStyle {
@@ -158,6 +179,33 @@ enum Papercut {
             }
         }
 
+        /// Jua를 쓰는 슬롯인가 (KAN-178). 안드로이드 `Type.kt`가 `fontFamily = Jua`를 준
+        /// 다섯 슬롯과 같다 — 제목·대사·등급·주 CTA 라벨·타이머다.
+        ///
+        /// 본문 쪽(``body``·``bodySmall``·``label``·``caption``)은 시스템 서체로 남는다.
+        /// 안드로이드가 `FontFamily.Default`를 두는 것과 같은 이유인데, 그쪽 시스템 산세리프도
+        /// WebView의 `sans-serif`도 Noto Sans CJK KR로 풀려서 저절로 수렴하기 때문이다.
+        /// iOS에서는 그 자리가 Apple SD Gothic Neo라 웹뷰와 네이티브가 같은 서체로 만난다 —
+        /// 어느 쪽이든 "본문은 그 OS의 본문 글꼴"이라는 규칙 하나로 설명된다.
+        var usesJua: Bool {
+            switch self {
+            case .display, .headline, .titleLarge, .title, .timer: return true
+            case .body, .bodySmall, .label, .caption: return false
+            }
+        }
+
+        /// 이 슬롯이 실제로 그릴 폰트.
+        ///
+        /// Jua 슬롯에 굵기를 얹지 않는다 (안드로이드 KAN-161 2단계와 같은 판단). 번들한 Jua에는
+        /// 굵기가 400 하나뿐이라 그 위를 요청하면 획을 부풀린 합성 볼드가 나오고, 곡선이 뭉개져
+        /// 손으로 오린 글씨가 아니라 두껍게 인쇄한 글씨로 보인다. Jua 슬롯의 ``weight``가 전부
+        /// `.regular`인 것도 같은 이유라 여기서 굵기를 버려도 잃는 것이 없다.
+        var font: Font {
+            usesJua
+                ? .custom(Papercut.juaFamily, size: size)
+                : .system(size: size, weight: weight)
+        }
+
         /// 자리가 고정된 숫자라 자간을 벌리지 않으면 `00:04`의 두 자리가 서로 붙어 보인다.
         /// 웹 `.type-timer`와 같은 값(0.04em)이다.
         var tracking: CGFloat {
@@ -166,18 +214,38 @@ enum Papercut {
     }
 }
 
+extension Papercut.TextStyle {
+    /// `lineSpacing`에 넣을 값 (KAN-178).
+    ///
+    /// `lineSpacing`은 **줄 사이에 더하는 값**이라 행간 자체가 아니다. 그래서 목표 행간에서
+    /// 그 서체가 이미 쓰는 줄 높이를 빼야 정본 §3의 값이 나온다 — KAN-108에서는 `size`를
+    /// 빼서 근사했는데(서체를 몰라 줄 높이를 잴 수 없었다), 그 값은 언제나 실제보다 넓었다.
+    ///
+    /// 음수는 0으로 잘린다. SwiftUI에는 줄을 서체의 자연 줄 높이보다 좁히는 길이 없고, Jua는
+    /// 한글 폰트라 26에서 이미 30을 넘는다 — 정본에 닿지 못하는 그 몇 포인트가 안드로이드와
+    /// 남는 유일한 차이이고, 방향은 "조금 넓게"라 대사가 붙어 읽히지는 않는다.
+    ///
+    /// 폰트를 못 찾으면(번들 등록 누락) 옛 근사로 떨어진다. 이 자리에서 죽지 않게 하는 이유는
+    /// 글꼴이 틀린 화면은 쓸 수 있지만 뜨지 않는 화면은 못 쓰기 때문이다.
+    var resolvedLineSpacing: CGFloat {
+        let uiFont: UIFont? = usesJua
+            ? UIFont(name: Papercut.juaFamily, size: size)
+            : UIFont.systemFont(ofSize: size, weight: weight == .medium ? .medium : .regular)
+        guard let natural = uiFont?.lineHeight else { return max(lineHeight - size, 0) }
+        return max(lineHeight - natural, 0)
+    }
+}
+
 extension View {
     /// 정본 §3의 한 슬롯을 통째로 적용한다.
     ///
-    /// `lineSpacing`은 **줄 사이에 더하는 값**이라 행간 자체가 아니다. 시스템 서체의 기본
-    /// 행간을 알 수 없어 `lineHeight - size`를 넣는데, 결과는 정본의 행간보다 조금 넓다 —
-    /// 서체 번들(§7·§8) 때 `Font`에 직접 행간을 얹으면서 정확해진다. 지금 이 값을 두는 이유는
-    /// 한 줄짜리 문구가 대부분이라 차이가 안 보이고, 여러 줄인 대사 카드에서 안드로이드와
-    /// 같은 방향(넓게)으로 어긋나는 편이 좁게 어긋나는 것보다 읽기 쉬워서다.
-    func papercutType(_ style: Papercut.TextStyle) -> some View {
+    /// - Parameter tracking: 슬롯 기본 자간(``Papercut/TextStyle/tracking``)을 덮을 값.
+    ///   주 CTA 라벨 하나가 쓴다 — 안드로이드 `AccenturyButton`의 `PRIMARY_LETTER_SPACING`
+    ///   자리이고, 굵기를 못 올리는 Jua에서 자간이 라벨의 무게를 대신한다.
+    func papercutType(_ style: Papercut.TextStyle, tracking: CGFloat? = nil) -> some View {
         self
-            .font(.system(size: style.size, weight: style.weight))
-            .tracking(style.tracking)
-            .lineSpacing(max(style.lineHeight - style.size, 0))
+            .font(style.font)
+            .tracking(tracking ?? style.tracking)
+            .lineSpacing(style.resolvedLineSpacing)
     }
 }

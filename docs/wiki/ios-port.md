@@ -107,6 +107,43 @@ allowlist를 통과한 문서뿐이고, `force`는 그 문을 열지 못한다. 
 | 7b | 밴드를 그리지 않는다 | 안드로이드와 같은 판단 |
 | 7b | `FilePcmSource` 심볼이 Release에도 있다 | Core가 한 모듈이라 타입 자체는 링크된다. **결선이 없다**: 읽는 코드가 `#if DEBUG`이고, `FAKE_MIC_ASSET` 키가 `Info-Release.plist`에 없고, `DebugResources/`가 릴리스 번들에서 빠진다 |
 | 5b | 카카오 SDK 없음 | 안드로이드의 **폴백 경로에 해당하는 것**만 세웠다 — `UIActivityViewController`(카톡 설치 시 시트에 뜬다). 카카오 링크 SDK는 후속 티켓 |
+| ~~7·8~~ | ~~Jua 대신 시스템 서체~~ | KAN-178에서 해소 — 아래 참고 |
+
+### 서체 (KAN-178에서 해소)
+
+§7·§8까지 네이티브 화면은 크기·행간·자간만 정본 §3대로 맞추고 글꼴은 시스템 서체를 썼다. 레이아웃
+(줄 수·카드 높이)이 먼저 잠겨야 서체를 끼울 때 화면이 흔들리지 않는다는 판단이었고, 그 레이아웃이
+잠긴 뒤 KAN-178에서 번들을 얹었다. **웹 화면(WKWebView)은 처음부터 woff2로 Jua를 썼기 때문에**,
+그동안 한 테스트 안에서 웹 문항과 네이티브 녹음 화면이 번갈아 나올 때마다 대사의 글꼴이 바뀌었다.
+
+번들은 안드로이드가 쓰는 `app/src/main/res/font/jua_regular.ttf`를 그대로 복사한 것이고
+(`ios/Accentury/Resources/Fonts/Jua-Regular.ttf`), `Info-{Debug,Release}.plist`의 `UIAppFonts`가
+등록한다. XcodeGen이 개별 파일 참조로 넣어 번들 루트에 평평하게 놓이므로 값은 `Jua-Regular.ttf`
+한 줄이다 — 폴더 참조로 바뀌면 `Fonts/Jua-Regular.ttf`가 된다. 라이선스는 `LICENSES/Jua-OFL.txt`
+(SIL OFL 1.1) 하나를 세 런타임이 공유한다.
+
+역할은 안드로이드 `Type.kt`와 1:1이다. `Papercut.TextStyle.usesJua`가 그 경계를 들고 있다.
+
+| 슬롯 | 크기 | 글꼴 | 쓰는 자리 |
+|---|---|---|---|
+| `display` | 40 | Jua | 결과 등급 |
+| `headline` | 26 | Jua | 대사 카드·목소리 점검 제목·권한 게이트 제목 |
+| `titleLarge` | 30 | Jua | 인트로 제목 |
+| `title` | 20 | Jua | 주 CTA 라벨(자간 0.4)·로딩 화면 제목·세션 준비 제목 |
+| `timer` | 16 | Jua | 녹음 타이머·8초 경고 캡슐 (자간 0.04em) |
+| `body`·`bodySmall`·`label`·`caption` | 16·15·14·13 | 시스템 | 본문·보조 문구·진행 표기·레인 라벨 |
+
+굵기는 Jua 슬롯 전부 400이다 (안드로이드 KAN-161 2단계와 같은 이유 — 번들 폰트에 굵기가 하나뿐이라
+그 위를 요청하면 합성 볼드가 나오고 곡선이 뭉개진다). 주 CTA만 자간 0.4로 무게를 대신한다.
+
+**행간은 여전히 근사다.** SwiftUI에 줄 높이를 직접 주는 API가 없어 `lineSpacing`(줄 사이에 더하는
+값)으로 맞추는데, KAN-108의 `lineHeight - size` 대신 이제 `lineHeight - UIFont.lineHeight`를 쓴다 —
+서체를 알게 됐으니 실제 줄 높이를 뺄 수 있다. 한글 폰트라 26에서 이미 30을 넘어 음수가 되는 슬롯이
+있고 그때는 0으로 잘린다. 정본에 못 닿는 그 몇 포인트가 안드로이드와 남는 유일한 차이이고, 방향이
+"조금 넓게"라 대사가 붙어 읽히지는 않는다.
+
+SF Symbol로 세운 그림 셋(히어로 아이콘·녹음 버튼 안 도형·권한 게이트 마이크)은 **서체가 아니라
+자산**이라 그대로 남는다 — 잉크 선화로 갈아 끼우는 것은 별개 몫이다.
 
 ## 4. 스모크 훅
 
