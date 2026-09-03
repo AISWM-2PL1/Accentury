@@ -11,7 +11,7 @@ infra/
   modules/
     network/          VPC, 서브넷, 보안 그룹 4종(alb, backend, rds, ai), 내부 호출용 프라이빗 DNS 영역 (KAN-121, KAN-36, KAN-165)
     data/             RDS PostgreSQL (KAN-122)
-    fargate/          backend ECS Fargate 서비스 - 클러스터, 태스크 정의, 서비스, 실행 역할과 태스크 역할, 로그 그룹 (KAN-165)
+    fargate/          backend ECS Fargate 서비스 - 클러스터, 태스크 정의, 서비스, 실행 역할과 태스크 역할, 로그 그룹 (KAN-165), 목표 추적 오토스케일링 min 1 max 3 (KAN-168)
     ai-host/          ai 전용 EC2 - ASG, 운영 compose, 기동 스크립트, systemd 유닛, egress 가드와 health 타이머 (KAN-124, KAN-36)
     config/           backend, ai 환경 변수의 정본인 SSM 파라미터와 시크릿 2종 (관리자 토큰, 내부 호출 토큰) (KAN-129, KAN-36)
     edge/             internal ALB(대상 그룹 ip), VPC 오리진, CloudFront, S3 (KAN-125, KAN-126)
@@ -62,7 +62,7 @@ Route 53 호스팅 영역 ── Porkbun에서 NS 위임 ── ACM 인증서 2�
   퍼블릭 서브넷 x2           ▼
   ┌──────────────────────────────────────────────────────────────┐
   │ ECS 클러스터 accentury-{env}  용량 공급자 FARGATE만       KAN-165 │
-  │   서비스 backend  desired 1, 롤링 배포, 회로 차단기 + 자동 롤백   │
+  │   서비스 backend  태스크 1~3개(요청 수 목표 추적, KAN-168), 롤링 배포, 회로 차단기 + 자동 롤백 │
   │   태스크 정의 accentury-{env}-backend  0.5 vCPU / 2 GB, x86_64   │
   │   ┌──────────────┐  awsvpc ENI + 퍼블릭 IP                      │
   │   │ backend :8080│ Spring Boot, secrets = SSM 7개, 로그 → CloudWatch │
@@ -194,7 +194,9 @@ ECR 리포지토리 `accentury/backend`, `accentury/ai`, `accentury/ai-model` (I
 (`token.actions.githubusercontent.com`, KAN-127 - 계정에 1개뿐이라 여기서 만든다.
 envs/*의 deploy 모듈이 data 소스로 조회하므로 bootstrap apply가 먼저다), ECS 서비스 연결
 역할 `AWSServiceRoleForECS` (KAN-165 - 계정에 1개뿐이고 첫 클러스터 생성이 자동으로 만드는
-대신 여기서 만든다. 없으면 envs apply의 클러스터 생성이 실패한다).
+대신 여기서 만든다. 없으면 envs apply의 클러스터 생성이 실패한다), Application Auto Scaling의
+ECS용 서비스 연결 역할 `AWSServiceRoleForApplicationAutoScaling_ECSService` (KAN-168 - 같은
+이유. 없으면 envs apply의 scalable target 등록이 실패한다).
 로컬에 남는 `terraform.tfstate`는 커밋하지 않는다 (.gitignore 처리 완료).
 
 배포용 리포지토리 `accentury/backend`와 `accentury/ai`는 KAN-120이 콘솔에서 먼저
@@ -234,6 +236,17 @@ terraform apply
   aws ecs describe-services --cluster "$(terraform output -raw ecs_cluster_name)" --services backend \
     --query 'services[0].[runningCount,deployments[0].rolloutState,taskDefinition]' --output text
   aws elbv2 describe-target-health --target-group-arn <대상 그룹 arn>   # 태스크 IP 하나가 healthy
+  ```
+- backend 오토스케일링 (KAN-168): scalable target이 min 1 max 3으로 등록됐고 목표 추적 경보 2개가
+  생겼는지. 부하가 없으면 AlarmLow(스케일인)는 ALARM, AlarmHigh는 OK가 정상이다 - min 1이라 더
+  줄지 않을 뿐이다 ("backend 오토스케일링" 절).
+
+  ```
+  aws application-autoscaling describe-scalable-targets --service-namespace ecs \
+    --resource-ids "$(terraform output -raw backend_autoscaling_resource_id)" \
+    --query 'ScalableTargets[0].[MinCapacity,MaxCapacity]' --output text
+  aws cloudwatch describe-alarms --alarm-names $(terraform output -json backend_autoscaling_alarm_names | jq -r '.[]') \
+    --query 'MetricAlarms[].[AlarmName,StateValue]' --output table
   ```
 - ai 호스트 (KAN-36): ASG에 인스턴스 1대가 InService이고, 프라이빗 영역에 `ai.accentury.internal`
   A 레코드가 그 인스턴스의 사설 IP로 생겼는지 (부팅 스크립트가 만든다 - 인스턴스가 뜬 뒤 1분 안).
@@ -436,7 +449,7 @@ backend는 `modules/fargate`가 만드는 ECS Fargate 서비스다. EC2 위 dock
 | --- | --- | --- |
 | 클러스터 | `accentury-{env}`, 용량 공급자 `FARGATE`만 | `FARGATE_SPOT`은 연결하지 않는다 (2026-09-01 결정). Container Insights 끔 |
 | 태스크 정의 | 패밀리 `accentury-{env}-backend`, 0.5 vCPU / 2 GB, `X86_64`, 컨테이너 `backend` 1개 | image = ECR `accentury/backend:<SSM IMAGE_TAG>`, secrets = SSM 파라미터 7개 (아래 표), `stopTimeout` 120초, awslogs `/accentury/{env}/backend`(14일), 컨테이너 healthCheck = compose와 같은 bash `/dev/tcp` 검사 |
-| 서비스 | `backend`, desired 1, 용량 공급자 전략 `FARGATE` weight 1 | 롤링 배포(min 100% / max 200%), 회로 차단기 + 자동 롤백, `health_check_grace_period_seconds` 150초(실측 기반, 아래), 퍼블릭 서브넷 + 퍼블릭 IP, `backend-sg`, 대상 그룹 ip:8080. 오토스케일링은 KAN-168 |
+| 서비스 | `backend`, 처음 desired 1, 용량 공급자 전략 `FARGATE` weight 1 | 롤링 배포(min 100% / max 200%), 회로 차단기 + 자동 롤백, `health_check_grace_period_seconds` 150초(실측 기반, 아래), 퍼블릭 서브넷 + 퍼블릭 IP, `backend-sg`, 대상 그룹 ip:8080. 태스크 수는 그 뒤 오토스케일링이 1~3에서 조절하고 Terraform은 `desired_count`를 다시 보지 않는다 (다음 절, KAN-168) |
 | 실행 역할 | `accentury-{env}-backend-execution` | `AmazonECSTaskExecutionRolePolicy`(ECR pull, 로그) + 이 환경 config 파라미터 7개의 `ssm:GetParameters`. ECS 에이전트 몫이라 컨테이너 안에서는 보이지 않는다 |
 | 태스크 역할 | `accentury-{env}-backend-task` | RDS 마스터 시크릿 `GetSecretValue` + `cloudwatch:PutMetricData`(네임스페이스 `accentury/backend` 조건). 애플리케이션이 SDK 기본 체인으로 받는다 - IMDS hop limit 조정이 없다 |
 
@@ -504,6 +517,80 @@ rolloutState 대기 상한 20분은 이 값 기준이다. 그보다 빨리 되�
 실측의 기동 시간에 여유를 더한 값이다. 이보다 짧으면 기동 중인 태스크를 ECS가 unhealthy로
 판정해 교체를 반복하고, 회로 차단기가 3회에 배포를 접는다. 길면 죽은 이미지를 배포했을 때
 회로 차단기 판정(실패 3회, 회당 grace period + 헬스체크 30초 + 교체)이 그만큼 늦어진다.
+
+## backend 오토스케일링 (KAN-168)
+
+`modules/fargate`가 backend 서비스에 Application Auto Scaling 목표 추적 정책을 붙인다. Fargate가 해
+주는 것은 "늘리라고 결정된 뒤의 실행"뿐이라 이 정책이 없으면 태스크 수는 고정이다.
+
+| 항목 | 값 | 근거 |
+| --- | --- | --- |
+| 지표 | `ALBRequestCountPerTarget` (대상 그룹의 태스크당 분당 요청 수, 1분 Sum) | CPU 평균은 태스크 하나가 포화된 뒤에야 오르고, 이 서비스의 부하는 세션 생성과 폴링이라는 가벼운 요청의 개수라 요청 수가 스파이크에 먼저 반응한다 |
+| 정책 | 목표 추적 (`accentury-{env}-backend-requests-per-task`) | 목표값 하나로 늘리기와 줄이기가 같이 정해진다 |
+| 목표값 | 태스크당 분당 1000건 (초기값, KAN-169 부하 시험이 확정) | 응시자 1명이 분석 대기 중 pollAfterMs 800ms로 분당 약 75건, 응시 전체 평균은 분당 약 20건. 1000이면 "동시 폴링 약 13명" 또는 "응시 중 약 50명"에서 늘어난다 - 혼잡 판정 임계(PROCESSING 30건)와 같은 자릿수. 0.5 vCPU의 처리 한계(수천 건/분)보다 훨씬 낮게 잡아 늘어나는 5분(경보 3분 + 기동 2분) 동안 태스크 1개가 포화되지 않게 한다 |
+| min / max | 1 / 3 (2026-09-02 확정) | min 2 예열은 월 약 24달러가 더 드는데 프로토타입 트래픽에 과하고 스파이크 초기는 혼잡 판정이 흡수한다. **상한 3은 AI 서버가 EC2 1대라 backend를 늘려도 분석 처리량은 늘지 않기 때문이다** - backend 확장은 세션 생성과 폴링을 버티는 용도이고 분석 대기는 혼잡 판정(`pollAfterMs`)이 흡수한다 |
+| 스케일아웃 쿨다운 | 60초 | 태스크 기동 30초에서 2분(실측 2분 1초)보다 짧게 두어 큰 스파이크에는 연달아 늘린다 |
+| 스케일인 쿨다운 | 300초 | 줄이기는 천천히. 스케일인 경보 자체가 15분 조건이라 이 값은 연속 축소의 간격만 정한다 |
+
+값은 두 환경이 같아야 하므로 tfvars가 아니라 `modules/fargate/variables.tf`의 기본값이다
+(`autoscaling_min_capacity`, `autoscaling_max_capacity`, `autoscaling_target_requests_per_minute`,
+쿨다운 2개). 서비스의 `desired_count`는 첫 생성 값(1)일 뿐이고 그 뒤는 `ignore_changes`다 - 안
+그러면 스케일아웃된 상태에서 apply할 때마다 1로 되돌려 태스크를 죽인다. 파이프라인(`deploy.yml`)의
+`update-service`는 태스크 정의만 바꾸고 desired를 건드리지 않으므로 배포와 스케일링이 겹쳐도 된다.
+서비스 연결 역할 `AWSServiceRoleForApplicationAutoScaling_ECSService`는 bootstrap이 만든다
+("0. bootstrap").
+
+**목표 추적이 경보 2개를 스스로 만들고 조건 길이가 다르다.** 이름은
+`TargetTracking-service/accentury-{env}/backend-AlarmHigh-<id>`와 `...-AlarmLow-<id>`이고
+(출력 `backend_autoscaling_alarm_names`), AlarmHigh(스케일아웃)는 1분 x 3회 연속, AlarmLow(스케일인)는
+1분 x 15회 연속이다. 부하를 끊어도 15분은 줄지 않는다 - 고장이 아니다. 부하가 없을 때 AlarmLow가
+ALARM에 머무는 것도 정상이다 (min 1이라 더 줄지 않을 뿐). 이 둘은 SNS에 붙이지 않는다 - 늘고 주는
+것은 정상 동작이고, 상한에 닿아 못 늘리는 상태는 `backend-cpu-high`가 대신 드러낸다. monitoring
+모듈의 `alarm_names`에도 없다.
+
+함정 둘. 태스크가 1개일 때 `ALBRequestCountPerTarget`은 전체 요청 수와 같으므로 목표값은 반드시
+태스크당 기준으로 읽는다. 폴링이 POST라 요청 수가 실제 사용자 수보다 훨씬 크게 잡히므로 목표값을
+바꿀 때는 폴링 주기(`poll-after-ms`, `congested-poll-after-ms`)를 같이 본다.
+
+2026-09-02 staging 실측값이다 (9차 구축, 85개 리소스. 부하 = CloudFront 경유 `GET /v0/tests/gn-2026.08.1`
+초당 25건(태스크당 분당 1500건, 목표값의 1.5배), 시각은 KST, 출처는 경보 이력, 스케일링 활동, `describe-tasks`,
+서비스 이벤트, `HealthyHostCount` 분 단위 지표, 컨테이너 로그).
+
+| 구간 | 시각 | 걸린 시간 |
+| --- | --- | --- |
+| 부하 시작 | 23:35:25 | |
+| AlarmHigh OK -> ALARM (분당 1500건 데이터포인트 3개: 23:37, 23:38, 23:39) | 23:41:05 | 부하 시작 + 5분 40초 |
+| 스케일링 활동 "desired 2" | 23:41:05 | 경보와 같은 초 |
+| 태스크 생성 / RUNNING(started) / 대상 그룹 등록 | 23:41:12 / 23:41:47 / 23:41:40 | |
+| `HealthyHostCount` 2 (서비스 steady state 23:43:06) | 23:43 | **ALARM + 2분 1초**, 부하 시작 + 7분 41초 |
+| AlarmLow OK -> ALARM (15개 데이터포인트 23:42~23:56 전부 900 미만) | 23:57:11 | |
+| 스케일링 활동 "desired 1" (첫 태스크가 종료 대상) | 23:57:11 | 경보와 같은 초 |
+| 대상 등록 해제 / SIGTERM(backend 로그 "종료 1/4") / STOPPED | 23:58:17 / 23:59:03 / 23:59:41 | KAN-166 4단계 종료가 1초 안에 끝남 (진행 중 분석 0건) |
+| 종료 구간의 요청 | 부하 계속 중 | 5xx 0건, 200이 14999건 (드레인 30초 + graceful shutdown) |
+| 남은 태스크 | desired 1 / running 1, healthy | min 1 복귀 |
+
+같은 날 확인한 것 둘. `desired_count`를 콘솔 경로(`update-service --desired-count 2`)로 바꾼 뒤 `terraform plan`이
+No changes다 (`ignore_changes` 동작). 그리고 **스케일인은 알람 창 전체를 본다** - 부하가 중간에 14분 끊겼다가
+(로컬 부하 생성기가 돌던 Mac의 절전) 태스크당 750건으로 다시 들어오는 중이었는데도 AlarmLow가 서자 바로 1로
+줄였다. 15개 데이터포인트 중 13개가 0이라 창 평균이 목표에 한참 못 미쳤기 때문으로 보인다. 줄인 뒤 태스크 1개가
+분당 1500건을 받으면 3분 뒤 다시 늘어난다 - 부하가 짧게 끊겼다 돌아오는 패턴에서는 이 왕복이 한 번 생길 수
+있고, 그 사이 요청은 드레인과 graceful shutdown이 받아 5xx는 없었다.
+
+운영 확인:
+
+```
+cd infra/envs/staging
+rid=$(terraform output -raw backend_autoscaling_resource_id)
+aws application-autoscaling describe-scalable-targets --service-namespace ecs --resource-ids "$rid" \
+  --query 'ScalableTargets[0].[MinCapacity,MaxCapacity]' --output text
+aws application-autoscaling describe-scaling-activities --service-namespace ecs --resource-id "$rid" \
+  --query 'ScalingActivities[:5].[StartTime,StatusCode,Description]' --output table      # 늘고 준 이력
+aws cloudwatch describe-alarms --alarm-names $(terraform output -json backend_autoscaling_alarm_names | jq -r '.[]') \
+  --query 'MetricAlarms[].[AlarmName,StateValue,EvaluationPeriods,Threshold]' --output table
+aws cloudwatch get-metric-statistics --namespace AWS/ApplicationELB --metric-name RequestCountPerTarget \
+  --dimensions Name=TargetGroup,Value=<대상 그룹 arn_suffix> --statistics Sum --period 60 \
+  --start-time "$(date -u -v-15M +%FT%TZ)" --end-time "$(date -u +%FT%TZ)" --output table   # 분당 태스크당 요청 수
+```
 
 ## ai 호스트 컨테이너 기동 (KAN-124, 전용 호스트 KAN-36)
 
@@ -1049,10 +1136,12 @@ terraform destroy
 - **AMI 고정 (ai 호스트)**: AL2023 최신 AMI를 SSM 파라미터로 읽되 `ignore_changes = [image_id]`.
   AMI 갱신이 "plan No changes" AC를 깨고 instance refresh를 유발하지 않게 한다.
 - **PriceClass_200**: 한국이 포함되는 최소 티어.
-- **backend 태스크 1개, ai 워커 1개 고정 (KAN-124, KAN-36, Fargate 전환 뒤에도 KAN-165)**:
+- **backend 태스크 1개, ai 워커 1개 고정 (KAN-124, KAN-36, Fargate 전환 뒤에도 KAN-165)** -
+  backend 쪽은 KAN-167과 KAN-168으로 풀렸다 (2026-09-02): 혼잡 판정과 활성 정의 포인터는 DB
+  기준이 됐고 요청 제한, 회로 차단기, 워커 큐는 인스턴스별로 두기로 했으며(KAN-167), 그 위에
+  오토스케일링 min 1 max 3이 붙었다 ("backend 오토스케일링" 절). 아래는 그 전의 근거다.
   backend가 다음 상태를 전부 프로세스 메모리에 둔다. 둘 이상이면 상태가 갈라져 요청
-  제한이 배로 풀리고 회로 차단기가 서로 다른 판단을 한다. 처리 방침은 KAN-167이 정하고
-  오토스케일링(min 1 max 3)은 KAN-168이 붙인다.
+  제한이 배로 풀리고 회로 차단기가 서로 다른 판단을 한다.
   - 요청 제한 5축 (`RateLimits`: 세션 생성 IP, 업로드 IP, 업로드 세션, 어휘
     세션, 완료)
   - AI 회로 차단기 (`AiCircuitBreaker`: 닫힘/열림/반열림 상태, 연속 실패 카운터)

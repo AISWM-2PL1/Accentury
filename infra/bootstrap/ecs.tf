@@ -19,3 +19,23 @@ output "ecs_service_linked_role_arn" {
   value       = aws_iam_service_linked_role.ecs.arn
   description = "envs/*의 fargate 모듈이 만드는 클러스터와 서비스가 쓰는 서비스 연결 역할"
 }
+
+# Application Auto Scaling이 ECS 서비스의 desired를 바꿀 때 맡는 서비스 연결 역할 (KAN-168). 위와 같은 이유로
+# 여기서 한 번만 만든다 - 첫 RegisterScalableTarget이 자동 생성하려 들지만 호출자에게 iam:CreateServiceLinkedRole이
+# 필요하고, 두 환경 스택이 각자 만들면 두 번째가 EntityAlreadyExists로 실패한다. 2026-09-02 기준 계정에 없었다
+# (get-role NoSuchEntity). 이미 있는 계정에서는 import한다: terraform import \
+# aws_iam_service_linked_role.application_autoscaling_ecs \
+# arn:aws:iam::<계정>:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService
+resource "aws_iam_service_linked_role" "application_autoscaling_ecs" {
+  aws_service_name = "ecs.application-autoscaling.amazonaws.com"
+
+  # 지우면 두 환경의 backend 서비스가 늘고 줄지 못한다.
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+output "application_autoscaling_ecs_service_linked_role_arn" {
+  value       = aws_iam_service_linked_role.application_autoscaling_ecs.arn
+  description = "envs/*의 fargate 모듈이 만드는 scalable target과 목표 추적 정책이 쓰는 서비스 연결 역할 (KAN-168)"
+}

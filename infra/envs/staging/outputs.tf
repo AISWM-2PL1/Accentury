@@ -38,6 +38,16 @@ output "backend_log_group" {
   description = "backend 컨테이너 로그 (KAN-165). aws logs tail <이 값> --follow"
 }
 
+output "backend_autoscaling_resource_id" {
+  value       = module.fargate.autoscaling_resource_id
+  description = "backend 오토스케일링 대상 (KAN-168). 이력: aws application-autoscaling describe-scaling-activities --service-namespace ecs --resource-id <이 값>"
+}
+
+output "backend_autoscaling_alarm_names" {
+  value       = module.fargate.autoscaling_alarm_names
+  description = "목표 추적이 만든 경보 2개 (KAN-168). AlarmHigh = 스케일아웃(1분 x 3회), AlarmLow = 스케일인(1분 x 15회). alarm_names(monitoring)와 별개다."
+}
+
 output "ai_asg_name" {
   value       = module.ai_host.asg_name
   description = "AI 호스트 ASG (KAN-36). 인스턴스 조회: aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names <이 값>"
