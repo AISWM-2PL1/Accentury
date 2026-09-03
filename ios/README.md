@@ -252,6 +252,33 @@ xcrun simctl launch --console-pty booted com.accentury.app -BridgeVersionOverrid
 # NAV: committed http://localhost:5173/?bridge=0&app=1.0
 ```
 
+### 공유 링크 진입 (KAN-32)
+
+`https://accentury.app/t?c=kko_share`를 눌러 앱이 열리는 경로. 링크가 실어 온 계측 코드는 두
+곳으로 간다 — 진입 URL의 `&c=`와 `POST /v0/sessions`의 `campaignToken`이다. 앱이 세션을 직접
+만들므로(KAN-34) URL만으로는 서버 세션에 유입 경로가 남지 않는다.
+
+```bash
+xcrun simctl launch --console-pty booted com.accentury.app \
+  -AppLinkURL "http://localhost:5173/t?c=kko_share"
+# APPLINK: campaignToken=kko_share
+# NAV: committed http://localhost:5173/?bridge=1&app=1.0&c=kko_share
+```
+
+- `-AppLinkURL <url>` — 실제 링크 탭이 부르는 것과 **같은 함수**(`TestFlowModel.applyAppLink`)로
+  URL을 흘려 넣는다. 시뮬레이터는 각 호스트에 `/.well-known/apple-app-site-association`이
+  서빙되기 전에는(KAN-32 4단계) Universal Link를 앱으로 넘기지 못하고 `xcrun simctl openurl`은
+  사파리만 열어서, 그때까지는 이 인자가 유일한 통로다.
+- 디버그 `WEB_URL`(`http://localhost:5173`)이 진입 origin 목록에 더해지는 덕에 위처럼 dev 서버
+  주소로도 밟아 볼 수 있다 (`AccenturyCore/Web/AppLink.swift`의 `appLinkOrigins(webUrl:)`).
+  릴리스에서는 아무것도 늘지 않는다.
+- 링크가 아닌 URL(`.../privacy`)을 주면 코드는 **지워지지 않는다** — 앱을 잠깐 벗어난 것만으로
+  유입 계측이 사라지면 안 되기 때문이다.
+
+호스트 목록의 정본은 `Accentury/Accentury.entitlements`의
+`com.apple.developer.associated-domains`이고, `appLinkOrigins`가 그 거울이다.
+`AccenturyCoreTests/Web/AppLinkTests`가 그 파일을 직접 읽어 두 목록을 대조한다.
+
 ## 목소리 점검·세션 게이트·녹음 화면 (KAN-108 §6)
 
 §6부터 시작 게이트의 세 칸이 전부 진짜 화면이다 — 마이크 권한(KAN-98) → 목소리 점검(KAN-105)

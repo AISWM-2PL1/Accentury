@@ -43,6 +43,9 @@ final class TestFlowModel: ObservableObject {
     static let micPassedKey = "test_flow_mic_passed"
     /// 안드로이드 `var voiceCenterHz by rememberSaveable`. 없으면 아직 점검 전이다.
     static let voiceCenterKey = "test_flow_voice_center_hz"
+    /// Universal Link가 실어 온 유입 계측 코드 (KAN-32). 안드로이드에는 대응 키가 없다 —
+    /// 아래 ``campaignToken`` 주석 참고.
+    static let campaignTokenKey = "test_flow_campaign_token"
 
     // MARK: 시작 게이트의 네 칸 (KAN-34, KAN-105)
 
@@ -62,6 +65,25 @@ final class TestFlowModel: ObservableObject {
                 defaults.set(voiceCenterHz, forKey: Self.voiceCenterKey)
             } else {
                 defaults.removeObject(forKey: Self.voiceCenterKey)
+            }
+        }
+    }
+
+    /// Universal Link가 실어 온 공유 유입 계측 코드 (KAN-32 3단계). 두 곳으로 간다 —
+    /// 웹 진입 URL의 `&c=`(``webUrl``)와 `POST /v0/sessions`의 `campaignToken`이다. 앱이 세션을
+    /// 직접 만드는 구조라(KAN-34) URL만으로는 서버 세션에 유입 경로가 남지 않아 둘 다 필요하다.
+    ///
+    /// **안드로이드와 갈리는 유일한 자리다.** 그쪽은 진입시킨 VIEW Intent를 OS가 들고 있다가
+    /// 프로세스 사망 복원 때 `onCreate`로 다시 배달하므로 저장이 필요 없다. iOS는 앱을 띄운
+    /// `NSUserActivity`를 다시 주지 않는다 — 그런데 세션도 흐름도 `UserDefaults`에서 복원되므로
+    /// (``flowStorageKey``·``gateStorageKey``), 코드만 사라지면 복원된 진입 URL과 재응시 세션이
+    /// 링크로 들어온 사람의 것인데도 유입 없는 것으로 남는다. 그래서 여기만 직접 적는다.
+    @Published private(set) var campaignToken: String? {
+        didSet {
+            if let campaignToken {
+                defaults.set(campaignToken, forKey: Self.campaignTokenKey)
+            } else {
+                defaults.removeObject(forKey: Self.campaignTokenKey)
             }
         }
     }
@@ -100,7 +122,14 @@ final class TestFlowModel: ObservableObject {
             base: AppConfig.webURL,
             appVersionName: AppConfig.appVersionName,
             testEntry: startRequested ? session.map { TestEntry(testVersion: $0.testVersion, sessionId: $0.sessionId) } : nil,
-            bridgeVersion: Self.urlBridgeVersion
+            bridgeVersion: Self.urlBridgeVersion,
+            /*
+             * 링크가 실어 온 계측 코드 (KAN-32). 응시 도중에 새 링크가 들어오면 이 URL 문자열이
+             * 바뀌어 WebViewHost가 다시 로드한다 — 웹이 sessionId 스냅샷에서 진행을 복원하고,
+             * 응시 중에 자기 링크를 다시 누르는 일 자체가 드물어 그 리로드를 감수한다
+             * (KAN-32 결정, 안드로이드와 같은 판단).
+             */
+            campaignToken: campaignToken
         )
     }
 
@@ -159,6 +188,7 @@ final class TestFlowModel: ObservableObject {
         self.startRequested = defaults.bool(forKey: Self.startRequestedKey)
         self.micPassed = defaults.bool(forKey: Self.micPassedKey)
         self.voiceCenterHz = defaults.object(forKey: Self.voiceCenterKey) as? Double
+        self.campaignToken = defaults.string(forKey: Self.campaignTokenKey)
 
         /*
          * 대응 업로드가 없는 대기 시도를 한 번 걷어낸다 (안드로이드의 첫 LaunchedEffect).
@@ -172,6 +202,28 @@ final class TestFlowModel: ObservableObject {
          */
         flow.pruneAttemptsWithoutUpload([])
         syncFlow()
+    }
+
+    // MARK: App Link
+
+    /// 앱을 연(또는 앱이 살아 있는 동안 눌린) URL이 우리 공유 링크일 때만 ``campaignToken``을
+    /// 갈아 끼운다 (KAN-32 3단계). 안드로이드 `MainActivity.applyAppLink` 자리다.
+    ///
+    /// **링크가 아니면 지우지 않는다.** 안드로이드가 런처 아이콘 탭의 MAIN Intent에 값을
+    /// 비우지 않는 것과 같은 이유다 — 링크로 들어와 응시하다 홈으로 나갔다 오거나, 결과 화면의
+    /// `https://accentury.app/privacy` 같은 다른 링크를 누르고 돌아오는 흐름에서 유입 계측이
+    /// 사라지면 안 된다.
+    ///
+    /// origin 목록에 이 빌드의 웹 origin을 더하는 쪽(``AccenturyCore/appLinkOrigins(webUrl:)``)이
+    /// 디버그 실행 인자 `-AppLinkURL`이 쓰는 통로다.
+    func applyAppLink(_ url: URL?) {
+        guard let entry = parseAppLink(url?.absoluteString, allowedOrigins: appLinkOrigins(webUrl: AppConfig.webURL)) else {
+            return
+        }
+        campaignToken = entry.campaignToken
+        #if DEBUG
+        smokeLog("APPLINK: campaignToken=\(entry.campaignToken ?? "(none)")")
+        #endif
     }
 
     // MARK: 브리지 콜백
@@ -246,7 +298,13 @@ final class TestFlowModel: ObservableObject {
         guard let sessionClient else { return }
         let result = await sessionClient.create(
             appVersion: AppConfig.appVersionName,
-            previousToken: sessionGate.pendingPreviousToken
+            previousToken: sessionGate.pendingPreviousToken,
+            /*
+             * 유입 코드는 세션에도 실어 보낸다 (KAN-32). 앱이 세션을 직접 만드는 구조라(KAN-34)
+             * 진입 URL의 `?c=`만으로는 서버 쪽 세션에 유입 경로가 남지 않는다 — 링크에서 온 것이
+             * URL과 세션 양쪽에 같은 값으로 실려야 공유 유입이 끝까지 이어진다.
+             */
+            campaignToken: campaignToken
         )
         sessionGate.onResult(result)
         syncGate()
@@ -286,7 +344,10 @@ final class TestFlowModel: ObservableObject {
         }
         let result = await sessionClient.create(
             appVersion: AppConfig.appVersionName,
-            previousToken: previousToken
+            previousToken: previousToken,
+            // 재응시도 같은 유입이다 (KAN-32) — 공유 링크로 들어온 사람이 한 번 더 보는 것까지가
+            // 그 링크가 만든 응시라, 코드를 그대로 물려준다.
+            campaignToken: campaignToken
         )
         let outcome = sessionGate.onRetestResult(result)
         syncGate()
@@ -480,7 +541,7 @@ final class TestFlowModel: ObservableObject {
 /// 여기까지가 이 스텁이 확인해 주는 범위다. 업로드도 같은 이유로 거절된다 — 서버가 모르는
 /// 세션이라 401이 온다.
 struct DebugStubSessionClient: SessionClient {
-    func create(appVersion: String, previousToken: String?) async -> SessionResult {
+    func create(appVersion: String, previousToken: String?, campaignToken: String?) async -> SessionResult {
         .created(
             Session(
                 sessionId: "s_debug_stub",

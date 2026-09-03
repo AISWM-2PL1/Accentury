@@ -41,6 +41,7 @@
 		8F1B9A53CDAEE4D6A8F89EC2 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37D2DAA08F2853EC2AE0D174 /* ContentView.swift */; };
 		8F6765D4C3E6F789C3722135 /* RecordButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60258D05999F9D1277CEE6B5 /* RecordButton.swift */; };
 		9657C4EA660358AADEF55CF3 /* AppConfigTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5375A299C4DD27AFDBA3FBDE /* AppConfigTests.swift */; };
+		97CB15FF57602CFA42081683 /* TestFlowModelAppLinkTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 681A5FBD0FA4004ED8476F0E /* TestFlowModelAppLinkTests.swift */; };
 		9F3F84ED5415429D7EF5FEFD /* VoiceCheckScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = A70A4F9127A4AF354E2D3DB3 /* VoiceCheckScreen.swift */; };
 		A371283916C2882A4A4C7C84 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = FA38785B971425B6F2AF86D5 /* Assets.xcassets */; };
 		A55DCF7BD0A9B9F015E57C19 /* RecordingScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EA747EEC2F30B1AF88A6CDE /* RecordingScreen.swift */; };
@@ -109,6 +110,7 @@
 		625B2F30DE6D951D6EFE8031 /* ProgressDotStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProgressDotStateTests.swift; sourceTree = "<group>"; };
 		678FAE681AA8637F3AA3B4ED /* HeroIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeroIcon.swift; sourceTree = "<group>"; };
 		67AD63BE69878C4E4EA59593 /* PermissionGateModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionGateModelTests.swift; sourceTree = "<group>"; };
+		681A5FBD0FA4004ED8476F0E /* TestFlowModelAppLinkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestFlowModelAppLinkTests.swift; sourceTree = "<group>"; };
 		6F8D1A37CB7B9A8DB919ABD3 /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
 		704F02B2845DB68F35EE0A01 /* RecordingFileLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingFileLifecycleTests.swift; sourceTree = "<group>"; };
 		710CF5D06B7D559FE6C6CA94 /* PcmSources.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PcmSources.swift; sourceTree = "<group>"; };
@@ -127,6 +129,7 @@
 		B886426FC063688254DDCEB6 /* CurveLane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurveLane.swift; sourceTree = "<group>"; };
 		B8A0F1602F0CEE2A8462704A /* TestFlowModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestFlowModel.swift; sourceTree = "<group>"; };
 		BDD3770C39CB1432FBAB3BB8 /* AccenturyTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AccenturyTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		BF5CB7883B502C64D53D5E99 /* Accentury.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Accentury.entitlements; sourceTree = "<group>"; };
 		C932DB5B8B6841CE96814E64 /* RecordingModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingModel.swift; sourceTree = "<group>"; };
 		CB58377AE12082A4E6DFF97D /* Accentury.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Accentury.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		CFABEDB1767B4A8CEB028BBF /* RecordingModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingModelTests.swift; sourceTree = "<group>"; };
@@ -245,6 +248,7 @@
 				625B2F30DE6D951D6EFE8031 /* ProgressDotStateTests.swift */,
 				704F02B2845DB68F35EE0A01 /* RecordingFileLifecycleTests.swift */,
 				CFABEDB1767B4A8CEB028BBF /* RecordingModelTests.swift */,
+				681A5FBD0FA4004ED8476F0E /* TestFlowModelAppLinkTests.swift */,
 				3D026A48BD81029111245DD7 /* UploadModelTests.swift */,
 				4DEE86D46BCC8F6213F670EA /* VoiceCheckModelTests.swift */,
 				4F992496097E1162874666B6 /* WebViewHostPolicyTests.swift */,
@@ -314,6 +318,7 @@
 		BEB02532CA571FDA38447DCE /* Accentury */ = {
 			isa = PBXGroup;
 			children = (
+				BF5CB7883B502C64D53D5E99 /* Accentury.entitlements */,
 				2929E30A84C10FDE57D3643B /* AccenturyApp.swift */,
 				1D06BC29425E893F55AE8F9A /* AppConfig.swift */,
 				FA38785B971425B6F2AF86D5 /* Assets.xcassets */,
@@ -516,6 +521,7 @@
 				04A63C20DF24D5E63CDF78CA /* RecordingFileLifecycleTests.swift in Sources */,
 				EFE227B1F3F2B15FE28C7B54 /* RecordingModelTests.swift in Sources */,
 				32DF4843F5A8DA80C8385721 /* TestDoubles.swift in Sources */,
+				97CB15FF57602CFA42081683 /* TestFlowModelAppLinkTests.swift in Sources */,
 				D65BC773E51A667EA5370B97 /* UploadModelTests.swift in Sources */,
 				33EC80CA45D4C12AC521A7C3 /* VoiceCheckModelTests.swift in Sources */,
 				BF78AD13B4C7F9B0F49C0A59 /* WebViewHostPolicyTests.swift in Sources */,
@@ -557,6 +563,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Accentury/Accentury.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -710,6 +717,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Accentury/Accentury.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				EXCLUDED_SOURCE_FILE_NAMES = "$(SRCROOT)/Accentury/DebugResources/*";
 				LD_RUNPATH_SEARCH_PATHS = (

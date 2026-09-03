@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- 공유 링크를 앱으로 받는 입구 (KAN-32 3단계). 안드로이드 AndroidManifest의
+	     `autoVerify` VIEW intent-filter 자리다 — 다만 iOS에는 경로(`/t`) 필터가 없다.
+	     OS는 호스트 단위로만 링크를 앱에 넘길지 정하고, `/t`인지 `/privacy`인지를 가르는 것은
+	     앱 쪽 `parseAppLink` 하나뿐이다.
+
+	     호스트 목록은 AccenturyCore `Web/AppLink.swift`의 `appLinkOrigins`와 한 몸이어야 한다 —
+	     여기만 늘리면 OS는 링크를 앱에 넘기는데 `parseAppLink`가 그 origin을 몰라 진입이
+	     성립하지 않고, 반대면 코드만 알고 링크는 사파리로 간다. 어긋나면 `AppLinkTests`가
+	     이 파일을 직접 읽어 실패한다.
+
+	     staging을 함께 두는 이유: 릴리스 전에 팀이 staging 버킷의 AASA로 실제 링크 탭 흐름을
+	     확인할 수 있어야 한다. 검증은 호스트마다 `/.well-known/apple-app-site-association`이
+	     서빙돼야 성립하고(KAN-32 4단계), SPA 리라이트 함수가 그 경로를 예외로 빼 줘야 한다 —
+	     리라이트에 걸려 index.html이 돌아오면 애플 CDN이 AASA를 읽지 못한다.
+
+	     App ID의 Associated Domains capability는 자동 서명이 아카이브 때 붙여 준다. -->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:accentury.app</string>
+		<string>applinks:staging.accentury.app</string>
+	</array>
+</dict>
+</plist>

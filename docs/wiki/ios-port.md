@@ -127,6 +127,7 @@ allowlist를 통과한 문서뿐이고, `force`는 그 문을 열지 못한다. 
 | `-AutoRecordingDrive 1` | 녹음 버튼을 시간에 맞춰 누른다 (`LATENCY:` 한 줄) |
 | `-AutoFlowDrive 1` | **통합 스모크**(§8). 아래 참고 |
 | `-BridgeVersionOverride <n>` | URL의 `bridge=`를 덮는다. 스큐 화면 검증용 |
+| `-AppLinkURL <url>` | 공유 링크 진입을 흘려 넣는다 (KAN-32). AASA가 서기 전에는 시뮬레이터가 Universal Link를 앱으로 넘기지 못하고 `simctl openurl`은 사파리만 연다 |
 
 `-AutoFlowDrive`만 절반씩 나뉜다. 네이티브 절반(`TestFlowView`)은 녹음 오버레이가 **뜰 때마다**
 [녹음]을 누르고, 가짜 마이크가 끝나 검토로 넘어오면 [다음]을 누른다 — 시간이 아니라 페이즈 변화를

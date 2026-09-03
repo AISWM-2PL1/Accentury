@@ -163,4 +163,64 @@ final class AppLinkTests: XCTestCase {
             parseAppLink("https://accentury.app/t?c=a%26b", allowedOrigins: allowed)
         )
     }
+
+    // MARK: - 진입으로 인정하는 origin 목록 (KAN-32 3단계)
+
+    /// 디버그 웹 origin이 App Link 진입 목록에 더해진다.
+    func testDebugWebOriginIsAddedToTheAppLinkOrigins() {
+        // 시뮬레이터에서 `-AppLinkURL`로 링크 진입을 그대로 밟아 보려면 HTTPS가 아닌 이 origin이
+        // 목록에 있어야 한다 — AASA가 서기 전에는 그 인자 말고 링크 진입 경로가 없다.
+        let origins = appLinkOrigins(webUrl: "http://localhost:5173")
+
+        XCTAssertTrue(origins.isSuperset(of: appLinkOrigins))
+        XCTAssertTrue(origins.contains("http://localhost:5173"))
+    }
+
+    /// 릴리스 웹 origin은 이미 목록 안이라 아무것도 늘리지 않는다.
+    func testReleaseWebOriginAddsNothingBecauseItIsAlreadyListed() {
+        XCTAssertEqual(appLinkOrigins, appLinkOrigins(webUrl: "https://accentury.app"))
+    }
+
+    // MARK: - entitlements와 코드가 같은 것을 가리키는지 (KAN-32 3단계)
+
+    /// Universal Link는 entitlements(OS가 링크를 앱에 넘길지 정한다)와
+    /// ``parseAppLink(_:allowedOrigins:)``(앱이 그 링크를 진입으로 인정할지 정한다)가 **둘 다**
+    /// 맞아야 성립한다. 한쪽만 고쳐도 컴파일은 통과하고 단위 테스트도 조용한데, 링크만 조용히
+    /// 죽는다 — 그 어긋남을 잡으라고 entitlements를 직접 읽는 테스트다.
+    ///
+    /// 안드로이드 `AppLinkTest`가 AndroidManifest를 파싱해 하는 일과 같다. 다만 대조 대상이
+    /// 호스트뿐이다 — iOS의 associated domains에는 scheme·path·category가 없고, 경로 판정은
+    /// 전부 ``parseAppLink(_:allowedOrigins:)`` 몫이다.
+    func testEntitlementsAssociatedDomainsMatchTheAppLinkOrigins() throws {
+        let path = Self.entitlementsPath()
+        guard let data = FileManager.default.contents(atPath: path) else {
+            // 건너뛰지 않는다 — 이 파일을 못 읽으면 검사 자체가 없던 일이 되고, 그게 정확히
+            // 이 테스트가 막으려는 상태다.
+            return XCTFail("Accentury.entitlements를 읽지 못했다: \(path)")
+        }
+        let plist = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+        let domains = try XCTUnwrap(
+            plist?["com.apple.developer.associated-domains"] as? [String],
+            "com.apple.developer.associated-domains가 없다: \(path)"
+        )
+
+        XCTAssertEqual(
+            Set(appLinkOrigins.map { $0.replacingOccurrences(of: "https://", with: "") }),
+            Set(domains.map { $0.replacingOccurrences(of: "applinks:", with: "") })
+        )
+    }
+
+    /// 이 테스트 파일에서 `ios/` 디렉터리까지 거슬러 올라가 entitlements를 찾는다.
+    /// 번들 리소스가 아니라 **레포의 그 파일**을 읽어야 한다 — 빌드에 실린 사본이 아니라
+    /// 사람이 고치는 원본과 코드를 대조하는 것이 이 검사의 요점이다.
+    private static func entitlementsPath() -> String {
+        var directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        while directory.path != "/" {
+            if directory.lastPathComponent == "ios" {
+                return directory.appendingPathComponent("Accentury/Accentury.entitlements").path
+            }
+            directory = directory.deletingLastPathComponent()
+        }
+        return "(#filePath=\(#filePath)에서 ios/ 디렉터리를 찾지 못했다)"
+    }
 }
