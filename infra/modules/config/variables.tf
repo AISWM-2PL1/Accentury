@@ -10,7 +10,7 @@ variable "ssm_prefix" {
 
 variable "domain" {
   type        = string
-  description = "이 환경의 도메인 (prod = accentury.app, staging = staging.accentury.app). web-test-url에 쓴다."
+  description = "이 환경의 도메인 (prod = accentury.app, staging = staging.accentury.app). web-test-url과 asset-base-url에 쓴다."
 }
 
 variable "vpc_cidr" {

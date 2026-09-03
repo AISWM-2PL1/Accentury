@@ -275,8 +275,12 @@ terraform apply
   "Image Deploy"를 해당 환경으로 수동 실행한다 - SSM 갱신, ai 호스트 reload, backend
   리비전 배포를 한 번에 한다 (아래 "이미지 배포 파이프라인과 롤백").
 - GitHub environment 변수 3개를 apply 출력으로 채운다 (아래 "GitHub 설정"). 그
-  뒤 웹 번들은 Web Deploy 워크플로가 올린다 (KAN-127). 등급 이미지 업로드는
-  KAN-132.
+  뒤 웹 번들은 Web Deploy 워크플로가 올린다 (KAN-127).
+- **등급 공유 이미지 5장을 올린다** (KAN-132). `scripts/publish-share-assets.sh <env>`를
+  환경마다 한 번 돌린다. backend는 SSM `ACCENTURY_RESULT_ASSETBASEURL`(= `https://<도메인>/share`)에
+  등급 code를 붙여 `/result`의 `share.imageUrl`을 만들므로, 버킷에 `share/<code>.png`가 없으면
+  결과 화면과 카카오 카드의 이미지가 깨진다. 캐릭터가 바뀌면 다시 돌린다 - 서버 배포는 없다.
+  아래 "등급 공유 이미지".
 - **SNS 이메일 구독을 확인한다** (KAN-134). apply 직후 수신함에 AWS 확인 메일이
   오고, 링크를 누르기 전에는 경보가 울려도 메일이 나가지 않는다. 아래 "경보와
   알림"에 확인 명령이 있다.
@@ -353,6 +357,42 @@ scripts/publish-well-known.sh staging      # 또는 prod
 - CloudFront의 SPA 재작성 Function이 `/.well-known/`을 예외로 빼 준다는 전제 위에 선다
   (아래 "설계 결정 기록"의 SPA 재작성 Function 항목). 예외가 빠지면 확장자 없는
   `apple-app-site-association`이 index.html로 치환돼 iOS 검증만 조용히 죽는다.
+
+## 등급 공유 이미지 (KAN-132)
+
+`/result`의 `share.imageUrl`(§3.7)은 등급마다 정적 PNG 한 장이다 - 결과 화면과 카카오 공유
+카드가 같은 파일을 쓴다 (KAN-162 자산, 레포 `assets/share/<code>.png`). 값 5개를 설정에 적지
+않고 **기준 URL 하나**에 등급 code를 붙인다: SSM `ACCENTURY_RESULT_ASSETBASEURL` =
+`https://<도메인>/share` (config 모듈이 도메인으로 조립), backend `TierAssets`가
+`<기준>/<code 소문자>.png`를 만든다. 환경마다 다른 것은 도메인뿐이고 파일명은 자산 정본이
+등급 code로 고정해 두었기 때문이다.
+
+이미지는 웹 S3 버킷의 `share/` 아래에 산다. CloudFront 기본 동작(S3 오리진, 캐싱 최적화)이
+서빙하고, 파일명에 확장자가 있어 SPA 재작성 Function에는 걸리지 않는다. 웹 배포
+(`web-deploy.yml`)는 `sync --delete`를 쓰지 않고 배포 역할에 DeleteObject가 없어 웹 번들이
+바뀌어도 살아남는다.
+
+```
+scripts/publish-share-assets.sh staging     # 또는 prod
+```
+
+5장을 `image/png`, `Cache-Control: public, max-age=86400`으로 올리고 `/share/*`를 무효화한 뒤
+도메인으로 200과 내용 일치를 확인한다. 몇 번을 돌려도 같은 결과다 (멱등). 캐릭터가 바뀌면
+`assets/characters/build.py`로 다시 만들어 이 스크립트만 돌린다 - **서버와 앱 배포는 없다**
+(AC - 이미지 교체는 S3 업로드만으로 반영). 대상 버킷과 배포 ID는 terraform output에서 읽고,
+없으면 `WEB_BUCKET`, `CLOUDFRONT_DISTRIBUTION_ID` 환경 변수로 준다. E2E 스모크(KAN-138)가
+완주 뒤 `share.imageUrl`에 HEAD를 보내 200 `image/png`를 확인하므로, 이미지를 안 올린 환경은
+스모크에서 드러난다.
+
+카카오 카드가 실제로 그려지려면 이미지 도메인이 **카카오 개발자 콘솔의 플랫폼 도메인에 등록**돼
+있어야 한다 (`assets/share/README.md`). AWS 밖 설정이라 Terraform도 스크립트도 확인하지 않는다.
+
+**순서: apply가 먼저, 이 코드를 실은 이미지 배포는 그다음이다.** 이미지 배포 파이프라인(KAN-128)은
+현재 태스크 정의를 복사해 image만 바꾸므로, apply로 태스크 정의에 새 secret이 들어가기 전에 이
+코드가 배포되면 `DeploymentConfigGuard`가 `ACCENTURY_RESULT_ASSETBASEURL` 누락으로 기동을 세우고
+파이프라인이 자동 롤백한다 (Codex 리뷰 P1). 필수 SSM 파라미터를 더하는 변경은 전부 같은 순서다 -
+KAN-36의 내부 호출 토큰이 그랬고, staging은 2026-09-03에 apply를 먼저 했다. prod는 최초 apply(KAN-171)에
+이 파라미터가 들어 있다.
 
 ## 이미지 배포 파이프라인과 롤백 (KAN-128)
 
@@ -472,7 +512,7 @@ backend는 `modules/fargate`가 만드는 ECS Fargate 서비스다. EC2 위 dock
 | 구성 | 값 | 비고 |
 | --- | --- | --- |
 | 클러스터 | `accentury-{env}`, 용량 공급자 `FARGATE`만 | `FARGATE_SPOT`은 연결하지 않는다 (2026-09-01 결정). Container Insights 끔 |
-| 태스크 정의 | 패밀리 `accentury-{env}-backend`, 0.5 vCPU / 2 GB, `X86_64`, 컨테이너 `backend` 1개 | image = ECR `accentury/backend:<SSM IMAGE_TAG>`, secrets = SSM 파라미터 7개 (아래 표), `stopTimeout` 120초, awslogs `/accentury/{env}/backend`(14일), 컨테이너 healthCheck = compose와 같은 bash `/dev/tcp` 검사 |
+| 태스크 정의 | 패밀리 `accentury-{env}-backend`, 0.5 vCPU / 2 GB, `X86_64`, 컨테이너 `backend` 1개 | image = ECR `accentury/backend:<SSM IMAGE_TAG>`, secrets = SSM 파라미터 8개 (아래 표), `stopTimeout` 120초, awslogs `/accentury/{env}/backend`(14일), 컨테이너 healthCheck = compose와 같은 bash `/dev/tcp` 검사 |
 | 서비스 | `backend`, 처음 desired 1, 용량 공급자 전략 `FARGATE` weight 1 | 롤링 배포(min 100% / max 200%), 회로 차단기 + 자동 롤백, `health_check_grace_period_seconds` 150초(실측 기반, 아래), 퍼블릭 서브넷 + 퍼블릭 IP, `backend-sg`, 대상 그룹 ip:8080. 태스크 수는 그 뒤 오토스케일링이 1~3에서 조절하고 Terraform은 `desired_count`를 다시 보지 않는다 (다음 절, KAN-168) |
 | 실행 역할 | `accentury-{env}-backend-execution` | `AmazonECSTaskExecutionRolePolicy`(ECR pull, 로그) + 이 환경 config 파라미터 7개의 `ssm:GetParameters`. ECS 에이전트 몫이라 컨테이너 안에서는 보이지 않는다 |
 | 태스크 역할 | `accentury-{env}-backend-task` | RDS 마스터 시크릿 `GetSecretValue` + `cloudwatch:PutMetricData`(네임스페이스 `accentury/backend` 조건). 애플리케이션이 SDK 기본 체인으로 받는다 - IMDS hop limit 조정이 없다 |
@@ -719,23 +759,24 @@ docker compose exec ai python -c "import urllib.request; urllib.request.urlopen(
 | --- | --- | --- |
 | `IMAGE_TAG` | ai 호스트 compose.env, backend 태스크 정의 image (Terraform data 소스) | 두 서비스가 같은 SHA 태그를 쓴다. **없으면 ai 기동 실패, plan 실패.** 파이프라인(KAN-128)이 쓴다 |
 | `ai/*` (하위 경로 전부) | ai.env (ai 호스트만) | ai 컨테이너 환경 변수. 지금은 내부 호출 토큰 하나 (KAN-36). 실모델 설정은 KAN-22가 이 경로 아래 어떤 이름으로든 더한다 - 이 호스트가 읽는 것은 이 경로뿐이라 이름 규칙이 없다 |
-| 그 외 전부 (`modules/config` 출력 7개) | backend 태스크 정의 secrets (KAN-165) | backend 컨테이너 환경 변수. 태스크 시작 시 실행 역할이 읽는다 (아래 표, KAN-129) |
+| 그 외 전부 (`modules/config` 출력 8개) | backend 태스크 정의 secrets (KAN-165) | backend 컨테이너 환경 변수. 태스크 시작 시 실행 역할이 읽는다 (아래 표, KAN-129) |
 
 backend 환경 변수는 전부 Terraform `modules/config`가 만든다 - 값이 다른 모듈의
 출력(RDS 주소, 시크릿 ARN, VPC CIDR, 도메인)이라 손으로 넣으면 재구축 때 어긋난다.
 fargate 모듈이 config의 파라미터 이름 목록을 그대로 태스크 정의 secrets와 실행 역할의
-허용 목록으로 쓰므로, 파라미터를 더하면(KAN-132 등급 이미지 URL 등) 태스크 정의와 역할에
-같이 반영된다. ai-host 모듈은 같은 목록(`ai_parameter_names`)을 precondition으로 참조해
+허용 목록으로 쓰므로, 파라미터를 더하면 태스크 정의와 역할에 같이 반영된다 (KAN-132의
+등급 이미지 기준 URL이 그 경로로 들어갔다 - 코드 변경은 config 모듈 한 곳이었다). ai-host 모듈은 같은 목록(`ai_parameter_names`)을 precondition으로 참조해
 첫 부팅의 기동 스크립트가 SSM을 읽는 시점에 파라미터가 이미 있게 한다.
 
 | `/accentury/{env}/` 아래 | 값 | 타입 |
 | --- | --- | --- |
-| `SPRING_PROFILES_ACTIVE` | `deploy` (두 환경 동일). 이 프로파일에서만 backend가 아래 6개 누락 시 기동을 세운다 (`DeploymentConfigGuard`) | String |
+| `SPRING_PROFILES_ACTIVE` | `deploy` (두 환경 동일). 이 프로파일에서만 backend가 아래 7개 누락 시 기동을 세운다 (`DeploymentConfigGuard`) | String |
 | `SPRING_DATASOURCE_URL` | `jdbc:aws-wrapper:postgresql://<RDS 주소>:5432/accentury?secretsManagerSecretId=<마스터 시크릿 ARN>` | String |
 | `ACCENTURY_ANALYSIS_AIBASEURL` | `http://ai.accentury.internal:8000` (프라이빗 영역의 고정 이름, 두 환경 동일, KAN-36) | String |
 | `ACCENTURY_ANALYSIS_AITOKEN` | `random_password` 48자 영숫자. backend가 AI 호출마다 `X-Accentury-Internal-Token`으로 싣는다 (KAN-36) | SecureString |
 | `ACCENTURY_TRUSTEDPROXIES` | 해당 환경 VPC CIDR 하나 | String |
 | `ACCENTURY_RESULT_WEBTESTURL` | `https://<도메인>/t?c=kko_share` | String |
+| `ACCENTURY_RESULT_ASSETBASEURL` | `https://<도메인>/share` (KAN-132). backend가 등급 code를 붙여 `share.imageUrl`을 만든다. 이미지는 웹 버킷 `share/<code>.png` (`scripts/publish-share-assets.sh`) | String |
 | `ACCENTURY_ADMIN_TOKEN` | `random_password` 48자 영숫자. 관리자 API(§6)와 E2E 스모크(KAN-138)가 쓴다 | SecureString |
 | `ai/ACCENTURY_AI_INTERNAL_TOKEN` | `ACCENTURY_ANALYSIS_AITOKEN`과 같은 난수. ai 서버가 health를 뺀 모든 요청에서 대조한다 (KAN-36). ai 호스트 역할만 읽는다 | SecureString |
 
@@ -785,14 +826,15 @@ gh secret set ACCENTURY_ADMIN_TOKEN --body "$(aws ssm get-parameter --with-decry
 2026-08-26 기준 `/accentury/*` 아래에는 파라미터가 없다 (CLI 확인). 이후 손으로 만든 값이
 있거나 destroy 없이 이 코드를 처음 적용하는 스택이면 두 가지를 한다.
 
-1. 같은 이름 8개는 import로 state에 흡수한다. 값은 apply가 코드 값으로 갱신한다
+1. 같은 이름 9개는 import로 state에 흡수한다. 값은 apply가 코드 값으로 갱신한다
    (`admin_token`과 토큰 2개는 `random_password`의 새 값으로 덮인다).
 
    ```
    cd infra/envs/staging
    for r in spring_profiles_active:SPRING_PROFILES_ACTIVE ai_base_url:ACCENTURY_ANALYSIS_AIBASEURL \
             datasource_url:SPRING_DATASOURCE_URL trusted_proxies:ACCENTURY_TRUSTEDPROXIES \
-            web_test_url:ACCENTURY_RESULT_WEBTESTURL admin_token:ACCENTURY_ADMIN_TOKEN \
+            web_test_url:ACCENTURY_RESULT_WEBTESTURL asset_base_url:ACCENTURY_RESULT_ASSETBASEURL \
+            admin_token:ACCENTURY_ADMIN_TOKEN \
             ai_token_backend:ACCENTURY_ANALYSIS_AITOKEN ai_token_ai:ai/ACCENTURY_AI_INTERNAL_TOKEN; do
      terraform import "module.config.aws_ssm_parameter.${r%%:*}" "/accentury/staging/${r#*:}"
    done
@@ -1115,11 +1157,11 @@ Terraform 입력의 차이는 `diff -r infra/envs/staging infra/envs/prod`가 �
 
 | 항목 | staging | prod | 흘러가는 곳 |
 | --- | --- | --- | --- |
-| 도메인 | `staging.accentury.app` | `accentury.app` | CloudFront 대체 도메인, Route 53, `ACCENTURY_RESULT_WEBTESTURL` |
+| 도메인 | `staging.accentury.app` | `accentury.app` | CloudFront 대체 도메인, Route 53, `ACCENTURY_RESULT_WEBTESTURL`, `ACCENTURY_RESULT_ASSETBASEURL` |
 | VPC CIDR | `10.1.0.0/16` | `10.0.0.0/16` | 서브넷 4개, `ACCENTURY_TRUSTEDPROXIES` |
 | RDS 엔드포인트 | `accentury-staging.<id>.ap-northeast-2.rds.amazonaws.com` | `accentury-prod.<id>...` | `SPRING_DATASOURCE_URL` (apply 후 output `rds_endpoint`) |
 | RDS 마스터 시크릿 | `rds!db-<staging uuid>` | `rds!db-<prod uuid>` | `SPRING_DATASOURCE_URL`의 `secretsManagerSecretId`, backend 태스크 역할 정책 |
-| SSM 경로 | `/accentury/staging/*` | `/accentury/prod/*` | backend 실행 역할 정책(secrets 7개), ai 호스트 역할 정책과 기동 스크립트, backend 태스크 정의의 `IMAGE_TAG` 조회 |
+| SSM 경로 | `/accentury/staging/*` | `/accentury/prod/*` | backend 실행 역할 정책(secrets 8개), ai 호스트 역할 정책과 기동 스크립트, backend 태스크 정의의 `IMAGE_TAG` 조회 |
 | backend 태스크 (KAN-165) | 0.5 vCPU / 2 GB, desired 1 | 같은 값 | `modules/fargate` 기본값 (tfvars 아님) |
 | 관리자 토큰 | 환경별 난수 | 환경별 난수 | `ACCENTURY_ADMIN_TOKEN` |
 | 내부 호출 토큰 (KAN-36) | 환경별 난수 | 환경별 난수 | `ACCENTURY_ANALYSIS_AITOKEN`, `ai/ACCENTURY_AI_INTERNAL_TOKEN` |

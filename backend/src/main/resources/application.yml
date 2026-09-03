@@ -183,29 +183,28 @@ accentury:
   # admin:
   #   token: ...
   # /result 등급별 자산 (명세서 §3.7, KAN-25) - 서버가 내려주므로 앱 배포 없이 여기서 교체 (KAN-29/30)
-  # 기동 시 5개 등급 전부 존재해야 한다 (TierAssets 검증). 코멘트, 문구, 이미지는 더미다 -
-  # KAN-29/30 확정 자산이 나오면 교체한다. 키는 등급 code의 소문자다 (relaxed binding이
-  # 대문자 키를 보존하지 않으므로 소문자로 적고, 조회가 대소문자를 무시한다).
+  # 기동 시 5개 등급 전부 존재해야 한다 (TierAssets 검증). 코멘트와 문구는 더미다 - 확정되면
+  # 여기서 교체한다. 키는 등급 code의 소문자다 (relaxed binding이 대문자 키를 보존하지 않으므로
+  # 소문자로 적고, 조회가 대소문자를 무시한다).
+  # 공유 이미지는 등급마다 URL을 적지 않는다 (KAN-132) - asset-base-url 아래 <code>.png가 자산 정본
+  # (assets/share/, KAN-162)의 파일명 규칙이고, 이미지 교체는 S3 업로드만으로 반영된다
+  # (scripts/publish-share-assets.sh). 배포에서는 환경 도메인이 SSM으로 들어온다 (application-deploy.yml).
   result:
     web-test-url: https://accentury.app/t?c=kko_share    # 공유 유입 계측 캠페인 파라미터가 붙은 완성 URL (2026-08-14 확정 - 전 등급 공통 고정값, KAN-30)
+    asset-base-url: https://accentury.app/share          # 등급 이미지 기준 URL - share.imageUrl = <기준>/<등급 code 소문자>.png (KAN-132)
     tiers:
       outsider:
         comment: "억양도 단어도 아직 표준어에 가깝습니다. 경남 사투리 입문을 환영합니다."
-        image-url: https://static.accentury.app/tier/outsider.png
         share-text: "나는 외지인! 너도 시도해볼래?"
       traveler:
         comment: "여행에서 주워들은 사투리가 조금 묻어 있습니다. 아직은 손님 티가 납니다."
-        image-url: https://static.accentury.app/tier/traveler.png
         share-text: "나는 여행객! 너도 시도해볼래?"
       wannabe:
         comment: "사투리를 쓰고 싶은 마음은 가득한데 억양이 아직 따라오지 못했습니다."
-        image-url: https://static.accentury.app/tier/wannabe.png
         share-text: "나는 사투리 호소인! 너도 시도해볼래?"
       honorary:
         comment: "억양은 거의 토박이인데 단어에서 들켰습니다."
-        image-url: https://static.accentury.app/tier/honorary.png
         share-text: "나는 명예주민! 너도 시도해볼래?"
       native:
         comment: "억양도 단어도 완벽한 경남 토박이입니다. 더 배울 것이 없습니다."
-        image-url: https://static.accentury.app/tier/native.png
         share-text: "나는 경남 토박이! 너도 시도해볼래?"

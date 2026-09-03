@@ -97,7 +97,9 @@ class ResultApiTest extends IntegrationTest {
                 .andExpect(jsonPath("$.tier.of").value(5))
                 // 코멘트와 공유 자산은 설정(application.yml) 값 그대로다 - 앱 배포 없이 교체 (§3.7)
                 .andExpect(jsonPath("$.comment").value("억양은 거의 토박이인데 단어에서 들켰습니다."))
-                .andExpect(jsonPath("$.share.imageUrl").value("https://static.accentury.app/tier/honorary.png"))
+                // 이미지 URL = asset-base-url + 등급 code 소문자 + .png (KAN-132). 기본값은 prod 도메인이고
+                // 배포에서는 SSM이 환경 도메인으로 바꾼다.
+                .andExpect(jsonPath("$.share.imageUrl").value("https://accentury.app/share/honorary.png"))
                 .andExpect(jsonPath("$.share.text").value("나는 명예주민! 너도 시도해볼래?"))
                 .andExpect(jsonPath("$.share.webTestUrl").value("https://accentury.app/t?c=kko_share"))
                 // AC - 결과에 test version과 score version이 포함된다.

@@ -72,7 +72,7 @@ public final class PropertiesFixture {
     }
 
     private static AccenturyProperties.Result result() {
-        return new AccenturyProperties.Result(null, Map.of());
+        return new AccenturyProperties.Result(null, null, Map.of());
     }
 
     /** 집계 정책만 바꾼 설정 - 일자 경계와 조회 상한(KAN-106) 검증이 쓴다. */

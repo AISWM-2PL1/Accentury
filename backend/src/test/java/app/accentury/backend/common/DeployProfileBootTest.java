@@ -55,6 +55,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
         "accentury.trusted-proxies=10.1.0.0/16",
         "accentury.admin.token=deploy-profile-boot-test-token-0123456789",
         "accentury.result.web-test-url=https://staging.accentury.app/t?c=kko_share",
+        // 등급 이미지 기준 URL (KAN-132) - 배포 프로파일 필수값.
+        "accentury.result.asset-base-url=https://staging.accentury.app/share",
         // 테스트 DB는 RDS가 아니라 순정 PostgreSQL이다.
         "spring.datasource.hikari.data-source-properties.wrapperDialect=pg"})
 @ActiveProfiles({"test", DeploymentConfigGuard.PROFILE})

@@ -5,6 +5,7 @@ output "parameter_names" {
     aws_ssm_parameter.datasource_url.name,
     aws_ssm_parameter.trusted_proxies.name,
     aws_ssm_parameter.web_test_url.name,
+    aws_ssm_parameter.asset_base_url.name,
     aws_ssm_parameter.admin_token.name,
     aws_ssm_parameter.ai_token_backend.name,
   ]
