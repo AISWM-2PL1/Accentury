@@ -110,11 +110,11 @@ export function IntroScreen({
       <div className="screen__body">
         {/*
           종이 일러스트(확성기를 든 사람)를 걷어내고 글자를 세웠다 (KAN-178). 그림은 이 앱이
-          무엇을 하는 곳인지 말하지 않았다 — 첫 화면에서 사용자가 알아야 할 것은 "여기서
-          내 사투리 등급이 나온다"이고, 그건 그리는 것보다 적는 편이 빠르다.
+          무엇을 하는 곳인지 말하지 않았다 — 첫 화면은 사용자에게 말을 걸어야 하고, 그건
+          그리는 것보다 적는 편이 빠르다.
         */}
         <div className="illustration illustration--intro">
-          <TextHero>니 사투리 몇 등급?</TextHero>
+          <TextHero>사투리 좀 치나?</TextHero>
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>

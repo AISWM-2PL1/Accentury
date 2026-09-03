@@ -46,7 +46,7 @@ PAPER_SHADOW = (0xCF, 0xC5, 0xAA)  # 오프셋 그림자 (3px 4px 0)
 
 # 화면 id → (헤드라인, 보조 문구). **여기만 고치면 네 규격에 한꺼번에 반영된다.**
 CAPTIONS = {
-    "01-intro": ("내 사투리, 몇 등급?", "3분이면 끝나는 경남 사투리 레벨 테스트"),
+    "01-intro": ("3분이면 끝나는 사투리 테스트", "음성 5 / 단어 5, 계정 없이"),
     "02-recording": ("말해보면 곡선이 그려져요", "억양을 실시간 피치 곡선으로"),
     "03-vocab": ("이 말, 무슨 뜻일까?", "경남 토박이만 아는 단어 문제"),
     "04-result": ("5등급 중 당신은?", "결과 카드로 친구에게 공유"),
@@ -153,10 +153,37 @@ def rounded_mask(w: int, h: int, radius: int, inset: int = 0) -> Image.Image:
     return big.resize((w, h), Image.BOX)
 
 
+def assert_glyphs(text: str) -> None:
+    """Jua에 없는 글자를 잡는다.
+
+    Pillow는 글리프가 없으면 조용히 두부(□)를 그린다 — 검증은 전부 통과하고 스토어에 걸린
+    그림에서만 보인다. 실제로 `음성 5 · 단어 5`의 가운뎃점(U+00B7)이 이렇게 새어 나갔다.
+    Jua는 한글·라틴·숫자와 기본 문장부호만 가진 글꼴이라, 문구를 고칠 때마다 여기서 막는다.
+    """
+    if _JUA_CMAP is None:  # fontTools가 없는 환경에서는 검사를 건너뛴다
+        return
+    missing = sorted({ch for ch in text if ch != " " and ord(ch) not in _JUA_CMAP})
+    if missing:
+        shown = ", ".join(f"{ch!r}(U+{ord(ch):04X})" for ch in missing)
+        raise SystemExit(f"Jua에 없는 글자가 캡션에 있다: {shown} — 문구: {text!r}")
+
+
+def _load_jua_cmap() -> set[int] | None:
+    try:
+        from fontTools.ttLib import TTFont  # 선택 의존성
+    except ImportError:
+        return None
+    return set(TTFont(str(FONT_JUA)).getBestCmap())
+
+
+_JUA_CMAP = _load_jua_cmap() if FONT_JUA.exists() else None
+
+
 def fit_font(text: str, size: int, max_w: float) -> ImageFont.FreeTypeFont:
     """max_w를 넘으면 글자를 줄인다 — 잘린 문구가 스토어에 걸리는 게 최악이다."""
     if not FONT_JUA.exists():
         raise SystemExit(f"Jua 폰트가 없다: {FONT_JUA}")
+    assert_glyphs(text)
     while True:
         font = ImageFont.truetype(str(FONT_JUA), size)
         if font.getlength(text) <= max_w or size <= 16:
