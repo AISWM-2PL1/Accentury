@@ -51,7 +51,9 @@ fun parseAppLink(url: String?, allowedOrigins: Set<String>): AppLinkEntry? {
     } catch (_: Exception) {
         return null
     }
-    // 디코딩된 경로로 비교한다 — `/%74`처럼 escape로 위장한 경로가 `/t`로 통과하지 않게.
+    // 디코딩된 경로로 비교한다 — `/%74`도 `/t`로 인정한다는 뜻이다. 매니페스트의 `android:path`
+    // 필터가 이미 디코딩된 경로로 맞추므로 OS가 `/%74`를 앱에 넘겨 주고, 경로를 어떻게 적어 오든
+    // 앱이 읽는 값은 `c` 하나뿐이라 escape로 위장해서 얻어 갈 것이 없다.
     val path = uri.path ?: return null
     if (path != "/t" && path != "/t/") return null
     val rawToken = firstQueryValue(uri.rawQuery, "c")
@@ -62,8 +64,12 @@ fun parseAppLink(url: String?, allowedOrigins: Set<String>): AppLinkEntry? {
  * 쿼리에서 [name]의 **첫** 값을 꺼낸다. 같은 이름이 여러 번 오면 뒤엣것은 무시한다 —
  * `?c=a&c=b`처럼 값을 덧붙여 판정을 흔드는 링크에서 앱이 읽는 값이 하나로 정해져 있어야 한다.
  *
- * 디코딩된 [java.net.URI.getQuery] 대신 [java.net.URI.getRawQuery]를 쪼갠 뒤 값만 푸는 이유:
+ * 디코딩된 [java.net.URI.getQuery] 대신 [java.net.URI.getRawQuery]를 쪼갠 뒤 푸는 이유:
  * 먼저 통째로 풀면 `c=a%26b`의 `%26`이 진짜 `&`가 되어 파라미터 경계가 하나 더 생긴다.
+ * 경계를 원문으로 가른 다음에는 **이름도 값과 똑같이 디코딩해서** 비교한다 — `?%63=kko_share`가
+ * `?c=kko_share`와 같은 링크라는 뜻이다. iOS의 `URLComponents.queryItems`와 웹의
+ * `URLSearchParams`가 둘 다 이름을 풀어서 읽으므로, 같은 링크를 세 소비자가 같게 읽으려면
+ * 여기도 풀어야 한다.
  */
 private fun firstQueryValue(rawQuery: String?, name: String): String? {
     if (rawQuery == null) return null
@@ -71,7 +77,7 @@ private fun firstQueryValue(rawQuery: String?, name: String): String? {
         if (pair.isEmpty()) continue
         val separator = pair.indexOf('=')
         val key = if (separator < 0) pair else pair.substring(0, separator)
-        if (key != name) continue
+        if (decodePercentEscapes(key) != name) continue
         return decodePercentEscapes(if (separator < 0) "" else pair.substring(separator + 1))
     }
     return null

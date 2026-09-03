@@ -76,6 +76,16 @@ class AppLinkTest {
         assertNull(parseAppLink("https://accentury.app/T?c=kko_share", allowed))
     }
 
+    @Test
+    fun `퍼센트 인코딩된 경로도 같은 진입점이다`() {
+        // 매니페스트의 `android:path` 필터가 디코딩된 경로로 맞추므로 OS가 이미 `/%74`를 앱에 넘긴다.
+        // 여기서 거절하면 OS는 넘기는데 앱만 모르는 어긋남이 된다 — iOS도 같은 판정이다.
+        assertEquals(
+            AppLinkEntry(campaignToken = "kko_share"),
+            parseAppLink("https://accentury.app/%74?c=kko_share", allowed),
+        )
+    }
+
     // --- 계측 코드가 없거나 계약에 어긋날 때: 진입은 살리고 코드만 버린다 ---
 
     @Test
@@ -148,6 +158,68 @@ class AppLinkTest {
         assertEquals(
             AppLinkEntry(campaignToken = null),
             parseAppLink("https://accentury.app/t?c=a%26b", allowed),
+        )
+    }
+
+    @Test
+    fun `파라미터 이름의 퍼센트 인코딩도 풀어서 맞춘다`() {
+        // iOS `URLComponents.queryItems`와 웹 `URLSearchParams`가 둘 다 이름을 풀어서 읽는다.
+        // 여기서만 원문으로 비교하면 같은 링크를 안드로이드만 다르게 읽는다.
+        assertEquals(
+            AppLinkEntry(campaignToken = "kko_share"),
+            parseAppLink("https://accentury.app/t?%63=kko_share", allowed),
+        )
+    }
+
+    @Test
+    fun `이름을 푼 뒤에도 먼저 온 값이 이긴다`() {
+        assertEquals(
+            AppLinkEntry(campaignToken = "a"),
+            parseAppLink("https://accentury.app/t?%63=a&c=b", allowed),
+        )
+    }
+
+    // --- 링크 경계: userinfo·fragment·포트·호스트 대소문자 ---
+
+    @Test
+    fun `호스트 앞에 붙인 userinfo는 호스트가 되지 못한다`() {
+        // `@` 앞은 userinfo다 — 진짜 호스트는 evil.com이라 allowlist 밖이다.
+        assertNull(parseAppLink("https://accentury.app@evil.com/t?c=x", allowed))
+        // 반대로 userinfo가 무엇이든 호스트가 우리 것이면 진입이다.
+        assertEquals(
+            AppLinkEntry(campaignToken = "x"),
+            parseAppLink("https://evil.com@accentury.app/t?c=x", allowed),
+        )
+    }
+
+    @Test
+    fun `fragment는 쿼리 판정을 흔들지 않는다`() {
+        assertEquals(
+            AppLinkEntry(campaignToken = "kko_share"),
+            parseAppLink("https://accentury.app/t?c=kko_share#frag", allowed),
+        )
+        // `#`이 먼저 오면 뒤는 통째로 fragment다 — 쿼리가 아예 없으므로 코드도 없다.
+        assertEquals(
+            AppLinkEntry(campaignToken = null),
+            parseAppLink("https://accentury.app/t#frag?c=x", allowed),
+        )
+    }
+
+    @Test
+    fun `기본 포트는 적혀 있어도 같은 origin이고 다른 포트는 아니다`() {
+        assertEquals(
+            AppLinkEntry(campaignToken = "x"),
+            parseAppLink("https://accentury.app:443/t?c=x", allowed),
+        )
+        assertNull(parseAppLink("https://accentury.app:8443/t?c=x", allowed))
+    }
+
+    @Test
+    fun `호스트의 대소문자는 같은 origin이다`() {
+        // 경로와 달리 호스트는 대소문자를 가리지 않는다 — webOrigin이 소문자로 내린다.
+        assertEquals(
+            AppLinkEntry(campaignToken = "x"),
+            parseAppLink("https://ACCENTURY.APP/t?c=x", allowed),
         )
     }
 

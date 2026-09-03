@@ -72,6 +72,16 @@ final class AppLinkTests: XCTestCase {
         XCTAssertNil(parseAppLink("https://accentury.app/T?c=kko_share", allowedOrigins: allowed))
     }
 
+    /// 퍼센트 인코딩된 경로도 같은 진입점이다.
+    func testPercentEncodedPathIsTheSameEntryPoint() {
+        // 안드로이드 매니페스트의 `android:path` 필터가 디코딩된 경로로 맞추므로 OS가 이미 `/%74`를
+        // 앱에 넘긴다. 여기서 거절하면 OS는 넘기는데 앱만 모르는 어긋남이 된다 — 두 플랫폼 같은 판정.
+        XCTAssertEqual(
+            AppLinkEntry(campaignToken: "kko_share"),
+            parseAppLink("https://accentury.app/%74?c=kko_share", allowedOrigins: allowed)
+        )
+    }
+
     // MARK: - 계측 코드가 없거나 계약에 어긋날 때: 진입은 살리고 코드만 버린다
 
     /// 계측 코드가 없어도 진입은 성립한다.
@@ -161,6 +171,68 @@ final class AppLinkTests: XCTestCase {
         XCTAssertEqual(
             AppLinkEntry(campaignToken: nil),
             parseAppLink("https://accentury.app/t?c=a%26b", allowedOrigins: allowed)
+        )
+    }
+
+    /// 파라미터 이름의 퍼센트 인코딩도 풀어서 맞춘다.
+    func testPercentEncodedParameterNamesAreDecodedBeforeMatching() {
+        // `queryItems`가 이름을 풀어서 주는 쪽이고, 웹 `URLSearchParams`도 같다. 안드로이드는
+        // 손으로 푸는 쪽이라 이름 비교 전에 같은 디코딩을 태워 세 소비자의 해석을 맞춰 뒀다.
+        XCTAssertEqual(
+            AppLinkEntry(campaignToken: "kko_share"),
+            parseAppLink("https://accentury.app/t?%63=kko_share", allowedOrigins: allowed)
+        )
+    }
+
+    /// 이름을 푼 뒤에도 먼저 온 값이 이긴다.
+    func testTheFirstValueStillWinsAfterNameDecoding() {
+        XCTAssertEqual(
+            AppLinkEntry(campaignToken: "a"),
+            parseAppLink("https://accentury.app/t?%63=a&c=b", allowedOrigins: allowed)
+        )
+    }
+
+    // MARK: - 링크 경계: userinfo·fragment·포트·호스트 대소문자
+
+    /// 호스트 앞에 붙인 userinfo는 호스트가 되지 못한다.
+    func testUserinfoBeforeTheHostNeverBecomesTheHost() {
+        // `@` 앞은 userinfo다 — 진짜 호스트는 evil.com이라 allowlist 밖이다.
+        XCTAssertNil(parseAppLink("https://accentury.app@evil.com/t?c=x", allowedOrigins: allowed))
+        // 반대로 userinfo가 무엇이든 호스트가 우리 것이면 진입이다.
+        XCTAssertEqual(
+            AppLinkEntry(campaignToken: "x"),
+            parseAppLink("https://evil.com@accentury.app/t?c=x", allowedOrigins: allowed)
+        )
+    }
+
+    /// fragment는 쿼리 판정을 흔들지 않는다.
+    func testFragmentsDoNotDisturbTheQueryVerdict() {
+        XCTAssertEqual(
+            AppLinkEntry(campaignToken: "kko_share"),
+            parseAppLink("https://accentury.app/t?c=kko_share#frag", allowedOrigins: allowed)
+        )
+        // `#`이 먼저 오면 뒤는 통째로 fragment다 — 쿼리가 아예 없으므로 코드도 없다.
+        XCTAssertEqual(
+            AppLinkEntry(campaignToken: nil),
+            parseAppLink("https://accentury.app/t#frag?c=x", allowedOrigins: allowed)
+        )
+    }
+
+    /// 기본 포트는 적혀 있어도 같은 origin이고 다른 포트는 아니다.
+    func testTheDefaultPortIsTheSameOriginButAnotherPortIsNot() {
+        XCTAssertEqual(
+            AppLinkEntry(campaignToken: "x"),
+            parseAppLink("https://accentury.app:443/t?c=x", allowedOrigins: allowed)
+        )
+        XCTAssertNil(parseAppLink("https://accentury.app:8443/t?c=x", allowedOrigins: allowed))
+    }
+
+    /// 호스트의 대소문자는 같은 origin이다.
+    func testHostCaseStillYieldsTheSameOrigin() {
+        // 경로와 달리 호스트는 대소문자를 가리지 않는다 — webOrigin이 소문자로 내린다.
+        XCTAssertEqual(
+            AppLinkEntry(campaignToken: "x"),
+            parseAppLink("https://ACCENTURY.APP/t?c=x", allowedOrigins: allowed)
         )
     }
 
