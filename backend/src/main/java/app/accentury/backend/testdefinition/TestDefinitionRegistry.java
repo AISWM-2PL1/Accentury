@@ -18,6 +18,7 @@ import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -212,11 +213,20 @@ public class TestDefinitionRegistry {
 
     /** 발행된 정의를 찾는다. 미발행 버전은 404 - 존재 여부 외 어떤 정보도 주지 않는다 (KAN-10 요구). */
     public PublishedDefinition get(String testVersion) {
-        PublishedDefinition found = published.get(testVersion);
-        if (found == null) {
-            throw new ApiException(ErrorCode.RESOURCE_NOT_FOUND);
-        }
-        return found;
+        return find(testVersion).orElseThrow(() -> new ApiException(ErrorCode.RESOURCE_NOT_FOUND));
+    }
+
+    /**
+     * 이 프로세스에 발행돼 있으면 그 정의, 없으면 빈 값 - 없는 것을 404로 바꾸지 않고 그대로
+     * 답해야 하는 호출부의 자리다 (관리자 목록 조회, §6.2).
+     * <p>
+     * <b>DB에 있어도 이 맵에 없는 버전이 있다.</b> 롤링 배포 중 새 태스크가 정의 마이그레이션을
+     * 적용하고 옛 태스크는 아직 재기동하지 않은 창이 그렇다 ({@link #active()}의 같은 창).
+     * 그 창에서 DB 행마다 {@link #get}을 부르면 새로 들어온 행 하나 때문에 목록 전체가 404가
+     * 되는데, 하필 운영자가 무엇이 발행됐는지 보고 전환과 롤백을 판단하는 순간이다.
+     */
+    public Optional<PublishedDefinition> find(String testVersion) {
+        return Optional.ofNullable(published.get(testVersion));
     }
 
     /**

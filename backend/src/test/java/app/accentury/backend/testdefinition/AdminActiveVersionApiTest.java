@@ -14,6 +14,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 import tools.jackson.databind.ObjectMapper;
 
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -251,6 +252,41 @@ class AdminActiveVersionApiTest extends IntegrationTest {
                 // 13KB짜리 본문은 목록에 싣지 않는다 - 문항은 공개 엔드포인트(§3.2)에서 본다.
                 .andExpect(jsonPath("$.definitions[0].body").doesNotExist())
                 .andExpect(header().string("Cache-Control", containsString("no-store")));
+    }
+
+    /**
+     * 롤링 배포의 한 창을 재현한다 - 새 태스크가 정의 마이그레이션을 적용했고 이 태스크는 아직
+     * 옛 레지스트리로 돌고 있다. 기동 뒤에 들어온 행이라 레지스트리에는 없다.
+     * <p>
+     * 그 행 하나로 목록 전체가 404가 되면, 하필 운영자가 무엇이 발행됐는지 보고 전환과 롤백을
+     * 판단해야 하는 순간에 아무것도 볼 수 없다. 그래서 행은 그대로 싣고 레지스트리만 답할 수
+     * 있는 두 값(voicePoolSize, voiceSetCount)을 비운다 (KAN-182 리뷰 P2, §6.2).
+     */
+    @Test
+    void 레지스트리에_없는_발행본이_섞여도_목록은_200이다() throws Exception {
+        String unknown = "gn-2999.99.9";
+        // 발행 시각을 멀리 잡아 목록 끝(발행 시각 오름차순)에 오게 한다.
+        jdbc.update("insert into test_definition (test_version, dialect, score_version, body, published_at)"
+                + " values (?, 'GYEONGNAM', 'sv-0.3', '{}', timestamp with time zone '2099-01-01T00:00:00Z')",
+                unknown);
+        try {
+            mockMvc.perform(get(DEFINITIONS_URL).header(AdminAuth.TOKEN_HEADER, TOKEN))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.definitions.length()").value(5))
+                    .andExpect(jsonPath("$.definitions[4].testVersion").value(unknown))
+                    // 사본 컬럼에서 오는 값은 그대로 나온다 - 모르는 것은 세트 관련 두 값뿐이다.
+                    .andExpect(jsonPath("$.definitions[4].dialect").value("GYEONGNAM"))
+                    .andExpect(jsonPath("$.definitions[4].active").value(false))
+                    .andExpect(jsonPath("$.definitions[4].voicePoolSize").value(nullValue()))
+                    .andExpect(jsonPath("$.definitions[4].voiceSetCount").value(nullValue()))
+                    // 아는 버전은 종전대로 답한다 - 한 행의 공백이 나머지를 비우지 않는다.
+                    .andExpect(jsonPath("$.definitions[1].voicePoolSize").value(5))
+                    .andExpect(jsonPath("$.definitions[1].voiceSetCount").value(1));
+        } finally {
+            // 이 행이 남으면 다음 컨텍스트가 기동 검증에서 '{}'를 파싱하다 서버를 못 띄운다 -
+            // test_definition은 클래스 사이 초기화 대상이 아니다 (DatabaseWipeExtension.KEEP).
+            jdbc.update("delete from test_definition where test_version = ?", unknown);
+        }
     }
 
     // === 인증 (§6) ===

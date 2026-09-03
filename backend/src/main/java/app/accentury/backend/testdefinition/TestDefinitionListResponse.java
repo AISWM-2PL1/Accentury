@@ -26,11 +26,16 @@ public record TestDefinitionListResponse(String activeVersion,
      * @param active        이 버전이 지금 활성인지 - 목록과 활성 필드를 눈으로 대조하지 않아도 되게 한다.
      * @param voicePoolSize 음성 문장 풀 크기 N (KAN-182) - 롤백 전에 어느 버전이 몇 세트짜리인지
      *                      확인하는 용도. 사본 컬럼이 아니라 레지스트리(메모리)가 답한다.
-     * @param voiceSetCount 세트 수 = ceil(N / 5) ({@link VoiceSets})
+     *                      <b>이 태스크에 발행되지 않은 버전은 null이다</b> - 롤링 배포 중 정의
+     *                      마이그레이션이 먼저 적용되고 이 태스크는 아직 재기동하지 않은 창에서
+     *                      DB 행이 레지스트리보다 앞선다 ({@link TestDefinitionRegistry#find}).
+     *                      행 자체는 그대로 실린다 - 그 창에서 운영자가 봐야 하는 것이 바로
+     *                      "새 버전이 들어와 있다"이기 때문이다.
+     * @param voiceSetCount 세트 수 = ceil(N / 5) ({@link VoiceSets}). null 조건은 위와 같다.
      */
     public record Definition(String testVersion, String dialect, String scoreVersion,
                              Instant publishedAt, boolean active,
-                             int voicePoolSize, int voiceSetCount) {
+                             @Nullable Integer voicePoolSize, @Nullable Integer voiceSetCount) {
     }
 
     public record HistoryEntry(ActiveVersionAudit.Action action,

@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 테스트 콘텐츠 버전의 활성 전환과 목록 조회 (KAN-26, API 명세서 §6).
@@ -102,7 +103,9 @@ class AdminTestDefinitionController {
      * 롤백하기 전에 무엇이 있고 어디로 돌아가게 되는지 확인하는 용도다. 정의 본문은 담지 않는다 -
      * 문항을 보려면 공개 엔드포인트({@code GET /v0/tests/{testVersion}}, §3.2)를 쓴다.
      * 음성 풀 크기와 세트 수(KAN-182)는 사본 컬럼을 두지 않고 레지스트리(메모리)가 답한다 -
-     * 기동 시 발행본 전부를 읽어 유도해 둔 값이라 목록마다 본문을 파싱하지 않는다.
+     * 기동 시 발행본 전부를 읽어 유도해 둔 값이라 목록마다 본문을 파싱하지 않는다. 그 대신
+     * <b>이 태스크가 모르는 버전은 두 값이 null</b>이다 - DB 행이 레지스트리보다 앞서는 창이
+     * 롤링 배포 중에 있기 때문이고, 그 창에서도 목록 자체는 나와야 한다 (아래 주석).
      * <p>
      * 200 조회 성공 / 401 토큰 누락이나 불일치({@code ADMIN_UNAUTHORIZED}).
      */
@@ -115,12 +118,20 @@ class AdminTestDefinitionController {
         List<TestDefinitionListResponse.Definition> published =
                 definitions.findAllByOrderByPublishedAtAscTestVersionAsc().stream()
                         .map(stored -> {
-                            TestDefinitionRegistry.PublishedDefinition registered =
-                                    registry.get(stored.testVersion());
+                            // 이 태스크에 발행되지 않은 버전은 두 값을 null로 두고 행은 그대로 싣는다.
+                            // 롤링 배포 중에는 새 태스크가 정의 마이그레이션을 적용한 뒤에도 옛 태스크가
+                            // 잠시 옛 레지스트리로 도는데, 여기서 registry.get()을 부르면 그 창에 새로
+                            // 들어온 행 하나가 404로 목록 전체를 죽인다 - 운영자가 무엇이 발행됐는지
+                            // 보고 전환을 판단하려고 여는 바로 그 목록이다 (KAN-182 리뷰 P2).
+                            Optional<TestDefinitionRegistry.PublishedDefinition> registered =
+                                    registry.find(stored.testVersion());
                             return new TestDefinitionListResponse.Definition(
                                     stored.testVersion(), stored.dialect(), stored.scoreVersion(),
                                     stored.publishedAt(), stored.testVersion().equals(current.testVersion()),
-                                    registered.voicePoolSize(), registered.voiceSetCount());
+                                    registered.map(TestDefinitionRegistry.PublishedDefinition::voicePoolSize)
+                                            .orElse(null),
+                                    registered.map(TestDefinitionRegistry.PublishedDefinition::voiceSetCount)
+                                            .orElse(null));
                         })
                         .toList();
         List<TestDefinitionListResponse.HistoryEntry> history =
