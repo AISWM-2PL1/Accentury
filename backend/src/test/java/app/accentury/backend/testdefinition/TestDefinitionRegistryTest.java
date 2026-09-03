@@ -68,24 +68,96 @@ class TestDefinitionRegistryTest {
         assertRejected(gyeongbuk, "경남");
     }
 
-    // === 문항 구성 확정 (2026-07-27) - 음성 5 + 어휘 5, seq 고정 ===
+    // === 문항 구성 (2026-07-27 확정, KAN-182 완화) - 음성 N (N >= 5) + 어휘 5, seq 풀 기준 고정 ===
 
     @Test
-    void 문항이_없거나_10개가_아니면_발행_거부다() {
-        assertRejected(withItems(valid(), null), "10개");
-        assertRejected(withItems(valid(), List.of()), "10개");
-
-        List<TestDefinition.Item> eleven = new ArrayList<>(valid().items());
-        eleven.add(vocabulary("w6", 11));
-        assertRejected(withItems(valid(), eleven), "10개");
+    void 문항이_없거나_10개_미만이면_발행_거부다() {
+        assertRejected(withItems(valid(), null), "음성 5개 이상");
+        assertRejected(withItems(valid(), List.of()), "음성 5개 이상");
+        assertRejected(withItems(valid(), valid().items().subList(0, 9)), "음성 5개 이상");
     }
 
     @Test
-    void 음성5_어휘5_구성이_아니면_발행_거부다() {
+    void 어휘가_5문항이_아니면_발행_거부다() {
+        // 어휘는 풀이 아니다 - 세트마다 그대로 5문항이므로 6개도 4개도 거부다.
+        List<TestDefinition.Item> six = new ArrayList<>(valid().items());
+        six.add(vocabulary("w6", 11));
+        assertRejected(withItems(valid(), six), "문항 구성");
+
         List<TestDefinition.Item> items = new ArrayList<>(valid().items());
         items.removeIf(item -> item.itemId().equals("v5"));
         items.add(vocabulary("w6", 9));
         assertRejected(withItems(valid(), items), "문항 구성");
+    }
+
+    @Test
+    void 음성이_5문항_미만이면_발행_거부다() {
+        // N = 4는 채워도 한 세트 안에 같은 문항이 두 번 들어간다 (KAN-182 AC - N = 4 거부).
+        // 9문항(음성 4 + 어휘 5)은 총수 검사에서 걸린다.
+        List<TestDefinition.Item> nine = new ArrayList<>(valid().items());
+        nine.removeIf(item -> item.itemId().equals("v5"));
+        assertRejected(withItems(valid(), nine), "음성 5개 이상");
+
+        // 총수를 어휘로 채운 정의(음성 4 + 어휘 7)는 구성 검사에서 걸린다.
+        List<TestDefinition.Item> fourVoices = new ArrayList<>(nine);
+        fourVoices.add(vocabulary("w6", 9));
+        fourVoices.add(vocabulary("w7", 11));
+        assertRejected(withItems(valid(), fourVoices), "문항 구성");
+    }
+
+    @Test
+    void 음성_풀이_5개를_넘는_정의는_발행된다() {
+        // KAN-182 - 풀 다중화. seq는 풀 기준 1..N+5 연속이면 된다.
+        TestDefinitionRegistry.validate(pool(7));
+        TestDefinitionRegistry.validate(pool(10));
+        TestDefinitionRegistry.validate(pool(34));
+    }
+
+    // === KAN-182 - scriptKey: 정의 단위 all-or-nothing, 풀 안에서 유일 ===
+
+    @Test
+    void scriptKey가_없는_기존_정의는_그대로_발행된다() {
+        // gn-2026.08.1은 scriptKey가 없고 더미 문장이라 실모델로 채점할 수 없지만, 발행 후 불변(§5.4)을
+        // 지키려면 새 검증이 기존 행을 깨뜨리면 안 된다.
+        TestDefinitionRegistry.validate(valid());
+        TestDefinitionRegistry.validate(withScriptKeys(pool(7), false));
+    }
+
+    @Test
+    void 전_음성_문항에_scriptKey가_있는_정의는_발행된다() {
+        TestDefinitionRegistry.validate(withScriptKeys(pool(7), true));
+    }
+
+    @Test
+    void scriptKey가_일부_문항에만_있으면_발행_거부다() {
+        TestDefinition partial = withItem(withScriptKeys(pool(7), true), "v3",
+                item -> new TestDefinition.Item(item.itemId(), item.seq(), item.type(), item.prompt(),
+                        null, item.guideF0(), null, null));
+        assertRejected(partial, "전부 없어야");
+    }
+
+    @Test
+    void scriptKey가_중복되면_발행_거부다() {
+        TestDefinition duplicated = withItem(withScriptKeys(pool(7), true), "v3",
+                item -> new TestDefinition.Item(item.itemId(), item.seq(), item.type(), item.prompt(),
+                        "1|1", item.guideF0(), null, null));
+        assertRejected(duplicated, "scriptKey 중복");
+    }
+
+    @Test
+    void scriptKey가_빈_문자열이면_발행_거부다() {
+        TestDefinition blank = withItem(withScriptKeys(pool(7), true), "v3",
+                item -> new TestDefinition.Item(item.itemId(), item.seq(), item.type(), item.prompt(),
+                        "  ", item.guideF0(), null, null));
+        assertRejected(blank, "scriptKey가 비어");
+    }
+
+    @Test
+    void VOCABULARY_문항에_scriptKey가_붙으면_발행_거부다() {
+        TestDefinition broken = withItem(valid(), "w1",
+                item -> new TestDefinition.Item(item.itemId(), item.seq(), item.type(), item.prompt(),
+                        "1|1", null, item.choices(), item.correctChoiceId()));
+        assertRejected(broken, "VOCABULARY 문항에 음성 필드");
     }
 
     @Test
@@ -266,11 +338,54 @@ class TestDefinitionRegistryTest {
 
             assertEquals("gn-2026.08.1", registry.active().definition().testVersion());
             assertEquals("sv-0.3", registry.active().definition().scoreVersion());
+            // 음성 5문항 정의는 세트 하나다 (KAN-182 하위 호환).
+            assertEquals(1, registry.active().voiceSetCount());
+            assertEquals(5, registry.active().voicePoolSize());
             // 활성이 아닌 발행본도 자기 경로로 계속 조회된다 (§5.4, KAN-26 AC).
-            assertEquals("gn-2026.07.0", registry.get("gn-2026.07.0").response().testVersion());
+            assertEquals("gn-2026.07.0", registry.get("gn-2026.07.0").voiceSet(1).response().testVersion());
 
             ApiException notFound = assertThrows(ApiException.class, () -> registry.get("gn-0000.00.0"));
             assertEquals(ErrorCode.RESOURCE_NOT_FOUND, notFound.code());
+        }
+
+        @Test
+        void 풀_정의는_세트별_응답과_ETag를_미리_만든다() {
+            // KAN-182 - 세트는 기동 시 발행본에서 유도되고, 세트마다 본문이 달라 ETag도 다르다.
+            TestDefinitionRegistry registry = registry(List.of(row("gn-2026.09.t7", pool(7))), "gn-2026.09.t7");
+            TestDefinitionRegistry.PublishedDefinition published = registry.get("gn-2026.09.t7");
+
+            assertEquals(7, published.voicePoolSize());
+            assertEquals(2, published.voiceSetCount());
+            assertEquals(1, published.voiceSet(1).response().voiceSet());
+            assertEquals(2, published.voiceSet(2).response().voiceSetCount());
+            assertEquals(List.of("v6", "w1", "v7", "w2", "v1", "w3", "v2", "w4", "v3", "w5"),
+                    published.voiceSet(2).response().items().stream()
+                            .map(TestDefinitionResponse.Item::itemId).toList());
+            assertTrue(!published.voiceSet(1).etag().equals(published.voiceSet(2).etag()),
+                    "세트별 ETag가 달라야 한다");
+            // 세트 수를 넘으면 없는 버전과 같은 404다 (§3.2).
+            assertEquals(ErrorCode.RESOURCE_NOT_FOUND,
+                    assertThrows(ApiException.class, () -> published.voiceSet(3)).code());
+            assertEquals(ErrorCode.RESOURCE_NOT_FOUND,
+                    assertThrows(ApiException.class, () -> published.voiceSet(0)).code());
+        }
+
+        @Test
+        void 세션_세트_밖의_음성_문항은_풀에_있어도_ITEM_NOT_IN_VERSION이다() {
+            // KAN-182 - 열어 두면 한 세션에 음성 점수가 5개 넘게 쌓여 집계가 깨진다.
+            TestDefinitionRegistry registry = registry(List.of(row("gn-2026.09.t7", pool(7))), "gn-2026.09.t7");
+
+            assertEquals("v6", registry.requireItem("gn-2026.09.t7", 2, "v6",
+                    TestDefinition.ItemType.VOICE).itemId());
+            assertEquals("v1", registry.requireItem("gn-2026.09.t7", 2, "v1",
+                    TestDefinition.ItemType.VOICE).itemId(), "채움 문항 v1은 세트 2의 문항이다");
+            ApiException outside = assertThrows(ApiException.class,
+                    () -> registry.requireItem("gn-2026.09.t7", 2, "v4", TestDefinition.ItemType.VOICE));
+            assertEquals(ErrorCode.ITEM_NOT_IN_VERSION, outside.code());
+            // 어휘 5문항은 모든 세트에 있다.
+            assertEquals("w5", registry.requireItem("gn-2026.09.t7", 2, "w5",
+                    TestDefinition.ItemType.VOCABULARY).itemId());
+            assertEquals(10, registry.sessionDefinition("gn-2026.09.t7", 2).items().size());
         }
 
         @Test
@@ -347,12 +462,12 @@ class TestDefinitionRegistryTest {
             TestDefinitionRegistry registry = new TestDefinitionRegistry(JsonMapper.builder().build(),
                     definitions(List.of(row("gn-2026.08.1"), row("gn-2026.07.0"))),
                     activeVersions(() -> pointer[0]), policies());
-            String etagBefore = registry.get("gn-2026.08.1").etag();
+            String etagBefore = registry.get("gn-2026.08.1").voiceSet(1).etag();
 
             pointer[0] = "gn-2026.07.0";
 
             assertEquals("gn-2026.07.0", registry.active().definition().testVersion());
-            assertEquals(etagBefore, registry.get("gn-2026.08.1").etag());
+            assertEquals(etagBefore, registry.get("gn-2026.08.1").voiceSet(1).etag());
         }
     }
 
@@ -418,6 +533,30 @@ class TestDefinitionRegistryTest {
     private static StoredTestDefinition row(String testVersion) {
         return new StoredTestDefinition(testVersion, "GYEONGNAM", "sv-0.3",
                 DefinitionFixtures.body(testVersion, "GYEONGNAM"), Instant.EPOCH);
+    }
+
+    private static StoredTestDefinition row(String testVersion, TestDefinition definition) {
+        return new StoredTestDefinition(testVersion, "GYEONGNAM", "sv-0.3",
+                DefinitionFixtures.body(withVersions(definition, testVersion, "sv-0.3")), Instant.EPOCH);
+    }
+
+    /** 음성 N + 어휘 5 풀 - scriptKey 없음 */
+    private static TestDefinition pool(int voiceCount) {
+        return DefinitionFixtures.pool(voiceCount);
+    }
+
+    private static TestDefinition withScriptKeys(TestDefinition base, boolean present) {
+        List<TestDefinition.Item> items = base.items().stream()
+                .map(item -> item.type() != TestDefinition.ItemType.VOICE ? item
+                        : new TestDefinition.Item(item.itemId(), item.seq(), item.type(), item.prompt(),
+                                present ? "1|" + item.itemId().substring(1) : null,
+                                item.guideF0(), null, null))
+                .toList();
+        return withItems(base, items);
+    }
+
+    private static TestDefinition.Item voice(String itemId, int seq) {
+        return DefinitionFixtures.voice(itemId, seq);
     }
 
     private static String body(String testVersion) {

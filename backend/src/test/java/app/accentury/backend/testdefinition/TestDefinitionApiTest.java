@@ -15,6 +15,7 @@ import java.util.Set;
 
 import static org.hamcrest.Matchers.aMapWithSize;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -48,7 +49,7 @@ class TestDefinitionApiTest extends IntegrationTest {
     }
 
     @Test
-    void 활성_버전_조회는_200과_명세의_5개_최상위_필드를_반환한다() throws Exception {
+    void 활성_버전_조회는_200과_명세의_7개_최상위_필드를_반환한다() throws Exception {
         mockMvc.perform(get(activePath()))
                 .andExpect(status().isOk())
                 // 두 버전 모두 발행본이 정본이다 - 설정에는 이제 어느 쪽도 없다 (KAN-26).
@@ -56,9 +57,106 @@ class TestDefinitionApiTest extends IntegrationTest {
                 .andExpect(jsonPath("$.scoreVersion").value(activeScoreVersion()))
                 .andExpect(jsonPath("$.dialect").value("GYEONGNAM"))
                 .andExpect(jsonPath("$.estimatedDurationSec").value(240))
+                // KAN-182 - 세트 번호와 세트 수. 음성 5문항 발행본은 세트 하나다.
+                .andExpect(jsonPath("$.voiceSet").value(1))
+                .andExpect(jsonPath("$.voiceSetCount").value(1))
                 .andExpect(jsonPath("$.items.length()").value(10))
-                // §3.2 응답은 정확히 5개 필드 - 늘면 이 테스트가 알려준다.
-                .andExpect(jsonPath("$").value(aMapWithSize(5)));
+                // §3.2 응답은 정확히 7개 필드 - 늘면 이 테스트가 알려준다.
+                .andExpect(jsonPath("$").value(aMapWithSize(7)));
+    }
+
+    // === KAN-182 - 세트 조회: ?voiceSet={n}, 생략 시 1, 세트별 ETag ===
+
+    /** 테스트 프로파일 픽스처 - N = 7 풀, 세트 2 = poolIndex 6, 7 + 1, 2, 3 (V901). */
+    private static final String POOL7 = "/v0/tests/gn-2026.09.t7";
+
+    @Test
+    void 세트를_지정하면_그_세트의_음성5_어휘5를_seq_교차_순서로_준다() throws Exception {
+        String body = mockMvc.perform(get(POOL7).param("voiceSet", "2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.testVersion").value("gn-2026.09.t7"))
+                .andExpect(jsonPath("$.voiceSet").value(2))
+                .andExpect(jsonPath("$.voiceSetCount").value(2))
+                .andExpect(jsonPath("$.items.length()").value(10))
+                .andReturn().getResponse().getContentAsString();
+        JsonNode items = objectMapper.readTree(body).get("items");
+        // 채움 규칙 - 마지막 세트의 부족분(3개)은 풀의 처음(v1, v2, v3)에서 온다.
+        List<String> expected = List.of("v6", "w1", "v7", "w2", "v1", "w3", "v2", "w4", "v3", "w5");
+        for (int i = 0; i < expected.size(); i++) {
+            assertEquals(expected.get(i), items.get(i).get("itemId").asString());
+            assertEquals(i + 1, items.get(i).get("seq").asInt(), "seq는 세트 응답에서 1..10으로 다시 매긴다");
+        }
+        // scriptKey는 AI meta 전용이다 - 정의 응답으로 새면 안 된다 (픽스처 t7은 전 문항에 scriptKey가 있다).
+        assertFalse(body.contains("scriptKey"), "scriptKey는 클라이언트 응답에 싣지 않는다");
+    }
+
+    @Test
+    void voiceSet을_생략하면_세트_1과_바이트_단위로_같다() throws Exception {
+        MvcResult omitted = mockMvc.perform(get(POOL7)).andExpect(status().isOk()).andReturn();
+        MvcResult explicit = mockMvc.perform(get(POOL7).param("voiceSet", "1"))
+                .andExpect(status().isOk()).andReturn();
+
+        assertEquals(explicit.getResponse().getContentAsString(), omitted.getResponse().getContentAsString(),
+                "세트를 모르는 기존 클라이언트는 변경 없이 세트 1을 받는다");
+        assertEquals(explicit.getResponse().getHeader("ETag"), omitted.getResponse().getHeader("ETag"));
+        List<String> firstSet = new java.util.ArrayList<>();
+        for (JsonNode item : objectMapper.readTree(omitted.getResponse().getContentAsString()).get("items")) {
+            firstSet.add(item.get("itemId").asString());
+        }
+        assertEquals(List.of("v1", "w1", "v2", "w2", "v3", "w3", "v4", "w4", "v5", "w5"), firstSet);
+    }
+
+    @Test
+    void 세트마다_ETag가_다르고_각각_304_재검증이_된다() throws Exception {
+        String etag1 = mockMvc.perform(get(POOL7).param("voiceSet", "1"))
+                .andExpect(status().isOk()).andReturn().getResponse().getHeader("ETag");
+        String etag2 = mockMvc.perform(get(POOL7).param("voiceSet", "2"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("ETag", not(etag1)))
+                .andExpect(header().string("Cache-Control", containsString("immutable")))
+                .andReturn().getResponse().getHeader("ETag");
+
+        mockMvc.perform(get(POOL7).param("voiceSet", "2").header("If-None-Match", etag2))
+                .andExpect(status().isNotModified());
+        // 다른 세트의 ETag로는 재검증되지 않는다 - 세트가 URL에 들어가 캐시 키가 갈린다.
+        mockMvc.perform(get(POOL7).param("voiceSet", "2").header("If-None-Match", etag1))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void 세트_수를_넘는_voiceSet은_404_RESOURCE_NOT_FOUND다() throws Exception {
+        // 없는 버전과 같은 취급이다 (§3.2).
+        mockMvc.perform(get(POOL7).param("voiceSet", "3"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("RESOURCE_NOT_FOUND"))
+                .andExpect(header().string("Cache-Control", containsString("no-store")));
+        // 음성 5문항 발행본은 세트 2가 없다.
+        mockMvc.perform(get(activePath()).param("voiceSet", "2"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("RESOURCE_NOT_FOUND"));
+    }
+
+    @Test
+    void 정수가_아니거나_1_미만인_voiceSet은_400_VALIDATION_FAILED다() throws Exception {
+        for (String invalid : List.of("0", "-1", "abc", "1.5")) {
+            mockMvc.perform(get(POOL7).param("voiceSet", invalid))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+        }
+    }
+
+    @Test
+    void 채움이_없는_5의_배수_풀은_세트를_순서대로_나눈다() throws Exception {
+        // 픽스처 t10 - N = 10, 세트 2 = poolIndex 6..10 (V901).
+        JsonNode items = objectMapper.readTree(mockMvc.perform(get("/v0/tests/gn-2026.09.t10").param("voiceSet", "2"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.voiceSetCount").value(2))
+                .andReturn().getResponse().getContentAsString()).get("items");
+        List<String> ids = new java.util.ArrayList<>();
+        for (JsonNode item : items) {
+            ids.add(item.get("itemId").asString());
+        }
+        assertEquals(List.of("v6", "w1", "v7", "w2", "v8", "w3", "v9", "w4", "v10", "w5"), ids);
     }
 
     // === KAN-10 AC - VOICE 5문항과 VOCABULARY 5문항이 구분되고 순서가 고정된다 ===

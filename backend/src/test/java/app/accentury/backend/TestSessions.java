@@ -35,7 +35,7 @@ public final class TestSessions {
     /** 최소 필드만 채운 세션 - token_hash는 유니크 제약(64자 hex)이 있어 id에서 유도한다. */
     public static TestSession bare(String id) {
         Instant now = Instant.now();
-        return new TestSession(id, sha256Hex(id), "gn-2026.08.1", "sv-0.3",
+        return new TestSession(id, sha256Hex(id), "gn-2026.08.1", "sv-0.3", 1,
                 null, null, null, Traffic.REAL, now, now.plus(Duration.ofMinutes(30)));
     }
 

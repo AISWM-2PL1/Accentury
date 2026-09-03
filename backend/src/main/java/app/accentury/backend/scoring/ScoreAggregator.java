@@ -41,7 +41,9 @@ public class ScoreAggregator {
      * 않으므로 억양 점수가 오르면 종합 점수와 등급도 절대 내려가지 않는다 (AC - 단조성).
      *
      * @param scoreVersion           세션이 생성 시점에 고정한 점수 버전 (§5.4)
-     * @param definition             세션의 테스트 정의 - 문항 구성과 어휘 정답표의 출처
+     * @param definition             세션의 세트 정의 (음성 5 + 어휘 5) - 문항 구성과 어휘 정답표의
+     *                               출처. 풀 정의가 아니라 {@code TestDefinitionRegistry#sessionDefinition}이
+     *                               준 세트여야 한다 (KAN-182) - 점수 규칙은 세트 도입 전과 같다.
      * @param intonationScoreByItem  음성 itemId → AI 원점수 0~100. 채점 대상은 문항당 최신 성공
      *                               시도 1건이다 ({@code AnalysisStatusService#representativeByItem}의
      *                               COMPLETED 대표, §5.1)

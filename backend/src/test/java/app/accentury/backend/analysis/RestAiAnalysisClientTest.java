@@ -10,6 +10,8 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.net.SocketTimeoutException;
 
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -306,8 +308,41 @@ class RestAiAnalysisClientTest {
         assertFalse(client.healthy());
     }
 
+    // === §4.1 meta 파트 - scriptKey는 정의에 있을 때만 실린다 (KAN-182) ===
+
+    @Test
+    void meta에_scriptKey가_실린다() {
+        server.expect(requestTo("http://ai.test/internal/v0/analyze"))
+                .andExpect(content().string(containsString("\"itemId\":\"v1\"")))
+                .andExpect(content().string(containsString("\"scriptKey\":\"1|5\"")))
+                .andExpect(content().string(containsString("\"durationMs\":3000")))
+                .andRespond(withSuccess(COMPLETED_BODY, MediaType.APPLICATION_JSON));
+
+        assertInstanceOf(AiAnalysisClient.Completed.class, client.analyze(request("1|5"), "c_test"));
+    }
+
+    @Test
+    void scriptKey가_없는_문항은_meta에서_필드를_생략한다() {
+        // 더미 정의(gn-2026.08.1)의 문항이다 - null을 싣지 않고 아예 뺀다. 스텁 엔진은 어느 쪽이든 무시한다.
+        server.expect(requestTo("http://ai.test/internal/v0/analyze"))
+                .andExpect(content().string(containsString("\"itemId\":\"v1\"")))
+                .andExpect(content().string(not(containsString("scriptKey"))))
+                .andRespond(withSuccess(COMPLETED_BODY, MediaType.APPLICATION_JSON));
+
+        assertInstanceOf(AiAnalysisClient.Completed.class, client.analyze(request(), "c_test"));
+    }
+
+    private static final String COMPLETED_BODY = """
+            { "status": "OK", "intonationScore": 78, "quality": { "code": "OK" },
+              "modelVersion": "rmvpe-0.2+dtw-0.1", "scoreVersion": "sv-0.3" }
+            """;
+
     private static AnalysisDispatcher.AnalysisRequest request() {
-        return new AnalysisDispatcher.AnalysisRequest("a_client-test", "s_client", "v1",
+        return request(null);
+    }
+
+    private static AnalysisDispatcher.AnalysisRequest request(String scriptKey) {
+        return new AnalysisDispatcher.AnalysisRequest("a_client-test", "s_client", "v1", scriptKey,
                 "gn-2026.08.1", "sv-0.3", 3000, new byte[] {82, 73, 70, 70});
     }
 }

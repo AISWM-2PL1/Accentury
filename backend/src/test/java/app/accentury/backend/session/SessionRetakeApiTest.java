@@ -151,7 +151,7 @@ class SessionRetakeApiTest extends IntegrationTest {
         seedChildren(old.id());
         long sessionsBefore = sessionRepository.count();
 
-        CreateSessionRequest oversized = new CreateSessionRequest("a".repeat(80), null);
+        CreateSessionRequest oversized = new CreateSessionRequest("a".repeat(80), null, null);
         assertThrows(RuntimeException.class, () -> sessionService.create(
                 oversized, "127.0.0.1", "Bearer " + old.token(), null));
 
@@ -183,7 +183,7 @@ class SessionRetakeApiTest extends IntegrationTest {
         Instant now = Instant.now();
         TestSession expired = sessionRepository.save(new TestSession(
                 SessionTokens.newSessionId(), SessionTokens.hash(token),
-                activeTestVersion(), activeScoreVersion(), null, null, null, Traffic.REAL,
+                activeTestVersion(), activeScoreVersion(), 1, null, null, null, Traffic.REAL,
                 now.minus(31, ChronoUnit.MINUTES), now.minus(1, ChronoUnit.MINUTES)));
 
         retake(token);
@@ -266,7 +266,7 @@ class SessionRetakeApiTest extends IntegrationTest {
         String body = mockMvc.perform(post("/v0/sessions")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + previousToken))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$").value(aMapWithSize(5)))
+                .andExpect(jsonPath("$").value(aMapWithSize(7)))
                 .andReturn().getResponse().getContentAsString();
         return objectMapper.readTree(body);
     }
@@ -285,7 +285,7 @@ class SessionRetakeApiTest extends IntegrationTest {
         analysisJobRepository.save(new AnalysisJob("a_" + UUID.randomUUID(), sessionId,
                 "v2", 1, "ik-voice-2", AnalysisJobStatus.PROCESSING, now));
         testResultRepository.save(new TestResult("r_" + UUID.randomUUID(), sessionId,
-                activeTestVersion(), activeScoreVersion(), 80, 80, 80,
+                activeTestVersion(), activeScoreVersion(), 1, 80, 80, 80,
                 "HONORARY", "명예주민", 4, 5, now, now.plus(24, ChronoUnit.HOURS)));
     }
 

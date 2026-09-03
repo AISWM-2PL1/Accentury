@@ -66,7 +66,8 @@ public class ResultService {
         }
 
         // 미완료 세션 - 만료는 인증이 이미 401로 걸렀으니 여기는 진행 중 세션뿐이다.
-        TestDefinition definition = registry.get(session.testVersion()).definition();
+        // 판정은 /complete와 같은 세션 세트 기준이다 (KAN-182).
+        TestDefinition definition = registry.sessionDefinition(session.testVersion(), session.voiceSet());
         CompletionJudge.Judgment judgment = judge.judge(session.id(), definition);
         if (!judgment.missingItems().isEmpty()) {
             throw new ItemsApiException(ErrorCode.RESULT_INCOMPLETE,

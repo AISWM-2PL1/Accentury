@@ -45,7 +45,7 @@ class TestDefinitionRegistryActivePointerTest {
         TestDefinitionRegistry.PublishedDefinition active = registry.active();
 
         assertEquals(NEWER, active.definition().testVersion());
-        assertEquals(active.definition().scoreVersion(), active.response().scoreVersion());
+        assertEquals(active.definition().scoreVersion(), active.voiceSet(1).response().scoreVersion());
     }
 
     /**

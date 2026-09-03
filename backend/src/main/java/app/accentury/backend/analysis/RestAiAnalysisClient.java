@@ -2,6 +2,7 @@ package app.accentury.backend.analysis;
 
 import app.accentury.backend.common.CorrelationIdFilter;
 import app.accentury.backend.common.ErrorCode;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -75,7 +76,7 @@ class RestAiAnalysisClient implements AiAnalysisClient {
         MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
         body.add("audio", part(new NamedBytes(request.audio()), MediaType.parseMediaType("audio/wav")));
         body.add("meta", part(objectMapper.writeValueAsString(new AnalyzeMeta(
-                        correlationId, request.itemId(), request.testVersion(),
+                        correlationId, request.itemId(), request.scriptKey(), request.testVersion(),
                         request.scoreVersion(), request.durationMs())),
                 MediaType.APPLICATION_JSON));
 
@@ -238,9 +239,13 @@ class RestAiAnalysisClient implements AiAnalysisClient {
         return false;
     }
 
-    /** §4.1 요청 meta 파트 - 순서와 이름은 명세 예시 그대로다. */
-    record AnalyzeMeta(String correlationId, String itemId, String testVersion,
-                       String scoreVersion, long durationMs) {
+    /**
+     * §4.1 요청 meta 파트 - 순서와 이름은 명세 예시 그대로다.
+     * {@code scriptKey}는 정의에 있을 때만 실린다 (KAN-182) - 없는 문항은 필드를 생략한다.
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    record AnalyzeMeta(String correlationId, String itemId, @Nullable String scriptKey,
+                       String testVersion, String scoreVersion, long durationMs) {
     }
 
     /** §4.1 응답 - 필요한 필드만 읽는다. segments, confidence, processingMs는 BE가 쓰지 않는다. */

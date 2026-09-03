@@ -128,6 +128,7 @@ class SessionServiceTest extends IntegrationTest {
         Set<String> allowed = Set.of("id", "tokenHash", "testVersion", "scoreVersion",
                 "platform", "appVersion", "campaignToken", "createdAt", "expiresAt",
                 "completedAt",    // 완료 가드 (KAN-15/16) - 시각뿐, 식별 정보 아님
+                "voiceSet",       // 응시 세트 번호 (KAN-182) - 정의의 문항 묶음일 뿐, 개인을 좁히지 않는다.
                 // 실사용자냐 검증용 스모크냐의 두 값뿐이다 (KAN-138) - 개인을 좁히지 않는다.
                 // 오히려 이 표시가 없으면 스모크가 실사용자 통계에 섞인다.
                 "traffic");
@@ -145,7 +146,7 @@ class SessionServiceTest extends IntegrationTest {
     private TestSession saveSessionExpiredAt(Instant expiresAt, String token) {
         return repository.save(new TestSession(
                 SessionTokens.newSessionId(), SessionTokens.hash(token),
-                "gn-2026.08.1", "sv-0.3", null, null, null, Traffic.REAL,
+                "gn-2026.08.1", "sv-0.3", 1, null, null, null, Traffic.REAL,
                 expiresAt.minus(30, ChronoUnit.MINUTES), expiresAt));
     }
 }

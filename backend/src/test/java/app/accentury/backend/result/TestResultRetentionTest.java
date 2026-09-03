@@ -47,7 +47,7 @@ class TestResultRetentionTest extends IntegrationTest {
     }
 
     private static TestResult result(String id, String sessionId, Instant createdAt, Instant expiresAt) {
-        return new TestResult(id, sessionId, "gn-2026.08.1", "sv-0.3",
+        return new TestResult(id, sessionId, "gn-2026.08.1", "sv-0.3", 1,
                 75, 60, 70, "HONORARY", "명예주민", 4, 5, createdAt, expiresAt);
     }
 }

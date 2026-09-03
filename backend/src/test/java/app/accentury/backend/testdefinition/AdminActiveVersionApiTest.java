@@ -230,7 +230,8 @@ class AdminActiveVersionApiTest extends IntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.activeVersion").value(BASELINE))
                 .andExpect(jsonPath("$.previousVersion").value(OLDER))
-                .andExpect(jsonPath("$.definitions.length()").value(2))
+                // 구버전(V900) + baseline + 풀 픽스처 둘(V901, KAN-182)
+                .andExpect(jsonPath("$.definitions.length()").value(4))
                 // 발행 시각 오름차순 - 구버전이 먼저다.
                 .andExpect(jsonPath("$.definitions[0].testVersion").value(OLDER))
                 .andExpect(jsonPath("$.definitions[0].dialect").value("GYEONGNAM"))
@@ -238,6 +239,15 @@ class AdminActiveVersionApiTest extends IntegrationTest {
                 .andExpect(jsonPath("$.definitions[0].active").value(false))
                 .andExpect(jsonPath("$.definitions[1].testVersion").value(BASELINE))
                 .andExpect(jsonPath("$.definitions[1].active").value(true))
+                // 어느 버전이 몇 세트짜리인지 (KAN-182, §6.2) - 롤백 전에 눈으로 확인하는 값.
+                .andExpect(jsonPath("$.definitions[1].voicePoolSize").value(5))
+                .andExpect(jsonPath("$.definitions[1].voiceSetCount").value(1))
+                .andExpect(jsonPath("$.definitions[2].testVersion").value("gn-2026.09.t7"))
+                .andExpect(jsonPath("$.definitions[2].voicePoolSize").value(7))
+                .andExpect(jsonPath("$.definitions[2].voiceSetCount").value(2))
+                .andExpect(jsonPath("$.definitions[3].testVersion").value("gn-2026.09.t10"))
+                .andExpect(jsonPath("$.definitions[3].voicePoolSize").value(10))
+                .andExpect(jsonPath("$.definitions[3].voiceSetCount").value(2))
                 // 13KB짜리 본문은 목록에 싣지 않는다 - 문항은 공개 엔드포인트(§3.2)에서 본다.
                 .andExpect(jsonPath("$.definitions[0].body").doesNotExist())
                 .andExpect(header().string("Cache-Control", containsString("no-store")));

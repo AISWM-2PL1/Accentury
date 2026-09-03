@@ -40,6 +40,7 @@ public class AnalysisStatusService {
     /**
      * 전체 음성 문항 상태 일괄 조회 (§3.4) - 분석 대기 화면(KAN-14)이 문항 수만큼
      * 폴링하지 않게 하는 엔드포인트다. 시도가 없는 문항도 NOT_SUBMITTED로 실린다.
+     * 싣는 것은 세션 세트의 음성 5문항뿐이다 (KAN-182) - 풀의 다른 문항은 이 세션의 것이 아니다.
      */
     @Transactional(readOnly = true)
     public AnalysisStatusResponse statuses(String sessionId, @Nullable String authorization) {
@@ -47,7 +48,8 @@ public class AnalysisStatusService {
         Map<String, List<AnalysisJob>> attemptsByItem = attemptsByItem(session.id());
 
         List<AnalysisStatusResponse.Item> items = new ArrayList<>();
-        for (TestDefinition.Item item : registry.get(session.testVersion()).definition().items()) {
+        TestDefinition definition = registry.sessionDefinition(session.testVersion(), session.voiceSet());
+        for (TestDefinition.Item item : definition.items()) {
             if (item.type() != TestDefinition.ItemType.VOICE) {
                 continue; // 어휘 문항은 분석 대상이 아니다 (§3.5 - AI를 거치지 않는다).
             }

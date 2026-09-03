@@ -45,14 +45,17 @@ class AdminTestDefinitionController {
     private final ActiveVersionService activeVersions;
     private final StoredTestDefinitionRepository definitions;
     private final ActiveVersionAuditRepository audits;
+    private final TestDefinitionRegistry registry;
 
     AdminTestDefinitionController(AdminAuth adminAuth, ActiveVersionService activeVersions,
                                   StoredTestDefinitionRepository definitions,
-                                  ActiveVersionAuditRepository audits) {
+                                  ActiveVersionAuditRepository audits,
+                                  TestDefinitionRegistry registry) {
         this.adminAuth = adminAuth;
         this.activeVersions = activeVersions;
         this.definitions = definitions;
         this.audits = audits;
+        this.registry = registry;
     }
 
     /**
@@ -94,10 +97,12 @@ class AdminTestDefinitionController {
     }
 
     /**
-     * 발행된 버전 목록과 활성 전환 이력 (§6 - 버전 목록·발행 이력).
+     * 발행된 버전 목록과 활성 전환 이력 (§6.2 - 버전 목록과 발행 이력).
      * <p>
      * 롤백하기 전에 무엇이 있고 어디로 돌아가게 되는지 확인하는 용도다. 정의 본문은 담지 않는다 -
      * 문항을 보려면 공개 엔드포인트({@code GET /v0/tests/{testVersion}}, §3.2)를 쓴다.
+     * 음성 풀 크기와 세트 수(KAN-182)는 사본 컬럼을 두지 않고 레지스트리(메모리)가 답한다 -
+     * 기동 시 발행본 전부를 읽어 유도해 둔 값이라 목록마다 본문을 파싱하지 않는다.
      * <p>
      * 200 조회 성공 / 401 토큰 누락이나 불일치({@code ADMIN_UNAUTHORIZED}).
      */
@@ -109,9 +114,14 @@ class AdminTestDefinitionController {
         ActiveTestVersion current = activeVersions.current();
         List<TestDefinitionListResponse.Definition> published =
                 definitions.findAllByOrderByPublishedAtAscTestVersionAsc().stream()
-                        .map(stored -> new TestDefinitionListResponse.Definition(
-                                stored.testVersion(), stored.dialect(), stored.scoreVersion(),
-                                stored.publishedAt(), stored.testVersion().equals(current.testVersion())))
+                        .map(stored -> {
+                            TestDefinitionRegistry.PublishedDefinition registered =
+                                    registry.get(stored.testVersion());
+                            return new TestDefinitionListResponse.Definition(
+                                    stored.testVersion(), stored.dialect(), stored.scoreVersion(),
+                                    stored.publishedAt(), stored.testVersion().equals(current.testVersion()),
+                                    registered.voicePoolSize(), registered.voiceSetCount());
+                        })
                         .toList();
         List<TestDefinitionListResponse.HistoryEntry> history =
                 audits.findAllByOrderByRecordedAtDescIdDesc(HISTORY_LIMIT).stream()

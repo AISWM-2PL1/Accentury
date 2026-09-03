@@ -373,7 +373,7 @@ class ResultApiTest extends IntegrationTest {
         sessionRepository.delete(stored);
         sessionRepository.flush();
         sessionRepository.save(new TestSession(stored.id(), stored.tokenHash(),
-                stored.testVersion(), stored.scoreVersion(), stored.platform(), stored.appVersion(),
+                stored.testVersion(), stored.scoreVersion(), stored.voiceSet(), stored.platform(), stored.appVersion(),
                 stored.campaignToken(), stored.traffic(), stored.createdAt(),
                 Instant.now().minusSeconds(1)));
     }
@@ -383,7 +383,7 @@ class ResultApiTest extends IntegrationTest {
         Instant past = Instant.now().minusSeconds(1);
         TestResult stored = resultRepository.findBySessionId(session.id()).orElseThrow();
         resultRepository.save(new TestResult(stored.id(), stored.sessionId(),
-                stored.testVersion(), stored.scoreVersion(),
+                stored.testVersion(), stored.scoreVersion(), stored.voiceSet(),
                 stored.intonation(), stored.vocabulary(), stored.overall(),
                 stored.tierCode(), stored.tierName(), stored.tierRank(), stored.tierCount(),
                 stored.createdAt(), past));

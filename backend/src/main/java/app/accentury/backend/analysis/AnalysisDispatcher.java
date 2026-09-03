@@ -1,5 +1,7 @@
 package app.accentury.backend.analysis;
 
+import org.jspecify.annotations.Nullable;
+
 import java.util.Arrays;
 
 /**
@@ -92,13 +94,17 @@ public interface AnalysisDispatcher {
     /**
      * AI 분석 1건에 필요한 전부 (§4.1 meta 파트와 대응).
      *
-     * @param audio WAV 원본 - 클라이언트 업로드를 그대로 패스스루한다 (§4.1).
-     *              소유권은 {@code dispatch()}로 넘어간다 (위 계약 참조).
+     * @param scriptKey 정의의 실모델 참조 키 ("1|5" 형식, KAN-182) - 실모델이 문장을 찾는 값이다.
+     *                  정의에 없는 문항(더미 정의)은 null이고 meta에서 생략된다. 스텁 엔진은
+     *                  무시한다. 실모델 어댑터가 이 키로 문장을 찾는 부분은 KAN-22다.
+     * @param audio     WAV 원본 - 클라이언트 업로드를 그대로 패스스루한다 (§4.1).
+     *                  소유권은 {@code dispatch()}로 넘어간다 (위 계약 참조).
      */
     record AnalysisRequest(
             String analysisJobId,
             String sessionId,
             String itemId,
+            @Nullable String scriptKey,
             String testVersion,
             String scoreVersion,
             long durationMs,

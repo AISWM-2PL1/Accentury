@@ -22,6 +22,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.lang.reflect.Field;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -83,6 +85,26 @@ class SchemaBaselineTest extends IntegrationTest {
     }
 
     /**
+     * 세트 다중화 (KAN-182) - 세션과 결과의 voice_set은 기본값 1이다. 세트를 모르는 옛 바이너리가
+     * 컬럼 없이 INSERT해도 세트 1 세션이 되어야 한다 (롤백 호환).
+     */
+    @Test
+    void 세트_컬럼은_기본값_1로_들어온다() {
+        Integer applied = jdbc.queryForObject(
+                "select count(*) from flyway_schema_history where version = '5' and success",
+                Integer.class);
+        assertEquals(1, applied, "V5 세트 마이그레이션이 성공 상태로 기록되어야 한다");
+
+        // PgJDBC는 Instant를 바인딩하지 못한다 - OffsetDateTime으로 넘긴다.
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        jdbc.update("insert into test_session (id, token_hash, test_version, score_version, traffic,"
+                        + " created_at, expires_at) values ('s_legacy', ?, 'gn-2026.08.1', 'sv-0.3', 'REAL', ?, ?)",
+                "0".repeat(64), now, now.plusMinutes(30));
+        assertEquals(1, sessionRepository.findById("s_legacy").orElseThrow().voiceSet(),
+                "voice_set 없이 넣은 세션은 세트 1이어야 한다");
+    }
+
+    /**
      * 활성 포인터는 한 행뿐이다 (KAN-26). 권역이 하나뿐인 MVP에서 두 번째 행이 생기면 어느
      * 쪽이 활성인지 알 수 없어지므로, 애플리케이션이 아니라 DB가 막게 해 뒀다.
      * <p>
@@ -124,7 +146,7 @@ class SchemaBaselineTest extends IntegrationTest {
         vocabAnswerRepository.save(new VocabAnswer("va_cascade", session.id(), "w1", "w1a",
                 true, "cascade-key", now));
         testResultRepository.save(new TestResult("r_cascade", session.id(),
-                "gn-2026.08.1", "sv-0.3", 80, 80, 80, "HONORARY", "명예주민", 4, 5,
+                "gn-2026.08.1", "sv-0.3", 1, 80, 80, 80, "HONORARY", "명예주민", 4, 5,
                 now, now.plus(24, ChronoUnit.HOURS)));
 
         // 애플리케이션의 벌크 삭제(KAN-107)를 일부러 우회하고 세션 행만 지운다 -

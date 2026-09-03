@@ -190,8 +190,8 @@ class ActiveVersionServiceTest {
                 if (!publishable && testVersion.equals(extraVersion)) {
                     TestDefinition definition = new TestDefinition(extraVersion, "sv-0.3",
                             extraDialect, 240, List.of());
-                    return new PublishedDefinition(definition,
-                            TestDefinitionResponse.from(definition), "\"stub\"");
+                    return new PublishedDefinition(definition, List.of(new VoiceSet(1, definition,
+                            TestDefinitionResponse.from(definition, 1, 1), "\"stub\"")));
                 }
                 return super.get(testVersion);
             }

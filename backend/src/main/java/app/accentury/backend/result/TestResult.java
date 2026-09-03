@@ -41,6 +41,13 @@ public class TestResult {
     @Column(name = "score_version", nullable = false, length = 20)
     private String scoreVersion;
 
+    /**
+     * 세션이 응시한 음성 문항 세트 번호 (KAN-182) - testVersion과 함께 "어느 10문항으로 이
+     * 점수가 나왔는가"를 재현하는 값이다. §3.7 응답에는 아직 싣지 않는다 (FE 요구가 나오면 정한다).
+     */
+    @Column(name = "voice_set", nullable = false)
+    private int voiceSet;
+
     /** 억양 점수 0~100 - 음성 5문항 20점 환산 점수의 합 (§4.3, 반올림 정수) */
     @Column(nullable = false)
     private int intonation;
@@ -81,7 +88,7 @@ public class TestResult {
         // JPA 전용
     }
 
-    public TestResult(String id, String sessionId, String testVersion, String scoreVersion,
+    public TestResult(String id, String sessionId, String testVersion, String scoreVersion, int voiceSet,
                       int intonation, int vocabulary, int overall,
                       String tierCode, String tierName, int tierRank, int tierCount,
                       Instant createdAt, Instant expiresAt) {
@@ -89,6 +96,7 @@ public class TestResult {
         this.sessionId = sessionId;
         this.testVersion = testVersion;
         this.scoreVersion = scoreVersion;
+        this.voiceSet = voiceSet;
         this.intonation = intonation;
         this.vocabulary = vocabulary;
         this.overall = overall;
@@ -118,6 +126,10 @@ public class TestResult {
 
     public String scoreVersion() {
         return scoreVersion;
+    }
+
+    public int voiceSet() {
+        return voiceSet;
     }
 
     public int intonation() {

@@ -13,13 +13,20 @@ import org.jspecify.annotations.Nullable;
  *
  * @param campaignToken 공유 유입 계측 코드 (개인 식별 불가). 저장되므로 안전한 문자만 허용한다.
  * @param client        플랫폼과 앱 버전 - 익명 집계용
+ * @param voiceSet      응시할 음성 문항 세트 번호 (1부터, KAN-182). 생략 시 1. 세트 선택은
+ *                      클라이언트가 한다 (2026-09-01 확정) - 웹은 세트 1 고정, 앱은 전체 세트
+ *                      선택 UI. 활성 정의의 세트 수 밖이면 400 {@code VALIDATION_FAILED}이고,
+ *                      그 검증은 {@link SessionService}가 활성 정의 스냅샷 하나에서 한다.
+ *                      정수가 아닌 값은 프레임워크가 파싱 단계에서 400으로 끊는다.
  */
 public record CreateSessionRequest(
         @Nullable
         @Pattern(regexp = "[A-Za-z0-9._-]{1,64}", message = "영숫자와 ._- 조합 최대 64자만 허용됩니다")
         String campaignToken,
 
-        @Nullable @Valid Client client
+        @Nullable @Valid Client client,
+
+        @Nullable Integer voiceSet
 ) {
 
     /**

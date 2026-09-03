@@ -37,7 +37,7 @@ class SessionApiTest extends IntegrationTest {
     // === KAN-9 AC - 유효한 요청은 새 세션을 반환한다 ===
 
     @Test
-    void 유효한_요청은_201과_명세의_5개_필드를_반환한다() throws Exception {
+    void 유효한_요청은_201과_명세의_7개_필드를_반환한다() throws Exception {
         mockMvc.perform(post("/v0/sessions")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -50,9 +50,47 @@ class SessionApiTest extends IntegrationTest {
                 // KAN-9 AC - 응답에 testVersion과 scoreVersion이 모두 포함된다.
                 .andExpect(jsonPath("$.testVersion").value("gn-2026.08.1"))
                 .andExpect(jsonPath("$.scoreVersion").value("sv-0.3"))
+                // KAN-182 - 세트를 모르는 클라이언트는 세트 1이고, 현행 발행본은 세트가 하나다.
+                .andExpect(jsonPath("$.voiceSet").value(1))
+                .andExpect(jsonPath("$.voiceSetCount").value(1))
                 .andExpect(jsonPath("$.expiresAt").exists())
-                // §3.1 응답은 정확히 5개 필드 - 늘면 이 테스트가 알려준다.
-                .andExpect(jsonPath("$").value(aMapWithSize(5)));
+                // §3.1 응답은 정확히 7개 필드 - 늘면 이 테스트가 알려준다.
+                .andExpect(jsonPath("$").value(aMapWithSize(7)));
+    }
+
+    // === KAN-182 - 세트 선택 ===
+
+    @Test
+    void voiceSet_1은_명시해도_생략과_같다() throws Exception {
+        mockMvc.perform(post("/v0/sessions")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{ \"voiceSet\": 1 }"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.voiceSet").value(1));
+    }
+
+    @Test
+    void 활성_정의의_세트_수_밖이면_400_VALIDATION_FAILED다() throws Exception {
+        // 활성 발행본(gn-2026.08.1)은 음성 5문항이라 세트가 하나뿐이다.
+        mockMvc.perform(post("/v0/sessions")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{ \"voiceSet\": 2 }"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+        mockMvc.perform(post("/v0/sessions")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{ \"voiceSet\": 0 }"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
+    @Test
+    void voiceSet이_정수가_아니면_400_VALIDATION_FAILED다() throws Exception {
+        mockMvc.perform(post("/v0/sessions")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{ \"voiceSet\": \"first\" }"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
     }
 
     @Test

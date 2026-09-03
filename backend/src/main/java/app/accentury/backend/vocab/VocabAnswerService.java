@@ -65,9 +65,10 @@ public class VocabAnswerService {
         // 그 이상은 재전송이거나 남용이다.
         rateLimits.check(RateLimits.Scope.VOCAB_ANSWER, session.id());
         String key = IdempotencyKeys.require(idempotencyKey);
-        // 없는 문항(422)과 음성 문항(409)을 여기서 끊는다 (§3.5, KAN-23과 공용 규칙).
+        // 없는 문항(422)과 음성 문항(409)을 여기서 끊는다 (§3.5, KAN-23과 공용 규칙). 어휘 5문항은
+        // 모든 세트에 들어 있으므로 세트 기준 검증이 어휘 답안을 새로 거르지는 않는다 (KAN-182).
         TestDefinition.Item item = registry.requireItem(
-                session.testVersion(), itemId, TestDefinition.ItemType.VOCABULARY);
+                session.testVersion(), session.voiceSet(), itemId, TestDefinition.ItemType.VOCABULARY);
         String choiceId = requireChoiceId(request);
         // 이 문항의 선택지가 아니면 거절한다 - 같은 버전의 다른 문항 선택지도 포함 (§3.5)
         boolean known = item.choices() != null && item.choices().stream()
@@ -139,13 +140,15 @@ public class VocabAnswerService {
      * 진행도 응답 (§3.5) - 어휘는 답안 저장, 음성은 업로드 시도 1건 이상을 제출로 센다
      * (2026-08-11 확정). 재전송 응답의 진행도는 저장 시점이 아니라 현재 값이다 -
      * "같은 결과"(AC)는 답안 수락에 대한 계약이고 진행도는 정보성 필드다.
+     * total은 세션 세트의 문항 수(10)다 (KAN-182) - 풀이 커져도 진행도의 분모는 바뀌지 않는다.
+     * 제출 검증이 세트 밖 음성 문항을 막으므로 분자도 세트 기준이다.
      * 세션 행 잠금 아래에서만 호출된다 - 잠금 밖에서는 재응시 폐기와 경합해 방금 저장한
      * 답안이 빠진 진행도를 읽을 수 있다.
      */
     private VocabAnswerResponse response(TestSession session) {
         long answered = repository.countBySessionId(session.id())
                 + analysisJobRepository.countDistinctSubmittedItems(session.id());
-        int total = registry.get(session.testVersion()).definition().items().size();
+        int total = registry.sessionDefinition(session.testVersion(), session.voiceSet()).items().size();
         return new VocabAnswerResponse(true, (int) answered, total);
     }
 
