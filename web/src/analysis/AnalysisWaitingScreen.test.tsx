@@ -531,7 +531,8 @@ describe('텍스트 히어로 (KAN-178)', () => {
       fetchImpl: fetchFor({ analyses: () => jsonResponse(200, statusesBody(Array(5).fill('PROCESSING'))) }),
     })
 
-    expect(screen.getByText('분석 중입니다')).toBeInTheDocument()
+    // 인트로와 달리 여기서는 히어로가 장식이다 (KAN-178) — 상태를 실어 나르는 h1이 아래에 있다
+    expect(screen.getByText('분석 중입니다')).toHaveAttribute('aria-hidden', 'true')
     // 히어로는 "분석 중" 한 상태를 붙박이로 말하고, 제목은 그 안에서 무엇이 진행 중인지를 말한다
     expect(screen.getByRole('heading', { level: 1, name: '결과를 만들고 있어요' })).toBeInTheDocument()
   })

@@ -112,13 +112,17 @@ export function IntroScreen({
           종이 일러스트(확성기를 든 사람)를 걷어내고 글자를 세웠다 (KAN-178). 그림은 이 앱이
           무엇을 하는 곳인지 말하지 않았다 — 첫 화면은 사용자에게 말을 걸어야 하고, 그건
           그리는 것보다 적는 편이 빠르다.
-        */}
-        <div className="illustration illustration--intro">
-          <TextHero>사투리 좀 치나?</TextHero>
-        </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-          <h1 className="type-title">사투리 억양 테스트</h1>
+          히어로가 이 화면의 h1이다. 아래에 있던 제목("사투리 억양 테스트")을 걷어냈다 —
+          큰 글자로 말을 건 바로 밑에서 같은 말을 정색하고 되풀이하는 꼴이었고, 사용자가
+          그 두 줄에서 새로 얻는 정보가 없었다. 화면 이름을 말하는 것이 히어로 하나뿐이므로
+          `heading`으로 세운다 (`TextHero` 주석 참고).
+
+          제목이 빠진 만큼 히어로를 192px 슬롯에서 꺼내 부제와 한 덩어리로 묶었다 —
+          근거는 `.intro-hero` 주석에 적었다.
+        */}
+        <div className="intro-hero">
+          <TextHero heading>사투리 좀 치나?</TextHero>
           <p className="type-body-sm" style={{ color: 'var(--color-muted-foreground)' }}>
             짧은 테스트로 내 억양이
             <br />
