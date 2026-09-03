@@ -106,7 +106,8 @@ module "edge" {
   web_acl_arn         = module.waf.web_acl_arn
 }
 
-# backend - ECS Fargate 서비스 (KAN-165). 0.5 vCPU / 2 GB 온디맨드 1개, 오토스케일링은 KAN-168.
+# backend - ECS Fargate 서비스 (KAN-165). 0.5 vCPU / 2 GB 온디맨드, 목표 추적 오토스케일링 min 1 max 3 (KAN-168).
+# min/max와 목표값은 두 환경이 같아야 하므로 tfvars가 아니라 모듈 기본값이다.
 # 이미지 태그는 SSM IMAGE_TAG(파이프라인 소유)를 읽으므로 첫 apply 전에 그 파라미터가 있어야 한다 (README).
 module "fargate" {
   source = "../../modules/fargate"
@@ -119,6 +120,9 @@ module "fargate" {
   metric_namespace           = local.backend_metric_namespace
   target_group_arn           = module.edge.target_group_arn
   alb_listener_arn           = module.edge.https_listener_arn
+  # 목표 추적 지표(ALBRequestCountPerTarget)의 resource_label 재료 (KAN-168).
+  alb_arn_suffix          = module.edge.alb_arn_suffix
+  target_group_arn_suffix = module.edge.target_group_arn_suffix
   # 태스크 정의 secrets로 전부 주입한다 - 실행 역할도 이 목록만 읽는다.
   config_parameter_names = module.config.parameter_names
 }

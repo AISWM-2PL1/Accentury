@@ -7,8 +7,8 @@
 #   태스크 정의   패밀리 accentury-{env}-backend. 0.5 vCPU / 2 GB, x86_64, 컨테이너 backend 하나. 환경 변수는
 #                 SSM /accentury/{env}/* 를 secrets로 주입한다 (목록은 config 모듈 출력이고 정본은 backend의
 #                 DeploymentConfigGuard.SSM_NAMES다). stopTimeout 120초 (KAN-166 종료 예산).
-#   서비스        backend. desired 1 (오토스케일링은 KAN-168). ALB 대상 그룹(ip)에 붙고 회로 차단기와 자동
-#                 롤백을 켠다. 퍼블릭 서브넷 + 퍼블릭 IP다 - VPC 엔드포인트 5종(월 약 47달러)을 두지 않는 결정이고
+#   서비스        backend. 처음 desired 1이고 그 뒤는 Application Auto Scaling이 min 1에서 max 3 사이로 조절한다
+#                 (KAN-168, 아래 "오토스케일링"). ALB 대상 그룹(ip)에 붙고 회로 차단기와 자동 롤백을 켠다. 퍼블릭 서브넷 + 퍼블릭 IP다 - VPC 엔드포인트 5종(월 약 47달러)을 두지 않는 결정이고
 #                 (티켓), 인바운드는 backend-sg가 alb-sg만 허용하므로 닫혀 있다.
 #   역할 2개      실행 역할(ECS 에이전트 몫: ECR pull, awslogs, SSM 파라미터 읽기)과 태스크 역할(애플리케이션
 #                 몫: RDS 마스터 시크릿, CloudWatch 지표). EC2 시절 인스턴스 역할 하나가 둘로 나뉜다.
@@ -286,7 +286,10 @@ resource "aws_ecs_service" "backend" {
   name            = local.container_name
   cluster         = aws_ecs_cluster.this.arn
   task_definition = aws_ecs_task_definition.backend.arn
-  desired_count   = var.desired_count
+
+  # 첫 생성 때의 값이다. 그 뒤로는 목표 추적 정책(아래)이 desired를 바꾸므로 Terraform은 이 속성을 보지 않는다
+  # (lifecycle ignore_changes) - 안 그러면 스케일아웃된 상태에서 apply할 때마다 1로 되돌려 태스크를 죽인다.
+  desired_count = var.desired_count
 
   # launch_type 대신 전략으로 - Spot을 붙일 때 이 블록만 바꾼다 (파일 머리).
   capacity_provider_strategy {
@@ -342,4 +345,66 @@ resource "aws_ecs_service" "backend" {
     aws_iam_role_policy_attachment.execution_managed,
     aws_iam_role_policy.task,
   ]
+
+  lifecycle {
+    # 오토스케일링(KAN-168)이 소유하는 값. 프로바이더 문서가 권하는 방식이다 - min/max를 바꾸려면 아래 scalable
+    # target의 변수를 바꾼다.
+    ignore_changes = [desired_count]
+  }
+}
+
+# ---- 오토스케일링 (KAN-168) ----
+
+# Application Auto Scaling 목표 추적. Fargate가 해 주는 것은 "늘리라고 결정된 뒤의 실행"뿐이라 정책이 없으면
+# 태스크 수는 고정이다. 지표는 ALBRequestCountPerTarget(대상 그룹의 태스크당 분당 요청 수, 1분 Sum)이고 목표값
+# 하나로 늘리기와 줄이기가 같이 정해진다. CPU가 아니라 요청 수인 이유는 스파이크 반응이 빠르고(CPU 평균은 태스크
+# 하나가 포화된 뒤에야 오른다), 이 서비스의 부하가 세션 생성과 폴링이라는 가벼운 요청의 개수라서다.
+#
+# 상한 3의 근거: AI 서버가 EC2 1대라 backend를 늘려도 분석 처리량은 늘지 않는다. backend 확장은 세션 생성과 폴링
+# 요청을 버티는 용도이고, 분석 대기는 혼잡 판정(pollAfterMs 3000ms, KAN-167)이 흡수한다. 하한 1의 근거는
+# variables.tf autoscaling_min_capacity.
+#
+# 목표 추적은 CloudWatch 경보 2개를 스스로 만든다 (이름 TargetTracking-service/<클러스터>/<서비스>-AlarmHigh|Low-<id>,
+# 출력 autoscaling_alarm_names). 조건 길이가 다르다 - AlarmHigh(스케일아웃)는 1분 x 3회 연속, AlarmLow(스케일인)는
+# 1분 x 15회 연속이라 부하를 끊어도 15분은 줄지 않는다. 고장이 아니다. 경보는 SNS에 붙이지 않는다 - 늘고 주는
+# 것은 정상 동작이고, 상한에 닿아 못 늘리는 상태는 backend-cpu-high(monitoring)가 대신 드러낸다.
+#
+# 서비스 연결 역할 AWSServiceRoleForApplicationAutoScaling_ECSService는 bootstrap이 만든다 (bootstrap/ecs.tf) -
+# 첫 RegisterScalableTarget이 자동 생성하려 들지만 호출자에게 iam:CreateServiceLinkedRole이 필요하고 두 환경
+# 스택이 각자 만들면 두 번째가 EntityAlreadyExists로 실패한다 (ECS 역할과 같은 이유).
+
+resource "aws_appautoscaling_target" "backend" {
+  service_namespace  = "ecs"
+  scalable_dimension = "ecs:service:DesiredCount"
+  resource_id        = "service/${aws_ecs_cluster.this.name}/${aws_ecs_service.backend.name}"
+  min_capacity       = var.autoscaling_min_capacity
+  max_capacity       = var.autoscaling_max_capacity
+
+  lifecycle {
+    precondition {
+      condition     = var.desired_count >= var.autoscaling_min_capacity && var.desired_count <= var.autoscaling_max_capacity
+      error_message = "desired_count(${var.desired_count})는 autoscaling_min_capacity(${var.autoscaling_min_capacity})와 autoscaling_max_capacity(${var.autoscaling_max_capacity}) 사이여야 합니다 - 첫 생성 직후 스케일링이 즉시 되돌립니다 (KAN-168)."
+    }
+  }
+}
+
+# resource_label은 "app/<alb>/<id>/targetgroup/<tg>/<id>"다 - ALB arn_suffix와 대상 그룹 arn_suffix를 /로 이은 것.
+# 목표값 산정 근거는 variables.tf autoscaling_target_requests_per_minute (KAN-169 부하 시험이 확정한다).
+resource "aws_appautoscaling_policy" "backend_requests" {
+  name               = "${local.family}-requests-per-task"
+  policy_type        = "TargetTrackingScaling"
+  service_namespace  = aws_appautoscaling_target.backend.service_namespace
+  scalable_dimension = aws_appautoscaling_target.backend.scalable_dimension
+  resource_id        = aws_appautoscaling_target.backend.resource_id
+
+  target_tracking_scaling_policy_configuration {
+    target_value       = var.autoscaling_target_requests_per_minute
+    scale_out_cooldown = var.autoscaling_scale_out_cooldown
+    scale_in_cooldown  = var.autoscaling_scale_in_cooldown
+
+    predefined_metric_specification {
+      predefined_metric_type = "ALBRequestCountPerTarget"
+      resource_label         = "${var.alb_arn_suffix}/${var.target_group_arn_suffix}"
+    }
+  }
 }

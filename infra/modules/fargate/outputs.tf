@@ -42,3 +42,18 @@ output "log_group_name" {
   value       = aws_cloudwatch_log_group.backend.name
   description = "backend 컨테이너 로그 그룹 (/accentury/{env}/backend). aws logs tail로 본다."
 }
+
+output "autoscaling_resource_id" {
+  value       = aws_appautoscaling_target.backend.resource_id
+  description = "Application Auto Scaling 대상 (service/<클러스터>/<서비스>, KAN-168). 스케일링 이력: aws application-autoscaling describe-scaling-activities --service-namespace ecs --resource-id <이 값>"
+}
+
+output "autoscaling_policy_name" {
+  value       = aws_appautoscaling_policy.backend_requests.name
+  description = "목표 추적 정책 이름 (KAN-168)"
+}
+
+output "autoscaling_alarm_names" {
+  value       = [for arn in aws_appautoscaling_policy.backend_requests.alarm_arns : element(split(":alarm:", arn), 1)]
+  description = "목표 추적이 만든 CloudWatch 경보 2개 (KAN-168). AlarmHigh = 스케일아웃(1분 x 3회), AlarmLow = 스케일인(1분 x 15회). 이 모듈이 만든 것이 아니라 정책이 만든 것이라 monitoring 모듈의 alarm_names에는 없다."
+}
