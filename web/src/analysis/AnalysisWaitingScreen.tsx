@@ -26,7 +26,7 @@
 import { Fragment, useEffect, useRef } from 'react'
 import { Button, StatusBlock } from '../ui'
 import { CheckSmallIcon } from '../ui/icons'
-import { WaitingHero } from '../ui/illustrations/WaitingHero'
+import { TextHero } from '../ui/TextHero'
 import { ANALYSIS_STAGES, analysisStage } from './analysisStage'
 import type { VoiceItem } from '../progress/testDefinition'
 import type { FetchLike } from '../progress/fetchTestDefinition'
@@ -241,13 +241,22 @@ export function AnalysisWaitingScreen({
       <div className={waiting ? 'analysis-body analysis-body--centered' : 'analysis-body'}>
         {waiting && (
           <div className="analysis-waiting">
+            {/*
+              계단 일러스트를 걷어내고 글자를 세웠다 (KAN-178). 그림 자리를 그대로 쓰므로
+              아래 제목·단계 목록은 있던 자리에 남는다.
+            */}
             <div className="illustration illustration--waiting">
-              <WaitingHero />
+              <TextHero>분석 중입니다</TextHero>
             </div>
             {/*
               대기 문구가 StatusBlock의 본문에서 제목(h1)으로 올라왔다. 이 화면에는 다른 제목이
               없어 이 문장이 곧 화면의 이름이고, 시안도 히어로 아래 가장 큰 글자로 둔다.
               문구 자체는 그대로라 대기 화면을 기다리는 테스트가 그대로 통과한다.
+
+              히어로가 생긴 뒤에도 이 제목을 남긴 이유는 둘이 다른 말을 하기 때문이다:
+              히어로는 "분석 중"이라는 상태 하나를 붙박이로 말하고, 이 줄은 그 안에서
+              무엇이 진행 중인지(만드는 중 / 다 되어 넘어가는 중)를 갈아 끼운다. 히어로가
+              `aria-hidden`이라 스크린 리더에는 이 제목 한 줄만 화면 이름으로 들어간다.
             */}
             <h1 className="type-headline">
               {status.kind === 'READY' ? '결과 화면으로 이동합니다' : '결과를 만들고 있어요'}

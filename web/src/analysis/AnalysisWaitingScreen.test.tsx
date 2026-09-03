@@ -524,3 +524,15 @@ describe('일시적 오류', () => {
     expect(screen.getByText('결과를 만들고 있어요')).toBeInTheDocument()
   })
 })
+
+describe('텍스트 히어로 (KAN-178)', () => {
+  it('그림 대신 "분석 중입니다"가 서고, 진행 상태를 말하는 제목은 그대로 남는다', async () => {
+    await renderScreen({
+      fetchImpl: fetchFor({ analyses: () => jsonResponse(200, statusesBody(Array(5).fill('PROCESSING'))) }),
+    })
+
+    expect(screen.getByText('분석 중입니다')).toBeInTheDocument()
+    // 히어로는 "분석 중" 한 상태를 붙박이로 말하고, 제목은 그 안에서 무엇이 진행 중인지를 말한다
+    expect(screen.getByRole('heading', { level: 1, name: '결과를 만들고 있어요' })).toBeInTheDocument()
+  })
+})

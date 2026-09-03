@@ -3,7 +3,7 @@ import { requestMicrophonePermission, type MicPermission } from '../audio/microp
 import { detectStorePlatform } from '../audio/storeLink'
 import { requestMicPermission } from '../bridge/bridge'
 import { Button } from '../ui'
-import { IntroHero } from '../ui/illustrations/IntroHero'
+import { TextHero } from '../ui/TextHero'
 import {
   ESTIMATED_MINUTES,
   START_FAILED_MESSAGE,
@@ -109,12 +109,12 @@ export function IntroScreen({
     <main className="screen">
       <div className="screen__body">
         {/*
-          이모지 히어로(🎯⭐✨)를 오려 낸 종이 일러스트로 갈았다 (KAN-161 3단계). 이모지는
-          시스템이 자기 색으로 그려서 잉크 한 색 화면에 유일한 색조로 남았고, 기기마다 다른
-          그림이 나왔다 — 그림을 우리가 그리면 둘 다 사라진다.
+          종이 일러스트(확성기를 든 사람)를 걷어내고 글자를 세웠다 (KAN-178). 그림은 이 앱이
+          무엇을 하는 곳인지 말하지 않았다 — 첫 화면에서 사용자가 알아야 할 것은 "여기서
+          내 사투리 등급이 나온다"이고, 그건 그리는 것보다 적는 편이 빠르다.
         */}
         <div className="illustration illustration--intro">
-          <IntroHero />
+          <TextHero>니 사투리 몇 등급?</TextHero>
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
