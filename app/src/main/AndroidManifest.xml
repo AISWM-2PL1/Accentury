@@ -30,16 +30,52 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.Accentury">
+        <!--
+          launchMode="singleTask" (KAN-32 2단계). 공유 링크는 앱이 살아 있는 동안에도 눌린다 —
+          기본 standard였다면 그때마다 MainActivity가 하나 더 쌓이고, WebView도 함께 하나 더 뜬다.
+          진행 중이던 응시 위에 인트로를 든 두 번째 WebView가 얹히는 셈이라, 뒤로 가기로만 원래
+          화면에 닿을 수 있고 녹음·업로드는 보이지 않는 화면에서 계속 돈다. singleTask면 링크가
+          살아 있는 인스턴스의 onNewIntent로 들어와 화면이 하나로 유지된다.
+        -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
+            android:launchMode="singleTask"
             android:theme="@style/Theme.Accentury"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!--
+              공유 링크를 앱으로 받는 입구 (KAN-32 2단계).
+
+              host 목록은 web/AppLink.kt의 APP_LINK_ORIGINS와 한 몸이어야 한다 — 매니페스트만
+              늘리면 OS는 링크를 앱에 넘기는데 parseAppLink가 그 origin을 몰라 진입이 성립하지
+              않고, 반대면 코드만 알고 링크는 브라우저로 간다. 어긋나면 AppLinkTest가 이 파일을
+              직접 읽어 실패한다.
+
+              path는 정확히 /t·/t/다. prefix로 열어 두면 /privacy·/terms 같은 페이지까지 앱이
+              가져가는데, 그 화면들은 브라우저에 남아야 한다.
+
+              autoVerify는 각 host의 /.well-known/assetlinks.json이 이 앱의 서명 지문을 담고
+              있어야 성립한다 (KAN-32 4단계). 검증 전에는 링크가 앱 선택 시트로 떨어질 뿐,
+              아래 결선은 그대로 동작한다.
+            -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data android:scheme="https" />
+                <data android:host="accentury.app" />
+                <data android:host="staging.accentury.app" />
+                <data android:path="/t" />
+                <data android:path="/t/" />
             </intent-filter>
         </activity>
     </application>

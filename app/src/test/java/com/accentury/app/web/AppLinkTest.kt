@@ -2,7 +2,11 @@ package com.accentury.app.web
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.w3c.dom.Element
+import java.io.File
+import javax.xml.parsers.DocumentBuilderFactory
 
 class AppLinkTest {
 
@@ -146,4 +150,81 @@ class AppLinkTest {
             parseAppLink("https://accentury.app/t?c=a%26b", allowed),
         )
     }
+
+    // --- 진입으로 인정하는 origin 목록 (KAN-32 2단계) ---
+
+    @Test
+    fun `디버그 웹 origin이 App Link 진입 목록에 더해진다`() {
+        // 에뮬레이터에서 adb로 링크 진입을 그대로 밟아 보려면 HTTPS가 아닌 이 origin이 필요하다.
+        val origins = appLinkOrigins("http://10.0.2.2:5173")
+
+        assertTrue(origins.containsAll(APP_LINK_ORIGINS))
+        assertTrue(origins.contains("http://10.0.2.2:5173"))
+    }
+
+    @Test
+    fun `릴리스 웹 origin은 이미 목록 안이라 아무것도 늘리지 않는다`() {
+        assertEquals(APP_LINK_ORIGINS, appLinkOrigins("https://accentury.app"))
+    }
+
+    // --- 매니페스트와 코드가 같은 것을 가리키는지 (KAN-32 2단계) ---
+
+    /**
+     * App Link는 매니페스트(OS가 링크를 앱에 넘길지 정한다)와 [parseAppLink](앱이 그 링크를 진입으로
+     * 인정할지 정한다)가 **둘 다** 맞아야 성립한다. 한쪽만 고쳐도 컴파일은 통과하고 단위 테스트도
+     * 조용한데, 링크만 조용히 죽는다 — 그 어긋남을 잡으라고 매니페스트를 직접 읽는 테스트다.
+     */
+    @Test
+    fun `매니페스트의 App Link 필터가 코드의 origin 목록과 같다`() {
+        val activity = mainActivityElement()
+        assertEquals("singleTask", activity.getAttributeNS(ANDROID_NS, "launchMode"))
+
+        val filter = viewIntentFilter(activity)
+        assertEquals("true", filter.getAttributeNS(ANDROID_NS, "autoVerify"))
+
+        val data = childElements(filter, "data")
+        assertEquals(
+            APP_LINK_ORIGINS.map { it.removePrefix("https://") }.toSet(),
+            data.mapNotNull { it.attributeOrNull("host") }.toSet(),
+        )
+        assertEquals(setOf("https"), data.mapNotNull { it.attributeOrNull("scheme") }.toSet())
+        assertEquals(setOf("/t", "/t/"), data.mapNotNull { it.attributeOrNull("path") }.toSet())
+
+        val categories = childElements(filter, "category").mapNotNull { it.attributeOrNull("name") }.toSet()
+        assertTrue(categories.contains("android.intent.category.DEFAULT"))
+        assertTrue(categories.contains("android.intent.category.BROWSABLE"))
+    }
+
+    private fun mainActivityElement(): Element {
+        // Gradle 단위 테스트의 작업 디렉터리는 모듈(app/)이다. 레포 루트에서 돌리는 경우도 받아 준다.
+        val manifest = listOf(File("src/main/AndroidManifest.xml"), File("app/src/main/AndroidManifest.xml"))
+            .firstOrNull(File::exists)
+            ?: error("AndroidManifest.xml을 찾지 못했다 (cwd=${File(".").absolutePath})")
+        val document = DocumentBuilderFactory.newInstance()
+            // android: 접두사가 아니라 네임스페이스로 속성을 읽는다 — 접두사는 파일마다 다를 수 있다.
+            .apply { isNamespaceAware = true }
+            .newDocumentBuilder()
+            .parse(manifest)
+        val activities = document.getElementsByTagName("activity")
+        for (index in 0 until activities.length) {
+            val element = activities.item(index) as Element
+            if (element.getAttributeNS(ANDROID_NS, "name") == ".MainActivity") return element
+        }
+        error(".MainActivity 선언을 찾지 못했다")
+    }
+
+    private fun viewIntentFilter(activity: Element): Element =
+        childElements(activity, "intent-filter").single { filter ->
+            childElements(filter, "action").any { it.attributeOrNull("name") == "android.intent.action.VIEW" }
+        }
+
+    private fun childElements(parent: Element, tag: String): List<Element> =
+        (0 until parent.childNodes.length)
+            .mapNotNull { parent.childNodes.item(it) as? Element }
+            .filter { it.tagName == tag }
+
+    private fun Element.attributeOrNull(name: String): String? =
+        getAttributeNS(ANDROID_NS, name).takeIf { it.isNotEmpty() }
 }
+
+private const val ANDROID_NS = "http://schemas.android.com/apk/res/android"

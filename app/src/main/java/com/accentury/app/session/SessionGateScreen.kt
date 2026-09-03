@@ -30,6 +30,7 @@ import kotlinx.coroutines.ensureActive
  * 취소이고(코루틴 취소가 소켓까지 내려간다) 다시 들어오면 다시 건다.
  *
  * @param gate 상태 머신. 결과 판정과 재시도가 전부 여기로 모인다
+ * @param campaignToken App Link로 들어온 공유 유입 계측 코드 (KAN-32). 링크 진입이 아니면 null
  * @param onBackToIntro 다시 시도해도 소용없는 실패에서 인트로로 돌려보낸다
  */
 @Composable
@@ -37,6 +38,7 @@ fun SessionGateScreen(
     gate: SessionGateController,
     client: SessionClient,
     appVersion: String,
+    campaignToken: String?,
     onBackToIntro: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -55,7 +57,16 @@ fun SessionGateScreen(
          * 결과 화면의 재응시는 이 경로를 타지 않는다 — 게이트 화면이 뜨지 않는 자리에서 벌어지므로
          * MainActivity가 직접 건다 (SessionGateController.beginRetest).
          */
-        val result = client.create(appVersion = appVersion, previousToken = gate.pendingPreviousToken)
+        /*
+         * 유입 코드는 세션에도 실어 보낸다 (KAN-32). 앱이 세션을 직접 만드는 구조라(KAN-34) 진입
+         * URL의 `?c=`만으로는 서버 쪽 세션에 유입 경로가 남지 않는다 — 링크에서 온 것이 URL과
+         * 세션 양쪽에 같은 값으로 실려야 공유 유입이 끝까지 이어진다.
+         */
+        val result = client.create(
+            appVersion = appVersion,
+            previousToken = gate.pendingPreviousToken,
+            campaignToken = campaignToken,
+        )
 
         // 취소된 뒤 도착한 앞 시도의 결과는 버린다. 재시도가 이 이펙트를 다시 걸었는데 앞 시도의
         // 실패가 뒤늦게 반영되면, 방금 시작한 '준비 중'이 실패 화면으로 되돌아간다.

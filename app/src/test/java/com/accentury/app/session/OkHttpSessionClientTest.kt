@@ -8,6 +8,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -75,6 +76,31 @@ class OkHttpSessionClientTest {
         assertEquals("1.2.3", client["appVersion"]!!.jsonPrimitive.content)
         // 앱 최초 응시에는 유입 코드가 없다 — 없는 값을 빈 문자열로 만들어 보내지 않는다.
         assertNull(body["campaignToken"])
+    }
+
+    @Test
+    fun `App Link 유입 코드를 바디에 실어 보낸다 (KAN-32)`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(201).setBody(createdBody))
+
+        client().create(appVersion = "1.2.3", campaignToken = "kko_share")
+
+        // 직렬화 결과를 그대로 본다 — 서버가 읽는 것이 이 문자열이고, 파싱해서 보면 키가 어떤
+        // 꼴로 실렸는지(누락인지 null인지)가 지워진다.
+        val body = server.takeRequest().body.readUtf8()
+        assertTrue(body, body.contains(""""campaignToken":"kko_share""""))
+        assertTrue(body, body.contains(""""platform":"ANDROID""""))
+        assertTrue(body, body.contains(""""appVersion":"1.2.3""""))
+    }
+
+    @Test
+    fun `링크 진입이 아니면 campaignToken 키 자체를 빼고 보낸다 (KAN-32)`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(201).setBody(createdBody))
+
+        client().create(appVersion = "1.0")
+
+        // `"campaignToken":null`로 나가면 서버 @Pattern에 걸릴 수 있다 — 없는 값은 키를 빼야 한다.
+        val body = server.takeRequest().body.readUtf8()
+        assertFalse(body, body.contains("campaignToken"))
     }
 
     @Test
