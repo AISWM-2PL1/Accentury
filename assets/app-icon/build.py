@@ -383,10 +383,11 @@ def build_ios(motif: Image.Image) -> list[Path]:
 
 
 def feature_graphic(motif: Image.Image) -> Image.Image:
-    """Play 스토어 피처 그래픽. 좌측 도상 + 우측 앱 이름 종이 조각 + 태그라인.
+    """Play 스토어 피처 그래픽. 좌측 도상 + 우측 앱 이름 + 태그라인.
 
-    글자는 공유 카드(`assets/characters/build.py`)와 같은 처리다 — 크림 조각에 잉크 테두리와
-    오프셋 그림자. 앱 이름 말고 다른 문구는 넣지 않는다(Play 정책: 기기 사진·평점·가격 금지).
+    앱 이름은 잉크 글자만 둔다 — 공유 카드처럼 종이 조각(테두리·그림자)에 넣었더니 도상의 종이 림과
+    겹쳐 사각형이 하나 더 보이는 느낌이라 뺐다(2026-09-03). 앱 이름 말고 다른 문구는 넣지
+    않는다(Play 정책: 기기 사진·평점·가격 금지).
     """
     if not FONT_JUA.exists():
         raise SystemExit(f"Jua 폰트가 없다: {FONT_JUA}")
@@ -401,7 +402,7 @@ def feature_graphic(motif: Image.Image) -> Image.Image:
     left = fx + fig.width + 56
     avail = FEATURE_W - margin - left
 
-    # 앱 이름 조각. 폭이 남는 여백을 넘으면 글자를 줄인다 — 잘린 이름이 스토어에 걸리는 게 최악이다.
+    # 앱 이름. 폭이 남는 여백을 넘으면 글자를 줄인다 — 잘린 이름이 스토어에 걸리는 게 최악이다.
     pad_x, pad_y = 26, 12
     size = 104
     while True:
@@ -417,10 +418,8 @@ def feature_graphic(motif: Image.Image) -> Image.Image:
     block_h = chip_h + gap + 38
     top = (FEATURE_H - block_h) // 2
 
-    draw.rectangle([left + 3, top + 4, left + chip_w + 3, top + chip_h + 4], fill=PAPER_SHADOW)
-    draw.rectangle([left, top, left + chip_w, top + chip_h], fill=CREAM, outline=INK, width=4)
     draw.text((left + pad_x, top + chip_h // 2), FEATURE_TITLE, font=title_font, fill=INK, anchor="lm")
-    # 태그라인은 조각 폭 기준 가운데 정렬 — 왼쪽 맞춤이면 조각보다 훨씬 짧아 오른쪽이 비어 보인다
+    # 태그라인은 앱 이름 폭 기준 가운데 정렬 — 왼쪽 맞춤이면 이름보다 훨씬 짧아 오른쪽이 비어 보인다
     draw.text((left + chip_w // 2, top + chip_h + gap), FEATURE_SUB, font=sub_font, fill=MUTED, anchor="ma")
     return card.convert("RGB")
 
