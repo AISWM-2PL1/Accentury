@@ -108,3 +108,27 @@ private fun hexDigit(char: Char): Int = when (char) {
     in 'A'..'F' -> char - 'A' + 10
     else -> -1
 }
+
+/**
+ * App Link로 앱을 열 수 있는 origin (KAN-32 2단계). `AndroidManifest.xml`의 VIEW intent-filter가
+ * 든 `android:host` 목록과 같은 것을 가리키는 거울이다 — 한쪽만 고치면 매니페스트는 링크를 앱으로
+ * 넘기는데 [parseAppLink]가 그 origin을 모르는(또는 그 반대의) 어긋남이 생기므로,
+ * `AppLinkTest`가 두 목록이 같은지를 매니페스트를 직접 읽어 검사한다.
+ *
+ * staging을 함께 두는 이유: 릴리스 전에 팀이 staging 버킷의 assetlinks(디버그 서명 지문까지 실린다)로
+ * 실제 링크 탭 흐름을 확인할 수 있어야 한다. 검증은 호스트마다 `/.well-known/assetlinks.json`이
+ * 있어야 성립한다 (KAN-32 4단계).
+ */
+val APP_LINK_ORIGINS: Set<String> = setOf("https://accentury.app", "https://staging.accentury.app")
+
+/**
+ * 이 빌드가 App Link 진입으로 인정할 origin 전부 — [APP_LINK_ORIGINS]에 이 빌드의 웹 origin을 더한다.
+ *
+ * 더하는 쪽은 사실상 디버그 빌드다. 에뮬레이터의 `WEB_URL`은 `http://10.0.2.2:5173`이라 HTTPS
+ * 검증이 성립하지 않는데, 이 origin이 목록에 있으면
+ * `adb shell am start -n com.accentury.app/.MainActivity -a android.intent.action.VIEW -d "http://10.0.2.2:5173/t?c=x"`로
+ * 링크 진입 경로를 그대로 밟아 볼 수 있다 (매니페스트 필터는 https·accentury.app만 받으므로
+ * 컴포넌트를 `-n`으로 직접 지정해야 한다).
+ * 릴리스에서는 `webOrigin(WEB_URL)`이 이미 [APP_LINK_ORIGINS] 안에 있어 아무것도 늘지 않는다.
+ */
+fun appLinkOrigins(webUrl: String): Set<String> = APP_LINK_ORIGINS + setOfNotNull(webOrigin(webUrl))

@@ -94,12 +94,17 @@ import com.accentury.app.upload.UploadRequest
 import com.accentury.app.upload.UploadState
 import com.accentury.app.upload.UploadStatusBar
 import com.accentury.app.upload.UploadViewModel
+import com.accentury.app.web.AppLinkEntry
 import com.accentury.app.web.TestEntry
 import com.accentury.app.web.WebViewHost
+import com.accentury.app.web.appLinkOrigins
 import com.accentury.app.web.buildWebUrl
+import com.accentury.app.web.parseAppLink
 import com.accentury.app.web.webOrigin
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 
@@ -114,6 +119,13 @@ import kotlinx.coroutines.launch
 private const val ORPHANED_SUBMIT_TIMEOUT_MS = 2_000L
 
 class MainActivity : ComponentActivity() {
+
+    /**
+     * App Link로 들어온 진입 (KAN-32 2단계). 링크가 실어 온 계측 코드를 화면 쪽으로 흘려보내는
+     * 통로다 — Activity가 받는 Intent를 Compose가 볼 수 있는 상태로 바꾸는 것이 이 필드의 전부다.
+     */
+    private val appLink = MutableStateFlow<AppLinkEntry?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         /*
@@ -137,13 +149,43 @@ class MainActivity : ComponentActivity() {
             isAppearanceLightStatusBars = true
             isAppearanceLightNavigationBars = true
         }
+        // 첫 화면이 그려지기 전에 읽는다 — 인트로가 뜬 뒤에 코드가 들어오면 진입 URL이 한 번
+        // 바뀌면서 WebView가 다시 로드된다.
+        applyAppLink(intent)
+
         setContent {
             AccenturyTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    TestFlow(modifier = Modifier.padding(innerPadding))
+                    TestFlow(appLink = appLink, modifier = Modifier.padding(innerPadding))
                 }
             }
         }
+    }
+
+    /**
+     * 앱이 살아 있는 동안 눌린 링크 (KAN-32 2단계). `launchMode="singleTask"`라 새 Activity가
+     * 서는 대신 여기로 들어온다. [setIntent]로 갈아 끼우는 이유는 이후 [getIntent]를 읽는 쪽이
+     * 첫 Intent를 보지 않게 하기 위해서다.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        applyAppLink(intent)
+    }
+
+    /**
+     * Intent가 우리 공유 링크일 때만 [appLink]를 갈아 끼운다 (KAN-32 2단계).
+     *
+     * **링크가 아니면 지우지 않는다.** singleTask에서는 런처 아이콘 탭도 이 경로로 들어오는데
+     * (데이터 없는 MAIN Intent), 그때 값을 비우면 사용자가 앱을 잠깐 내렸다 다시 여는 것만으로
+     * 유입 계측이 사라진다 — 링크로 들어와 응시하다 홈으로 나갔다 오는 흐름이 정확히 그 경우다.
+     *
+     * 회전·프로세스 사망 복원은 원래 VIEW Intent가 [onCreate]로 다시 배달되므로 별도 저장 없이
+     * 값이 돌아온다.
+     */
+    private fun applyAppLink(intent: Intent?) {
+        val entry = parseAppLink(intent?.dataString, appLinkOrigins(BuildConfig.WEB_URL)) ?: return
+        appLink.value = entry
     }
 }
 
@@ -155,10 +197,19 @@ class MainActivity : ComponentActivity() {
  * WebView를 내리면 어디까지 왔는지가 같이 사라진다 — 네이티브 화면(권한 게이트·세션 준비·녹음)은
  * 화면을 갈아끼우는 대신 그 위를 덮는다. 무엇을 덮을지는 [TestFlowController.phase]가 정하고,
  * 여기는 Android·Compose 결선만 한다.
+ *
+ * @param appLink App Link 진입 (KAN-32). Activity가 Intent에서 읽어 흘려보낸다
  */
 @Composable
-private fun TestFlow(modifier: Modifier = Modifier) {
+private fun TestFlow(appLink: StateFlow<AppLinkEntry?>, modifier: Modifier = Modifier) {
     val context = LocalContext.current
+
+    /*
+     * 링크가 실어 온 계측 코드 (KAN-32 2단계). 두 곳으로 간다 — 웹 진입 URL의 `?c=`와
+     * `POST /v0/sessions`의 campaignToken이다. 앱이 세션을 직접 만드는 구조라(KAN-34) URL만으로는
+     * 서버 세션에 유입 경로가 남지 않아 둘 다 필요하다.
+     */
+    val campaignToken = appLink.collectAsStateWithLifecycle().value?.campaignToken
 
     /*
      * 결과 공유 (KAN-30). Activity 컨텍스트인 이유: 공유 시트와 카톡 전환은 지금 화면 위에 올라와야
@@ -356,6 +407,9 @@ private fun TestFlow(modifier: Modifier = Modifier) {
             val result = sessionClient.create(
                 appVersion = BuildConfig.VERSION_NAME,
                 previousToken = previousToken,
+                // 재응시도 같은 유입이다 (KAN-32) — 공유 링크로 들어온 사람이 한 번 더 보는 것까지가
+                // 그 링크가 만든 응시라, 코드를 그대로 물려준다.
+                campaignToken = campaignToken,
             )
             when (val outcome = sessionGate.onRetestResult(result)) {
                 is RetestOutcome.Replaced -> {
@@ -413,6 +467,13 @@ private fun TestFlow(modifier: Modifier = Modifier) {
                     } else {
                         null
                     },
+                    /*
+                     * 링크가 실어 온 계측 코드 (KAN-32). 응시 도중에 새 링크가 들어오면 이 URL
+                     * 문자열이 바뀌어 WebViewHost가 다시 로드한다 — 웹이 sessionId 스냅샷에서
+                     * 진행을 복원하고, 응시 중에 자기 링크를 다시 누르는 일 자체가 드물어 그
+                     * 리로드를 감수한다 (KAN-32 결정).
+                     */
+                    campaignToken = campaignToken,
                 ),
                 allowedOrigins = setOfNotNull(webOrigin(BuildConfig.WEB_URL)),
                 // 웹의 어휘 답안 제출(KAN-13)이 쓸 토큰. 업로드·웹 진입 URL과 같은 세션에서 온다.
@@ -501,6 +562,7 @@ private fun TestFlow(modifier: Modifier = Modifier) {
                     gate = sessionGate,
                     client = sessionClient,
                     appVersion = BuildConfig.VERSION_NAME,
+                    campaignToken = campaignToken,
                     onBackToIntro = {
                         startRequested = false
                         micPassed = false

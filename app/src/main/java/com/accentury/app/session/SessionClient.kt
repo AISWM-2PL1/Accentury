@@ -74,8 +74,13 @@ interface SessionClient {
     /**
      * @param appVersion 익명 집계용 앱 버전 (서버 상한 32자)
      * @param previousToken 재응시일 때 폐기할 이전 세션의 토큰. 최초 응시는 null
+     * @param campaignToken App Link로 들어온 공유 유입 계측 코드 (KAN-32). 링크 진입이 아니면 null
      */
-    suspend fun create(appVersion: String, previousToken: String? = null): SessionResult
+    suspend fun create(
+        appVersion: String,
+        previousToken: String? = null,
+        campaignToken: String? = null,
+    ): SessionResult
 }
 
 class OkHttpSessionClient(
@@ -87,8 +92,12 @@ class OkHttpSessionClient(
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    override suspend fun create(appVersion: String, previousToken: String?): SessionResult = try {
-        client.await(buildRequest(appVersion, previousToken)).use { response ->
+    override suspend fun create(
+        appVersion: String,
+        previousToken: String?,
+        campaignToken: String?,
+    ): SessionResult = try {
+        client.await(buildRequest(appVersion, previousToken, campaignToken)).use { response ->
             val body = withContext(Dispatchers.IO) { response.body.string() }
             toResult(response.code, body, response.header(HEADER_RETRY_AFTER))
         }
@@ -96,14 +105,24 @@ class OkHttpSessionClient(
         SessionResult.TransportError(e.message ?: e.javaClass.simpleName)
     }
 
-    private fun buildRequest(appVersion: String, previousToken: String?): Request {
+    private fun buildRequest(appVersion: String, previousToken: String?, campaignToken: String?): Request {
         val url = baseUrl.newBuilder().addPathSegments(PATH_SESSIONS).build()
-        // 바디 전체가 선택이지만(§3.1) client는 채워 보낸다 — 익명 집계가 플랫폼별 응시·완주를
-        // 가르는 유일한 입력이다. campaignToken은 싣지 않는다: 앱 최초 응시에는 유입 코드가 없고,
-        // 서버가 저장하는 값이라 없는 것을 빈 문자열로라도 만들어 보낼 이유가 없다.
+        /*
+         * 바디 전체가 선택이지만(§3.1) client는 채워 보낸다 — 익명 집계가 플랫폼별 응시·완주를
+         * 가르는 유일한 입력이다.
+         *
+         * campaignToken은 App Link가 준 링크 진입에만 실린다 (KAN-32). 앱이 세션을 직접 만들므로
+         * (KAN-34) 진입 URL의 `?c=`만으로는 서버 세션에 유입 경로가 남지 않는다 — 웹이 세션을 만들 때
+         * 하던 일을 이 자리가 대신한다. 링크 진입이 아니면 키 자체를 빼고 보낸다: kotlinx 기본이
+         * encodeDefaults=false라 null 필드는 직렬화되지 않고(웹 webSession.ts도 같은 방식이다),
+         * 서버 `@Pattern`은 없는 필드는 보지만 `null`로 온 값에는 걸릴 수 있다.
+         */
         val payload = json.encodeToString(
             CreateSessionBody.serializer(),
-            CreateSessionBody(ClientBody(platform = PLATFORM_ANDROID, appVersion = appVersion)),
+            CreateSessionBody(
+                campaignToken = campaignToken,
+                client = ClientBody(platform = PLATFORM_ANDROID, appVersion = appVersion),
+            ),
         )
         val builder = Request.Builder()
             .url(url)
@@ -168,7 +187,7 @@ class OkHttpSessionClient(
 
 /** 요청 바디 (§3.1). 모든 필드가 선택이라 서버는 바디 자체가 없어도 세션을 만든다. */
 @Serializable
-private data class CreateSessionBody(val client: ClientBody)
+private data class CreateSessionBody(val campaignToken: String? = null, val client: ClientBody)
 
 @Serializable
 private data class ClientBody(val platform: String, val appVersion: String)
