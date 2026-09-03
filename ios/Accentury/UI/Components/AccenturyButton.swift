@@ -55,8 +55,14 @@ struct AccenturyButton: View {
 
         case .primary, .secondary:
             Button(action: action) {
+                // 주 CTA 라벨은 Jua 20(`title`)에 자간 0.4다 — 이 화면에서 눌러야 할 것이
+                // 제목만큼 크고, 굵기를 못 올리는 폰트라 자간이 무게를 대신한다 (KAN-178).
+                // 보조는 본문 글꼴 15(`bodySmall`)로, 안드로이드 `bodyMedium` 자리다.
                 Text(text)
-                    .papercutType(variant == .primary ? .title : .bodySmall)
+                    .papercutType(
+                        variant == .primary ? .title : .bodySmall,
+                        tracking: variant == .primary ? Papercut.primaryLabelTracking : nil
+                    )
                     .foregroundColor(variant == .primary ? Papercut.cream : Papercut.ink)
             }
             .buttonStyle(PapercutButtonStyle(isPrimary: variant == .primary, fillsWidth: fillsWidth))

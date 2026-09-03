@@ -673,8 +673,9 @@ private struct LoadingScreen: View {
         ZStack {
             Papercut.cream.ignoresSafeArea()
             VStack(spacing: Papercut.space3) {
+                // 안드로이드 `LoadingScreen`과 같은 슬롯이다 — `titleMedium`(Jua 20).
                 Text("사투리 억양 테스트")
-                    .font(.system(size: 20))
+                    .papercutType(.title)
                     .foregroundColor(Papercut.ink)
                 ProgressView()
                     .progressViewStyle(.circular)
@@ -685,6 +686,12 @@ private struct LoadingScreen: View {
 }
 
 /// 네이티브 오류 화면 (§6) — 비난 없는 카피 + [다시 시도]. 문구는 안드로이드 정본 그대로다.
+///
+/// 세 줄의 타이포는 안드로이드가 이 화면에 쓰는 것과 같은 슬롯으로 맞췄다 (KAN-178).
+/// 그쪽은 `StatusBlock` + `AccenturyButton` 조합이라 문구가 `body`(16) · `caption`(13)이고
+/// 라벨만 Jua 20이다 — 22·18 같은 토큰 밖 크기를 쓰던 자리라 글꼴을 얹으면서 함께 맞췄다.
+/// **이 화면에서 가장 큰 글자는 눌러야 할 것**이 되는데, 지금 할 수 있는 일이 하나뿐인
+/// 화면에서는 그게 맞는 위계다.
 private struct LoadFailureScreen: View {
 
     let onRetry: () -> Void
@@ -694,16 +701,16 @@ private struct LoadFailureScreen: View {
             Papercut.cream.ignoresSafeArea()
             VStack(spacing: Papercut.space3) {
                 Text("연결이 불안정해요")
-                    .font(.system(size: 22))
+                    .papercutType(.body)
                     .foregroundColor(Papercut.ink)
                 Text("네트워크를 확인하고 다시 시도해 주세요")
-                    .font(.system(size: 16))
+                    .papercutType(.caption)
                     .foregroundColor(Papercut.muted)
                     .multilineTextAlignment(.center)
 
                 Button(action: onRetry) {
                     Text("다시 시도")
-                        .font(.system(size: 18))
+                        .papercutType(.title, tracking: Papercut.primaryLabelTracking)
                         .foregroundColor(Papercut.cream)
                         .padding(.horizontal, Papercut.space6)
                         .frame(height: Papercut.controlHeightLarge)

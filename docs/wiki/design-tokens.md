@@ -131,8 +131,8 @@ Accentury 네이티브(Compose)와 웹(WebView)이 공유하는 색·타이포·
 
 두 벌을 쓴다.
 
-- **Jua** — 제목·대사·등급. 번들 필수(어느 기기에도 없는 디스플레이 폰트). `app/src/main/res/font/jua_regular.ttf`(2.0MB), `web/public/fonts/Jua-Regular.woff2`(360KB). 라이선스 `LICENSES/Jua-OFL.txt`(SIL OFL 1.1).
-- **본문 — 시스템 기본 산세리프.** Android 시스템 폰트가 이미 Noto Sans CJK KR이고 WebView의 `sans-serif`도 같은 폰트로 해석되므로, 네이티브와 웹이 저절로 같은 글꼴로 수렴한다. 9.9MB짜리 Noto Sans KR 가변폰트를 번들해도 타깃 기기에서 보이는 글자는 같아서 넣지 않는다.
+- **Jua** — 제목·대사·등급. 번들 필수(어느 기기에도 없는 디스플레이 폰트). `app/src/main/res/font/jua_regular.ttf`(2.0MB), `web/public/fonts/Jua-Regular.woff2`(360KB), `ios/Accentury/Resources/Fonts/Jua-Regular.ttf`(2.0MB, KAN-178 — `UIAppFonts`로 등록하고 `Font.custom`에 PostScript 이름 `Jua-Regular`를 준다). 라이선스 `LICENSES/Jua-OFL.txt`(SIL OFL 1.1) 하나를 세 런타임이 공유한다.
+- **본문 — 시스템 기본 산세리프.** Android 시스템 폰트가 이미 Noto Sans CJK KR이고 WebView의 `sans-serif`도 같은 폰트로 해석되므로, 네이티브와 웹이 저절로 같은 글꼴로 수렴한다. 9.9MB짜리 Noto Sans KR 가변폰트를 번들해도 타깃 기기에서 보이는 글자는 같아서 넣지 않는다. iOS도 같은 규칙을 그쪽 글꼴로 지킨다 — 네이티브 `.system`과 WKWebView의 `sans-serif`가 둘 다 Apple SD Gothic Neo로 풀린다.
 
 | 토큰 | 크기 | 굵기 | 폰트 | 용도 |
 |---|---|---|---|---|

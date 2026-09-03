@@ -12,10 +12,10 @@ import SwiftUI
 /// 이유다. 같은 게이트를 테스트 시작과 VOICE 문항 진입 두 곳에서 쓰는데 통과 후 할 일이
 /// 서로 다르다(테스트 URL 로드 vs 기다리던 문항의 녹음 재개).
 ///
-/// 그림은 임시다. 팔레트(``Papercut``)·간격·계층은 `docs/wiki/design-tokens.md`를 따르지만
-/// Jua 서체 번들과 잉크 선화 자산은 §7·§8 다듬기 몫이라 시스템 서체와 SF Symbol로 세워 뒀다.
-/// 토큰 자체는 §6에서 `UI/Theme/PapercutTheme.swift`로 옮겼다 — 같은 값을 쓰는 화면이
-/// 넷 늘면서 사본이 파일마다 생길 자리가 됐다.
+/// 팔레트(``Papercut``)·간격·계층·서체는 `docs/wiki/design-tokens.md`를 따른다. 토큰은 §6에서
+/// `UI/Theme/PapercutTheme.swift`로 옮겼고(같은 값을 쓰는 화면이 넷 늘면서 사본이 파일마다
+/// 생길 자리가 됐다), 제목과 버튼 라벨의 Jua는 KAN-178에서 얹었다. 남은 임시는 **잉크 선화
+/// 자산**뿐이라 마이크 그림만 아직 SF Symbol이다.
 struct PermissionGateView: View {
 
     @StateObject private var model: PermissionGateModel
@@ -131,12 +131,14 @@ struct PermissionGateView: View {
                 heroIcon
 
                 VStack(spacing: Papercut.space2) {
+                    // 안드로이드 `MainActivity.GateScreen`과 같은 슬롯 짝이다 —
+                    // 제목이 headline(Jua 26), 아래 한 줄이 bodySmall(시스템 15)이다.
                     Text(headline)
-                        .font(.system(size: 26, weight: .regular))
+                        .papercutType(.headline)
                         .foregroundColor(Papercut.ink)
                         .multilineTextAlignment(.center)
                     Text(supporting)
-                        .font(.system(size: 16))
+                        .papercutType(.bodySmall)
                         .foregroundColor(Papercut.muted)
                         .multilineTextAlignment(.center)
                 }
@@ -177,7 +179,7 @@ struct PermissionGateView: View {
                         .fill(Papercut.ink)
                         .frame(width: 6, height: 6)
                     Text(line)
-                        .font(.system(size: 16))
+                        .papercutType(.bodySmall)
                         .foregroundColor(Papercut.ink)
                 }
             }
@@ -211,8 +213,11 @@ struct PermissionGateView: View {
                         .progressViewStyle(.circular)
                         .tint(Papercut.cream)
                 }
+                // 공통 버튼(``AccenturyButton``)의 주 변형과 같은 라벨이다 — Jua 20에
+                // 자간 0.4. 이 화면만 버튼을 손으로 세운 이유는 진행 표시를 라벨 옆에
+                // 끼워야 해서인데, 글자만은 같은 값을 읽는다.
                 Text(label)
-                    .font(.system(size: 20, weight: .regular))
+                    .papercutType(.title, tracking: Papercut.primaryLabelTracking)
                     .foregroundColor(Papercut.cream)
             }
             .frame(maxWidth: .infinity)
