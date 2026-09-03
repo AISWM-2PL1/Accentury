@@ -1,0 +1,19 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["559P9SYY57.com.accentury.app"],
+        "components": [
+          {
+            "/": "/t",
+            "comment": "공유 링크 진입 (KAN-32). 앱 쪽 parseAppLink도 /t만 받는다"
+          },
+          {
+            "/": "/t/",
+            "comment": "끝 슬래시가 붙은 같은 진입 (KAN-32). AndroidManifest의 android:path와 짝이다"
+          }
+        ]
+      }
+    ]
+  }
+}

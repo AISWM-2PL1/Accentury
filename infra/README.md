@@ -280,6 +280,9 @@ terraform apply
 - **SNS 이메일 구독을 확인한다** (KAN-134). apply 직후 수신함에 AWS 확인 메일이
   오고, 링크를 누르기 전에는 경보가 울려도 메일이 나가지 않는다. 아래 "경보와
   알림"에 확인 명령이 있다.
+- **App Link 검증 파일을 올린다** (KAN-32). `scripts/publish-well-known.sh <env>`를 환경마다
+  한 번 돌린다. Terraform이 만드는 것이 아니라 버킷 안의 객체 2개라, apply만으로는 생기지
+  않는다. 서명 키나 애플 팀 ID가 바뀌면 다시 돌린다. 아래 "App Link 검증 파일".
 
 ## GitHub 설정 (KAN-127)
 
@@ -329,6 +332,27 @@ prod의 승인 게이트는 GitHub environment `prod`의 **required reviewers**�
 reviewers에 팀원을 넣으면 Release 병합이 만든 실행이 승인 전까지 `deploy` job에서
 멈춘다. 이미지와 웹 배포가 같은 environment라 둘 다 승인을 기다린다. 코드가 아니라
 저장소 설정이므로 레포에는 남지 않는다 - 새 저장소에서는 다시 켠다.
+
+## App Link 검증 파일 (KAN-32)
+
+공유 링크 `https://accentury.app/t?c=...`를 브라우저 대신 앱이 받게 하려면 도메인이 앱을
+인정한다고 공개 선언해야 한다. 그 선언 파일 두 개가 웹 버킷의 `/.well-known/` 아래 산다.
+
+```
+scripts/publish-well-known.sh staging      # 또는 prod
+```
+
+정본은 `infra/well-known/<env>/.well-known/`이고, 값의 근거·게시 뒤 확인 명령·Play App Signing
+함정은 전부 **`infra/well-known/README.md`**에 있다. 여기서는 인프라 쪽 사실 셋만 적는다.
+
+- Terraform이 만드는 것이 아니라 버킷 안의 객체다. apply로는 생기지 않고, apply를 다시 해도
+  지워지지 않는다.
+- 웹 배포와 충돌하지 않는다. `web-deploy.yml`의 `aws s3 sync`에 `--delete`가 없고 배포 역할에
+  `s3:DeleteObject`가 아예 없어서(`modules/deploy`), 여기서 올린 객체는 이후 웹 배포에
+  살아남는다. 그래서 지문 교체가 웹 재배포를 요구하지 않는다.
+- CloudFront의 SPA 재작성 Function이 `/.well-known/`을 예외로 빼 준다는 전제 위에 선다
+  (아래 "설계 결정 기록"의 SPA 재작성 Function 항목). 예외가 빠지면 확장자 없는
+  `apple-app-site-association`이 index.html로 치환돼 iOS 검증만 조용히 죽는다.
 
 ## 이미지 배포 파이프라인과 롤백 (KAN-128)
 
@@ -1131,6 +1155,11 @@ terraform destroy
   정본으로 두고 환경별 Function 2개를 만든다 (2026-08-24 확정). 환경별 state
   분리 구조에서 단일 Function을 공유 소유할 수 없기 때문이다. KAN-126의
   "두 배포가 공유" 문구는 이 결정으로 수정됐다.
+  `/.well-known/`은 예외로 그냥 통과시킨다 (KAN-32) — App Link 검증 파일
+  `apple-app-site-association`은 확장자가 없어 재작성 규칙에 걸리는데, 그러면 애플 CDN이
+  JSON 대신 index.html을 받아 Universal Link 검증이 성립하지 않는다. 예외를 접두사 통째로
+  잡은 이유는 RFC 8615가 그 아래를 기계 판독 메타데이터용으로 예약했기 때문이다.
+  `infra/modules/edge/spa-rewrite.test.mjs`가 이 동작을 붙들고 있다.
 - **RDS 마스터 비밀번호**: `manage_master_user_password`로 RDS가 생성해
   Secrets Manager에 보관한다. 코드, tfvars, state 어디에도 평문이 없다.
 - **AMI 고정 (ai 호스트)**: AL2023 최신 AMI를 SSM 파라미터로 읽되 `ignore_changes = [image_id]`.
