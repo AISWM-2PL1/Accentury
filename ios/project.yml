@@ -53,6 +53,22 @@ targets:
     settings:
       base:
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        # Universal Links 입구 (KAN-32 3단계). 안드로이드 매니페스트의 `autoVerify` VIEW
+        # intent-filter 자리다.
+        #
+        # XcodeGen의 `entitlements:` 키가 아니라 빌드 설정으로 다는 이유: 그 키를 쓰면
+        # XcodeGen이 그 파일의 주인이 돼서 `generate` 때마다 내용을 새로 쓴다 — 손으로 적은
+        # 호스트 목록도 주석도 빈 `<dict/>`로 덮인다. Info-{Debug,Release}.plist를 xcconfig의
+        # INFOPLIST_FILE로 가리키는 것과 같은 방식으로, plist는 손으로 들고 배선만 여기서 한다.
+        #
+        # 파일 안의 호스트 목록은 AccenturyCore `Web/AppLink.swift`의 `appLinkOrigins`가 든
+        # 것과 같아야 하고, `AppLinkTests`가 그 entitlements 파일을 직접 읽어 대조한다 —
+        # 한쪽만 고치면 컴파일도 단위 테스트도 조용한 채로 링크만 죽는다.
+        #
+        # 실제 검증은 호스트마다 `/.well-known/apple-app-site-association`이 서빙돼야 성립하고
+        # (KAN-32 4단계), SPA 리라이트 함수가 그 경로를 예외로 빼 줘야 한다. App ID의
+        # Associated Domains capability는 자동 서명이 아카이브 때 붙인다.
+        CODE_SIGN_ENTITLEMENTS: Accentury/Accentury.entitlements
       configs:
         # 가짜 마이크 WAV 등 디버그 전용 자산은 릴리스 번들에 넣지 않는다 (KAN-108 §6).
         # 안드로이드는 `src/debug/assets/`가 소스셋으로 갈려 이 일이 저절로 되지만, XcodeGen에는

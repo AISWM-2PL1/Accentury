@@ -48,9 +48,14 @@ public final class URLSessionSessionClient: SessionClient, Sendable {
         self.session = session
     }
 
-    public func create(appVersion: String, previousToken: String?) async -> SessionResult {
+    public func create(
+        appVersion: String,
+        previousToken: String?,
+        campaignToken: String?
+    ) async -> SessionResult {
         do {
-            let (data, response) = try await session.data(for: try buildRequest(appVersion, previousToken))
+            let request = try buildRequest(appVersion, previousToken, campaignToken)
+            let (data, response) = try await session.data(for: request)
             let http = response as? HTTPURLResponse
             return Self.toResult(
                 status: http?.statusCode ?? 0,
@@ -62,14 +67,29 @@ public final class URLSessionSessionClient: SessionClient, Sendable {
         }
     }
 
-    private func buildRequest(_ appVersion: String, _ previousToken: String?) throws -> URLRequest {
+    private func buildRequest(
+        _ appVersion: String,
+        _ previousToken: String?,
+        _ campaignToken: String?
+    ) throws -> URLRequest {
         var request = URLRequest(url: baseURL.appendingPathComponent(pathSessions))
         request.httpMethod = "POST"
-        // 바디 전체가 선택이지만(§3.1) 클라이언트는 채워 보낸다 — 익명 집계가 플랫폼별 응시·완주를
-        // 가르는 유일한 입력이다. campaignToken은 싣지 않는다: 앱 최초 응시에는 유입 코드가 없고,
-        // 서버가 저장하는 값이라 없는 것을 빈 문자열로라도 만들어 보낼 이유가 없다.
+        /*
+         * 바디 전체가 선택이지만(§3.1) 클라이언트는 채워 보낸다 — 익명 집계가 플랫폼별 응시·완주를
+         * 가르는 유일한 입력이다.
+         *
+         * campaignToken은 Universal Link가 준 링크 진입에만 실린다 (KAN-32). 앱이 세션을 직접
+         * 만드는 구조라(KAN-34) 진입 URL의 `?c=`만으로는 서버 세션에 유입 경로가 남지 않는다 —
+         * 웹이 세션을 만들 때 하던 일을 이 자리가 대신한다. 링크 진입이 아니면 키 자체를 빼고
+         * 보낸다: `Encodable` 합성이 옵셔널을 `encodeIfPresent`로 내보내 nil 필드는 직렬화되지
+         * 않고(웹 webSession.ts도 같은 방식이다), 서버 `@Pattern`은 없는 필드는 보지만 `null`로
+         * 온 값에는 걸릴 수 있다.
+         */
         request.httpBody = try JSONEncoder().encode(
-            CreateSessionBody(client: ClientBody(platform: platformIOS, appVersion: appVersion))
+            CreateSessionBody(
+                campaignToken: campaignToken,
+                client: ClientBody(platform: platformIOS, appVersion: appVersion)
+            )
         )
         request.setValue(jsonMediaType, forHTTPHeaderField: headerContentType)
         request.setValue(UUID().uuidString, forHTTPHeaderField: headerCorrelationId)
@@ -135,7 +155,12 @@ public final class URLSessionSessionClient: SessionClient, Sendable {
 }
 
 /// 요청 바디 (§3.1). 모든 필드가 선택이라 서버는 바디 자체가 없어도 세션을 만든다.
+///
+/// `campaignToken`이 nil이면 **키 자체가 빠진다** — 합성된 `encode(to:)`가 옵셔널을
+/// `encodeIfPresent`로 내보내기 때문이고, 안드로이드의 kotlinx `encodeDefaults=false`와 같은
+/// 결과다. `"campaignToken":null`로 나가면 서버 `@Pattern`에 걸릴 수 있어 그 차이가 중요하다.
 struct CreateSessionBody: Encodable {
+    let campaignToken: String?
     let client: ClientBody
 }
 

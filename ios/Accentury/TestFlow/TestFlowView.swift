@@ -110,6 +110,21 @@ struct TestFlowView: View {
         .onChange(of: model.phase) { phase in syncOverlayPhase(phase) }
         .onAppear { syncOverlayPhase(model.phase) }
         /*
+         * 공유 링크로 앱이 열렸다 (KAN-32 3단계). 안드로이드 `MainActivity`의
+         * `onCreate`/`onNewIntent` + `applyAppLink` 자리다.
+         *
+         * iOS에서 Universal Link는 Intent가 아니라 `NSUserActivity`로 온다. 앱이 살아 있을 때
+         * 눌린 링크는 물론 콜드 스타트도 이 한 자리로 들어온다 — SwiftUI가 씬이 붙은 뒤에
+         * 배달해 주기 때문에 안드로이드처럼 `onCreate`와 `onNewIntent`로 갈리지 않는다.
+         *
+         * 그 대신 콜드 스타트에서는 첫 로드가 코드 없이 한 번 나간 뒤 URL이 바뀌어 다시
+         * 로드된다(안드로이드는 `setContent` 전에 읽어 이 리로드가 없다). 인트로 구간이라
+         * 잃을 진행이 없어 그대로 둔다.
+         */
+        .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+            model.applyAppLink(activity.webpageURL)
+        }
+        /*
          * 흐름이 끝나면 업로드 계층을 명시적으로 놓는다 — 구독을 끊고, 남은 음성 바이트를
          * 폐기하고(FR-DP-02), 빌려 둔 백그라운드 실행 시간을 반납한다.
          *
@@ -158,6 +173,21 @@ struct TestFlowView: View {
             }
         }
         #if DEBUG
+        /*
+         * `-AppLinkURL "http://localhost:5173/t?c=kko_share"` — 링크 진입 경로를 그대로 밟아 본다.
+         *
+         * AASA(`/.well-known/apple-app-site-association`)가 각 호스트에 서빙되기 전에는
+         * (KAN-32 4단계) 시뮬레이터가 Universal Link를 앱으로 넘기지 못한다 —
+         * `xcrun simctl openurl`은 사파리만 연다. 그래서 실제 링크 탭이 부르는 것과 **같은 함수**로
+         * URL을 흘려 넣는다. 배선(코드 → 진입 URL의 `&c=` → 세션 바디)까지 함께 확인된다.
+         *
+         * 디버그 `WEB_URL`이 App Link origin 목록에 더해지는 것이 이 인자가 성립하는 근거다
+         * (`AccenturyCore/appLinkOrigins(webUrl:)`).
+         */
+        .task {
+            guard let url = UserDefaults.standard.string(forKey: "AppLinkURL"), !url.isEmpty else { return }
+            model.applyAppLink(URL(string: url))
+        }
         /*
          * `-AutoRecordingOverlay 1` — 백엔드 없이 녹음 화면 자체를 보는 통로다.
          *

@@ -61,3 +61,30 @@ public func parseAppLink(_ url: String?, allowedOrigins: Set<String>) -> AppLink
 private func validCampaignToken(_ value: String) -> String? {
     value.range(of: campaignTokenPattern, options: .regularExpression) != nil ? value : nil
 }
+
+/// Universal Link로 앱을 열 수 있는 origin (KAN-32 3단계). `Accentury/Accentury.entitlements`의
+/// `com.apple.developer.associated-domains`가 든 `applinks:` 호스트 목록과 같은 것을 가리키는
+/// 거울이다 — 한쪽만 고치면 OS는 링크를 앱으로 넘기는데 ``parseAppLink(_:allowedOrigins:)``가
+/// 그 origin을 모르는(또는 그 반대의) 어긋남이 생기므로, `AppLinkTests`가 두 목록이 같은지를
+/// entitlements 파일을 직접 읽어 검사한다.
+///
+/// 안드로이드 `web/AppLink.kt`의 `APP_LINK_ORIGINS` 자리다. 다만 거울로 삼는 상대가 다르다 —
+/// 안드로이드는 매니페스트가 경로(`/t`)까지 걸러 주지만, iOS의 associated domains는 호스트
+/// 단위라 경로 판정은 전부 ``parseAppLink(_:allowedOrigins:)`` 몫이다.
+///
+/// staging을 함께 두는 이유: 릴리스 전에 팀이 staging 버킷의 AASA로 실제 링크 탭 흐름을
+/// 확인할 수 있어야 한다. 검증은 호스트마다 `/.well-known/apple-app-site-association`이
+/// 있어야 성립한다 (KAN-32 4단계).
+public let appLinkOrigins: Set<String> = ["https://accentury.app", "https://staging.accentury.app"]
+
+/// 이 빌드가 Universal Link 진입으로 인정할 origin 전부 — ``appLinkOrigins``에 이 빌드의 웹
+/// origin을 더한다. 안드로이드 `appLinkOrigins(webUrl:)`의 이식본이다.
+///
+/// 더하는 쪽은 사실상 디버그 빌드다. 시뮬레이터의 `WEB_URL`은 `http://localhost:5173`이라
+/// HTTPS 검증이 성립하지 않는데, 이 origin이 목록에 있으면 디버그 실행 인자
+/// `-AppLinkURL "http://localhost:5173/t?c=kko_share"`로 링크 진입 경로를 그대로 밟아 볼 수 있다
+/// (AASA가 서빙되기 전에는 `xcrun simctl openurl`이 사파리만 열기 때문에 이 인자 말고는 길이 없다).
+/// 릴리스에서는 `webOrigin(WEB_URL)`이 이미 ``appLinkOrigins`` 안에 있어 아무것도 늘지 않는다.
+public func appLinkOrigins(webUrl: String) -> Set<String> {
+    appLinkOrigins.union([webOrigin(webUrl)].compactMap { $0 })
+}

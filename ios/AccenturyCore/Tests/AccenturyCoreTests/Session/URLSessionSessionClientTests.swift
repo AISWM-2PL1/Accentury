@@ -64,6 +64,31 @@ final class URLSessionSessionClientTests: XCTestCase {
         XCTAssertNil(body["campaignToken"])
     }
 
+    func testApp_Link_유입_코드를_바디에_실어_보낸다_KAN32() async throws {
+        MockURLProtocol.respond(status: 201, body: createdBody)
+
+        _ = await client().create(appVersion: "1.2.3", previousToken: nil, campaignToken: "kko_share")
+
+        // 직렬화 결과를 그대로 본다 — 서버가 읽는 것이 이 문자열이고, 파싱해서 보면 키가 어떤
+        // 꼴로 실렸는지(누락인지 null인지)가 지워진다.
+        let body = try XCTUnwrap(String(data: try XCTUnwrap(MockURLProtocol.lastRequest()).body, encoding: .utf8))
+        XCTAssertTrue(body.contains(#""campaignToken":"kko_share""#), body)
+        XCTAssertTrue(body.contains(#""platform":"IOS""#), body)
+        XCTAssertTrue(body.contains(#""appVersion":"1.2.3""#), body)
+    }
+
+    func test링크_진입이_아니면_campaignToken_키_자체를_빼고_보낸다_KAN32() async throws {
+        MockURLProtocol.respond(status: 201, body: createdBody)
+
+        _ = await client().create(appVersion: "1.0")
+
+        // `"campaignToken":null`로 나가면 서버 @Pattern에 걸릴 수 있다 — 없는 값은 키를 빼야 한다.
+        // 합성된 `Encodable`이 옵셔널을 `encodeIfPresent`로 내보내는 덕에 저절로 그렇게 되는데,
+        // 필드를 non-optional로 바꾸는 순간 조용히 깨지는 성질이라 여기 못 박아 둔다.
+        let body = try XCTUnwrap(String(data: try XCTUnwrap(MockURLProtocol.lastRequest()).body, encoding: .utf8))
+        XCTAssertFalse(body.contains("campaignToken"), body)
+    }
+
     func test최초_응시에는_Authorization_헤더를_붙이지_않는다() async throws {
         MockURLProtocol.respond(status: 201, body: createdBody)
 
