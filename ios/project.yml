@@ -25,6 +25,15 @@ configs:
 packages:
   AccenturyCore:
     path: AccenturyCore
+  # 카카오톡 공유 SDK (KAN-180). 안드로이드 `libs.kakao.share`(v2-share) 자리다 — 다만 두
+  # 플랫폼의 SDK 버전 계열이 따로 굴러서 번호는 맞지 않는다(안드로이드 2.24.0).
+  #
+  # 카카오 문서는 브랜치 master를 물라고 하지만 태그를 못 박는다: 브랜치를 물면 같은 커밋에서
+  # 어제와 오늘의 빌드가 달라지고, 공유가 깨졌을 때 우리 변경인지 SDK 변경인지 가릴 수 없다.
+  # 올릴 때는 이 한 줄을 고치고 시뮬레이터 빌드까지 확인한다.
+  KakaoOpenSDK:
+    url: https://github.com/kakao/kakao-ios-sdk
+    exactVersion: 2.29.0
 
 targets:
   Accentury:
@@ -79,6 +88,21 @@ targets:
     dependencies:
       - package: AccenturyCore
         product: AccenturyCore
+      # 카카오 공유 (KAN-180). Share가 Common·Template을 이미 끌고 오지만 셋 다 적는다 —
+      # 우리 코드가 `import KakaoSDKCommon`(initSDK)과 `import KakaoSDKTemplate`(피드 템플릿)을
+      # 직접 하므로, 전이 의존에 기대면 SDK가 내부 구성을 바꾸는 날 import가 끊긴다.
+      # Alamofire가 Common을 통해 따라 들어온다 — 앱에 처음 들어오는 서드파티 네트워킹
+      # 라이브러리이고, 우리 코드는 쓰지 않는다(네이티브 HTTP는 AccenturyCore Net/이 URLSession으로 한다).
+      #
+      # **AccenturyCore에는 넣지 않는다.** Core는 시뮬레이터 없이 `swift test`로 도는 순수
+      # 계층이고, 카카오 SDK는 UIKit·앱 번들(앱 키)에 매여 있다. 순수 판정(어느 통로로 갈지,
+      # 시트에 실을 문구)은 Core에 두고 SDK 호출만 앱 타깃에 남긴다.
+      - package: KakaoOpenSDK
+        product: KakaoSDKShare
+      - package: KakaoOpenSDK
+        product: KakaoSDKTemplate
+      - package: KakaoOpenSDK
+        product: KakaoSDKCommon
 
   AccenturyTests:
     type: bundle.unit-test
