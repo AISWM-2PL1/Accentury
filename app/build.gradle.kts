@@ -7,6 +7,29 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+/*
+ * 계측·크래시 플러그인은 google-services.json이 있을 때만 건다 (KAN-33).
+ *
+ * **없는 것이 정상 상태다.** [kakaoNativeAppKey]·[releaseSigning]과 같은 판단이다 - 콘솔 프로젝트가
+ * 생기기 전의 로컬 빌드와 PR CI도 그대로 돌아야 한다. 다만 저 둘과 갈리는 지점이 있다: 카카오 키와
+ * 키스토어는 빈 값을 코드가 받아 넘길 수 있지만, 이 두 플러그인은 설정 파일이 없으면 **설정 단계에서
+ * 빌드를 죽인다.** 값이 아니라 플러그인 적용 자체를 조건에 거는 이유가 그것이다.
+ *
+ * 의존성(BoM·analytics·crashlytics)은 조건 없이 넣는다. 설정이 없으면 FirebaseApp이 초기화되지
+ * 않을 뿐이고, 그 사실은 EventSink.create가 한 곳에서 판정해 Logcat sink로 내려간다
+ * (analytics/FirebaseEventSink.kt). 의존성까지 조건부로 하면 설정 유무에 따라 컴파일되는 소스가
+ * 갈려서, 설정이 없는 CI가 검증한 코드와 스토어로 나가는 코드가 달라진다.
+ *
+ * google-services.json은 커밋 대상이다 - 카카오 키와 갈리는 지점이다. 저 값은 우리 앱 키로 남이
+ * 카카오 API를 두드릴 수 있지만, 이 파일의 앱 id·API 키는 패키지명과 서명 지문에 묶여 있어 다른
+ * 앱이 가져다 쓸 수 없다. 콘솔에서 받아 app/에 넣고 커밋하면 이 분기가 켜진다.
+ */
+val firebaseConfig = file("google-services.json")
+if (firebaseConfig.exists()) {
+    apply(plugin = libs.plugins.google.services.get().pluginId)
+    apply(plugin = libs.plugins.firebase.crashlytics.get().pluginId)
+}
+
 /**
  * 가짜 마이크 asset 이름. `-PfakeMic=` 프로퍼티가 우선이고, 없으면 local.properties(gitignore 대상)의
  * `fakeMic=`을 본다 - Android Studio의 Run 버튼은 gradle 프로퍼티를 넘길 수 없어서다. 둘 다 없으면 "".
@@ -257,6 +280,11 @@ dependencies {
     // 결과 공유 (KAN-30). 피드 템플릿 공유만 쓰므로 v2-share 하나다 - 카카오 로그인(v2-user)은
     // 우리 인증에 없다.
     implementation(libs.kakao.share)
+    // 익명 계측·크래시 (KAN-33). 위 조건부 apply와 달리 의존성은 늘 붙는다 - 설정이 없으면
+    // FirebaseApp이 초기화되지 않고 sink가 만들어지지 않을 뿐이다 (analytics/FirebaseEventSink.kt).
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.analytics)
+    implementation(libs.firebase.crashlytics)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.okhttp.mockwebserver)

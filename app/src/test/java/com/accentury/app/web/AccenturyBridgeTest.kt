@@ -1,5 +1,6 @@
 package com.accentury.app.web
 
+import com.accentury.app.analytics.EventParam
 import com.accentury.app.bridge.GuideF0
 import com.accentury.app.bridge.SharePayload
 import com.accentury.app.bridge.VoiceItemStart
@@ -45,6 +46,7 @@ class AccenturyBridgeTest {
             onStartVoiceItem = { received = it },
             onStartRetest = {},
             onShareResult = {},
+            onLogEvent = { _, _ -> },
         )
         bridge.startVoiceItem(payloadJson)
         queue.drain()
@@ -64,6 +66,7 @@ class AccenturyBridgeTest {
             onStartVoiceItem = {},
             onStartRetest = {},
             onShareResult = {},
+            onLogEvent = { _, _ -> },
         )
         bridge.requestMicPermission()
         queue.drain()
@@ -83,6 +86,7 @@ class AccenturyBridgeTest {
             onStartVoiceItem = {},
             onStartRetest = {},
             onShareResult = {},
+            onLogEvent = { _, _ -> },
         )
         bridge.requestMicPermission()
         queue.drain()
@@ -105,6 +109,7 @@ class AccenturyBridgeTest {
             onStartVoiceItem = {},
             onStartRetest = {},
             onShareResult = {},
+            onLogEvent = { _, _ -> },
         )
         bridge.requestMicPermission() // 호출 시점엔 허용 상태
         allowedNow = false // 실행 전에 allowlist 밖으로 이동
@@ -125,6 +130,7 @@ class AccenturyBridgeTest {
             onStartVoiceItem = {},
             onStartRetest = { fired++ },
             onShareResult = {},
+            onLogEvent = { _, _ -> },
         )
         bridge.startRetest()
         queue.drain()
@@ -157,6 +163,7 @@ class AccenturyBridgeTest {
             onStartVoiceItem = {},
             onStartRetest = { fired++ },
             onShareResult = {},
+            onLogEvent = { _, _ -> },
         )
         bridge.startRetest() // 호출 시점엔 허용 상태
         allowedNow = false // 실행 전에 allowlist 밖으로 이동
@@ -183,6 +190,7 @@ class AccenturyBridgeTest {
             onStartVoiceItem = {},
             onStartRetest = { fired++ },
             onShareResult = {},
+            onLogEvent = { _, _ -> },
         )
         bridge.startRetest()
         bridge.startRetest()
@@ -202,6 +210,7 @@ class AccenturyBridgeTest {
             onStartVoiceItem = {},
             onStartRetest = {},
             onShareResult = {},
+            onLogEvent = { _, _ -> },
         )
         assertEquals(BRIDGE_CONTRACT_VERSION, bridge.getContractVersion())
     }
@@ -216,6 +225,7 @@ class AccenturyBridgeTest {
         onStartVoiceItem = {},
         onStartRetest = {},
         onShareResult = {},
+        onLogEvent = { _, _ -> },
     )
 
     @Test
@@ -342,6 +352,7 @@ class AccenturyBridgeTest {
             onStartVoiceItem = { received = it },
             onStartRetest = {},
             onShareResult = {},
+            onLogEvent = { _, _ -> },
         )
         bridge.startVoiceItem(payload()) // 호출 시점엔 허용 상태
         allowedNow = false // 실행 전에 allowlist 밖으로 이동
@@ -363,6 +374,7 @@ class AccenturyBridgeTest {
             onStartVoiceItem = {},
             onStartRetest = {},
             onShareResult = { received = it },
+            onLogEvent = { _, _ -> },
         )
         bridge.shareResult(payloadJson)
         queue.drain()
@@ -402,6 +414,67 @@ class AccenturyBridgeTest {
                 """{"imageUrl":"https://a/b.png","text":"x","webTestUrl":"javascript:alert(1)"}""",
             ),
         )
+    }
+
+    /** logEvent를 한 번 호출하고 창구가 받은 이벤트를 돌려준다. 버려졌으면 null. */
+    private fun logEvent(
+        name: String,
+        paramsJson: String,
+        allowed: Boolean = true,
+    ): Pair<String, Map<String, EventParam>>? {
+        val queue = FakeMainQueue()
+        var received: Pair<String, Map<String, EventParam>>? = null
+        val bridge = AccenturyBridge(
+            postToMain = queue::post,
+            isCurrentUrlAllowed = { allowed },
+            isOriginAllowedNow = { false },
+            sessionToken = { "" },
+            onRequestMicPermission = {},
+            onStartVoiceItem = {},
+            onStartRetest = {},
+            onShareResult = {},
+            onLogEvent = { eventName, params -> received = eventName to params },
+        )
+        bridge.logEvent(name, paramsJson)
+        queue.drain()
+        return received
+    }
+
+    @Test
+    fun `허용된 origin이면 계측 이벤트가 타입을 살린 채 창구로 온다`() {
+        // 숫자가 숫자로 남아야 GA4에서 평균·P95를 낼 수 있다 (KAN-33 AC). 변환 규칙 자체는
+        // EventParamsTest가 못박고, 여기서는 브리지가 그 결과를 그대로 넘기는지만 본다.
+        assertEquals(
+            "analysis_wait_duration" to mapOf(
+                "duration_ms" to EventParam.Count(8_200L),
+                "pending_item_count" to EventParam.Count(2L),
+            ),
+            logEvent("analysis_wait_duration", """{"duration_ms":8200,"pending_item_count":2}"""),
+        )
+    }
+
+    @Test
+    fun `allowlist 밖 origin에서는 계측 이벤트도 무시한다`() {
+        // 계측은 집계 축이라 한 번 쌓이면 지울 수 없다 - allowlist 밖 페이지가 우리 대시보드에
+        // 값을 남기는 통로가 되면 안 된다.
+        assertNull(logEvent("item_shown", """{"item_seq":1}""", allowed = false))
+    }
+
+    @Test
+    fun `불량 JSON이나 규격 밖 이벤트명은 조용히 버린다`() {
+        // 이벤트 하나를 잃는 편이 낫다 - 웹은 오류를 돌려줄 상대가 아니고(§8), 규격 밖 이름이
+        // 흘러가면 GA4에 지울 수 없는 축이 생긴다. 버렸다는 사실은 Crashlytics로만 남는다.
+        assertNull(logEvent("item_shown", "{oops"))
+        assertNull(logEvent("item_shown", "[]"))
+        assertNull(logEvent("Item_Shown", """{"item_seq":1}"""))
+        assertNull(logEvent("item-shown", """{"item_seq":1}"""))
+        assertNull(logEvent("firebase_item_shown", """{"item_seq":1}"""))
+        assertNull(logEvent("", """{"item_seq":1}"""))
+    }
+
+    @Test
+    fun `파라미터 없는 이벤트도 그대로 지나간다`() {
+        assertEquals("retest_started" to emptyMap<String, EventParam>(), logEvent("retest_started", "{}"))
     }
 
     @Test

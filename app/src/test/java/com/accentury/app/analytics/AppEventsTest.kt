@@ -2,6 +2,7 @@ package com.accentury.app.analytics
 
 import com.accentury.app.share.ShareChannel
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Test
 
 class AppEventsTest {
@@ -24,7 +25,28 @@ class AppEventsTest {
         LogcatEventSink.log(ShareEvents.TAPPED)
         LogcatEventSink.log(
             ShareEvents.LAUNCHED,
-            mapOf(ShareEvents.PARAM_CHANNEL to channelParam(ShareChannel.KAKAO)),
+            mapOf(ShareEvents.PARAM_CHANNEL to EventParam.Text(channelParam(ShareChannel.KAKAO))),
         )
+    }
+
+    @Test
+    fun `설정이 없으면 Firebase sink가 아니라 Logcat 폴백이 선택된다`() {
+        /*
+         * google-services.json이 없는 것이 정상 상태다 (app/build.gradle.kts). 그때 FirebaseApp이
+         * 초기화되지 않아 계측기를 만들 수 없는데, 그 사실을 판정하는 자리는 한 곳이어야 한다 —
+         * 화면마다 다시 물으면 어느 화면 하나가 묻는 것을 잊고 초기화되지 않은 SDK를 부른다.
+         */
+        assertSame(LogcatEventSink, eventSinkFor(null))
+    }
+
+    @Test
+    fun `재녹음 이벤트의 이름과 값은 웹 스키마와 같다`() {
+        // 웹 녹음기와 네이티브 녹음 화면은 같은 사건이라 한 지표로 쌓여야 한다
+        // (web/src/analytics/events.ts). 이름이 갈리면 문항 난이도를 두 표본으로 나눠 보게 된다.
+        assertEquals("recording_retake", RecordingEvents.RETAKE)
+        assertEquals("item_seq", RecordingEvents.PARAM_ITEM_SEQ)
+        assertEquals("reason", RecordingEvents.PARAM_REASON)
+        // 사유만 대문자다 — 웹 `RetakeReason`의 표기를 그대로 따른다.
+        assertEquals("USER", RecordingEvents.REASON_USER)
     }
 }

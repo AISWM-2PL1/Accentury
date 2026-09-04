@@ -31,6 +31,22 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Accentury">
         <!--
+          익명 계측 (KAN-33). 광고 식별자(AAID)를 수집하지 않고 광고 개인화 신호도 보내지 않는다 —
+          웹에서 allow_google_signals·allow_ad_personalization_signals를 끈 것과 같은 요구다
+          (FR-AN-09 익명 집계). 사용자 ID도 붙이지 않는데, 그쪽은 설정이 아니라 코드의 사실이라
+          (setUserId를 부르는 곳이 없다) 여기 적을 자리가 없다.
+
+          기본값이 수집하는 쪽이라 명시가 곧 스위치다 — 이 두 줄이 없으면 SDK를 넣는 순간
+          광고 식별자가 붙는다. 계측기를 만드는 자리(analytics/FirebaseEventSink.kt)가 아니라
+          매니페스트인 이유: SDK는 이 값을 초기화 시점에 읽고, 그 시점은 우리 코드보다 먼저다.
+        -->
+        <meta-data
+            android:name="google_analytics_adid_collection_enabled"
+            android:value="false" />
+        <meta-data
+            android:name="google_analytics_default_allow_ad_personalization_signals"
+            android:value="false" />
+        <!--
           launchMode="singleTask" (KAN-32 2단계). 공유 링크는 앱이 살아 있는 동안에도 눌린다 —
           기본 standard였다면 그때마다 MainActivity가 하나 더 쌓이고, WebView도 함께 하나 더 뜬다.
           진행 중이던 응시 위에 인트로를 든 두 번째 WebView가 얹히는 셈이라, 뒤로 가기로만 원래

@@ -13,6 +13,9 @@ coroutinesTest = "1.10.2"
 okhttp = "5.4.0"
 kotlinxSerialization = "1.9.0"
 kakaoSdk = "2.24.0"
+firebaseBom = "34.18.0"
+googleServices = "4.5.0"
+firebaseCrashlyticsPlugin = "3.0.8"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -37,9 +40,18 @@ okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhtt
 okhttp-mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver", version.ref = "okhttp" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 kakao-share = { group = "com.kakao.sdk", name = "v2-share", version.ref = "kakaoSdk" }
+# 익명 계측·크래시 (KAN-33). 두 SDK의 버전은 BoM 하나가 잡는다 - 같은 firebase-common 위에 서 있어
+# 따로 올리면 조합이 어긋난다. 그래서 아래 둘에는 version이 없다.
+firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.ref = "firebaseBom" }
+firebase-analytics = { group = "com.google.firebase", name = "firebase-analytics" }
+firebase-crashlytics = { group = "com.google.firebase", name = "firebase-crashlytics" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+# 계측·크래시 플러그인 (KAN-33). 둘 다 google-services.json이 있을 때만 적용한다 - 설정 파일이
+# 없으면 설정 단계에서 빌드를 죽이기 때문이다 (app/build.gradle.kts의 조건부 apply 주석 참고).
+google-services = { id = "com.google.gms.google-services", version.ref = "googleServices" }
+firebase-crashlytics = { id = "com.google.firebase.crashlytics", version.ref = "firebaseCrashlyticsPlugin" }
 

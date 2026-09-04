@@ -1,6 +1,10 @@
 package com.accentury.app.web
 
 import android.webkit.JavascriptInterface
+import com.accentury.app.analytics.CrashReports
+import com.accentury.app.analytics.EventParam
+import com.accentury.app.analytics.isAnalyticsName
+import com.accentury.app.analytics.parseEventParams
 import com.accentury.app.bridge.SharePayload
 import com.accentury.app.bridge.VoiceItemStart
 import com.accentury.app.bridge.parseSharePayload
@@ -9,8 +13,8 @@ import com.accentury.app.bridge.parseVoiceItemStart
 /**
  * 웹 → 네이티브 브리지 (webview-layer.md §8). `window.AccenturyBridge`로 주입된다.
  *
- * 최소 표면 원칙 — 화면 전환(KAN-100)·답안 제출 인증(KAN-13)·재응시(KAN-34)·결과 공유(KAN-30)까지
- * 필요한 여섯 메서드만 둔다. 늘리기 전에 웹에서 해결 가능한지 먼저 볼 것.
+ * 최소 표면 원칙 — 화면 전환(KAN-100)·답안 제출 인증(KAN-13)·재응시(KAN-34)·결과 공유(KAN-30)·
+ * 계측(KAN-33)까지 필요한 일곱 메서드만 둔다. 늘리기 전에 웹에서 해결 가능한지 먼저 볼 것.
  *
  * 메서드 추가는 하위호환이라 [BRIDGE_CONTRACT_VERSION]을 올리지 않는다 (§5).
  *
@@ -28,6 +32,8 @@ import com.accentury.app.bridge.parseVoiceItemStart
  *   상태 머신이 맡는다 — 진행 중이라는 사실의 주인이 둘이면 어긋난다 (SessionGateController.retestInFlight)
  * @param onShareResult 결과 화면의 [친구에게 공유하기] (KAN-30). 카드 자산은 웹이 실어 보내고
  *   (서버가 정한 값이다) 어느 통로로 나갈지는 네이티브가 정한다 (ResultSharer)
+ * @param onLogEvent 웹이 센 계측 이벤트 (KAN-33). 이름·파라미터는 검증을 통과한 값이고, 어디로
+ *   보낼지는 창구 너머의 sink가 정한다 (analytics/AppEvents.kt)
  */
 class AccenturyBridge(
     private val postToMain: (() -> Unit) -> Unit,
@@ -38,6 +44,7 @@ class AccenturyBridge(
     private val onStartVoiceItem: (VoiceItemStart) -> Unit,
     private val onStartRetest: () -> Unit,
     private val onShareResult: (SharePayload) -> Unit,
+    private val onLogEvent: (String, Map<String, EventParam>) -> Unit,
 ) {
     /** §5 스큐 협상 — 웹이 앱의 계약 버전을 런타임에 재확인할 때 쓴다. 상태 변경이 없어 스레드 무관. */
     @JavascriptInterface
@@ -92,7 +99,12 @@ class AccenturyBridge(
     fun startVoiceItem(payloadJson: String) {
         postToMain {
             if (!isCurrentUrlAllowed()) return@postToMain
-            val start = parseVoiceItemStart(payloadJson) ?: return@postToMain
+            val start = parseVoiceItemStart(payloadJson) ?: run {
+                // 조용히 버리되 흔적은 남긴다 (KAN-33). allowlist를 통과한 페이지만 여기 오므로
+                // 이 실패는 우리 웹과 앱이 계약을 다르게 알고 있다는 뜻이다 (CrashReports).
+                CrashReports.recordBridgeParseFailure("startVoiceItem")
+                return@postToMain
+            }
             onStartVoiceItem(start)
         }
     }
@@ -115,8 +127,42 @@ class AccenturyBridge(
     fun shareResult(payloadJson: String) {
         postToMain {
             if (!isCurrentUrlAllowed()) return@postToMain
-            val payload = parseSharePayload(payloadJson) ?: return@postToMain
+            val payload = parseSharePayload(payloadJson) ?: run {
+                CrashReports.recordBridgeParseFailure("shareResult")
+                return@postToMain
+            }
             onShareResult(payload)
+        }
+    }
+
+    /**
+     * 웹이 센 계측 이벤트를 네이티브 Firebase로 넘긴다 (KAN-33).
+     *
+     * 앱 안 이벤트를 웹의 gtag가 아니라 여기로 받는 이유는 두 가지다. SDK가 붙여 주는 축
+     * (기기·OS·앱 버전·앱 인스턴스)은 WebView 안에서 만들 수 없고, 웹 스트림으로 보내면 앱
+     * 사용자가 웹 트래픽으로 세어진다 (`analytics/track.ts`의 분기표).
+     *
+     * @JavascriptInterface는 문자열만 주고받으므로 파라미터는 JSON으로 온다. 검증 순서는
+     * [startVoiceItem]과 같다 — origin을 통과한 값만 파싱한다. 다만 여기서 거르는 것은 안전이
+     * 아니라 **집계 축의 위생**이다: 규격 밖 이름이 한 번 흘러가면 GA4에 지울 수 없는 축이 생긴다
+     * (`analytics/EventParams.kt`).
+     *
+     * 이벤트 하나를 잃는 것은 감수한다. 웹은 오류를 돌려줄 상대가 아니고(§8), 계측 때문에 응시를
+     * 멈출 이유는 더더욱 없다 — 대신 버렸다는 사실만 Crashlytics 비치명 이벤트로 남긴다.
+     *
+     * 메서드 추가는 하위호환이라 [BRIDGE_CONTRACT_VERSION] 1을 유지한다 (§5). 그래서 계측을 모르는
+     * 구버전 앱도 스큐 게이트를 그대로 통과하고, 웹 래퍼가 false로 걸러 이벤트만 조용히 사라진다.
+     */
+    @JavascriptInterface
+    fun logEvent(name: String, paramsJson: String) {
+        postToMain {
+            if (!isCurrentUrlAllowed()) return@postToMain
+            val params = if (isAnalyticsName(name)) parseEventParams(paramsJson) else null
+            if (params == null) {
+                CrashReports.recordBridgeParseFailure("logEvent")
+                return@postToMain
+            }
+            onLogEvent(name, params)
         }
     }
 }

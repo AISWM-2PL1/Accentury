@@ -1,10 +1,11 @@
 package com.accentury.app
 
 import android.app.Application
+import com.accentury.app.analytics.CrashReports
 import com.kakao.sdk.common.KakaoSdk
 
 /**
- * 앱 전역 초기화 지점. 지금은 카카오 SDK 하나뿐이다 (KAN-30).
+ * 앱 전역 초기화 지점 — 카카오 SDK(KAN-30)와 크래시 리포트(KAN-33).
  *
  * Application이 필요한 이유: 카카오 SDK는 앱 키를 프로세스 단위로 한 번만 등록받고
  * (`ShareClient.instance`가 그 값을 전제로 만들어진다) 공유 호출 시점에는 이미 초기화돼 있어야 한다.
@@ -27,5 +28,16 @@ class AccenturyApplication : Application() {
         if (kakaoAppKey.isNotBlank()) {
             KakaoSdk.init(this, kakaoAppKey)
         }
+
+        /*
+         * 크래시 리포트 (KAN-33). 카카오와 달리 여기에 init 호출이 없는 이유: Firebase는
+         * google-services 플러그인이 심은 ContentProvider가 Application보다 먼저 스스로 초기화한다.
+         * 설정 파일이 없는 빌드에서는 그 초기화가 아예 일어나지 않고, [CrashReports]가 그 사실을
+         * 확인해 아무 데도 보내지 않는다 - "설정이 없는 것이 정상 상태"라는 카카오 키와 같은 규칙이다.
+         *
+         * 그래서 여기서 하는 일은 커스텀 키 하나를 걸어 두는 것뿐이다. 사용자 식별자는 붙이지
+         * 않는다 (setUserId 금지, 익명 규칙).
+         */
+        CrashReports.install()
     }
 }
