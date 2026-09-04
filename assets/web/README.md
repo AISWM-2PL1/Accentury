@@ -73,6 +73,10 @@ SPA라 `/t?c=...`도 같은 `index.html`이 응답한다 — 등급별로 다른
 Pillow·numpy·scipy가 필요하다(위 venv에 있다). 끝에 검증표를 찍고 하나라도 FAIL이면 종료 코드 1이다.
 보는 것: 정확한 픽셀 크기·모드·모서리 색(크림)·용량 상한·manifest가 적은 아이콘이 실제로 옆에 있는지.
 
+카드에 박히는 문구는 그리기 전에 Jua cmap과 대조한다(`assets/screenshots/build.py`의
+`assert_glyphs`). Pillow는 글리프가 없어도 조용히 두부(□)를 그려서, 검증표가 전부 통과한 그림이
+바깥에서만 깨진 적이 있다 (KAN-178 §6 — 가운뎃점 U+00B7). 문구를 고치면 여기서 막힌다.
+
 키잉과 종이색 정규화는 옆 스크립트에서 그대로 가져다 쓴다 — `build.py`가
 `assets/app-icon/build.py`와 `assets/characters/build.py`를 모듈로 읽는다. 두 스크립트의 키잉은
 이름만 같고 알맹이가 달라서(아이콘은 흰 배경 + 도상 안 종이, 캐릭터는 배경이 곧 종이색) 아이콘은
