@@ -52,6 +52,15 @@ test('/.well-known/ 아래는 재작성하지 않는다 (KAN-32)', () => {
   assert.equal(rewrite('/.well-known/assetlinks.json'), '/.well-known/assetlinks.json');
 });
 
+test('/privacy.html은 재작성되지 않는다 (KAN-133)', () => {
+  // 개인정보처리방침은 SPA 라우트가 아니라 S3의 정적 문서다. 여기서 index.html로 넘어가면
+  // 스토어 심사관이 정책 대신 앱 화면을 보게 되는데, 200이 떠서 조용하다.
+  // 확장자를 붙인 것 자체가 그 방어라, 재작성 규칙을 고칠 때 이 줄이 먼저 깨져야 한다.
+  assert.equal(rewrite('/privacy.html'), '/privacy.html');
+  // 확장자를 뗀 쪽은 반대로 재작성되는 것이 맞다 - 그래서 확정 URL에 .html이 붙어 있다.
+  assert.equal(rewrite('/privacy'), '/index.html');
+});
+
 test('점 없는 이름이 우연히 비슷해도 예약 접두사가 아니면 재작성된다', () => {
   // `/well-known`(점 없음)은 RFC 8615의 그 자리가 아니다 — SPA 경로로 다뤄야 한다.
   assert.equal(rewrite('/well-known/foo'), '/index.html');
