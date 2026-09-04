@@ -70,12 +70,13 @@
 ### 재생성
 
 ```
-/Users/iseongju/accentury/.venv/bin/python assets/app-icon/build.py
+python3 assets/app-icon/build.py
 ```
 
-Pillow·numpy·scipy가 필요하다(위 venv에 있다). 끝에 **39행 검증표**를 찍고 하나라도 FAIL이면
-종료 코드 1이다. 보는 것: 파일 존재·정확한 픽셀 크기·알파 유무·모서리 색·adaptive 전경 bbox가
-66dp 안전 영역 안인지·스플래시 bbox가 192dp 원 안인지·용량 상한·기본 아이콘 잔재 0개.
+Pillow·numpy·scipy가 필요하다 — 없으면 가상환경을 만들어 `pip install pillow numpy scipy`로 넣고 그
+안에서 돌린다. 끝에 **39행 검증표**를 찍고 하나라도 FAIL이면 종료 코드 1이다. 보는 것: 파일
+존재·정확한 픽셀 크기·알파 유무·모서리 색·adaptive 전경 bbox가 66dp 안전 영역 안인지·스플래시 bbox가
+192dp 원 안인지·용량 상한·기본 아이콘 잔재 0개.
 
 ## 3. Android 런처·스플래시 배선
 
@@ -201,9 +202,12 @@ xcrun simctl io booted screenshot assets/screenshots/raw/ios/01-intro.png
 ### 재생성
 
 ```
-/Users/iseongju/accentury/.venv/bin/python assets/screenshots/build.py
+python3 assets/screenshots/build.py
 ... --raw <원본 폴더> --out <출력 폴더>   # 임시 캡처로 배치만 확인할 때
 ```
+
+Pillow·numpy가 필요하다 — 없으면 가상환경을 만들어 `pip install pillow numpy`로 넣고 그 안에서
+돌린다. fontTools는 선택이다: 있으면 캡션 글자가 Jua에 있는지까지 검사한다.
 
 검증표는 규격 12줄(파일 존재·픽셀 크기·알파 없는 RGB·모서리 크림·8MB 이하)과 플랫폼별 버튼 여백
 2줄(가장 바깥 버튼 픽셀이 프레임 변에서 3% 이상)이다. 버튼 여백이 FAIL이면 `MIN_DEVICE_W`·
