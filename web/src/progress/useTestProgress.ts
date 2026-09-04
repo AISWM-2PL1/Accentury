@@ -35,8 +35,15 @@ export interface UseTestProgressResult {
   current: TestItem | null
   /** 진행바용 n/N. 첫 문항이 1/10이다 (endowed progress — ux-ui.md §3 Goal-Gradient) */
   progress: Progress
-  /** 현재 문항의 제출 완료 통지. 상태 머신이 거부하면 아무 일도 일어나지 않는다 */
-  submit: (itemId: string) => void
+  /**
+   * 현재 문항의 제출 완료 통지. 상태 머신이 거부하면 아무 일도 일어나지 않는다.
+   *
+   * 돌려주는 값은 **진행이 실제로 밀렸는가**다 (KAN-33). 이 판정은 상태 머신만 할 수 있는데
+   * (중복 제출·순서 위반·모르는 itemId를 여기서 거른다), 호출자는 그 사실을 알아야 문항 제출을
+   * 한 번만 셀 수 있다 — 재녹음 결과도 같은 경로로 들어오므로 세는 쪽에서 다시 판정하면
+   * 같은 규칙이 두 벌이 된다.
+   */
+  submit: (itemId: string) => boolean
 }
 
 /** 저장소가 아예 없는 환경에서 쓰는 빈 저장소. 진행은 메모리로만 이어진다 */
@@ -85,11 +92,12 @@ export function useTestProgress(
     const next = submitItem(previous, itemId)
     // 동일 참조 = 상태 머신이 거부했다(중복 제출·순서 위반·모르는 itemId).
     // 진행이 그대로이므로 저장도 리렌더도 하지 않는다.
-    if (next === previous) return
+    if (next === previous) return false
 
     latest.current.state = next
     saveSnapshot(latest.current.storage, next, latest.current.testVersion, latest.current.sessionId)
     setState(next)
+    return true
   }, [])
 
   useEffect(() => {

@@ -12,8 +12,9 @@
  * 실수로도 생기지 않는다.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnalysisWaitingScreen } from '../analysis/AnalysisWaitingScreen'
+import { track } from '../analytics/track'
 import type { CaptureFactory, Recording } from '../audio'
 import { uploadRecording } from '../audio/uploadRecording'
 import { getSessionToken, installItemResultReceiver, startVoiceItem } from '../bridge/bridge'
@@ -189,15 +190,54 @@ function TestRunner({
    * 들어온다. 두 경로가 만드는 것이 같은 [ItemResult]라 받는 쪽을 나눌 이유가 없고, 나누면
    * 진행을 미는 규칙이 두 벌이 되어 언젠가 어긋난다.
    */
+  /*
+   * 계측이 문항을 찾을 자리. 콜백 의존성에 `state.items`를 넣지 않으려고 ref로 든다 —
+   * 넣으면 문항이 바뀔 때마다 [receiveResult]가 새로 만들어지고, 그러면 아래 수신 지점이
+   * 문항마다 다시 설치된다 (전환 도중 결과가 들어왔을 때 받을 사람이 없는 순간이 생긴다).
+   */
+  const itemsRef = useRef(state.items)
+  itemsRef.current = state.items
+
   const receiveResult = useCallback(
     (result: ItemResult) => {
-      submit(result.itemId)
+      /*
+       * **진행이 실제로 밀렸을 때만 센다** (KAN-33). 재녹음 결과도 이 경로로 들어오는데,
+       * 그 문항은 이미 제출된 것이라 상태 머신이 거부한다 — 거부까지 세면 문항 제출 수가
+       * 재녹음 횟수만큼 부풀어 오른다. 재녹음은 `recording_retake`가 따로 센다.
+       */
+      if (submit(result.itemId)) {
+        const index = itemsRef.current.findIndex((item) => item.itemId === result.itemId)
+        const item = itemsRef.current[index]
+        if (item !== undefined) {
+          track({ name: 'item_submitted', item_seq: index + 1, item_type: item.type })
+        }
+      }
       setResultNonce((n) => n + 1)
     },
     [submit],
   )
 
   useEffect(() => installItemResultReceiver(receiveResult), [receiveResult])
+
+  /*
+   * 문항 노출 계측 (KAN-33 퍼널). 문항이 바뀔 때 한 번이다 — 의존성이 itemId라 리렌더로는
+   * 다시 나가지 않는다 (AC "중복 화면 노출로 이벤트가 과다 발생하지 않는다").
+   *
+   * 이 자리에서 세는 이유: 유형별 화면 둘이 각자 세면 규칙이 두 벌이 되고, 한쪽에 화면이
+   * 하나 늘 때 조용히 어긋난다. 진행을 아는 것은 여기 하나뿐이다.
+   *
+   * 개발 빌드의 StrictMode는 이펙트를 일부러 두 번 돌린다 — 배포 빌드에는 그 재실행이 없다.
+   */
+  const shownItemId = current?.itemId
+  const shownSeq = progress.current
+  const shownType = current?.type
+  useEffect(() => {
+    if (shownItemId === undefined || shownType === undefined) return
+    track({ name: 'item_shown', item_seq: shownSeq, item_type: shownType })
+    // 순번·유형은 문항이 정하는 값이라 itemId 하나가 바뀌면 함께 바뀐다. 셋 다 의존성에
+    // 두면 같은 문항에서 진행률만 다시 계산돼도 노출이 한 번 더 세어진다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shownItemId])
 
   /**
    * 이 화면이 서버로 나갈 때 쓰는 세션 토큰 — **녹음 업로드·어휘 제출·분석 폴링이 전부 이
@@ -354,7 +394,12 @@ function TestRunner({
               fetchImpl,
             )
           }
-          onSubmitted={() => submit(current.itemId)}
+          onSubmitted={() => {
+            // 음성 경로(`receiveResult`)와 같은 규칙이다 — 상태 머신이 받아들인 제출만 센다
+            if (submit(current.itemId)) {
+              track({ name: 'item_submitted', item_seq: progress.current, item_type: 'VOCABULARY' })
+            }
+          }}
         />
       )}
     </main>

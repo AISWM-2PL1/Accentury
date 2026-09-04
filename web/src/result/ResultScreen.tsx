@@ -22,7 +22,7 @@
  * 화면과 큰 글자 크기에서 두 칸이 서로를 찌그러뜨리지 않게 하기 위해서다 (AC 6항).
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { storeLabelFor, storeUrlFor, type StorePlatform } from '../audio/storeLink'
 import type { FetchLike } from '../progress/fetchTestDefinition'
 import { Button, StatusBlock, type ButtonVariant } from '../ui'
@@ -70,6 +70,15 @@ export interface ResultScreenProps {
    */
   onDownloadClick?: () => void
   /**
+   * 결과가 처음으로 도착했다 (KAN-33 계측 자리). **성공한 첫 조회에 한 번만** 부른다 —
+   * [다시 시도]로 다시 조회해도, 부모가 리렌더돼도 두 번 가지 않는다.
+   *
+   * 화면이 직접 세지 않고 콜백으로 올리는 이유는 `campaign` 때문이다. 유입 코드는 진입 URL이
+   * 들고 있는 값이라 그 규칙을 아는 것은 App이고(`trackedCampaign`), 이 화면이 URL을 읽기
+   * 시작하면 다운로드 CTA를 부모 판정으로 받는 규칙과 어긋난다.
+   */
+  onResultLoaded?: (result: TestResultView) => void
+  /**
    * 주입용 fetch (테스트용).
    *
    * **참조가 안정적이어야 한다** — 이 값이 조회 이펙트의 의존성이라, 렌더마다 새로 만든
@@ -92,11 +101,18 @@ export function ResultScreen({
   retest,
   storePlatform,
   onDownloadClick,
+  onResultLoaded,
   fetchImpl,
 }: ResultScreenProps) {
   const [load, setLoad] = useState<LoadState>({ status: 'loading' })
   // [다시 시도]는 이 값을 올려 조회 이펙트를 다시 돌린다 (TestFlowScreen과 같은 방식).
   const [attempt, setAttempt] = useState(0)
+  /*
+   * 결과 도착을 이미 알렸는가. 계측은 "이 사람이 결과를 봤다" 한 건이라, 재조회나 토큰
+   * 변경으로 이펙트가 다시 돌아도 한 번이어야 한다 (AC "중복 화면 노출로 이벤트가 과다
+   * 발생하지 않는다").
+   */
+  const notified = useRef(false)
 
   useEffect(() => {
     // 재시도로 요청이 겹칠 때 먼저 뜬 응답이 뒤늦게 화면을 덮지 않도록 버린다.
@@ -104,7 +120,12 @@ export function ResultScreen({
     setLoad({ status: 'loading' })
     fetchResult({ apiBase, sessionId, sessionToken }, fetchImpl)
       .then((result) => {
-        if (!cancelled) setLoad({ status: 'ready', result })
+        if (cancelled) return
+        setLoad({ status: 'ready', result })
+        if (!notified.current) {
+          notified.current = true
+          onResultLoaded?.(result)
+        }
       })
       .catch((error: unknown) => {
         if (!cancelled) setLoad({ status: 'error', error: asResultError(error) })
@@ -112,6 +133,13 @@ export function ResultScreen({
     return () => {
       cancelled = true
     }
+    /*
+     * `onResultLoaded`는 의존성에 없다. 부모가 렌더마다 새로 만드는 인라인 콜백이라 넣으면
+     * 부모가 다시 그려질 때마다 결과를 다시 조회한다 (`fetchImpl` 주석과 같은 함정이고,
+     * 그쪽은 참조 안정을 요구해 풀었지만 이 콜백은 계측 한 번이라 그럴 값어치가 없다).
+     * 한 번만 부르는 것은 위 `notified`가 보증한다.
+     */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiBase, sessionId, sessionToken, fetchImpl, attempt])
 
   const retry = useCallback(() => setAttempt((n) => n + 1), [])

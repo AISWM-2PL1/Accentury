@@ -2,7 +2,11 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FetchLike } from '../progress/fetchTestDefinition'
 import type { VoiceItem } from '../progress/testDefinition'
-import { AnalysisWaitingScreen, type AnalysisWaitingScreenProps } from './AnalysisWaitingScreen'
+import {
+  AnalysisWaitingScreen,
+  retakeReason,
+  type AnalysisWaitingScreenProps,
+} from './AnalysisWaitingScreen'
 
 function voiceItem(seq: number): VoiceItem {
   return {
@@ -91,7 +95,18 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers()
+  delete window.gtag
 })
+
+/** GA4 태그 자리의 대역 (KAN-33). 도착한 이벤트를 순서대로 모은다 */
+function stubGtag(): Record<string, unknown>[] {
+  const events: Record<string, unknown>[] = []
+  window.gtag = (...args: unknown[]) => {
+    if (args[0] !== 'event') return
+    events.push({ event: args[1] as string, ...(args[2] as Record<string, unknown>) })
+  }
+  return events
+}
 
 describe('진행률 — 분모는 10이다', () => {
   it('어휘 5문항을 완료로 세고 음성 완료를 더한다', async () => {
@@ -535,5 +550,41 @@ describe('텍스트 히어로 (KAN-178)', () => {
     expect(screen.getByText('분석 중입니다')).toHaveAttribute('aria-hidden', 'true')
     // 히어로는 "분석 중" 한 상태를 붙박이로 말하고, 제목은 그 안에서 무엇이 진행 중인지를 말한다
     expect(screen.getByRole('heading', { level: 1, name: '결과를 만들고 있어요' })).toBeInTheDocument()
+  })
+})
+
+describe('재녹음 계측 (KAN-33)', () => {
+  it('사유를 상태에서 뽑아 문항 번호와 함께 보낸다', () => {
+    // 품질로 되돌아온 문항과 분석이 실패한 문항은 손볼 곳이 다르다 (KAN-28)
+    expect(retakeReason('RETRYABLE_FAILED')).toBe('QUALITY')
+    expect(retakeReason('FAILED')).toBe('FAILED')
+    // 아직 보내지 않은 문항은 서버가 되돌려보낸 것이 아니다
+    expect(retakeReason('NOT_SUBMITTED')).toBe('USER')
+  })
+
+  it('[다시 녹음]을 누르면 그 문항의 번호와 사유가 나간다', async () => {
+    const events = stubGtag()
+    const onRetake = vi.fn()
+    await renderScreen({
+      onRetake,
+      fetchImpl: fetchFor({
+        analyses: () =>
+          jsonResponse(
+            200,
+            statusesBody(['COMPLETED', 'RETRYABLE_FAILED', 'COMPLETED', 'COMPLETED', 'COMPLETED']),
+          ),
+      }),
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '다시 녹음' }))
+
+    // v2는 전체 10문항 기준 3번이다 (VOICE_ITEMS의 itemNumber)
+    expect(events).toContainEqual({
+      event: 'recording_retake',
+      item_seq: 3,
+      reason: 'QUALITY',
+    })
+    // 세는 것과 여는 것은 다른 일이다 — 계측이 붙어도 재녹음은 그대로 열린다
+    expect(onRetake).toHaveBeenCalledWith('v2')
   })
 })

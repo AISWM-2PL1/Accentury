@@ -23,6 +23,8 @@
  */
 
 import { useCallback, useMemo, useRef, useState } from 'react'
+import type { RetakeReason } from '../analytics/events'
+import { track } from '../analytics/track'
 import { useRecorder, type CaptureFactory, type QualityStatus, type Recording } from '../audio'
 import { PitchTracker, type PitchFrame } from '../audio/pitchTracker'
 import { UploadError, type UploadAccepted } from '../audio/uploadRecording'
@@ -41,6 +43,12 @@ import type { VoiceItem } from './testDefinition'
 
 export interface WebVoiceRecorderProps {
   item: VoiceItem
+  /**
+   * 전체 문항 기준 1-기반 순번. 재녹음 계측(KAN-33)이 "몇 번 문항을 몇 번 다시 읽었나"로
+   * 집계하는 축이다 — 정의의 `seq`가 아니라 사용자가 화면에서 본 번호를 쓴다. 대기 화면·
+   * 네이티브 녹음 화면이 쓰는 번호와 같아야 세 곳의 집계가 같은 문항을 가리킨다.
+   */
+  itemNumber: number
   /** 녹음 한 건을 서버로 올린다. 같은 attemptId로 다시 부르는 것이 재시도다 */
   upload: (recording: Recording, attemptId: string) => Promise<UploadAccepted>
   /** 접수됨 — 브리지 경로의 `onItemResult`와 같은 모양으로 알린다 */
@@ -111,6 +119,7 @@ const QUALITY_MESSAGE: Record<Exclude<QualityStatus, 'NORMAL'>, string> = {
 
 export function WebVoiceRecorder({
   item,
+  itemNumber,
   upload,
   onUploaded,
   capture,
@@ -214,13 +223,28 @@ export function WebVoiceRecorder({
    */
   const uploadingRef = useRef(false)
 
-  /** [재녹음] — 녹음도 곡선도 시도 식별자도 버리고 처음으로 돌아간다. 서버에는 아무 일도 없었다 */
-  const retake = useCallback(() => {
-    attemptIdRef.current = null
-    setUploadState({ kind: 'idle' })
-    resetCurve()
-    discard()
-  }, [discard, resetCurve])
+  /**
+   * [재녹음] — 녹음도 곡선도 시도 식별자도 버리고 처음으로 돌아간다. 서버에는 아무 일도 없었다.
+   *
+   * 사유를 인자로 받는다 (KAN-33). 같은 버튼이 세 자리에 있고 누른 이유가 자리마다 다른데
+   * (품질 게이트에 막혔다 / 업로드가 실패했다 / 그냥 다시 읽고 싶다), 여기서는 어느 자리에서
+   * 왔는지 알 수 없다. 사유가 섞이면 "재녹음이 많다"까지만 알게 되어 품질 임계치를 손봐야
+   * 하는지 아닌지가 갈리지 않는다 (KAN-28).
+   *
+   * **서버 시도를 만들지 않는 재녹음도 센다.** 이 버튼은 attempt를 만들지 않아 GPU 비용이
+   * 0이지만, 사용자가 몇 번을 다시 읽는지는 그 자체로 문항 난이도·안내 문구의 신호다.
+   * 시도로 이어진 재녹음과는 `reason`으로 갈린다.
+   */
+  const retake = useCallback(
+    (reason: RetakeReason) => {
+      track({ name: 'recording_retake', item_seq: itemNumber, reason })
+      attemptIdRef.current = null
+      setUploadState({ kind: 'idle' })
+      resetCurve()
+      discard()
+    },
+    [discard, resetCurve, itemNumber],
+  )
 
   /** [녹음] — 앞 녹음의 곡선을 놓고 새로 시작한다. 분석기는 첫 조각에서 캡처 레이트로 만들어진다 */
   const beginRecording = useCallback(() => {
@@ -285,7 +309,7 @@ export function WebVoiceRecorder({
           tone="error"
           message={state.message}
           action={
-            <Button onClick={retake} style={{ width: '100%' }}>
+            <Button onClick={() => retake('FAILED')} style={{ width: '100%' }}>
               다시 시도
             </Button>
           }
@@ -395,7 +419,8 @@ function ReviewPanel({
 }: {
   recording: Recording
   uploadState: UploadState
-  onRetake: () => void
+  /** 재녹음. 사유는 누른 자리가 정한다 (`retake` 주석) */
+  onRetake: (reason: RetakeReason) => void
   onSend: () => void
 }) {
   if (uploadState.kind === 'uploading') {
@@ -412,7 +437,10 @@ function ReviewPanel({
           <div className="record-actions">
             {/* 재시도는 **같은 녹음을 같은 키로** 다시 보낸다 (§5.2) — 중복 접수가 생기지 않는다 */}
             {uploadState.retryable && <Button onClick={onSend}>다시 시도</Button>}
-            <Button variant={uploadState.retryable ? 'text' : 'primary'} onClick={onRetake}>
+            <Button
+              variant={uploadState.retryable ? 'text' : 'primary'}
+              onClick={() => onRetake('FAILED')}
+            >
               재녹음
             </Button>
           </div>
@@ -432,7 +460,7 @@ function ReviewPanel({
         tone="error"
         message={QUALITY_MESSAGE[recording.status]}
         action={
-          <Button onClick={onRetake} style={{ width: '100%' }}>
+          <Button onClick={() => onRetake('QUALITY')} style={{ width: '100%' }}>
             재녹음
           </Button>
         }
@@ -445,7 +473,7 @@ function ReviewPanel({
       {/* 재생이 없으므로 "들어보세요"라고 말하지 않는다 (§5.7) */}
       <p className="type-caption record-hint">녹음이 끝났어요. 다시 녹음하거나 다음으로 넘어가세요</p>
       <div className="record-actions">
-        <Button variant="text" onClick={onRetake}>
+        <Button variant="text" onClick={() => onRetake('USER')}>
           재녹음
         </Button>
         <Button onClick={onSend}>다음</Button>

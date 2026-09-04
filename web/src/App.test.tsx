@@ -1128,6 +1128,17 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
     )
   }
 
+  /**
+   * [stubResultFetch]가 주는 결과의 등급 계측 (KAN-33). 종합 점수 72는 70 버킷으로 뭉개진다 —
+   * 원값이 이벤트에 실리지 않는다는 것이 이 상수가 지키는 사실이다 (FR-AN-09).
+   */
+  const RESULT_TIER_EVENT = {
+    event: 'tier_assigned',
+    tier_code: 'HONORARY',
+    score_version: 'sv-0.3',
+    overall_bucket: 70,
+  }
+
   /** §3.7 200 응답 — 결과 화면까지 가야 [앱 다운로드]가 있다 */
   function stubResultFetch() {
     vi.stubGlobal(
@@ -1209,8 +1220,11 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
     download.addEventListener('click', (event) => event.preventDefault())
     fireEvent.click(download)
 
-    // 결과 화면으로 바로 들어온 경로라 유입 이벤트는 없다 (인트로를 거치지 않았다)
+    // 결과 화면으로 바로 들어온 경로라 유입 이벤트는 없다 (인트로를 거치지 않았다).
+    // 앞의 두 건은 결과가 도착하면서 나간다 (KAN-33) — 다운로드 탭은 그 뒤에 붙는다
     expect(queue).toEqual([
+      { event: 'result_viewed', campaign: 'kko_share' },
+      RESULT_TIER_EVENT,
       { event: 'app_download_clicked', campaign: 'kko_share', platform: 'unknown' },
     ])
   })
@@ -1238,6 +1252,8 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
 
       // 결과 화면으로 바로 들어온 경로라 유입 이벤트는 없다 (인트로를 거치지 않았다)
       expect(queue).toEqual([
+        { event: 'result_viewed', campaign: 'kko_share' },
+        RESULT_TIER_EVENT,
         { event: 'share_clicked', campaign: 'kko_share', channel: 'system' },
       ])
     } finally {
@@ -1258,8 +1274,14 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
 
     // 공유 자체는 브리지로 정상적으로 나간다 — 세지 않는 것과 보내지 않는 것은 다른 이야기다
     expect(bridgeShare).toHaveBeenCalledTimes(1)
-    // 어느 경로로도 세지 않는다. 앱의 그 한 건은 네이티브가 `share_tapped`로 센다
-    expect(native).toEqual([])
+    /*
+     * 공유는 어느 경로로도 세지 않는다 — 앱의 그 한 건은 네이티브가 `share_tapped`로 센다.
+     * 결과 도착 두 건은 앱에서도 세고(등급 분포는 앱 응시가 대부분이다), 브리지로 나간다.
+     */
+    expect(native).toEqual([
+      { event: 'result_viewed', campaign: 'kko_share' },
+      RESULT_TIER_EVENT,
+    ])
     expect(queue).toEqual([])
   })
 
