@@ -89,5 +89,15 @@ output "alerts_topic_arn" {
 
 output "alarm_names" {
   value       = module.monitoring.alarm_names
-  description = "생성된 CloudWatch 경보 7종 (KAN-134의 ALB, RDS 3종 + KAN-165의 backend 서비스 2종 + KAN-36의 AI 2종)"
+  description = "생성된 CloudWatch 경보 10종 (KAN-134의 ALB, RDS 3종 + KAN-165의 backend 서비스 2종 + KAN-36의 AI 2종 + KAN-38의 관측성 3종)"
+}
+
+output "dashboard_name" {
+  value       = module.monitoring.dashboard_name
+  description = "운영 대시보드 이름 (KAN-38). 콘솔 경로는 CloudWatch > 대시보드 > 이 이름이다."
+}
+
+output "dashboard_url" {
+  value       = module.monitoring.dashboard_url
+  description = "운영 대시보드 바로가기 (KAN-38) - README '관측성 지표와 대시보드'의 확인 절차가 이 출력을 쓴다."
 }

@@ -3,7 +3,9 @@ package app.accentury.backend.analysis;
 import app.accentury.backend.IntegrationTest;
 import app.accentury.backend.SteppingClock;
 import app.accentury.backend.TestSessions;
+import app.accentury.backend.observability.ServiceMetrics;
 import app.accentury.backend.session.TestSessionRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -451,6 +453,38 @@ class HttpAnalysisDispatcherTest extends IntegrationTest {
     }
 
     @Test
+    void 버려진_늦은_결과는_지연_분포에_들어가지_않는다() {
+        // 조건부 전이가 0행이면 그 건은 사용자에게 성공이 아니었다 (위 테스트). 그런데 소요
+        // 시간은 정의상 타임아웃보다 길어서, 세면 P95를 위로 밀어 "성공만 잰다"는 취지가 깨진다
+        // (KAN-38).
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        AnalysisMetrics metrics = TestMetrics.analysisMetrics(registry);
+        AnalysisJob job = saveProcessingJob();
+        transitions.fail(job.id(), AnalysisJobStatus.RETRYABLE_FAILED, "ANALYSIS_TIMEOUT");
+        ScriptedClient client = new ScriptedClient()
+                .then(new AiAnalysisClient.Completed(95, "OK", "rmvpe-0.2", "sv-0.3"));
+
+        new HttpAnalysisDispatcher(client, new SyncTaskExecutor(), transitions,
+                new AnalysisBacklog(), openCircuitNever(), metrics, 0, 0).dispatch(request(job));
+
+        assertEquals(0, registry.get(ServiceMetrics.ANALYSIS_DURATION).timer().count());
+    }
+
+    @Test
+    void 성공한_분석은_지연_분포에_들어간다() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        AnalysisMetrics metrics = TestMetrics.analysisMetrics(registry);
+        AnalysisJob job = saveProcessingJob();
+        ScriptedClient client = new ScriptedClient()
+                .then(new AiAnalysisClient.Completed(78, "OK", "rmvpe-0.2", "sv-0.3"));
+
+        new HttpAnalysisDispatcher(client, new SyncTaskExecutor(), transitions,
+                new AnalysisBacklog(), openCircuitNever(), metrics, 0, 0).dispatch(request(job));
+
+        assertEquals(1, registry.get(ServiceMetrics.ANALYSIS_DURATION).timer().count());
+    }
+
+    @Test
     void 종결마다_백로그가_복귀해_혼잡_판정이_남지_않는다() {
         AnalysisBacklog backlog = new AnalysisBacklog();
         AnalysisJob job = saveProcessingJob();
@@ -463,7 +497,7 @@ class HttpAnalysisDispatcherTest extends IntegrationTest {
         new HttpAnalysisDispatcher(client, task -> {
             duringRun.set(backlog.inFlight());
             task.run();
-        }, transitions, backlog, openCircuitNever(), 0, 0).dispatch(request(job));
+        }, transitions, backlog, openCircuitNever(), TestMetrics.analysisMetrics(), 0, 0).dispatch(request(job));
 
         assertEquals(1, duringRun.get());
         assertEquals(0, backlog.inFlight());
@@ -481,7 +515,7 @@ class HttpAnalysisDispatcherTest extends IntegrationTest {
                     atRejection.set(backlog.inFlight());
                     throw new RejectedExecutionException("큐 포화 시뮬레이션");
                 },
-                transitions, backlog, openCircuitNever(), 0, 0);
+                transitions, backlog, openCircuitNever(), TestMetrics.analysisMetrics(), 0, 0);
 
         // 예외는 업로드 요청 스레드로 그대로 올라가야 업로드가 503으로 종결할 수 있다 (§3.3).
         assertThrows(RejectedExecutionException.class, () -> dispatcher.dispatch(request(job)));
@@ -544,7 +578,7 @@ class HttpAnalysisDispatcherTest extends IntegrationTest {
                 task -> {
                     throw new RejectedExecutionException("큐 포화 시뮬레이션");
                 },
-                transitions, new AnalysisBacklog(), openCircuitNever(), 0, 0);
+                transitions, new AnalysisBacklog(), openCircuitNever(), TestMetrics.analysisMetrics(), 0, 0);
 
         assertThrows(RejectedExecutionException.class, () -> dispatcher.dispatch(request));
 
@@ -559,7 +593,7 @@ class HttpAnalysisDispatcherTest extends IntegrationTest {
                                               AiCircuitBreaker circuitBreaker) {
         // 백오프 0ms - 테스트가 재전송 대기에 시간을 쓰지 않게 한다.
         return new HttpAnalysisDispatcher(client, new SyncTaskExecutor(), transitions,
-                new AnalysisBacklog(), circuitBreaker, retries, 0);
+                new AnalysisBacklog(), circuitBreaker, TestMetrics.analysisMetrics(), retries, 0);
     }
 
     /** health까지 통과해 시험 1건을 기다리는 회로 */

@@ -41,20 +41,25 @@ public class AnalysisJobTransitions {
     /**
      * 분석 성공 - COMPLETED로 전이하고 결과(점수, 품질, 모델과 점수 버전)를 채운다.
      * 점수는 이 시점에 세션 저장소에 누적되고(§4.3), 합산은 /complete가 1회 한다 (KAN-25).
+     *
+     * @return 실제로 전이했으면 true. false면 늦게 도착한 결과라 버려졌다는 뜻이므로 이 건을
+     *         성공으로 세는 계측(지연 분포, KAN-38)에 넣으면 안 된다 - 사용자는 이미 재녹음
+     *         안내를 받은 뒤이고, 그 건의 소요 시간은 정의상 타임아웃보다 길어 P95를 위로 민다.
      */
     @Transactional
-    public void complete(String jobId, int intonationScore, String qualityCode,
-                         String modelVersion, String scoreVersion) {
+    public boolean complete(String jobId, int intonationScore, String qualityCode,
+                            String modelVersion, String scoreVersion) {
         int updated = repository.completeIfProcessing(
                 jobId, intonationScore, qualityCode, modelVersion, scoreVersion, Instant.now());
         if (updated == 0) {
             // 0행은 두 경우다 - 이미 종결된 작업이거나, 재응시 폐기(KAN-107)로 행 자체가
             // 지워진 작업이다. 여기서는 구분할 수 없으므로 로그가 두 경우를 모두 말해야 한다.
             log.warn("늦은 분석 결과를 버린다 - 이미 종결됐거나 재응시 폐기로 삭제된 작업이다 jobId={}", jobId);
-        } else {
-            // 점수는 로그에 남기지 않는다 - 결과 공개는 /result 한 곳이다 (§3.4, KAN-12).
-            log.info("분석 완료 jobId={} modelVersion={}", jobId, modelVersion);
+            return false;
         }
+        // 점수는 로그에 남기지 않는다 - 결과 공개는 /result 한 곳이다 (§3.4, KAN-12).
+        log.info("분석 완료 jobId={} modelVersion={}", jobId, modelVersion);
+        return true;
     }
 
     /**

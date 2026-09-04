@@ -52,6 +52,7 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
     private final AnalysisJobTransitions transitions;
     private final AnalysisBacklog backlog;
     private final AiCircuitBreaker circuitBreaker;
+    private final AnalysisMetrics metrics;
     private final int retries;
     private final long retryBackoffMs;
 
@@ -63,18 +64,20 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
 
     HttpAnalysisDispatcher(AiAnalysisClient client, TaskExecutor executor,
                            AnalysisJobTransitions transitions, AnalysisBacklog backlog,
-                           AiCircuitBreaker circuitBreaker, int retries) {
-        this(client, executor, transitions, backlog, circuitBreaker, retries, RETRY_BACKOFF_MS);
+                           AiCircuitBreaker circuitBreaker, AnalysisMetrics metrics, int retries) {
+        this(client, executor, transitions, backlog, circuitBreaker, metrics, retries, RETRY_BACKOFF_MS);
     }
 
     HttpAnalysisDispatcher(AiAnalysisClient client, TaskExecutor executor,
                            AnalysisJobTransitions transitions, AnalysisBacklog backlog,
-                           AiCircuitBreaker circuitBreaker, int retries, long retryBackoffMs) {
+                           AiCircuitBreaker circuitBreaker, AnalysisMetrics metrics, int retries,
+                           long retryBackoffMs) {
         this.client = client;
         this.executor = executor;
         this.transitions = transitions;
         this.backlog = backlog;
         this.circuitBreaker = circuitBreaker;
+        this.metrics = metrics;
         this.retries = retries;
         this.retryBackoffMs = retryBackoffMs;
     }
@@ -215,7 +218,7 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
         }
     }
 
-    private void run(AnalysisRequest request, String correlationId) {
+    private void run(AnalysisRequest request, String correlationId, long acceptedNanos) {
         MDC.put(CorrelationIdFilter.MDC_KEY, correlationId);
         try {
             // 실행 시작을 원자적으로 선점한다 - 이미 종결된(타임아웃 등) 작업이면 그 결과는
@@ -225,7 +228,7 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
                 log.info("이미 종결된 작업이라 AI 호출을 건너뛴다 jobId={}", request.analysisJobId());
                 return;
             }
-            apply(request.analysisJobId(), analyzeWithRetry(request, correlationId));
+            apply(request.analysisJobId(), analyzeWithRetry(request, correlationId), acceptedNanos);
         } catch (RuntimeException e) {
             // 종결을 놓치면 사용자는 타임아웃 스위퍼까지 대기 화면에 묶인다 - 어떤 예외도 종결로 바꾼다.
             log.error("분석 전달 워커 실패 jobId={}", request.analysisJobId(), e);
@@ -339,11 +342,20 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
         };
     }
 
-    private void apply(String jobId, AiAnalysisClient.@Nullable Outcome outcome) {
+    private void apply(String jobId, AiAnalysisClient.@Nullable Outcome outcome, long acceptedNanos) {
         switch (outcome) {
-            case AiAnalysisClient.Completed completed -> transitions.complete(jobId,
-                    completed.intonationScore(), completed.qualityCode(),
-                    completed.modelVersion(), completed.scoreVersion());
+            case AiAnalysisClient.Completed completed -> {
+                // 전이에 <b>성공한</b> 건만 지연 분포에 넣는다 (KAN-38). 0행으로 버려진 결과는
+                // 사용자가 이미 재녹음 안내를 받은 뒤이고, 그 소요 시간은 정의상 타임아웃보다
+                // 길어 P95를 위로 민다 - 실패를 빼려고 성공만 재는 취지가 그대로 깨진다.
+                // 기준점은 dispatch() 진입이다: 업로드는 작업 행을 저장한 바로 다음 줄에서
+                // 전달하므로(VoiceUploadService) 작업의 createdAt과 사실상 같은 순간이고,
+                // 그 값을 얻자고 종결 경로에 조회를 하나 더 두지 않는다.
+                if (transitions.complete(jobId, completed.intonationScore(), completed.qualityCode(),
+                        completed.modelVersion(), completed.scoreVersion())) {
+                    metrics.recordCompleted(System.nanoTime() - acceptedNanos);
+                }
+            }
             case AiAnalysisClient.Rejected rejected -> transitions.fail(jobId,
                     rejected.retryable() ? AnalysisJobStatus.RETRYABLE_FAILED : AnalysisJobStatus.FAILED,
                     rejected.errorCode());
@@ -376,6 +388,8 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
 
         final AnalysisRequest request;
         final String correlationId;
+        /** 전달 접수 시각 - 지연 지표의 기준점이다 (KAN-38). */
+        final long acceptedNanos = System.nanoTime();
         final AtomicReference<State> state = new AtomicReference<>(State.QUEUED);
 
         Task(AnalysisRequest request, String correlationId) {
@@ -406,7 +420,7 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
                 return;
             }
             try {
-                HttpAnalysisDispatcher.this.run(request, correlationId);
+                HttpAnalysisDispatcher.this.run(request, correlationId, acceptedNanos);
             } finally {
                 tasks.remove(this);
             }

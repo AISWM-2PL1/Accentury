@@ -3,7 +3,7 @@
 # 스크립트를 /opt/accentury에 놓고 systemd 유닛을 등록한다. IMAGE_TAG는 파이프라인(KAN-128) 몫이라 그 전까지
 # 유닛은 실패한 채 기다린다. iptables egress 가드와 health 지표 타이머도 여기서 놓는다.
 # cloud-init은 인스턴스당 한 번만 돈다 - 여기 든 파일이 바뀌면 시작 템플릿 새 버전으로 인스턴스가 교체된다 (main.tf).
-# 이 파일은 압축 없이 user_data 16KB 상한에 든다 - 긴 설명은 main.tf와 infra/README.md에 둔다.
+# 이 파일만 user_data 16KB 상한에 든다 - compose와 스크립트 3개는 S3에서 받는다 (KAN-38, main.tf).
 set -euxo pipefail
 
 dnf install -y docker
@@ -29,14 +29,28 @@ AI_ZONE_ID=${ai_zone_id}
 VPC_CIDR=${vpc_cidr}
 CONF
 
-# ---- 운영 compose 파일(docker-compose.ai.yml)과 스크립트 - gzip + base64 (KAN-129 리뷰) ----
+# ---- 운영 compose 파일과 스크립트 - S3에서 받는다 (KAN-38) ----
+# 파일 내용을 gzip + base64로 여기 박던 방식(KAN-129 리뷰)은 user_data 16KB 상한의 75%를 먹어 한계에 닿았다.
+# 자산 해시 ${boot_assets_hash}가 네 파일 내용의 지문이다 - 이 값이 user_data에 들어 있어야 스크립트를 고쳤을 때
+# 시작 템플릿 새 버전과 instance refresh가 돌아 새 인스턴스가 새 파일을 받는다 (박아 넣던 시절의 동작 유지).
 # 호스트 경로는 compose 파일 이름과 무관하게 /opt/accentury/docker-compose.yml이다 - 파이프라인 remote 스크립트가
 # 경로 하나만 안다.
 mkdir -p /opt/accentury
-echo '${compose_yml_b64}' | base64 -d | gunzip > /opt/accentury/docker-compose.yml
-echo '${up_script_b64}' | base64 -d | gunzip > /opt/accentury/accentury-up.sh
-echo '${guard_script_b64}' | base64 -d | gunzip > /opt/accentury/ai-egress-guard.sh
-echo '${health_script_b64}' | base64 -d | gunzip > /opt/accentury/ai-health-metric.sh
+
+# S3 일시 장애로 첫 부팅이 통째로 죽지 않게 5회까지 늘려 가며 재시도한다 (최대 약 75초).
+# 다 실패하면 return 1이 set -e에 걸려 cloud-init 로그에 남고 ASG가 인스턴스를 교체한다.
+fetch() {
+  for i in 1 2 3 4 5; do
+    if aws s3 cp "s3://${boot_bucket}/ai-host/$1" "$2" --region ${region}; then return 0; fi
+    sleep $((i * 5))
+  done
+  return 1
+}
+
+fetch docker-compose.ai.yml /opt/accentury/docker-compose.yml
+fetch accentury-up.sh /opt/accentury/accentury-up.sh
+fetch ai-egress-guard.sh /opt/accentury/ai-egress-guard.sh
+fetch ai-health-metric.sh /opt/accentury/ai-health-metric.sh
 chmod 755 /opt/accentury/accentury-up.sh /opt/accentury/ai-egress-guard.sh /opt/accentury/ai-health-metric.sh
 
 # ---- 컨테이너 egress 가드 + health 지표 타이머 (KAN-36) ----

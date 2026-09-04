@@ -16,7 +16,7 @@ infra/
     config/           backend, ai 환경 변수의 정본인 SSM 파라미터와 시크릿 2종 (관리자 토큰, 내부 호출 토큰) (KAN-129, KAN-36)
     edge/             internal ALB(대상 그룹 ip), VPC 오리진, CloudFront, S3 (KAN-125, KAN-126)
     waf/              CloudFront 앞단 웹 ACL. us-east-1 프로바이더로 호출한다 (KAN-149)
-    monitoring/       SNS 이메일과 CloudWatch 경보 7종 - ALB, RDS 3종 + backend 서비스 2종 + AI 호스트 2종 (KAN-134, KAN-165, KAN-36)
+    monitoring/       SNS 이메일과 CloudWatch 경보 10종(ALB, RDS 3종 + backend 서비스 2종 + AI 호스트 2종 + 관측성 3종), 운영 대시보드 1개 (KAN-134, KAN-165, KAN-36, KAN-38)
     deploy/           GitHub Actions가 OIDC로 맡는 환경별 배포 역할 (KAN-127)
   envs/
     staging/          main.tf + terraform.tfvars
@@ -714,14 +714,34 @@ CloudFront 5xxErrorRate 0 (13:45부터 15:15). 클라이언트 쪽은 세 phase 
 
 ## ai 호스트 컨테이너 기동 (KAN-124, 전용 호스트 KAN-36)
 
-ai 호스트는 무상태다. `modules/ai-host`의 첫 부팅 user_data가 docker, compose, 운영 compose
-파일(`modules/ai-host/docker-compose.ai.yml`, 호스트에서는 `/opt/accentury/docker-compose.yml`),
-기동 스크립트(`modules/ai-host/accentury-up.sh`), systemd 유닛 `accentury.service`를 놓는다. 두
-환경의 호스트 구성은 완전히 같고, 환경별 값은 전부 SSM Parameter Store에서 온다. compose
-파일이나 스크립트를 고치면 user_data가 바뀌어 **인스턴스가 교체된다** (시작 템플릿 새 버전 +
-ASG instance refresh). 그래도 되는 이유가 무상태다. 교체 동안 분석만 끊기고 backend 회로가
-열렸다 닫힌다. user_data는 raw 16KB 상한이 있어 ai-host 모듈의 precondition이 plan에서 크기를
-검사한다. backend는 이 호스트에 없다 - KAN-165 전의 backend 호스트(`accentury-{env}`, t3.small,
+ai 호스트는 무상태다. `modules/ai-host`의 첫 부팅 user_data가 docker와 compose 플러그인을 깔고,
+운영 compose 파일(`modules/ai-host/docker-compose.ai.yml`, 호스트에서는
+`/opt/accentury/docker-compose.yml`)과 스크립트 3개(`accentury-up.sh`, `ai-egress-guard.sh`,
+`ai-health-metric.sh`)를 **부팅 자산 버킷에서 내려받은 뒤**(KAN-38, 아래 "부팅 자산 버킷") systemd
+유닛 `accentury.service`를 놓는다. 두 환경의 호스트 구성은 완전히 같고, 환경별 값은 전부 SSM
+Parameter Store에서 온다. compose 파일이나 스크립트를 고치면 user_data가 바뀌어 **인스턴스가
+교체된다** (시작 템플릿 새 버전 + ASG instance refresh). 그래도 되는 이유가 무상태다. 교체 동안
+분석만 끊기고 backend 회로가 열렸다 닫힌다. user_data는 raw 16KB 상한이 있어 ai-host 모듈의
+precondition이 plan에서 크기를 검사한다.
+
+### 부팅 자산 버킷 (KAN-38)
+
+네 파일은 `accentury-{env}-ai-boot-{계정}` 버킷의 `ai-host/` 접두사 아래에 있고 Terraform이
+`aws_s3_object`로 올린다. 퍼블릭 접근은 전면 차단이고, EC2 역할은 그 접두사에 `s3:GetObject`만
+가진다 - 호스트가 뚫려도 자기 부팅 파일을 바꿔치기하지 못한다. 네트워크는 새로 뚫은 것이 없다.
+호스트가 퍼블릭 서브넷에 있어 ECR과 SSM을 쓰던 경로를 그대로 쓴다.
+
+| 항목 | 값 |
+| --- | --- |
+| 옮긴 이유 | 파일을 user_data에 `base64gzip`으로 박으면 16KB 상한의 75%를 먹는다. KAN-38이 health 스크립트를 늘리며 상한을 넘겼다 |
+| 옮긴 뒤 크기 | user_data 약 5.4KB (상한의 약 33%) |
+| 변경 감지 | 네 파일의 `filemd5`를 묶은 해시가 user_data에 주석으로 들어간다. 파일이 바뀌면 해시가 바뀌고 시작 템플릿 새 버전과 instance refresh가 돈다 |
+| 첫 부팅 실패 대비 | `fetch`가 5회까지 늘려 가며 재시도한다 (최대 약 75초). 다 실패하면 `set -e`가 부팅을 세우고 ASG가 교체한다 |
+| 순서 | 시작 템플릿에 `depends_on = [aws_s3_object.boot]`. 오브젝트가 인스턴스보다 먼저 올라간다 |
+
+해시가 핵심이다. 이 값이 없으면 스크립트를 고쳐도 user_data가 그대로라 S3만 갱신되고 도는
+인스턴스는 옛 파일을 계속 쓴다. 파일을 박아 넣던 시절에는 내용이 곧 user_data라 공짜로
+성립하던 성질이라, 옮기면서 명시적으로 되살린 것이다. backend는 이 호스트에 없다 - KAN-165 전의 backend 호스트(`accentury-{env}`, t3.small,
 `aws_instance`)는 Fargate 서비스로 대체됐다.
 
 | | ai 호스트 `accentury-{env}-ai` |
@@ -969,10 +989,10 @@ Count 관찰은 2026-08-28부터의 staging 사이클과 당일 부하 시험(�
 ## 경보와 알림 (KAN-134)
 
 prod는 무인으로 돈다. 서버가 죽은 것을 사용자보다 먼저 알아야 하므로 SNS 토픽
-하나(`accentury-{env}-alerts`)에 이메일 구독을 걸고 CloudWatch 경보 7종을 붙인다
-(`infra/modules/monitoring`, 두 환경 각 1벌). AI 지표 2종을 빼면 지표를 새로 수집하지
-않는다 - ALB, RDS, ECS가 이미 내보내는 표준 지표다. 지표 수집과 대시보드, correlation ID
-규약은 KAN-38이고, 이 절은 그중 최소 선행분이다.
+하나(`accentury-{env}-alerts`)에 이메일 구독을 걸고 CloudWatch 경보를 붙인다
+(`infra/modules/monitoring`, 두 환경 각 1벌). 이 절의 7종은 "서버가 죽었다"를 알리고,
+AI 지표 2종을 빼면 지표를 새로 수집하지 않는다 - ALB, RDS, ECS가 이미 내보내는 표준 지표다.
+서비스 지표 수집과 대시보드, 그 위의 경보 3종은 아래 "관측성 지표와 대시보드 (KAN-38)"다.
 
 | 경보 | 지표 | 조건 | 결측 처리 |
 | --- | --- | --- | --- |
@@ -1183,7 +1203,100 @@ EC2 시절 `unhealthy-hosts`가 더 걸린 이유는 앞에 ALB 헬스체크 판
 CloudWatch 표준 경보는 개당 월 0.10달러, 지표 math 경보(`alb-5xx`)는 지표 2개를 세어
 0.20달러다. 경보 7종에 환경당 월 약 0.80달러, 커스텀 지표(`Healthy` 1개 + backend `accentury.*`
 약 5개)가 이름당 월 0.30달러로 약 1.80달러다. SNS 이메일 알림은 월 1000건까지 무료다. 두 환경
-합산 월 5달러 안팎이라 상시 켜 둔다.
+합산 월 5달러 안팎이라 상시 켜 둔다. KAN-38이 더하는 몫은 아래 절에 따로 적는다.
+
+## 관측성 지표와 대시보드 (KAN-38)
+
+앞 절이 "서버가 죽었다"를 알린다면 이 절은 **"서버는 살아 있는데 파이프라인이 고장 났다"**를
+보는 층이다. 죽음은 사용자가 바로 알지만 이쪽은 대기 화면이 길어지는 것으로만 드러나 아무도
+신고하지 않는다 - 무인 운영에서 조용히 나빠지는 구간이다.
+
+**설계 근거와 지표 카탈로그의 정본은 [docs/wiki/observability.md](../docs/wiki/observability.md)다.**
+여기는 인프라 쪽에 무엇이 생기고 어떻게 확인하는지를 적는다.
+
+### 무엇이 생기는가
+
+| 리소스 | 이름 |
+| --- | --- |
+| 대시보드 1개 | `accentury-{env}-ops` (환경 루트의 `terraform output -raw dashboard_url`이 바로가기) |
+| 경보 3종 | `ai-temp-residue`, `analysis-backlog-high`, `analysis-timeouts-high` |
+
+경보는 앞 절과 **같은 SNS 토픽**으로 간다. 심각도별 채널을 나누지 않는다 - 3인 팀에 채널이
+여럿이면 어느 쪽도 보지 않게 된다. 모듈 출력 `alarm_names`가 10종 전부를 준다.
+
+| 경보 | 지표 | 조건 | 결측 처리 |
+| --- | --- | --- | --- |
+| `ai-temp-residue` | `accentury/ai` `TempFiles` (차원 env) | 5분 최대 >= 20이 2회 연속 | `notBreaching` |
+| `analysis-backlog-high` | `accentury/backend` `accentury.analysis.processing.value` | 1분 최대 >= 60이 5회 연속 | `notBreaching` |
+| `analysis-timeouts-high` | `accentury.analysis.timeouts.count`의 두 사유(stuck, lost) 합 | 5분 합계 > 5 | `notBreaching` |
+
+셋 다 결측을 장애로 세지 않는다. backend가 죽어 지표가 끊기는 것은 `no-healthy-target`이,
+AI 호스트가 죽는 것은 `ai-unhealthy`가 이미 잡는다 - 같은 사건에 메일 세 통을 보내지 않는다.
+
+### AI 임시파일 지표가 올라오는 경로
+
+`ai-health-metric.sh`(systemd 타이머, 1분)가 하는 일이 둘로 늘었다.
+
+1. `GET /internal/v0/health` (토큰 불필요) -> `Healthy` 0|1
+2. `GET /internal/v0/metrics` (**토큰 필요**) -> `TempFiles`, `TempOldestAge`, `TempScanFailures`
+
+둘째의 토큰은 SSM을 매분 다시 읽지 않고 `accentury-up.sh`가 기동 때 만들어 둔
+`/run/accentury/ai.env`(root 전용 tmpfs)에서 가져온다 - 컨테이너에 들어가는 것과 같은 값이라
+IAM도 SSM 호출도 늘지 않는다. 그 파일이 없거나(첫 부팅, compose 기동 전) 조회에 실패하면
+**임시파일 지표만 건너뛴다** - health는 그것과 무관하게 계속 나간다.
+
+값을 못 읽었을 때 0을 올리지 않는 것이 중요하다. 0은 "깨끗하다"라서, 조회가 막힌 바로 그
+순간에 경보가 거꾸로 조용해진다 (`ai/app/tempstore.py`가 훑기 실패 시 잔존 값을 덮지 않는
+것과 같은 판단이다).
+
+호스트에서 직접 확인:
+
+```bash
+# ai 호스트 (SSM Session Manager)
+sudo /opt/accentury/ai-health-metric.sh
+# ai health=200 -> Healthy=1, tempFiles=0, tempOldestAge=0, tempScanFailures=0 (accentury/ai env=staging)
+```
+
+### 배포 뒤 확인 절차
+
+```bash
+ENV=staging
+REGION=ap-northeast-2
+
+# 1. 경보 10종이 다 있고 INSUFFICIENT_DATA를 벗어났는가
+aws cloudwatch describe-alarms --region "$REGION"   --alarm-name-prefix "accentury-$ENV-"   --query 'MetricAlarms[].[AlarmName,StateValue]' --output table
+
+# 2. backend 지표가 실제로 올라오는가 (기동 뒤 2분 이상 기다린다 - 발행 주기가 1분이다)
+aws cloudwatch list-metrics --region "$REGION" --namespace accentury/backend   --query 'Metrics[].MetricName' --output text | tr '	' '
+' | sort
+
+# 3. AI 지표도 올라오는가
+aws cloudwatch list-metrics --region "$REGION" --namespace accentury/ai   --query 'Metrics[].MetricName' --output text | tr '	' '
+' | sort
+
+# 4. 대시보드가 값을 그리는가 - 스모크 한 바퀴(KAN-138) 뒤에 열어 본다
+terraform output -raw dashboard_url
+```
+
+2번에 `accentury.http.requests.percentile.value`가 없으면 백분위 게이지 등록이 빠진 것이다 -
+CloudWatch 레지스트리는 Timer의 백분위를 스스로 내보내지 않으므로, 그 게이지가 없으면 대시보드의
+P95만 영영 빈 채로 나머지는 멀쩡해 보인다 (`ServiceMetrics.registerPercentiles`).
+
+그 P95는 **태스크마다 계산된 값을 `Maximum`으로 접은 것**이라 "가장 나쁜 태스크의 P95"다.
+NFR-PF-01 판단에 안전한 쪽을 택한 것이고, 표본이 작은 새 태스크에서 튈 수 있다는 읽는 법까지
+`docs/wiki/observability.md`에 적어 두었다.
+
+### 비용
+
+이 절이 더하는 커스텀 지표가 29개(이름 x 차원 조합)로 환경당 월 약 8.7달러, 경보 3종에
+0.40달러(`analysis-timeouts-high`는 지표 2개를 세는 math 경보라 0.20달러)다. 29개의 내역은
+`docs/wiki/observability.md`의 수집 경로 절에 표로 있다. 대시보드는 계정당
+3개까지 무료라 이 하나는 요금이 없다. 두 환경 합산 월 18달러 안팎이 늘어난다.
+
+지표 수가 곧 요금이므로 **태그는 값이 다섯 이하로 닫힌 것만 쓴다** - 세션 ID나 IP를 태그로
+쓰면 요금이 트래픽에 비례한다. 이 규칙은 backend의 `ServiceMetrics` javadoc에도 적혀 있고,
+`CloudWatchMetricsConfigTest`가 이름 목록이 내보내기 필터를 통과하는지까지 본다.
+
 
 ## 환경별 값 차이 (KAN-129)
 
@@ -1296,6 +1409,14 @@ terraform destroy
 - **AMI 고정 (ai 호스트)**: AL2023 최신 AMI를 SSM 파라미터로 읽되 `ignore_changes = [image_id]`.
   AMI 갱신이 "plan No changes" AC를 깨고 instance refresh를 유발하지 않게 한다.
 - **PriceClass_200**: 한국이 포함되는 최소 티어.
+- **지표 수집은 Micrometer CloudWatch push (2026-09-05, KAN-38)**: 티켓이 남긴 선택지는
+  "레지스트리 push"와 "구조화 로그 기반(Logs Insights)"이었다. push를 택한 이유는 셋이다 -
+  KAN-36이 회로 상태를 올리려고 이미 배선(네임스페이스, 차원, IAM 조건, 발행 주기 1분)을
+  깔아 두었고, 경보와 대시보드가 지표를 직접 읽으며, 백분위를 낼 수 있다. 대가는 이름 x 차원
+  조합마다 붙는 월 0.30달러라, 태그는 값이 다섯 이하로 닫힌 것만 쓴다. 자세한 근거는
+  `docs/wiki/observability.md`.
+- **actuator는 지표를 노출하지 않는다 (KAN-38)**: 수집 경로가 push라 `/actuator/metrics`를
+  열 이유가 없다. 노출 폭은 여전히 health 하나이고 `ActuatorHealthApiTest`가 붙들고 있다.
 - **backend 태스크 1개, ai 워커 1개 고정 (KAN-124, KAN-36, Fargate 전환 뒤에도 KAN-165)** -
   backend 쪽은 KAN-167과 KAN-168으로 풀렸다 (2026-09-02): 혼잡 판정과 활성 정의 포인터는 DB
   기준이 됐고 요청 제한, 회로 차단기, 워커 큐는 인스턴스별로 두기로 했으며(KAN-167), 그 위에
@@ -1424,9 +1545,14 @@ terraform destroy
   성립한다. 대가는 compose 변경 시 인스턴스 교체인데, 호스트가 무상태라 감수한다.
   배포 파이프라인(KAN-128)은 SSM `IMAGE_TAG` 갱신과 `systemctl reload`만 한다.
   backend는 KAN-165부터 compose가 없다 - 태스크 정의가 그 자리다.
-  compose 파일과 기동 스크립트는 `base64gzip`으로 실어 온다 (2026-08-26, KAN-129
-  리뷰) - 평문이면 user_data가 16KB 상한의 91%라 주석 몇 줄에 apply가 터진다.
-  압축 뒤 약 11KB이고, 더 커지면 S3 배치로 옮긴다.
+  compose 파일과 스크립트는 `base64gzip`으로 실어 왔다가 (2026-08-26, KAN-129 리뷰)
+  **2026-09-05에 S3 부팅 자산 버킷으로 옮겼다** (KAN-38, 위 "부팅 자산 버킷").
+  압축해도 16KB 상한의 75%였고 KAN-38의 health 스크립트 확장이 상한을 넘겨,
+  precondition의 error_message가 제시하던 두 갈래 중 "주석을 줄인다"가 아니라
+  "S3 배치로 옮긴다"를 골랐다 - 주석을 깎는 쪽은 결정 근거를 태우면서 KAN-36
+  B단계(compose 확장)에 다시 걸린다. 2026-08-25 결정의 "별도 전달 채널 없이"는
+  파일 배치 경로에 한해 깨졌지만, 성립시키려던 AC 둘(재부팅 자동 기동, 두 환경
+  같은 파일)은 그대로다 - 파일의 정본은 여전히 Terraform이고 S3는 전달만 한다.
 - **ssm_prefix는 env와 결합** (2026-08-26): envs 변수 validation이 `/accentury/{env}`와
   정확히 같은지 plan에서 세운다. prod tfvars에 staging 접두사를 잘못 적으면 prod EC2
   역할이 staging 경로를 읽게 되기 때문이다. compute의 인스턴스 precondition도 config가

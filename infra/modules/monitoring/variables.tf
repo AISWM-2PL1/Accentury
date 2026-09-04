@@ -132,3 +132,49 @@ variable "ai_unhealthy_evaluation_periods" {
     error_message = "ai_unhealthy_evaluation_periods는 1 이상이어야 합니다."
   }
 }
+
+# ---- KAN-38 관측성 경보의 임계치 ----
+
+variable "ai_temp_residue_threshold" {
+  type        = number
+  description = "AI 임시 디렉터리의 잔존 파일 수 상한 (KAN-38). 이 지표는 처리 중인 파일도 세는데 동시 추론이 구조적으로 12건을 넘지 못하므로(워커 4 x 태스크 3), 정상 부하가 닿지 않는 20을 기본값으로 한다."
+  default     = 20
+
+  validation {
+    condition     = var.ai_temp_residue_threshold >= 1
+    error_message = "ai_temp_residue_threshold는 1 이상이어야 합니다."
+  }
+}
+
+variable "analysis_backlog_threshold" {
+  type        = number
+  description = "전 인스턴스의 진행 중 분석 건수 상한 (KAN-38). 폴링 혼잡 임계치(application.yml의 congestion-threshold, 기본 30)의 두 배 - 서버가 폴링 간격을 올려 압력을 뺀 뒤에도 그만큼 쌓였다면 사람이 볼 일이다."
+  default     = 60
+
+  validation {
+    condition     = var.analysis_backlog_threshold >= 1
+    error_message = "analysis_backlog_threshold는 1 이상이어야 합니다."
+  }
+}
+
+variable "analysis_backlog_evaluation_periods" {
+  type        = number
+  description = "analysis-backlog-high가 요구하는 연속 위반 분 수. 다섯 문항을 몰아 제출하는 순간으로는 서지 않을 만큼."
+  default     = 5
+
+  validation {
+    condition     = var.analysis_backlog_evaluation_periods >= 1
+    error_message = "analysis_backlog_evaluation_periods는 1 이상이어야 합니다."
+  }
+}
+
+variable "analysis_timeout_threshold" {
+  type        = number
+  description = "5분 동안 허용하는 분석 타임아웃 건수 (KAN-38). 실행 잔류와 큐 유실의 합이고, 정상 운영에서는 0이다 - 배포 중 태스크 교체로 나는 한두 건 위에 선을 긋는다."
+  default     = 5
+
+  validation {
+    condition     = var.analysis_timeout_threshold >= 0
+    error_message = "analysis_timeout_threshold는 0 이상이어야 합니다."
+  }
+}

@@ -187,6 +187,29 @@ class LogMaskingTest extends IntegrationTest {
     }
 
     @Test
+    void 임시_디렉터리_아래의_경로를_지운다() {
+        // 정상 경로에서는 임시파일이 생기지 않지만(메모리 전용 불변식, KAN-27), 그 불변식이
+        // 깨졌을 때 프레임워크가 예외 메시지에 스풀 경로를 실어 나른다 (KAN-38 AC).
+        String masked = LogMasking.mask(
+                "스풀 실패 path=/var/folders/T/accentury-voice-tmp/upload_9f1c.tmp");
+
+        assertFalse(masked.contains("upload_9f1c"), masked);
+        assertTrue(masked.contains("/var/folders/T/accentury-voice-tmp/***"), masked);
+    }
+
+    @Test
+    void 임시_디렉터리_밖의_임시파일_이름도_지운다() {
+        // 전용 디렉터리 규칙은 디렉터리 이름을 문자열로 안다 - temp-dir를 옮기거나 공용 임시
+        // 디렉터리로 샌 파일은 그 규칙에 안 걸리므로 파일명 규칙이 한 겹 더 있다.
+        // audio-*.wav는 AI 서버의 임시 오디오라(ai/app/tempstore.py) AI 오류가 backend
+        // 로그로 옮겨 실릴 때 나타난다.
+        assertEquals("스풀 실패 path=/tmp/***",
+                LogMasking.mask("스풀 실패 path=/tmp/upload_3b7e21a0.tmp"));
+        assertEquals("AI 오류 detail=***",
+                LogMasking.mask("AI 오류 detail=audio-7fk2p9.wav"));
+    }
+
+    @Test
     void 정상_로그는_건드리지_않는다() {
         // 과잉 마스킹은 디버깅을 못 하게 만든다 - 세션 ID(s_), 문항 ID, correlation ID는 남아야 한다.
         String line = "음성 업로드 접수 sessionId=s_2f9c4b1e-77a1-4a8e-9a1f-0a5f2c6d8e31 "

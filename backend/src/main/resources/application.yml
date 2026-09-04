@@ -67,8 +67,9 @@ logging:
 # 비정상 판정된다. 이 경로는 /v0/* 밖이라 CloudFront를 거치지 않고 ALB 내부에서만 쓰인다.
 # 노출 폭이 Boot 기본값과 같아도 명시해서 못박는다 - 기본값에 기대면 의존성 추가나 부트
 # 업그레이드가 노출 폭을 조용히 바꿔도 잡을 자리가 없다 (ActuatorHealthApiTest가 검증).
-# 나머지 관측성(메트릭 exporter, 대시보드)은 KAN-38 범위다 - KAN-27이 등록한 Micrometer
-# 게이지도 그때까지 비노출로 남는다.
+# 지표는 이 경로로 나가지 않는다 (KAN-38 확정) - Micrometer가 CloudWatch로 push하므로
+# /actuator/metrics를 열 이유가 없고, 열면 내부 구성이 인증 없이 드러난다. 지표 목록과
+# 소비처는 docs/wiki/observability.md가 정본이다.
 management:
   endpoints:
     web:

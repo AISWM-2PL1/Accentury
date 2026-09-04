@@ -5,9 +5,9 @@
 # 띄우고 8000을 발행하며, 부팅 시 프라이빗 영역에 자기 A 레코드를 UPSERT해 backend가 고정 이름
 # (ai.accentury.internal)으로 부르게 하는 호스트다. 상태 검사 실패 시 ASG가 교체한다.
 #
-# 파일들(docker-compose.ai.yml, accentury-up.sh, egress 가드와 health 스크립트)은 user_data가 첫 부팅에
-# /opt/accentury로 옮기고, 환경별 값은 부팅마다 SSM Parameter Store에서 읽으므로 두 환경의 호스트 구성은
-# 완전히 같다. 리소스 이름(역할 accentury-{env}-ai-ec2, 정책 ai-host-access, ASG accentury-{env}-ai)은
+# 파일들(docker-compose.ai.yml, accentury-up.sh, egress 가드와 health 스크립트)은 부팅 자산 버킷에 두고
+# user_data가 첫 부팅에 /opt/accentury로 내려받으며(KAN-38, 아래 "부팅 자산 S3 버킷"), 환경별 값은 부팅마다
+# SSM Parameter Store에서 읽으므로 두 환경의 호스트 구성은 완전히 같다. 리소스 이름(역할 accentury-{env}-ai-ec2, 정책 ai-host-access, ASG accentury-{env}-ai)은
 # KAN-36 그대로다 - 살아 있는 state에서 주소만 바뀌고(module.ai_compute -> module.ai_host, envs의 moved 블록)
 # 리소스는 교체되지 않는다. user_data(스크립트 정리)만 바뀌어 시작 템플릿 새 버전 + instance refresh가 한 번 돈다.
 
@@ -100,6 +100,14 @@ data "aws_iam_policy_document" "host" {
     }
   }
 
+  # 부팅 자산(compose 파일과 스크립트 3개)을 내려받는다 (KAN-38). 버킷 전체가 아니라 ai-host/ 접두사만이고
+  # 읽기 전용이다 - 이 호스트가 뚫려도 자기 부팅 파일을 바꿔치기하지 못한다.
+  statement {
+    sid       = "ReadBootAssets"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.boot.arn}/ai-host/*"]
+  }
+
   # 부팅 시 자기 사설 IP로 A 레코드를 UPSERT한다 (accentury-up.sh, KAN-36). 영역 하나, 레코드 이름 하나, A 타입,
   # UPSERT만 - 이 호스트가 뚫려도 다른 이름을 만들거나 지우지 못한다.
   statement {
@@ -139,6 +147,56 @@ resource "aws_iam_instance_profile" "this" {
   role = aws_iam_role.this.name
 }
 
+# ---- 부팅 자산 S3 버킷 (KAN-38) ----
+
+# compose 파일과 스크립트 3개를 user_data에 gzip + base64로 박던 방식(KAN-129 리뷰)은 EC2 raw 16KB 상한의
+# 75%를 먹었다. KAN-38이 health 스크립트를 늘리면서 상한을 넘어 plan이 precondition에서 멈췄고, 그 자리에서
+# error_message가 제시하던 두 갈래("주석을 줄이거나 S3 배치로 옮기세요") 중 뒤를 골랐다 - 주석을 깎는 쪽은
+# 결정 근거를 태우면서 KAN-36 B단계(compose 확장)에 다시 걸린다. 옮긴 뒤 user_data는 약 29%만 쓴다.
+resource "aws_s3_bucket" "boot" {
+  # S3 버킷 이름은 전역 유일이라 계정 ID를 붙인다 (edge 모듈 web 버킷과 같은 규약).
+  bucket = "${local.name}-boot-${data.aws_caller_identity.current.account_id}"
+
+  # teardown 시 객체가 남아 있어도 버킷을 지울 수 있게 한다. 내용물은 이 모듈이 다시 올리는 산출물이다.
+  force_destroy = true
+}
+
+resource "aws_s3_bucket_public_access_block" "boot" {
+  bucket = aws_s3_bucket.boot.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+locals {
+  # 키는 모듈 안 파일 이름이고 그대로 ai-host/ 아래의 오브젝트 키가 된다. 호스트에 놓이는 경로는
+  # user_data의 fetch 호출이 정한다 - compose만 이름이 docker-compose.yml로 바뀐다.
+  boot_assets = toset([
+    "docker-compose.ai.yml",
+    "accentury-up.sh",
+    "ai-egress-guard.sh",
+    "ai-health-metric.sh",
+  ])
+
+  # 네 파일 내용의 지문. user_data에 주석으로 실려서, 파일이 바뀌면 user_data가 바뀌고 시작 템플릿 새 버전과
+  # instance refresh가 돈다. 이 값이 없으면 S3만 갱신되고 도는 인스턴스는 옛 스크립트를 계속 쓴다 - 파일을
+  # 박아 넣던 시절에는 내용이 곧 user_data라 공짜로 성립하던 성질이다.
+  boot_assets_hash = md5(join("", [for f in sort(tolist(local.boot_assets)) : filemd5("${path.module}/${f}")]))
+}
+
+resource "aws_s3_object" "boot" {
+  for_each = local.boot_assets
+
+  bucket = aws_s3_bucket.boot.id
+  key    = "ai-host/${each.value}"
+  source = "${path.module}/${each.value}"
+
+  # 내용이 바뀌면 오브젝트를 다시 올린다 - source만으로는 Terraform이 변경을 못 본다.
+  etag = filemd5("${path.module}/${each.value}")
+}
+
 # ---- user_data ----
 
 locals {
@@ -152,11 +210,9 @@ locals {
     ai_dns_name      = var.dns_name
     ai_zone_id       = var.private_zone_id
     vpc_cidr         = var.vpc_cidr
-    # 16KB user_data 상한 대비 gzip + base64 (KAN-129 리뷰).
-    compose_yml_b64   = base64gzip(file("${path.module}/docker-compose.ai.yml"))
-    up_script_b64     = base64gzip(file("${path.module}/accentury-up.sh"))
-    guard_script_b64  = base64gzip(file("${path.module}/ai-egress-guard.sh"))
-    health_script_b64 = base64gzip(file("${path.module}/ai-health-metric.sh"))
+    # 부팅 자산은 S3에서 받는다 (KAN-38). 해시는 파일 변경을 instance refresh로 잇는 고리다.
+    boot_bucket      = aws_s3_bucket.boot.id
+    boot_assets_hash = local.boot_assets_hash
   })
 
   # 첫 부팅의 accentury-up.sh가 SSM을 읽을 때 config 모듈의 파라미터가 이미 있어야 한다 (KAN-129).
@@ -176,6 +232,10 @@ locals {
 # backend 회로가 열렸다가(KAN-28) 새 인스턴스가 UP이 되면 닫힌다. 2대 이상은 앞에 내부 LB가 필요해
 # 미룬 결정이다 (티켓 표).
 resource "aws_launch_template" "ai" {
+  # 오브젝트가 먼저 올라가 있어야 첫 부팅의 fetch가 성공한다. 버킷 자체는 IAM 정책을 통해 이미 엮여 있지만
+  # 오브젝트는 참조가 없어 순서가 보장되지 않는다 (KAN-129의 SSM 파라미터 선행과 같은 성격).
+  depends_on = [aws_s3_object.boot]
+
   name_prefix   = "${local.name}-"
   image_id      = data.aws_ssm_parameter.al2023_ami.insecure_value
   instance_type = var.instance_type
@@ -242,7 +302,7 @@ resource "aws_launch_template" "ai" {
 
     precondition {
       condition     = local.user_data_bytes <= local.user_data_max_bytes
-      error_message = "ai 호스트 user_data가 EC2 상한 ${local.user_data_max_bytes} 바이트를 넘습니다 (약 ${local.user_data_bytes} 바이트). compose나 스크립트의 주석을 줄이거나 S3 배치로 옮기세요 (KAN-36 B단계 compose 확장 시 주의)."
+      error_message = "ai 호스트 user_data가 EC2 상한 ${local.user_data_max_bytes} 바이트를 넘습니다 (약 ${local.user_data_bytes} 바이트). compose와 스크립트는 이미 부팅 자산 버킷에 있으므로(KAN-38), 남은 것은 user_data.sh.tftpl 본문입니다 - 주석을 main.tf나 infra/README.md로 옮기거나 systemd 유닛 정의도 부팅 자산으로 내리세요."
     }
   }
 

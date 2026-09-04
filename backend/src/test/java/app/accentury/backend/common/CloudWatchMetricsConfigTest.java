@@ -1,5 +1,6 @@
 package app.accentury.backend.common;
 
+import app.accentury.backend.observability.ServiceMetrics;
 import io.micrometer.cloudwatch2.CloudWatchConfig;
 import io.micrometer.core.instrument.Meter;
 import io.micrometer.core.instrument.Tags;
@@ -11,9 +12,12 @@ import org.springframework.core.io.ClassPathResource;
 import org.springframework.mock.env.MockEnvironment;
 
 import java.io.IOException;
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.time.Duration;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * CloudWatch 내보내기 조립의 두 규칙 (KAN-36) - accentury.* 지표만 나가고, Micrometer 설정 키가
@@ -22,8 +26,27 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class CloudWatchMetricsConfigTest {
 
     @Test
+    void 지표_이름_목록이_전부_내보내기_필터를_통과한다() throws Exception {
+        // ServiceMetrics는 대시보드와 경보(infra/modules/monitoring)가 문자열로 적어 두는 이름의
+        // 정본이다 (KAN-38). 접두사를 어긴 이름을 하나 더하면 그 지표만 조용히 안 올라가고,
+        // 그래프가 빈 이유를 배포 뒤에야 알게 된다 - 목록째로 필터에 태워 막는다.
+        int checked = 0;
+        for (Field field : ServiceMetrics.class.getDeclaredFields()) {
+            if (field.getType() != String.class || !Modifier.isStatic(field.getModifiers())) {
+                continue;
+            }
+            String name = (String) field.get(null);
+            assertEquals(MeterFilterReply.NEUTRAL, CloudWatchMetricsConfig.serviceMetricsOnly().accept(id(name)),
+                    field.getName() + "(" + name + ")이 내보내기 필터에 막힌다");
+            checked++;
+        }
+        assertTrue(checked >= 10, "이름 상수를 읽지 못했다 - 필드가 " + checked + "개뿐이다");
+    }
+
+    @Test
     void 서비스_지표만_내보내고_JVM과_HTTP_지표는_막는다() {
-        // 이름마다 월 요금이 붙는다 - 회로 상태와 임시파일 잔존만 올린다.
+        // 이름마다 월 요금이 붙는다 - accentury.* 서비스 지표만 올린다 (KAN-36 회로 상태와
+        // 임시파일 잔존, KAN-38 관측성 지표).
         assertEquals(MeterFilterReply.NEUTRAL, CloudWatchMetricsConfig.serviceMetricsOnly()
                 .accept(id("accentury.ai.circuit.state")));
         assertEquals(MeterFilterReply.NEUTRAL, CloudWatchMetricsConfig.serviceMetricsOnly()

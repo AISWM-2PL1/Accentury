@@ -62,6 +62,7 @@ class AnalysisDispatchConfig {
                                           ThreadPoolTaskExecutor analysisExecutor,
                                           AnalysisJobTransitions transitions,
                                           AnalysisBacklog backlog,
+                                          AnalysisMetrics metrics,
                                           ObjectMapper objectMapper,
                                           MeterRegistry meterRegistry) {
         String aiBaseUrl = properties.analysis().aiBaseUrl();
@@ -106,7 +107,7 @@ class AnalysisDispatchConfig {
         return new HttpAnalysisDispatcher(
                 new RestAiAnalysisClient(restClient, healthRestClient, objectMapper,
                         properties.analysis().aiToken()),
-                analysisExecutor, transitions, backlog, circuitBreaker,
+                analysisExecutor, transitions, backlog, circuitBreaker, metrics,
                 properties.analysis().aiRetries());
     }
 
