@@ -124,7 +124,7 @@ describe('track — 응시 상관 키 (KAN-33 AC 1)', () => {
   it('응시가 시작된 뒤에는 모든 이벤트에 같은 키가 붙는다', () => {
     const gtag = vi.fn()
     window.gtag = gtag
-    const testId = ensureTestId('s_1')
+    const testId = ensureTestId('s_1')?.testId
 
     track({ name: 'item_shown', item_seq: 1, item_type: 'VOICE' })
     track({ name: 'test_completed', campaign: null })
@@ -153,7 +153,7 @@ describe('track — 응시 상관 키 (KAN-33 AC 1)', () => {
   it('브리지 경로에도 같은 키가 실린다 — 앱·웹이 같은 축으로 묶인다', () => {
     const logEvent = vi.fn()
     bridgeWithLogEvent(logEvent)
-    const testId = ensureTestId('s_1')
+    const testId = ensureTestId('s_1')?.testId
 
     track({ name: 'retest_started' })
 

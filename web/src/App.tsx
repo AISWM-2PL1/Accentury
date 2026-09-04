@@ -86,7 +86,7 @@ export default function App({ navigate = assignHref, voiceCheckCapture }: AppPro
      * 이펙트로 미루면 첫 문항 노출(`item_shown`)이 키 없이 나간다 — 자식의 이펙트가 부모의
      * 이펙트보다 먼저 돌기 때문이다.
      */
-    ensureTestId(params.get('sessionId') ?? '')
+    startedTest(params.get('sessionId') ?? '', trackedCampaign())
     return (
       <TestFlowScreen
         apiBase={API_BASE}
@@ -133,8 +133,13 @@ export default function App({ navigate = assignHref, voiceCheckCapture }: AppPro
    * 경로도 그대로 살아 있다: 결과 화면만 따로 확인하는 개발 통로다.
    */
   if (params.get('screen') === 'result') {
-    // 문항 화면과 같은 이유다. 결과 도착 계측(`result_viewed`·`tier_assigned`)이 같은 응시로
-    // 묶여야 «시작한 사람 중 몇이 결과까지 왔나»를 셀 수 있다.
+    /*
+     * 문항 화면과 같은 이유로 키를 확보한다 — 결과 도착 계측(`result_viewed`·`tier_assigned`)이
+     * 같은 응시로 묶여야 «시작한 사람 중 몇이 결과까지 왔나»를 셀 수 있다.
+     *
+     * 여기서는 시작을 세지 않는다. 결과 화면만 따로 여는 경로(개발 통로, 공유된 결과 URL)에서
+     * 키가 처음 발급될 수 있는데, 그건 응시를 시작한 것이 아니다.
+     */
     ensureTestId(params.get('sessionId') ?? '')
     return (
       <ResultRoute sessionId={params.get('sessionId') ?? ''} standalone={standalone} navigate={navigate} />
@@ -267,6 +272,22 @@ function trackedCampaign(): string | null {
 }
 
 /**
+ * 문항 화면 진입을 응시의 시작으로 센다 (퍼널 2번째 지점).
+ *
+ * 상관 키가 **처음 발급되는 순간**이 곧 이 세션의 첫 진입이라, 그 신호 하나로 두 실행을 함께
+ * 덮는다 (`analytics/testId.ts`). 같은 세션으로 화면을 다시 열면(백그라운드 복귀, 리로드)
+ * 키가 이미 있으므로 다시 세지 않는다.
+ *
+ * 렌더 중에 부르는 것이 걸리지만 멱등이고, 이펙트로 미루면 첫 문항 노출(`item_shown`)이 키
+ * 없이 나간다 — 자식의 이펙트가 부모의 이펙트보다 먼저 돌기 때문이다.
+ */
+function startedTest(sessionId: string, campaign: string | null): void {
+  if (ensureTestId(sessionId)?.issued === true) {
+    track({ name: 'referral_test_started', campaign })
+  }
+}
+
+/**
  * 웹 단독 실행의 [시작하기] — 세션을 만들고 문항 화면으로 넘긴다 (KAN-31).
  *
  * 이전 세션의 토큰을 함께 보낸다. 저장된 세션이 있다는 것은 이 탭에서 이미 한 번 응시했다는
@@ -321,14 +342,16 @@ async function startStandaloneTest(navigate: Navigate, userCurveCenterHz: number
   }
 
   /*
-   * 시작 계측 (퍼널 2번째 지점). 세션이 실제로 만들어진 뒤에 센다 — 탭 시점에 세면 429나
-   * 네트워크 실패로 시작하지 못한 사람까지 "시작"으로 세어져 완주율의 분모가 부풀어 오른다.
+   * 시작 계측은 여기서 하지 않는다 — 다음 문서의 문항 화면 진입이 [startedTest]로 센다.
    *
-   * 상관 키를 **먼저** 확보한다. 이 이벤트가 응시의 첫 지점이라, 여기에 키가 없으면 순서
-   * 분석의 시작점이 통째로 빠진다 (KAN-33 AC 1).
+   * 세션을 만드는 주체가 실행마다 다르기 때문이다: 웹 단독은 이 함수가, 앱은 네이티브가
+   * 만든다(KAN-9). 이 자리에서 세면 **앱 응시는 시작이 영영 세어지지 않는다** — 에뮬레이터
+   * 확인에서 실제로 그 구멍이 드러났다(2026-09-05). 두 실행이 공유하는 자리는 "문항 화면에
+   * 처음 도달했다"이고, 거기서 세면 규칙이 하나로 남는다.
+   *
+   * 429나 네트워크 실패로 시작하지 못한 사람이 세어지지 않는다는 성질도 그대로다 — 그런
+   * 실패는 이 함수가 던져서 화면을 옮기지 않으므로 문항 화면에 도달하지 못한다.
    */
-  ensureTestId(session.sessionId)
-  track({ name: 'referral_test_started', campaign: trackedCampaign() })
 
   // 진입 경로(`/t`)와 나머지 쿼리(`c` 등)는 그대로 두고 화면 지정만 얹는다.
   navigate(

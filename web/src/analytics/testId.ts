@@ -50,16 +50,26 @@ interface StoredTestId {
  *
  * 저장에 실패해도 발급한 값을 돌려준다. 그 문서 안에서는 이벤트가 같은 키로 묶이고, 다음
  * 문서에서 끊길 뿐이다 — 계측 하나 때문에 응시를 막을 이유가 없다는 규칙이 여기에도 걸린다.
+ *
+ * ## `issued`가 곧 "응시가 시작됐다"
+ *
+ * 키를 **처음 발급한 순간**은 이 세션으로 문항 화면에 처음 들어온 순간이다. 그래서 호출자가
+ * 시작 계측(`referral_test_started`)을 그 신호에 건다 — 새 세션이면 한 번, 같은 세션으로
+ * 화면을 다시 열면(백그라운드 복귀·리로드) 다시 세지 않는다.
+ *
+ * 시작을 세는 규칙이 실행마다 갈리지 않는 것이 요점이다. 세션을 만드는 주체는 실행에 따라
+ * 다르지만(웹 단독은 이 문서가, 앱은 네이티브가) **문항 화면에 처음 도달했다**는 사실은 두
+ * 실행에서 같은 자리에 있다.
  */
-export function ensureTestId(sessionId: string): string | null {
+export function ensureTestId(sessionId: string): { testId: string; issued: boolean } | null {
   if (sessionId.trim() === '') return null
 
   const stored = readStored()
-  if (stored !== null && stored.sessionId === sessionId) return stored.testId
+  if (stored !== null && stored.sessionId === sessionId) return { testId: stored.testId, issued: false }
 
   const testId = newIdempotencyKey()
   write({ sessionId, testId })
-  return testId
+  return { testId, issued: true }
 }
 
 /**

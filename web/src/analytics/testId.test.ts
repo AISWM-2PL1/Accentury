@@ -7,21 +7,23 @@ afterEach(() => {
 })
 
 describe('ensureTestId — 응시 하나를 가리키는 익명 키 (KAN-33 AC 1)', () => {
-  it('같은 세션 안에서는 같은 키를 돌려준다 — 문서 전환을 건너 이벤트가 한 묶음이 된다', () => {
+  it('같은 세션 안에서는 같은 키를 돌려주고, 처음 한 번만 발급으로 표시한다', () => {
     const first = ensureTestId('s_1')
 
-    expect(first).not.toBeNull()
-    expect(ensureTestId('s_1')).toBe(first)
-    expect(currentTestId()).toBe(first)
+    expect(first?.issued).toBe(true)
+    // 문서 전환(리로드)·백그라운드 복귀가 이 자리다 — 응시가 다시 시작된 것이 아니다
+    expect(ensureTestId('s_1')).toEqual({ testId: first?.testId, issued: false })
+    expect(currentTestId()).toBe(first?.testId)
   })
 
-  it('세션이 바뀌면 새 키다 — 재응시가 앞 응시와 섞이지 않는다', () => {
+  it('세션이 바뀌면 새 키를 발급한다 — 재응시가 앞 응시와 섞이지 않는다', () => {
     const first = ensureTestId('s_1')
 
     const second = ensureTestId('s_2')
 
-    expect(second).not.toBe(first)
-    expect(currentTestId()).toBe(second)
+    expect(second?.testId).not.toBe(first?.testId)
+    expect(second?.issued).toBe(true)
+    expect(currentTestId()).toBe(second?.testId)
   })
 
   it('세션 id가 없으면 발급하지 않는다 — 아직 어느 응시에도 속하지 않는다', () => {
@@ -31,7 +33,7 @@ describe('ensureTestId — 응시 하나를 가리키는 익명 키 (KAN-33 AC 1
   })
 
   it('서버 세션 id를 그대로 쓰지 않는다 (AC 2 — 세션 id는 이벤트에 실을 수 없다)', () => {
-    const testId = ensureTestId('s_1')
+    const testId = ensureTestId('s_1')?.testId ?? ''
 
     expect(testId).not.toBe('s_1')
     expect(testId).not.toContain('s_1')
@@ -53,7 +55,7 @@ describe('저장소를 쓸 수 없는 브라우저', () => {
     })
 
     // 다음 문서에서 끊길 뿐이다 — 계측 하나 때문에 응시를 막지 않는다
-    expect(ensureTestId('s_1')).not.toBeNull()
+    expect(ensureTestId('s_1')?.testId).toBeTruthy()
   })
 
   it('읽기가 던져도 호출자에게 튀지 않는다', () => {
