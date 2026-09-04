@@ -4,6 +4,48 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>사투리 억양 테스트</title>
+    <meta name="description" content="내 말투가 얼마나 경남 사투리인지 목소리로 재 봐요. 5등급 중 내 등급은?" />
+
+    <!--
+      링크 미리보기·파비콘·manifest (KAN-179). 자산은 `assets/web/build.py`가 만들고
+      `web/public/`에 있다 — 이 파일의 참조와 실제 파일이 어긋나면 `src/webAppMeta.test.ts`가 깨진다.
+
+      파일명의 `-v1`은 캐시 때문이다. `web-deploy.yml`(KAN-127)이 index.html을 뺀 dist/ 전부를
+      immutable 1년으로 올리고 CloudFront 무효화는 `/`와 `/index.html`뿐이라, public/ 파일은
+      내용을 바꿔도 1년 동안 옛 것이 나간다. 교체는 build.py의 VERSION을 올려 이름을 바꾸고
+      여기 참조를 따라 고치는 것이다. index.html만 no-cache라 그 즉시 새 이름이 나간다.
+    -->
+    <link rel="icon" type="image/svg+xml" href="/favicon-v1.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon-v1.png" />
+    <link rel="manifest" href="/manifest-v1.webmanifest" />
+    <!-- 주소창·상태 표시줄을 화면 종이색으로. 값은 --color-background와 같다 -->
+    <meta name="theme-color" content="#f3ecd9" />
+
+    <!--
+      OG는 **링크를 사람이 붙여 넣는 경로**를 위한 것이다. 카카오 SDK 공유(KAN-30)는 앱이 카드를
+      직접 만들어 보내므로 OG를 읽지 않지만, iOS 공유 시트(KAN-108)가 내보내는 텍스트 링크 한 줄,
+      카톡 안에서의 재전달, 슬랙·DM에 붙은 주소는 받는 쪽 앱이 이 태그를 읽어 카드를 그린다.
+
+      **절대 URL이어야 한다** — 상대 경로면 카카오가 이미지를 가져가지 못해 카드가 글자만 남는다.
+      도메인을 prod로 박아 두는 이유는 배포 산출물이 환경을 몰라야 하기 때문이다(web-deploy.yml —
+      staging·prod가 같은 빌드를 쓰고 환경 변수를 주지 않는다). staging에 올라간 문서도 prod 주소를
+      가리키는데, 공유되는 주소가 원래 prod 하나뿐이라 그게 맞는 값이다.
+
+      SPA라 `/t?c=...`도 이 문서가 응답한다 — 등급별로 다른 카드를 내보내려면 서버 렌더가 필요해서
+      프로토타입은 고정 한 장으로 간다 (assets/web/README.md).
+    -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Accentury" />
+    <meta property="og:locale" content="ko_KR" />
+    <meta property="og:title" content="사투리 좀 치나?" />
+    <meta property="og:description" content="내 말투가 얼마나 경남 사투리인지 목소리로 재 봐요. 5등급 중 내 등급은?" />
+    <meta property="og:url" content="https://accentury.app/" />
+    <meta property="og:image" content="https://accentury.app/og-card-v1.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="확성기를 든 사투리 호소인 캐릭터와 '사투리 좀 치나?' 문구" />
+    <meta name="twitter:card" content="summary_large_image" />
+
     <!--
       바탕 스타일은 src/tokens.css의 body 규칙이 갖는다 (KAN-148). 여기에 색을 적어 두면
       토큰과 별개로 움직이는 두 번째 출처가 생긴다.
