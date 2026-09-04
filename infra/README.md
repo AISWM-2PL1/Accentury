@@ -449,12 +449,12 @@ staging 반영과 스모크가 모두 통과하면 같은 이미지에 ECR 태�
 
 테스트는 파이프라인에서 다시 돌리지 않는다 - PR의 `backend-test`, `ai-test` required
 check가 게이트다. E2E 스모크는 staging 반영 직후 같은 job에서 `scripts/e2e_smoke.py`를
-직접 부르고, 관리자 토큰은 그 환경 SSM에서 읽어 합성 트래픽으로 표시한다 (아래 "관리자
-토큰" 절의 저장소 시크릿 한계가 파이프라인에서는 사라진다). `e2e-smoke.yml`의
+직접 부르고, 관리자 토큰은 그 환경 SSM에서 읽어 합성 트래픽으로 표시한다. `e2e-smoke.yml`의
 `workflow_call`을 쓰지 않는 이유는 토큰을 job output으로 넘기면 GitHub이 마스킹된 값이라며
 output을 버리기 때문이다. prod는 승격 직후 사람이 `e2e-smoke.yml`을 workflow_dispatch로
-돌린다. 스모크 실패는 실행을 실패로 만들지만 반영을 되돌리지는 않는다 - 스모크가 보는
-것은 이미지가 아니라 전 구간이라, 원인이 이미지가 아닐 수 있다.
+돌린다 (아래 "원격 스모크 수동 실행"). 스모크 실패는 실행을 실패로 만들지만 반영을
+되돌리지는 않는다 - 스모크가 보는 것은 이미지가 아니라 전 구간이라, 원인이 이미지가
+아닐 수 있다.
 
 권한은 `infra/modules/deploy`의 `image-deploy` 정책이다. staging 역할만 ECR push를
 갖고(`ci_image_push`, 환경 간 tfvars 차이) prod 역할은 조회뿐이다. Run Command는
@@ -803,21 +803,48 @@ force-new-deployment 다음**이다 (그 사이 backend 호출은 401로 끊겨 
 Terraform state(S3 암호화 + 버전 관리 버킷)에 남는다 - KAN-140이 수용한 범위이고, 레포, 이미지,
 로그에는 없다.
 
-**E2E 스모크의 GitHub 시크릿도 함께 맞춘다** (KAN-138). `.github/workflows/e2e-smoke.yml`은
-토큰을 `workflow_call` 시크릿 `admin-token` 또는 저장소 시크릿 `ACCENTURY_ADMIN_TOKEN`에서
-읽는다. 토큰이 Terraform 생성으로 바뀌었으므로 apply나 재발급 뒤에 시크릿을 갱신하지
-않으면 원격 스모크가 전부 401로 끝난다.
+**이 토큰은 GitHub에 두지 않는다** (2026-09-05, KAN-171 리뷰 P3). 예전에는
+`e2e-smoke.yml`이 저장소 시크릿 `ACCENTURY_ADMIN_TOKEN`을 읽었는데 두 가지가 걸렸다.
+저장소 시크릿은 하나뿐이라 서로 다른 두 환경 토큰을 동시에 담을 수 없었고, 무엇보다
+저장소 시크릿은 아무 브랜치의 워크플로나 꺼내 쓸 수 있어 prod 관리자 토큰을 두기에
+맞지 않았다. 지금은 파이프라인과 수동 실행이 모두 대상 환경 SSM에서 직접 읽는다. 그래서
+apply나 재발급으로 토큰이 바뀌어도 GitHub 쪽에 맞춰 줄 것이 없다.
+
+읽지 않게 된 것과 남아 있는 것은 다르다. 예전 안내를 따라 시크릿을 넣어 둔 저장소라면
+**지워야** 노출이 실제로 사라진다 - 워크플로가 안 읽을 뿐 다른 브랜치의 워크플로는 여전히
+꺼낼 수 있다 (KAN-171 Codex 리뷰 P1). 이 저장소는 2026-09-05 확인 시점에 이 시크릿이
+없었으므로 할 일이 없다.
 
 ```
-gh secret set ACCENTURY_ADMIN_TOKEN --body "$(aws ssm get-parameter --with-decryption \
-  --name /accentury/staging/ACCENTURY_ADMIN_TOKEN --query Parameter.Value --output text)"
+gh secret list                                 # ACCENTURY_ADMIN_TOKEN이 보이면
+gh secret delete ACCENTURY_ADMIN_TOKEN         # 지운다
 ```
 
-저장소 시크릿은 하나뿐이라 staging과 prod의 서로 다른 토큰을 동시에 담을 수 없다.
-파이프라인(`deploy.yml`, KAN-128)은 이 시크릿을 쓰지 않고 해당 환경 SSM에서 직접
-읽으므로 staging 자동 스모크는 항상 맞는 토큰을 쓴다. 이 시크릿이 필요한 것은
-`e2e-smoke.yml`을 사람이 workflow_dispatch로 돌릴 때(prod 승격 직후)뿐이라, 그때
-대상 환경의 값으로 맞춘다.
+### 원격 스모크 수동 실행 (KAN-138)
+
+이미 떠 있는 환경을 도메인 경유로 두드린다. 토큰은 job이 SSM에서, 대상 주소는 그 environment의
+변수 `APP_DOMAIN`에서 읽으므로 넣을 입력이 환경 이름뿐이다.
+
+```
+gh workflow run e2e-smoke.yml --ref Dev     -f environment=staging -f expect-stub-scores=true
+gh workflow run e2e-smoke.yml --ref Release -f environment=prod    -f expect-stub-scores=true
+```
+
+주소를 입력으로 받지 않는 것은 의도다. 사람이 주소를 넣게 두면 SSM에서 막 읽은 그 환경의
+관리자 토큰이 `X-Admin-Token`에 실려 임의의 호스트로 나간다 - 코드를 고치지 않고 토큰을
+빼낼 수 있다 (KAN-171 Codex 리뷰 P1). 주소를 직접 정하려면 `workflow_call`로 부르면서
+`admin-token`을 함께 넘겨야 하고, 그때는 SSM을 읽지 않는다. 어느 쪽이든 호출자 job에
+`permissions: id-token: write`가 있어야 한다 - 재사용 워크플로의 권한은 호출자 권한이
+상한이라 불리는 쪽에서 올릴 수 없다.
+
+`--ref`가 환경마다 다른 것은 job이 GitHub environment를 지정하기 때문이다. OIDC 역할의
+신뢰 정책이 sub를 `repo:OWNER/REPO:environment:{env}`로 묶으므로 environment 지정이
+필수인데, 그러면 그 environment의 배포 브랜치 정책(staging = Dev, prod = Release)이 함께
+적용된다. 브랜치를 틀리면 "Branch is not allowed to deploy to ..."로 막힌다. prod에는
+required reviewers가 걸려 있어 실행할 때마다 승인을 한 번 받는다.
+
+`expect-stub-scores`는 AI가 스텁일 때만 켠다. 실모델 전환(KAN-36 B단계) 뒤에는 끈다 -
+점수를 미리 알 수 없어 검산이 실패한다.
 
 ### 이미 있는 SSM 파라미터 (재구축, 수동 생성분)
 
