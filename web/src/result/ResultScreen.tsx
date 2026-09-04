@@ -277,7 +277,7 @@ export function ResultScreen({
  *
  * 그림은 투명 배경 WebP고 종이·잉크 색이 박혀 있다 (정본 §7 `ILLO` — 일러스트는 테마를
  * 따르지 않는다). 다크 팔레트가 붙는 날 검정 선이 어두운 배경에 묻히는 것을 막는 것이
- * `.tier-character__image`의 크림 2px halo다 (`paper.tsx`의 `PAPER_FILTER`와 같은 규칙).
+ * `.tier-character__image`의 크림 2px halo다.
  * 라이트에서는 halo가 배경과 같은 크림이라 보이지 않는다 — 지금 넣어 두는 이유는 다크가
  * 오는 날 이 화면을 다시 열지 않기 위해서다.
  */

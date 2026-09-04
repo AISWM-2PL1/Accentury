@@ -85,10 +85,11 @@ store/                스토어 업로드용 파생본 (생성물)
 ## 재생성
 
 ```
-/Users/iseongju/accentury/.venv/bin/python assets/app-icon/build.py
+python3 assets/app-icon/build.py
 ```
 
-Pillow·numpy·scipy가 필요하다(위 venv에 있다). 끝에 규격 검증표를 찍고, 하나라도 FAIL이면 종료 코드 1이다.
+Pillow·numpy·scipy가 필요하다 — 없으면 가상환경을 만들어 `pip install pillow numpy scipy`로
+넣고 그 안에서 돌린다. 끝에 규격 검증표를 찍고, 하나라도 FAIL이면 종료 코드 1이다.
 스크립트가 하는 일:
 
 1. **배경 키잉** — 테두리 평균색을 배경으로 잡고, 그 색과 가까운(채널 차 ≤14) 픽셀 중 **바깥에서 이어진

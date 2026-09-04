@@ -19,11 +19,13 @@
 없는 화면은 SKIP으로 찍고 넘어가므로, 캡처를 한 장씩 채워 가며 돌릴 수 있다.
 
 실행:
-    /Users/iseongju/accentury/.venv/bin/python assets/screenshots/build.py
+    python3 assets/screenshots/build.py
     ... --raw <원본 폴더> --out <출력 폴더>   # 임시 캡처로 배치만 확인할 때
 
-Pillow·numpy가 필요하다(위 venv에 있다). 끝에 규격 검증표를 찍는다 — 규격 12줄 + 플랫폼별 버튼
-여백 2줄. 하나라도 FAIL이면 종료 코드 1, SKIP만 있으면 0이다.
+Pillow·numpy가 필요하다 — 없으면 가상환경을 만들어 `pip install pillow numpy`로 넣고 그 안에서
+돌린다. fontTools는 선택이다: 있으면 캡션 글자가 Jua에 있는지까지 검사하고, 없으면 그 검사만
+건너뛴다. 끝에 규격 검증표를 찍는다 — 규격 12줄 + 플랫폼별 버튼 여백 2줄. 하나라도 FAIL이면 종료
+코드 1, SKIP만 있으면 0이다.
 """
 
 from __future__ import annotations

@@ -89,7 +89,7 @@ xcrun simctl io booted screenshot assets/screenshots/raw/ios/01-intro.png
 ## 재생성
 
 ```
-/Users/iseongju/accentury/.venv/bin/python assets/screenshots/build.py
+python3 assets/screenshots/build.py
 ```
 
 폴더를 바꿔서 돌릴 수도 있다(임시 캡처로 배치만 확인할 때).
@@ -98,9 +98,11 @@ xcrun simctl io booted screenshot assets/screenshots/raw/ios/01-intro.png
 ... assets/screenshots/build.py --raw <원본 폴더> --out <출력 폴더>
 ```
 
-Pillow·numpy가 필요하다(위 venv에 있다). 끝에 검증표를 찍는다 — 규격 12줄(파일 존재·정확한 픽셀 크기·
-알파 없는 RGB·모서리 색이 크림인지·8MB 이하)과 플랫폼별 버튼 여백 2줄(가장 바깥 버튼 픽셀이 프레임 변에서
-3% 이상 떨어져 있는지). 하나라도 FAIL이면 종료 코드 1이고, SKIP만 있으면 0이다.
+Pillow·numpy가 필요하다 — 없으면 가상환경을 만들어 `pip install pillow numpy`로 넣고 그 안에서
+돌린다. fontTools는 선택이다: 있으면 캡션 글자가 Jua에 있는지까지 검사하고, 없으면 그 검사만
+건너뛴다. 끝에 검증표를 찍는다 — 규격 12줄(파일 존재·정확한 픽셀 크기·알파 없는 RGB·모서리 색이
+크림인지·8MB 이하)과 플랫폼별 버튼 여백 2줄(가장 바깥 버튼 픽셀이 프레임 변에서 3% 이상 떨어져
+있는지). 하나라도 FAIL이면 종료 코드 1이고, SKIP만 있으면 0이다.
 
 ## 규격 (업로드 기준)
 
