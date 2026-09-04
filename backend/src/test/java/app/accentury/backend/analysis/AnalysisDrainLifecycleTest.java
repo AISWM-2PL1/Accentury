@@ -228,7 +228,7 @@ class AnalysisDrainLifecycleTest extends IntegrationTest {
             }
         };
         holder[0] = new HttpAnalysisDispatcher(client, new SyncTaskExecutor(), transitions,
-                new AnalysisBacklog(), openCircuitNever(), 2, 0);
+                new AnalysisBacklog(), openCircuitNever(), TestMetrics.analysisMetrics(), 2, 0);
 
         holder[0].dispatch(request(job));
 
@@ -281,7 +281,7 @@ class AnalysisDrainLifecycleTest extends IntegrationTest {
     private HttpAnalysisDispatcher dispatcher(AiAnalysisClient client, ThreadPoolTaskExecutor executor,
                                               AnalysisBacklog backlog) {
         return new HttpAnalysisDispatcher(client, executor, transitions, backlog,
-                openCircuitNever(), 0, 0);
+                openCircuitNever(), TestMetrics.analysisMetrics(), 0, 0);
     }
 
     private static AiCircuitBreaker openCircuitNever() {

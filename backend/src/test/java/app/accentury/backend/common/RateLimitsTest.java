@@ -1,6 +1,7 @@
 package app.accentury.backend.common;
 
 import app.accentury.backend.SteppingClock;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 
 import java.time.Clock;
@@ -109,7 +110,7 @@ class RateLimitsTest {
         incomplete.put(RateLimits.Scope.SESSION_CREATE, 10);
 
         assertThrows(IllegalStateException.class,
-                () -> new RateLimits(incomplete, new SteppingClock()));
+                () -> new RateLimits(incomplete, new SteppingClock(), new SimpleMeterRegistry()));
     }
 
     @Test
@@ -123,7 +124,7 @@ class RateLimitsTest {
         zeroed.put(RateLimits.Scope.VOCAB_ANSWER, 0);
 
         assertThrows(IllegalStateException.class,
-                () -> new RateLimits(zeroed, new SteppingClock()));
+                () -> new RateLimits(zeroed, new SteppingClock(), new SimpleMeterRegistry()));
     }
 
     private static RateLimits limits(int limitPerMinute, Clock clock) {
@@ -131,6 +132,6 @@ class RateLimitsTest {
         for (RateLimits.Scope scope : RateLimits.Scope.values()) {
             limits.put(scope, limitPerMinute);
         }
-        return new RateLimits(limits, clock);
+        return new RateLimits(limits, clock, new SimpleMeterRegistry());
     }
 }

@@ -313,3 +313,150 @@ resource "aws_cloudwatch_metric_alarm" "ai_circuit_open" {
 
   tags = { Name = "${local.name}-ai-circuit-open" }
 }
+
+# ---- KAN-38 경보 3종: 관측성 지표가 실제로 사람을 부르는 자리 ----
+#
+# KAN-134가 "서버가 죽었다"를 알리고, 아래 셋은 "서버는 살아 있는데 파이프라인이 고장 났다"를
+# 알린다. 죽음은 사용자가 바로 알지만 이쪽은 대기 화면이 길어지는 것으로만 드러나 아무도
+# 신고하지 않는다 - 무인 운영에서 조용히 나빠지는 구간이다.
+#
+# 셋 다 같은 SNS 토픽으로 간다. 심각도별 채널을 나누지 않는 것은 KAN-38의 제약 그대로다
+# (경보와 화면을 최소로) - 3인 팀에 채널이 여럿이면 어느 쪽도 보지 않게 된다.
+
+# ---- 경보 1: AI 임시 디렉터리 잔존 파일 (KAN-27 청소 잡 실패) ----
+
+# AI는 BE와 달리 오디오가 디스크를 한 번 거친다 (ai/app/tempstore.py - 추론 라이브러리가 파형
+# 파일을 읽는다). 지우는 겹이 셋인데(요청 종료 시 finally, 기동 정리, 주기 스윕) 전부 실패하면
+# 원본 음성이 호스트에 남는다 - 즉시 파기(NFR-PR-03, §5.5) 위반이라 사람이 봐야 한다.
+#
+# 임계치가 20인 이유: 이 지표는 <b>처리 중인 파일도 센다</b>(스윕은 보존 기간 안의 파일을 잔존으로
+# 집계한다). 동시 추론은 backend 태스크당 워커 4개(dispatch-concurrency) x 태스크 최대 3개
+# (KAN-168)라 구조적으로 12를 넘지 못하므로, 20이면 정상 부하가 절대 닿지 않으면서 "안 지워지고
+# 쌓인다"는 신호에는 걸린다. 그 12라는 상한이 바뀌면(워커 수, 오토스케일링 상한) 여기도 함께 본다.
+#
+# 정확한 고장 신호는 잔존 시간(TempOldestAge)이다 - 보존 기간 30분을 넘긴 파일은 삭제가 실패한
+# 것뿐이다. 다만 티켓 AC가 "잔존 파일 수 임계치"라 경보는 건수로 걸고, 잔존 시간은 대시보드에
+# 함께 그려 원인을 가르게 한다 (건수만 오르면 부하, 시간까지 오르면 청소 잡 고장).
+#
+# treat_missing_data = "notBreaching": 호스트 타이머가 값을 못 읽으면 이 지표를 아예 올리지 않는다
+# (스크립트가 0으로 덮지 않는다 - 0은 "깨끗하다"라서 조회가 막힌 순간에 경보가 조용해진다).
+# 그 결측은 잔존이 쌓인 것과 다르고, 타이머나 호스트 자체가 죽은 것은 ai-unhealthy가 잡는다.
+resource "aws_cloudwatch_metric_alarm" "ai_temp_residue" {
+  alarm_name        = "${local.name}-ai-temp-residue"
+  alarm_description = "accentury ${var.env}: AI 호스트의 임시 디렉터리에 파일이 ${var.ai_temp_residue_threshold}개 이상 남아 있습니다. 청소 잡(KAN-27)이 막혔는지, 원본 음성이 파기되지 않고 있는지 확인하세요. 대시보드의 최장 잔존 시간이 30분을 넘었으면 삭제 실패입니다. (KAN-38)"
+
+  namespace   = var.ai_metric_namespace
+  metric_name = "TempFiles"
+  dimensions  = { env = var.env }
+
+  statistic           = "Maximum"
+  period              = 300
+  evaluation_periods  = 2
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = var.ai_temp_residue_threshold
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = local.alarm_actions
+  ok_actions    = local.alarm_actions
+
+  tags = { Name = "${local.name}-ai-temp-residue" }
+}
+
+# ---- 경보 2: 분석 진행 중 건수 적체 ----
+
+# 큐가 없는 구조라(HTTP 디스패치) 진행 중 건수가 곧 AI에 걸린 압력이다. 이 값이 지속적으로 높다는
+# 것은 추론이 유입을 못 따라간다는 뜻이고, 사용자에게는 대기 화면 체류로 나타난다 - 그러다 실행
+# 잔류 한도(60초)에 닿으면 재녹음 안내를 받는다.
+#
+# 보는 값은 <b>전 인스턴스</b> 합(DB의 PROCESSING 행 수)이다. 태스크별 인메모리 카운터
+# (accentury.analysis.inflight)로 걸면 태스크 셋이 임계치를 나눠 가져 아무도 울지 않는다 - KAN-167이
+# 혼잡 판정을 DB로 옮긴 것과 같은 이유다. 태스크가 여럿이면 이 지표는 태스크마다 같은 값을 올리므로
+# Maximum으로 읽는다 (합이 아니다 - 합하면 태스크 수만큼 부풀려진다).
+#
+# 임계치 60은 폴링 혼잡 임계치(congestion-threshold 30, application.yml)의 두 배다. 30에서는 서버가
+# 폴링 간격을 올려 스스로 압력을 빼는 것으로 충분하고, 그 조치에도 두 배로 쌓였다면 사람이 볼 일이다.
+# 5분 연속을 요구해 업로드가 몰린 순간(다섯 문항 연속 제출)으로는 서지 않는다.
+#
+# treat_missing_data = "notBreaching": backend가 죽으면 지표가 끊기는데 그것은 no-healthy-target이 잡는다.
+resource "aws_cloudwatch_metric_alarm" "analysis_backlog_high" {
+  alarm_name        = "${local.name}-analysis-backlog-high"
+  alarm_description = "accentury ${var.env}: 진행 중 분석이 ${var.analysis_backlog_evaluation_periods}분 연속 ${var.analysis_backlog_threshold}건을 넘었습니다. AI가 유입을 못 따라가는 중입니다 - AI 호스트 부하와 backend 워커 수(dispatch-concurrency)를 확인하세요. (KAN-38)"
+
+  namespace   = var.backend_metric_namespace
+  metric_name = "accentury.analysis.processing.value"
+  dimensions  = { env = var.env }
+
+  statistic           = "Maximum"
+  period              = 60
+  evaluation_periods  = var.analysis_backlog_evaluation_periods
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = var.analysis_backlog_threshold
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = local.alarm_actions
+  ok_actions    = local.alarm_actions
+
+  tags = { Name = "${local.name}-analysis-backlog-high" }
+}
+
+# ---- 경보 3: 분석 타임아웃 급증 ----
+
+# 적체 경보가 "밀리고 있다"라면 이쪽은 "이미 버려지고 있다"이다. 타임아웃 종결은 그 사용자가
+# 재녹음 안내를 받았다는 뜻이라 적체보다 늦고 더 아픈 신호다 - 둘 다 두는 이유이고, AC의
+# "AI 진행 중 건수 또는 타임아웃"의 "또는"이기도 하다. 지표 하나로 합치지 않는 것은 단위가 달라서다
+# (건수 게이지와 누적 카운터를 더하면 어느 쪽이 울렸는지 알 수 없다).
+#
+# 두 사유를 합해서 본다 - 실행 잔류(stuck)든 큐 유실(lost)든 사용자에게는 같은 실패이고, 어느
+# 쪽이었는지는 대시보드가 나눠 그린다. 합을 쓰는 이유는 alb-5xx와 같다: 한쪽만 보면 다른 쪽 장애를
+# 놓치고, 경보를 둘로 늘리면 이 티켓의 "경보 최소" 제약을 깬다.
+#
+# 임계치 5는 5분에 5건이다. 정상 운영에서 타임아웃은 0이다(워커가 죽거나 AI가 60초 넘게 붙들려야
+# 난다) - 1~2건은 배포 중 태스크 교체로도 나므로, 그 위를 사람이 볼 선으로 잡는다.
+#
+# treat_missing_data = "notBreaching": 카운터는 0도 발행하지만, backend가 죽으면 끊긴다 -
+# 그것은 no-healthy-target이 잡는다.
+resource "aws_cloudwatch_metric_alarm" "analysis_timeouts_high" {
+  alarm_name        = "${local.name}-analysis-timeouts-high"
+  alarm_description = "accentury ${var.env}: 분석 타임아웃이 5분 동안 ${var.analysis_timeout_threshold}건을 넘었습니다. 실행 잔류와 큐 유실의 합이며, 그만큼의 사용자가 재녹음 안내를 받았습니다. 대시보드에서 두 사유를 나눠 보세요. (KAN-38)"
+
+  evaluation_periods  = 1
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = var.analysis_timeout_threshold
+  treat_missing_data  = "notBreaching"
+
+  metric_query {
+    id          = "total_timeouts"
+    expression  = "SUM([stuck, lost])"
+    label       = "타임아웃 합계 (실행 잔류 + 큐 유실)"
+    return_data = true
+  }
+
+  metric_query {
+    id = "stuck"
+
+    metric {
+      namespace   = var.backend_metric_namespace
+      metric_name = "accentury.analysis.timeouts.count"
+      dimensions  = { env = var.env, reason = "stuck" }
+      period      = 300
+      stat        = "Sum"
+    }
+  }
+
+  metric_query {
+    id = "lost"
+
+    metric {
+      namespace   = var.backend_metric_namespace
+      metric_name = "accentury.analysis.timeouts.count"
+      dimensions  = { env = var.env, reason = "lost" }
+      period      = 300
+      stat        = "Sum"
+    }
+  }
+
+  alarm_actions = local.alarm_actions
+  ok_actions    = local.alarm_actions
+
+  tags = { Name = "${local.name}-analysis-timeouts-high" }
+}

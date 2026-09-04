@@ -27,7 +27,7 @@ class AnalysisDispatchConfigTest {
         AnalysisDispatchConfig config = new AnalysisDispatchConfig();
         // 검증이 조립보다 먼저 실행되므로 협력자는 쓰이지 않는다.
         assertThrows(IllegalStateException.class, () -> config.analysisDispatcher(
-                props(Duration.ofSeconds(30)), null, null, null, null, null));
+                props(Duration.ofSeconds(30)), null, null, null, null, null, null));
     }
 
     @Test
@@ -36,7 +36,8 @@ class AnalysisDispatchConfigTest {
         SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
         AnalysisDispatcher dispatcher = new AnalysisDispatchConfig().analysisDispatcher(
                 props(Duration.ofSeconds(60)), new ThreadPoolTaskExecutor(), null,
-                new AnalysisBacklog(), new ObjectMapper(), meterRegistry);
+                new AnalysisBacklog(), TestMetrics.analysisMetrics(meterRegistry), new ObjectMapper(),
+                meterRegistry);
 
         assertInstanceOf(HttpAnalysisDispatcher.class, dispatcher);
         // 회로 상태 게이지가 등록되고 닫힘(0)으로 시작한다 (KAN-36) - CloudWatch 경보 ai-circuit-open의 입력이다.
@@ -50,7 +51,7 @@ class AnalysisDispatchConfigTest {
                 PropertiesFixture.analysis(30, "http://ai.test", Duration.ofSeconds(60), Duration.ofSeconds(10)));
 
         assertThrows(IllegalStateException.class, () -> new AnalysisDispatchConfig().analysisDispatcher(
-                props, null, null, null, null, null));
+                props, null, null, null, null, null, null));
     }
 
     @Test
@@ -60,7 +61,7 @@ class AnalysisDispatchConfigTest {
                 PropertiesFixture.analysis(30, null, Duration.ofSeconds(60), Duration.ofSeconds(1)));
 
         AnalysisDispatcher dispatcher = new AnalysisDispatchConfig().analysisDispatcher(
-                props, null, null, null, null, null);
+                props, null, null, null, null, null, null);
 
         assertInstanceOf(NoopAnalysisDispatcher.class, dispatcher);
     }

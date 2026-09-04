@@ -36,10 +36,13 @@ public class AnalysisJobTimeout {
 
     private final AnalysisJobRepository repository;
     private final AccenturyProperties properties;
+    private final AnalysisMetrics metrics;
 
-    public AnalysisJobTimeout(AnalysisJobRepository repository, AccenturyProperties properties) {
+    public AnalysisJobTimeout(AnalysisJobRepository repository, AccenturyProperties properties,
+                              AnalysisMetrics metrics) {
         this.repository = repository;
         this.properties = properties;
+        this.metrics = metrics;
     }
 
     @Scheduled(initialDelay = 30, fixedDelay = 30, timeUnit = TimeUnit.SECONDS)
@@ -55,6 +58,10 @@ public class AnalysisJobTimeout {
         int lost = repository.failUnstartedBefore(
                 now.minus(properties.analysis().queuedTimeout()),
                 ErrorCode.ANALYSIS_UNAVAILABLE.name(), now);
+        // 지표는 로그와 달리 0건도 지난다 - 카운터는 증가분만 올리므로 0을 더해도 값이 그대로다.
+        // 두 사유를 태그로 가르는 이유는 대응이 다르기 때문이다 (KAN-38): 실행 잔류는 워커나
+        // AI 쪽이고, 큐 유실은 프로세스가 죽은 흔적이다.
+        metrics.recordTimeouts(stuck, lost);
         if (stuck > 0 || lost > 0) {
             log.warn("PROCESSING 잔류 작업 종결 - 실행 잔류 {}건, 큐 유실 {}건", stuck, lost);
         }
