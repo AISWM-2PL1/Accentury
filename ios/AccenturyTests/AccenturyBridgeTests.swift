@@ -275,7 +275,7 @@ final class AccenturyBridgeTests: XCTestCase {
         let sink = Sink()
         makeDispatcher(sink: sink, isCurrentUrlAllowed: { true }).handle(
             method: "logEvent",
-            payload: eventPayload(name: "share_tapped", params: #"{"Channel":"kakao","reason":"USER"}"#)
+            payload: eventPayload(name: "share_clicked", params: #"{"Channel":"kakao","reason":"USER"}"#)
         )
         XCTAssertEqual(["reason": .text("USER")], sink.events.first?.params)
     }

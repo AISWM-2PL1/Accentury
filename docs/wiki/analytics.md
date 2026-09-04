@@ -36,8 +36,7 @@
 | `recording_retake` | `item_seq`, `reason` | 웹(QUALITY·FAILED) · 앱(USER) | 같은 문항을 다시 녹음했다 |
 | `test_completed` | `campaign` | 웹 | 결과가 확정됐다 |
 | `result_viewed` | `campaign` | 웹 | 결과 화면을 실제로 봤다 |
-| `share_clicked` | `campaign`, `channel` | 웹 | [친구에게 공유하기]를 눌렀다 |
-| `share_tapped` | — | 앱 | 같은 탭을 네이티브가 받았다 (아래 «둘을 왜 다 세는가») |
+| `share_clicked` | `campaign`, `channel` | 웹 (앱 안에서도) | [친구에게 공유하기]를 눌렀다 |
 | `share_launched` | `channel` | 앱 | 카톡·공유 시트를 실제로 띄웠다 |
 | `app_download_clicked` | `campaign`, `platform` | 웹 | [앱 다운로드] — 웹 단독 실행에만 있는 지점 |
 | `retest_started` | — | 웹 | [다시 테스트하기] |
@@ -47,12 +46,40 @@
 | `analysis_item_terminal` | `status`, `error_code` | 웹 | 문항이 종결 상태에 도달했다 |
 | `tier_assigned` | `tier_code`, `score_version`, `overall_bucket` | 웹 | **KAN-21 트리거의 측정값** |
 
-**둘을 왜 다 세는가 (`share_clicked` / `share_tapped` / `share_launched`).** 웹이 세는 것은
-"눌렀다"이고, 네이티브가 세는 둘은 "네이티브가 그 요청을 받았다"와 "통로가 실제로 열렸다"다.
-탭과 실행의 차이가 곧 **눌렀는데 아무 데도 못 간 비율**이고, 한 건으로 뭉치면 그 구멍이 보이지
-않는다. `share_launched`는 «보냈다»는 뜻이 아니다 — 카카오 SDK도 OS 공유 시트도 전환 뒤를
-돌려주지 않고, 우리 앱은 그 순간 뒤로 내려간다. 실제 전송 수는 카카오 콘솔의 공유 웹훅으로만
-알 수 있고 그건 BE 후속 작업이다.
+**클릭은 웹이, 실행은 네이티브가 센다 (`share_clicked` / `share_launched`).** 공유 버튼은 두
+실행 모두에서 웹 결과 화면에 있으므로 «눌렀다»는 웹이 아는 사실이고, 앱 안에서는 그 이벤트가
+브리지를 타고 앱 스트림으로 간다(`channel`이 `bridge`다). «통로가 실제로 열렸다»는 네이티브만
+아는 사실이라 `share_launched`가 따로 있다. 둘의 차이가 곧 **눌렀는데 아무 데도 못 간 비율**이다.
+
+> 2026-09-05 정정. 처음에는 앱 안의 클릭을 네이티브가 `share_tapped`로 따로 셌는데, 그러면 한
+> 사람의 같은 행동이 플랫폼에 따라 다른 이름으로 쌓여 공유 퍼널이 둘로 갈렸다(Codex 교차 검증
+> 지적, AC 8 위반). 이름을 하나로 줄이면서 얻는 정보는 그대로다 — 클릭 수와 실행 수의 차이가
+> 예전 «탭 대 실행»과 같은 값이다.
+
+`share_launched`는 «보냈다»는 뜻이 아니다 — 카카오 SDK도 OS 공유 시트도 전환 뒤를 돌려주지
+않고, 우리 앱은 그 순간 뒤로 내려간다. 실제 전송 수는 카카오 콘솔의 공유 웹훅으로만 알 수 있고
+그건 BE 후속 작업이다.
+
+### 공통 파라미터 `test_id` — 응시 하나를 가리키는 익명 키
+
+위 표에 적지 않은 파라미터가 하나 더 붙는다. **응시가 시작된 뒤의 모든 이벤트**에 창구
+(`track()`)가 공통으로 얹는 무작위 값이다 (`web/src/analytics/testId.ts`).
+
+없으면 AC 1(«한 테스트 세션의 핵심 이벤트 순서를 분석할 수 있다»)을 닫을 수 없다. GA4가 자동으로
+붙이는 세션(`ga_session_id`)은 앱·브라우저 **사용** 세션이라 30분 무활동 전까지 하나로 유지되는데,
+그 안에서 재응시하면(`retest_started`) 두 번의 응시가 한 덩어리로 섞인다 — 재응시는 우리가 권하는
+행동이라 실제로 일어난다.
+
+- **서버 세션 id가 아니다.** 그 값은 AC 2가 이벤트에 싣는 것을 금지한다(결과 조회·서버 로그와
+  이어진 값이라 익명 집계와 그쪽 세계가 한 줄로 연결된다). `test_id`는 계측 안에서만 의미가 있고
+  어디에도 다시 나타나지 않는다
+- 발급은 세션 id를 아는 자리(`App.tsx`의 진입 분기, 웹 단독 시작)에서, 보관은 `sessionStorage`다 —
+  인트로 → 문항 → 결과가 전부 문서 리로드라 그 전환을 건너야 하고, 탭과 함께 사라져야 한다
+- **인트로 이벤트에는 없다.** `referral_opened`는 아직 어느 응시에도 속하지 않고, 인트로가 뜨는
+  순간 앞 응시의 키를 지운다 — 남겨 두면 A의 이벤트 목록 끝에 B의 시작이 붙는다
+- 네이티브가 자체로 세는 두 이벤트(`share_launched`, `recording_retake`의 `USER`)에는 붙지 않는다.
+  브리지를 건너온 이벤트가 아니라 네이티브가 만든 사건이라 키를 모른다 — 순서 분석의 핵심은
+  퍼널(웹이 센다)이라 감수한다
 
 **`recording_retake`의 사유가 갈리는 곳이 다르다.** 서버가 되돌려보낸 재녹음(QUALITY·FAILED)은
 사유를 아는 유일한 곳이 웹의 분석 대기 화면이라 거기서 세고, 사용자가 그냥 다시 읽기로 한
@@ -232,7 +259,11 @@ GA4 → 관리(⚙) → 데이터 표시 → **맞춤 정의**
 
 **맞춤 측정기준**(범위=이벤트) — 분포를 가를 축이 된다.
 
-`tier_code` · `score_version` · `campaign` · `channel` · `reason` · `item_type` · `status` · `error_code` · `platform`
+`test_id` · `tier_code` · `score_version` · `campaign` · `channel` · `reason` · `item_type` · `status` · `error_code` · `platform`
+
+> `test_id`를 등록해야 «한 응시의 이벤트를 순서대로» 볼 수 있다 (AC 1). 탐색 → 자유 형식에서
+> `test_id`를 행에 놓고 이벤트 이름·시각을 열로 두면 응시 하나의 흐름이 한 줄로 읽힌다.
+> 값이 무작위라 카디널리티가 높으니 상시 보고서가 아니라 개별 응시를 들여다볼 때 쓴다.
 
 > 속성당 맞춤 측정기준 50개·측정항목 50개가 상한이다. 지금 목록은 그 절반도 쓰지 않는다.
 
@@ -306,6 +337,31 @@ xcrun simctl spawn booted log stream --predicate 'subsystem == "com.accentury.ap
 
 웹은 개발 빌드에서 `console.debug('[track]', event)`가 같은 자리다.
 
+### 테스트 크래시 (AC 9)
+
+크래시 리포트가 실제로 도착하는지는 **일부러 죽여 봐야** 확인된다. 비치명 보고(`recordException`)는
+다른 경로라 이 확인을 대신하지 못한다. 진입점은 **디버그 빌드에만** 있다 — Android는 소스셋
+(`app/src/{debug,release}/.../TestCrash.kt`), iOS는 `#if DEBUG`로 막는다.
+
+```bash
+# Android
+./gradlew :app:installDebug
+adb shell am force-stop com.accentury.app
+adb shell am start -n com.accentury.app/.MainActivity --ez crashTest true   # 여기서 죽는다
+adb shell am start -n com.accentury.app/.MainActivity                       # 이 실행이 리포트를 올린다
+
+# iOS (시뮬레이터)
+xcrun simctl launch --console-pty booted com.accentury.app -TestCrash 1     # 여기서 죽는다
+xcrun simctl launch --console-pty booted com.accentury.app                  # 이 실행이 리포트를 올린다
+```
+
+**두 번째 실행이 반드시 필요하다.** Crashlytics는 죽는 순간 네트워크를 쓰지 않고 리포트를 디스크에
+쓴 뒤 다음 실행의 초기화에서 올려보낸다. 크래시만 내고 대시보드를 보면 아무것도 없다.
+
+디버거를 붙인 채로는 잡히지 않는다(LLDB가 먼저 멈춰 세운다). **실기기**는 Xcode › Edit Scheme ›
+Run에서 «Debug executable»을 끄고 Arguments에 `-TestCrash 1`을 넣은 뒤 Run한다. AC 9의 «기기
+모델·OS 버전»과 심볼화 확인은 시뮬레이터로는 채워지지 않으므로 실기기여야 한다.
+
 ### 자동 검증
 
 | 무엇 | 어디 |
@@ -338,4 +394,5 @@ Generate Privacy Report)를 근거로 쓰면 항목을 빠뜨리지 않는다.
 - **P95 경로 선택** — BigQuery Export 링크 또는 구간 파라미터 추가 (§6-4). 둘 중 하나가 서야 KAN-24 AC가 닫힌다.
 - **맞춤 정의 등록** — 콘솔 작업이라 코드로 못박을 수 없다 (§6-3). 등록 이전 데이터는 소급되지 않는다.
 - **공유 전송 완료 수** — 카카오 공유 웹훅(서버 콜백)이 있어야 알 수 있다. BE 후속.
-- **iOS 실기기 크래시 확인** — 심볼화된 스택은 아카이브 → dSYM 업로드 → 실기기 크래시까지 가야 눈으로 볼 수 있다. 시뮬레이터 빌드까지가 이 단계의 검증 범위다.
+- **iOS 실기기 크래시 확인** — 심볼화된 스택은 아카이브 → dSYM 업로드 → 실기기 크래시까지 가야 눈으로 볼 수 있다. 시뮬레이터 빌드까지가 이 단계의 검증 범위다. 크래시를 내는 방법은 §7 «테스트 크래시»에 있다.
+- **네이티브 이벤트의 상관 키** — `share_launched`와 `recording_retake`(USER)는 네이티브가 만든 사건이라 `test_id`가 없다. 순서 분석의 핵심인 퍼널은 웹이 세므로 지금은 감수한다 — 필요해지면 브리지로 키를 내려보내는 방법이 있다.

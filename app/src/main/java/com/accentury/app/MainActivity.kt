@@ -78,6 +78,7 @@ import com.accentury.app.analytics.EventParam
 import com.accentury.app.analytics.EventSink
 import com.accentury.app.analytics.RecordingEvents
 import com.accentury.app.analytics.ShareEvents
+import com.accentury.app.analytics.crashIfRequested
 import com.accentury.app.analytics.create
 import com.accentury.app.analytics.log
 import com.accentury.app.analytics.channelParam
@@ -165,6 +166,12 @@ class MainActivity : ComponentActivity() {
         // 바뀌면서 WebView가 다시 로드된다.
         applyAppLink(intent)
 
+        /*
+         * 일부러 내는 테스트 크래시 (KAN-33 AC 9). 디버그 빌드에만 본문이 있다 —
+         * 릴리스 변형은 `src/release`의 빈 함수다 (analytics/TestCrash.kt).
+         */
+        crashIfRequested(intent)
+
         setContent {
             AccenturyTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
@@ -183,6 +190,8 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         applyAppLink(intent)
+        // 이미 떠 있는 앱에도 넣을 수 있어야 한다 — singleTask라 두 번째 `am start`가 여기로 온다.
+        crashIfRequested(intent)
     }
 
     /**
@@ -504,14 +513,13 @@ private fun TestFlow(appLink: StateFlow<AppLinkEntry?>, modifier: Modifier = Mod
                 },
                 onStartRetest = { startRetest() },
                 /*
-                 * 탭과 실행을 따로 센다 (FR-SH-06). 탭은 사용자가 한 일이고 실행은 통로가 열린
-                 * 일이라, 둘의 차이가 곧 "눌렀는데 아무 데도 못 간" 비율이다 — 한 건으로 뭉치면
-                 * 그 구멍이 보이지 않는다. 실행 쪽은 [resultSharer]가 통로까지 붙여 울린다.
+                 * 탭은 여기서 세지 않는다 (FR-SH-06). 그 한 건은 웹이 `share_clicked`로 이미
+                 * 세고, 앱 안에서는 브리지 `logEvent`를 타고 같은 창구로 들어온다 — 네이티브가
+                 * 이름을 하나 더 붙이면 같은 탭이 앱과 웹에서 다른 축으로 갈린다. 네이티브가 세는
+                 * 것은 통로가 실제로 열린 일뿐이고, 그쪽은 [resultSharer]가 통로를 붙여 울린다.
+                 * 클릭 수와 실행 수의 차이는 그대로 "눌렀는데 아무 데도 못 간" 비율이다.
                  */
-                onShareResult = {
-                    events.log(ShareEvents.TAPPED)
-                    resultSharer.share(it)
-                },
+                onShareResult = { resultSharer.share(it) },
                 /*
                  * 웹이 센 사건을 앱 스트림으로 넘긴다 (KAN-33). 이름을 여기서 손대지 않는 것이
                  * 요점이다 — 웹과 앱이 같은 이름으로 쌓여야 하나의 퍼널이 되고, 그 정본은

@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
+import { clearTestId } from './analytics/testId'
 import { createFakeCapture, sineChunk, type FakeCapture } from './audio/testing/fakeCapture'
 import { REQUIRED_BRIDGE_VERSION } from './bridge/bridge'
 import { snapshotKey } from './progress/progressSnapshot'
@@ -136,6 +137,9 @@ afterEach(() => {
   // 계측 전역도 실물이다 (KAN-33). 남겨 두면 다음 테스트가 앞 테스트의 이벤트를 센다
   delete window.gtag
   delete window.dataLayer
+  // 응시 상관 키는 실물 sessionStorage에 남는다 — 지우지 않으면 다음 테스트의 이벤트가
+  // 앞 테스트의 응시에 묶인다
+  clearTestId()
   delete (navigator as { mediaDevices?: unknown }).mediaDevices
   // 진행 화면 분기 테스트가 fetch·localStorage를 스텁한다. 실패로 중단돼도 다음 테스트에
   // 새지 않게 여기서 되돌린다
@@ -1137,7 +1141,14 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
     tier_code: 'HONORARY',
     score_version: 'sv-0.3',
     overall_bucket: 70,
+    test_id: expect.any(String),
   }
+
+  /**
+   * 응시에 속한 이벤트에는 상관 키가 함께 나간다 (KAN-33 AC 1). 값 자체는 무작위라 존재만
+   * 확인한다 — 같은 응시의 이벤트가 **같은 키**를 쓴다는 사실은 `testId.test.ts`가 못박는다.
+   */
+  const inTest = (event: Record<string, unknown>) => ({ ...event, test_id: expect.any(String) })
 
   /** §3.7 200 응답 — 결과 화면까지 가야 [앱 다운로드]가 있다 */
   function stubResultFetch() {
@@ -1196,9 +1207,13 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
 
     await passVoiceCheck(capture)
 
+    /*
+     * 유입에는 상관 키가 없고 시작부터 붙는다 (KAN-33 AC 1). 인트로는 아직 어느 응시에도
+     * 속하지 않고, 키는 세션이 만들어진 뒤에 발급된다 (`analytics/testId.ts`).
+     */
     expect(queue).toEqual([
       { event: 'referral_opened', campaign: 'kko_share' },
-      { event: 'referral_test_started', campaign: 'kko_share' },
+      inTest({ event: 'referral_test_started', campaign: 'kko_share' }),
     ])
   })
 
@@ -1223,9 +1238,9 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
     // 결과 화면으로 바로 들어온 경로라 유입 이벤트는 없다 (인트로를 거치지 않았다).
     // 앞의 두 건은 결과가 도착하면서 나간다 (KAN-33) — 다운로드 탭은 그 뒤에 붙는다
     expect(queue).toEqual([
-      { event: 'result_viewed', campaign: 'kko_share' },
+      inTest({ event: 'result_viewed', campaign: 'kko_share' }),
       RESULT_TIER_EVENT,
-      { event: 'app_download_clicked', campaign: 'kko_share', platform: 'unknown' },
+      inTest({ event: 'app_download_clicked', campaign: 'kko_share', platform: 'unknown' }),
     ])
   })
 
@@ -1252,16 +1267,16 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
 
       // 결과 화면으로 바로 들어온 경로라 유입 이벤트는 없다 (인트로를 거치지 않았다)
       expect(queue).toEqual([
-        { event: 'result_viewed', campaign: 'kko_share' },
+        inTest({ event: 'result_viewed', campaign: 'kko_share' }),
         RESULT_TIER_EVENT,
-        { event: 'share_clicked', campaign: 'kko_share', channel: 'system' },
+        inTest({ event: 'share_clicked', campaign: 'kko_share', channel: 'system' }),
       ])
     } finally {
       delete (navigator as { share?: unknown }).share
     }
   })
 
-  it('앱 안 공유 탭은 웹이 세지 않는다 — 그 한 건은 네이티브가 센다 (AppEvents)', async () => {
+  it('앱 안 공유 탭도 웹이 센다 — 같은 행동이 플랫폼마다 다른 이름으로 갈리지 않는다', async () => {
     setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0&c=kko_share&screen=result&sessionId=s_web`)
     const native = stubBridgeWithEvents()
     const bridgeShare = vi.fn()
@@ -1275,12 +1290,17 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
     // 공유 자체는 브리지로 정상적으로 나간다 — 세지 않는 것과 보내지 않는 것은 다른 이야기다
     expect(bridgeShare).toHaveBeenCalledTimes(1)
     /*
-     * 공유는 어느 경로로도 세지 않는다 — 앱의 그 한 건은 네이티브가 `share_tapped`로 센다.
-     * 결과 도착 두 건은 앱에서도 세고(등급 분포는 앱 응시가 대부분이다), 브리지로 나간다.
+     * 클릭은 웹이 세고 브리지로 넘어간다. 예전에는 이 자리를 네이티브가 `share_tapped`로 따로
+     * 셌는데, 그러면 한 사람의 같은 행동이 플랫폼에 따라 다른 이름으로 쌓여 공유 퍼널이 둘로
+     * 갈렸다 (Codex 검증 지적, AC 8). 지금 네이티브가 세는 것은 통로가 실제로 열린
+     * `share_launched` 하나뿐이다.
+     *
+     * `channel`이 `bridge`인 것이 앱 안이라는 뜻이다 — 어느 통로였는지는 네이티브가 말한다.
      */
     expect(native).toEqual([
-      { event: 'result_viewed', campaign: 'kko_share' },
+      inTest({ event: 'result_viewed', campaign: 'kko_share' }),
       RESULT_TIER_EVENT,
+      inTest({ event: 'share_clicked', campaign: 'kko_share', channel: 'bridge' }),
     ])
     expect(queue).toEqual([])
   })
