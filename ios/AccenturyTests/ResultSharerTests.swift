@@ -202,6 +202,12 @@ final class ResultSharerTests: XCTestCase {
         XCTAssertNotNil(weakSharer, "카카오 콜백을 기다리는 동안 sharer가 해제됐다")
         deferred?(nil, TestError.rejected)
         XCTAssertEqual([payload], spy.sheets)
+
+        // 그리고 **끝나면 풀린다.** 위 단언만 있으면 "살려 두라"는 요구만 남아, 강한 캡처를
+        // 영구 보관으로 바꿔도 통과한다 — 그러면 공유할 때마다 객체가 쌓인다. 카카오 SDK가
+        // 콜백을 놓는 자리를 여기서는 `deferred`가 대신하므로 그것을 비워 확인한다.
+        deferred = nil
+        XCTAssertNil(weakSharer, "공유가 끝났는데 sharer가 남아 있다 - 강한 캡처가 누수가 됐다")
     }
 
     /// 카카오 콜백은 즉시 오지만 열기 완료 핸들러가 늦게 오는 경우. 전환 실패를 시트로
@@ -248,4 +254,3 @@ final class ResultSharerTests: XCTestCase {
         )
     }
 }
-
