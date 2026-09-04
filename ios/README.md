@@ -65,6 +65,27 @@ OS 공유 시트로 내려간다 — 그쪽은 텍스트 한 줄이 가는 경�
 **시뮬레이터로는 확인할 수 없다** — 카톡이 없으므로 늘 2번에서 시트로 간다. 카드 수신은
 실기기 확인 사항이다.
 
+## 계측·크래시 (KAN-33)
+
+`Accentury/GoogleService-Info.plist`(Firebase 콘솔 › 프로젝트 `accentury-c2713` › iOS 앱
+`com.accentury.app`)가 있으면 켜지고, **없으면 계측·크래시 보고 없이 그대로 돈다** — 카카오 키와
+같은 자리·같은 판단이고, 없는 것이 정상 상태다. 판정은 `Analytics/FirebaseEventSink.swift`의
+`FirebaseSetup` 한 곳에서 한다.
+
+이벤트 스키마·콘솔 설정·GA4에서 무엇을 어떻게 보는지는 [`docs/wiki/analytics.md`](../docs/wiki/analytics.md)에 있다.
+
+```bash
+# 설정이 없는 빌드에서 이벤트가 도는지 (로그로만 남는다)
+xcrun simctl spawn booted log stream --predicate 'subsystem == "com.accentury.app" AND category == "analytics"'
+
+# 설정이 있는 빌드에서 GA4 DebugView로 흘려보기
+xcrun simctl launch --console-pty booted com.accentury.app -FIRDebugEnabled
+```
+
+dSYM 업로드는 빌드 단계(`project.yml`의 «Crashlytics dSYM 업로드»)가 한다. **Debug 빌드에서는
+«Unable to process Accentury.app.dSYM» 경고 한 줄이 나오는 것이 정상이다** — dSYM은
+Release·아카이브에서만 만들어진다 (Debug의 `DEBUG_INFORMATION_FORMAT`은 `dwarf`).
+
 ## 가짜 마이크 (디버그 전용)
 
 시뮬레이터에는 쓸 만한 마이크 입력이 없고 실기기라도 매번 같은 발화를 낼 수는 없다. 피치

@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		0286E8DBA30BED74F1C2AD3B /* KakaoSDKShare in Frameworks */ = {isa = PBXBuildFile; productRef = F5B3D07508A812FD7E26A278 /* KakaoSDKShare */; };
+		03FD3E88EFCBAEB786922E80 /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = 519A8D634C011FD35B714408 /* GoogleService-Info.plist */; };
 		04A63C20DF24D5E63CDF78CA /* RecordingFileLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 704F02B2845DB68F35EE0A01 /* RecordingFileLifecycleTests.swift */; };
 		10D68C70533165CE8FD66555 /* ResultSharer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62A131F2B4843525E348A138 /* ResultSharer.swift */; };
 		111E067F4C27A92446F1B194 /* CurvePathBuilderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE7651DEA8417312CA6605FD /* CurvePathBuilderTests.swift */; };
@@ -20,6 +21,7 @@
 		32DF4843F5A8DA80C8385721 /* TestDoubles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8743BCD3EE6871AFE9C2DF64 /* TestDoubles.swift */; };
 		33EC80CA45D4C12AC521A7C3 /* VoiceCheckModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DEE86D46BCC8F6213F670EA /* VoiceCheckModelTests.swift */; };
 		355B9977DF82745AA41AE529 /* PapercutTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E00BC0B32B9296094D3014D /* PapercutTheme.swift */; };
+		38419F6115CAF01241F54943 /* FirebaseCrashlytics in Frameworks */ = {isa = PBXBuildFile; productRef = 6EBC5DFDBE6BCFF4929561DB /* FirebaseCrashlytics */; };
 		387373ED323D0FED5A62B215 /* PermissionGateModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1AD1979B9D7FBA7E7FFB170 /* PermissionGateModel.swift */; };
 		3958ED33ADDA31F6FE392B5C /* PcmSourcesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A728677C2DA7FF5644257BD /* PcmSourcesTests.swift */; };
 		3B949FFAAB1FABA338069613 /* PermissionGateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3AB85017A7A546F989420EE /* PermissionGateView.swift */; };
@@ -32,6 +34,7 @@
 		5E60AE7995F74242710F685B /* AccenturyCore in Frameworks */ = {isa = PBXBuildFile; productRef = 40EFC6BFA1E64779B7362D13 /* AccenturyCore */; };
 		5ED6916F91EF39CDBFA136E7 /* StatusBlock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9732EF804309D56179E479C5 /* StatusBlock.swift */; };
 		625890275914FFE13FFDE280 /* CurvePathBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F38F6B8DAF4F82A6A2F4E3B /* CurvePathBuilder.swift */; };
+		6418A5CB8873C161F6F2EA31 /* AppEvents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EF695EE1F55530BE6EBC6BC /* AppEvents.swift */; };
 		66BF29B84C335095A8902902 /* fake_mic.wav in Resources */ = {isa = PBXBuildFile; fileRef = 3EA0782619C8E715500EADB4 /* fake_mic.wav */; };
 		6D7240DA835E2C68EA660649 /* AccenturyButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC5E217157A2E9F6D8CCB49A /* AccenturyButton.swift */; };
 		6E2C121212BA37EB0F2E205E /* TestFlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16C54BFDB88BCBAAA1B9DD42 /* TestFlowView.swift */; };
@@ -57,11 +60,14 @@
 		BF78AD13B4C7F9B0F49C0A59 /* WebViewHostPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F992496097E1162874666B6 /* WebViewHostPolicyTests.swift */; };
 		C51B1AC0B01DF054FC0A23EA /* RecordingSmokeModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7C2427E4D1A062E023DB7E1 /* RecordingSmokeModel.swift */; };
 		C86DC74651CBF6524F5B6F65 /* WebViewLifecycleNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36CE5E56B2476309F75325D5 /* WebViewLifecycleNotifier.swift */; };
+		D1525C5A8620F9800627CBFB /* CrashReports.swift in Sources */ = {isa = PBXBuildFile; fileRef = 262A6550B61CC0F6093B9FA2 /* CrashReports.swift */; };
 		D1B7F74966AF95157A3892E3 /* HalftoneGrid.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2942DF00F77DB7DE3B8AB95 /* HalftoneGrid.swift */; };
+		D5E1BBE6B28F1B36E27969D9 /* FirebaseAnalyticsCore in Frameworks */ = {isa = PBXBuildFile; productRef = 7E14D05D5859B8B47FDD16ED /* FirebaseAnalyticsCore */; };
 		D65BC773E51A667EA5370B97 /* UploadModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D026A48BD81029111245DD7 /* UploadModelTests.swift */; };
 		D67159D06F1C8892C958695B /* RecordingModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C932DB5B8B6841CE96814E64 /* RecordingModel.swift */; };
 		D93DEAE1AAC5C59731EE7A9F /* KakaoSDKCommon in Frameworks */ = {isa = PBXBuildFile; productRef = FF1258F7B626CBA21E416381 /* KakaoSDKCommon */; };
 		D9B4B12CAA8445E94A026C6E /* VoiceCheckModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 920EDC35F3B069BC5960F487 /* VoiceCheckModel.swift */; };
+		E1222128CC32A2AE5817FA25 /* FirebaseEventSink.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4A40932C982FF73FB3DC8DB /* FirebaseEventSink.swift */; };
 		EA2AD6CC5E227A113595DC9B /* GuideCurveCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54D6ABD705F2CA4791966C17 /* GuideCurveCache.swift */; };
 		EF16FA13AAC3F86EF5455E0D /* MicPermission.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB797E81992F94828EE83D32 /* MicPermission.swift */; };
 		EF39FBB9D3880F681389D93D /* ResultSharerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A9274FF9A22FC4F50EB082D /* ResultSharerTests.swift */; };
@@ -91,6 +97,7 @@
 		16C54BFDB88BCBAAA1B9DD42 /* TestFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestFlowView.swift; sourceTree = "<group>"; };
 		1A9274FF9A22FC4F50EB082D /* ResultSharerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultSharerTests.swift; sourceTree = "<group>"; };
 		1D06BC29425E893F55AE8F9A /* AppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfig.swift; sourceTree = "<group>"; };
+		262A6550B61CC0F6093B9FA2 /* CrashReports.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrashReports.swift; sourceTree = "<group>"; };
 		2929E30A84C10FDE57D3643B /* AccenturyApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccenturyApp.swift; sourceTree = "<group>"; };
 		2A728677C2DA7FF5644257BD /* PcmSourcesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PcmSourcesTests.swift; sourceTree = "<group>"; };
 		36CE5E56B2476309F75325D5 /* WebViewLifecycleNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewLifecycleNotifier.swift; sourceTree = "<group>"; };
@@ -105,10 +112,12 @@
 		4DEE86D46BCC8F6213F670EA /* VoiceCheckModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceCheckModelTests.swift; sourceTree = "<group>"; };
 		4F992496097E1162874666B6 /* WebViewHostPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewHostPolicyTests.swift; sourceTree = "<group>"; };
 		514DE1060D23DE29162CBED3 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
+		519A8D634C011FD35B714408 /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
 		5375A299C4DD27AFDBA3FBDE /* AppConfigTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfigTests.swift; sourceTree = "<group>"; };
 		53EFA92F03249BAA2DB5FCF8 /* WebAutoDriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebAutoDriver.swift; sourceTree = "<group>"; };
 		5427870AADAE9970E09CBC35 /* Local.xcconfig.example */ = {isa = PBXFileReference; path = Local.xcconfig.example; sourceTree = "<group>"; };
 		54D6ABD705F2CA4791966C17 /* GuideCurveCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuideCurveCache.swift; sourceTree = "<group>"; };
+		5EF695EE1F55530BE6EBC6BC /* AppEvents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEvents.swift; sourceTree = "<group>"; };
 		5F38F6B8DAF4F82A6A2F4E3B /* CurvePathBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurvePathBuilder.swift; sourceTree = "<group>"; };
 		60258D05999F9D1277CEE6B5 /* RecordButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordButton.swift; sourceTree = "<group>"; };
 		605E85B43A92125E5747AF57 /* CurveLatencyProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurveLatencyProbe.swift; sourceTree = "<group>"; };
@@ -142,6 +151,7 @@
 		C932DB5B8B6841CE96814E64 /* RecordingModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingModel.swift; sourceTree = "<group>"; };
 		CB58377AE12082A4E6DFF97D /* Accentury.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Accentury.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		CFABEDB1767B4A8CEB028BBF /* RecordingModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingModelTests.swift; sourceTree = "<group>"; };
+		D4A40932C982FF73FB3DC8DB /* FirebaseEventSink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirebaseEventSink.swift; sourceTree = "<group>"; };
 		D7C2427E4D1A062E023DB7E1 /* RecordingSmokeModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingSmokeModel.swift; sourceTree = "<group>"; };
 		DFA23661AF83EC18C5D92B7B /* BridgeUserScript.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeUserScript.swift; sourceTree = "<group>"; };
 		EB797E81992F94828EE83D32 /* MicPermission.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicPermission.swift; sourceTree = "<group>"; };
@@ -161,6 +171,8 @@
 				0286E8DBA30BED74F1C2AD3B /* KakaoSDKShare in Frameworks */,
 				87742CFC1D4AE0205D4BC31B /* KakaoSDKTemplate in Frameworks */,
 				D93DEAE1AAC5C59731EE7A9F /* KakaoSDKCommon in Frameworks */,
+				D5E1BBE6B28F1B36E27969D9 /* FirebaseAnalyticsCore in Frameworks */,
+				38419F6115CAF01241F54943 /* FirebaseCrashlytics in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -192,6 +204,16 @@
 				D7C2427E4D1A062E023DB7E1 /* RecordingSmokeModel.swift */,
 			);
 			path = Audio;
+			sourceTree = "<group>";
+		};
+		311F4BAD67776C0EACC850AC /* Analytics */ = {
+			isa = PBXGroup;
+			children = (
+				5EF695EE1F55530BE6EBC6BC /* AppEvents.swift */,
+				262A6550B61CC0F6093B9FA2 /* CrashReports.swift */,
+				D4A40932C982FF73FB3DC8DB /* FirebaseEventSink.swift */,
+			);
+			path = Analytics;
 			sourceTree = "<group>";
 		};
 		40C603DF7B528095311A8DC6 /* Web */ = {
@@ -360,8 +382,10 @@
 				1D06BC29425E893F55AE8F9A /* AppConfig.swift */,
 				FA38785B971425B6F2AF86D5 /* Assets.xcassets */,
 				37D2DAA08F2853EC2AE0D174 /* ContentView.swift */,
+				519A8D634C011FD35B714408 /* GoogleService-Info.plist */,
 				0DB52A866B3F7B1F6A531D61 /* Info-Debug.plist */,
 				42B781741E830E2F917845E1 /* Info-Release.plist */,
+				311F4BAD67776C0EACC850AC /* Analytics */,
 				2A867CA9FAA03EE0E07AB832 /* Audio */,
 				D0CECAC03F3782E93DFD2217 /* Config */,
 				AB093A790D7428F842EBCF49 /* Curve */,
@@ -437,6 +461,7 @@
 				6FEDB80A920EB9746AE7B570 /* Sources */,
 				FE71A31FE54F098D8B2E7048 /* Resources */,
 				B8BB8B6B2F8AB8C6E63A19C5 /* Frameworks */,
+				1C3795B6DC37DE61FAE7B508 /* Crashlytics dSYM 업로드 */,
 			);
 			buildRules = (
 			);
@@ -448,6 +473,8 @@
 				F5B3D07508A812FD7E26A278 /* KakaoSDKShare */,
 				70564E535D389FE4BC65ABC0 /* KakaoSDKTemplate */,
 				FF1258F7B626CBA21E416381 /* KakaoSDKCommon */,
+				7E14D05D5859B8B47FDD16ED /* FirebaseAnalyticsCore */,
+				6EBC5DFDBE6BCFF4929561DB /* FirebaseCrashlytics */,
 			);
 			productName = Accentury;
 			productReference = CB58377AE12082A4E6DFF97D /* Accentury.app */;
@@ -478,6 +505,7 @@
 			mainGroup = 9AE45EECD303E885B9F07C81;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				5A543650BB6230FB590B5F7F /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
 				CAA935154D11E7DF71BC105F /* XCRemoteSwiftPackageReference "kakao-ios-sdk" */,
 				7778F63A93DF226A80ED400E /* XCLocalSwiftPackageReference "AccenturyCore" */,
 			);
@@ -498,12 +526,40 @@
 			buildActionMask = 2147483647;
 			files = (
 				A371283916C2882A4A4C7C84 /* Assets.xcassets in Resources */,
+				03FD3E88EFCBAEB786922E80 /* GoogleService-Info.plist in Resources */,
 				AF6D7E2053D3891597D8440E /* Jua-Regular.ttf in Resources */,
 				66BF29B84C335095A8902902 /* fake_mic.wav in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		1C3795B6DC37DE61FAE7B508 /* Crashlytics dSYM 업로드 */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(DWARF_DSYM_FOLDER_PATH)/$(DWARF_DSYM_FILE_NAME)",
+				"$(DWARF_DSYM_FOLDER_PATH)/$(DWARF_DSYM_FILE_NAME)/Contents/Resources/DWARF/$(TARGET_NAME)",
+				"$(DWARF_DSYM_FOLDER_PATH)/$(DWARF_DSYM_FILE_NAME)/Contents/Info.plist",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/GoogleService-Info.plist",
+				"$(TARGET_BUILD_DIR)/$(EXECUTABLE_PATH)",
+			);
+			name = "Crashlytics dSYM 업로드";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -euo pipefail\n# 스크립트가 실제로 읽는 것은 **번들에 복사된** 설정 파일이다. 소스 폴더의 것이 아니라\n# 이쪽을 보는 이유는 아래 inputFiles와 같은 경로여야 샌드박스가 열어 주기 때문이다.\n# 설정이 없는 빌드가 정상 상태이므로(FirebaseSetup) 여기서 죽이지 않는다 — 갓 클론한\n# 기계와 CI가 빌드조차 못 하게 되고, 그때 잃는 것은 dSYM 업로드 하나뿐이다.\nif [ ! -f \"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/GoogleService-Info.plist\" ]; then\n  echo \"warning: GoogleService-Info.plist가 없어 dSYM 업로드를 건너뛴다 (KAN-33)\"\n  exit 0\nfi\n# SwiftPM 체크아웃 경로. 아직 패키지를 받지 않았거나 Firebase를 떼어낸 빌드에서는 없다.\nRUN_SCRIPT=\"${BUILD_DIR%/Build/*}/SourcePackages/checkouts/firebase-ios-sdk/Crashlytics/run\"\nif [ ! -f \"$RUN_SCRIPT\" ]; then\n  echo \"warning: Crashlytics run 스크립트를 찾지 못해 dSYM 업로드를 건너뛴다 (KAN-33)\"\n  exit 0\nfi\n\"$RUN_SCRIPT\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		6FEDB80A920EB9746AE7B570 /* Sources */ = {
@@ -514,12 +570,15 @@
 				8DE02AF5FF1FC6B1659D18D7 /* AccenturyBridge.swift in Sources */,
 				6D7240DA835E2C68EA660649 /* AccenturyButton.swift in Sources */,
 				23A926CAEA2B263C22C7533B /* AppConfig.swift in Sources */,
+				6418A5CB8873C161F6F2EA31 /* AppEvents.swift in Sources */,
 				B34211F2D69B414CB38A5784 /* AudioRecorder.swift in Sources */,
 				B1AECCF83121D9644D1171E8 /* BridgeUserScript.swift in Sources */,
 				8F1B9A53CDAEE4D6A8F89EC2 /* ContentView.swift in Sources */,
+				D1525C5A8620F9800627CBFB /* CrashReports.swift in Sources */,
 				4BFF2CB4480E6FDE33185928 /* CurveLane.swift in Sources */,
 				14158247BFD2031B9D6B7738 /* CurveLatencyProbe.swift in Sources */,
 				625890275914FFE13FFDE280 /* CurvePathBuilder.swift in Sources */,
+				E1222128CC32A2AE5817FA25 /* FirebaseEventSink.swift in Sources */,
 				EA2AD6CC5E227A113595DC9B /* GuideCurveCache.swift in Sources */,
 				D1B7F74966AF95157A3892E3 /* HalftoneGrid.swift in Sources */,
 				5BA4AD39A52498A1CA365979 /* HeroIcon.swift in Sources */,
@@ -814,6 +873,14 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		5A543650BB6230FB590B5F7F /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
+			requirement = {
+				kind = exactVersion;
+				version = 12.18.0;
+			};
+		};
 		CAA935154D11E7DF71BC105F /* XCRemoteSwiftPackageReference "kakao-ios-sdk" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/kakao/kakao-ios-sdk";
@@ -829,10 +896,20 @@
 			isa = XCSwiftPackageProductDependency;
 			productName = AccenturyCore;
 		};
+		6EBC5DFDBE6BCFF4929561DB /* FirebaseCrashlytics */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5A543650BB6230FB590B5F7F /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseCrashlytics;
+		};
 		70564E535D389FE4BC65ABC0 /* KakaoSDKTemplate */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = CAA935154D11E7DF71BC105F /* XCRemoteSwiftPackageReference "kakao-ios-sdk" */;
 			productName = KakaoSDKTemplate;
+		};
+		7E14D05D5859B8B47FDD16ED /* FirebaseAnalyticsCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5A543650BB6230FB590B5F7F /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAnalyticsCore;
 		};
 		F5B3D07508A812FD7E26A278 /* KakaoSDKShare */ = {
 			isa = XCSwiftPackageProductDependency;

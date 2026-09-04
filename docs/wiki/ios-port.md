@@ -35,8 +35,9 @@ ios/
 `WKScriptMessageHandler`는 단방향·비동기다.
 
 그래서 브리지 객체 자체를 JS로 적어 `WKUserScript`(`.atDocumentStart`, 메인 프레임 전용)로 심는다
-(`Accentury/Web/BridgeUserScript.swift`). 값을 돌려주는 둘은 JS 안의 값을 읽고, 상태를 바꾸는 넷은
-`postMessage`로 네이티브에 넘긴다.
+(`Accentury/Web/BridgeUserScript.swift`). 값을 돌려주는 둘은 JS 안의 값을 읽고, 상태를 바꾸는 다섯은
+`postMessage`로 네이티브에 넘긴다. 그중 `logEvent`(KAN-33)만 인자가 둘이라 봉투가 객체다 — 계측
+배선 전체는 `docs/wiki/analytics.md`에 있다.
 
 ### 보안 등가성
 

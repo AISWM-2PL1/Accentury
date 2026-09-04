@@ -5,8 +5,8 @@ import WebKit
 /// 웹 → 네이티브 브리지의 **네이티브 쪽 절반** (webview-layer.md §8).
 /// 안드로이드 `AccenturyBridge.kt`의 이식본이고, JS 쪽 절반은 ``BridgeUserScript``다.
 ///
-/// 최소 표면 원칙 — 화면 전환(KAN-100)·답안 제출 인증(KAN-13)·재응시(KAN-34)·결과 공유(KAN-30)까지
-/// 필요한 여섯 메서드만 둔다. 늘리기 전에 웹에서 해결 가능한지 먼저 볼 것.
+/// 최소 표면 원칙 — 화면 전환(KAN-100)·답안 제출 인증(KAN-13)·재응시(KAN-34)·결과 공유(KAN-30)·
+/// 계측(KAN-33)까지 필요한 일곱 메서드만 둔다. 늘리기 전에 웹에서 해결 가능한지 먼저 볼 것.
 /// 그중 값을 돌려주는 둘(`getContractVersion`·`getSessionToken`)은 여기로 오지 않는다 —
 /// JS 안에서 끝난다 (``BridgeUserScript`` 참고).
 ///
@@ -37,6 +37,10 @@ struct BridgeDispatcher {
     let onStartRetest: () -> Void
     let onShareResult: (SharePayload) -> Void
 
+    /// 웹이 센 계측 이벤트 (KAN-33). 이름과 파라미터는 여기 도착하기 전에 이미 GA4 규격으로
+    /// 좁혀져 있다 — 받는 쪽(``EventSink``)은 이름을 손대지 않는다.
+    let onLogEvent: (String, [String: EventParam]) -> Void
+
     /// 메시지 한 건을 처리한다. 조건에 맞지 않으면 **조용히** 아무 일도 하지 않는다.
     ///
     /// 조용한 이유는 안드로이드와 같다: 웹은 신뢰 경계 밖이라 오류를 되돌려 줄 상대가 아니고,
@@ -65,13 +69,42 @@ struct BridgeDispatcher {
 
         case "startVoiceItem":
             guard let json = payload as? String else { return }
-            guard let start = parseVoiceItemStart(json) else { return }
+            guard let start = parseVoiceItemStart(json) else {
+                // 조용히 버리되 흔적은 남긴다 (KAN-33). allowlist를 통과한 페이지만 여기 오므로
+                // 이 실패는 우리 웹과 우리 앱이 계약을 다르게 알고 있다는 뜻이다 (``CrashReports``).
+                CrashReports.recordBridgeParseFailure("startVoiceItem")
+                return
+            }
             onStartVoiceItem(start)
 
         case "shareResult":
             guard let json = payload as? String else { return }
-            guard let share = parseSharePayload(json) else { return }
+            guard let share = parseSharePayload(json) else {
+                CrashReports.recordBridgeParseFailure("shareResult")
+                return
+            }
             onShareResult(share)
+
+        case "logEvent":
+            /*
+             * 여기서 거르는 것은 안전이 아니라 **집계 축의 위생**이다. 규격 밖 이름이 한 번
+             * 흘러가면 GA4에 지울 수 없는 축이 생기고(이벤트·파라미터 정의는 사후 삭제가 안 된다),
+             * 그 축은 사람이 다시 읽어야 하는 대시보드가 된다 (`AccenturyCore` `EventParams`).
+             *
+             * 이벤트 하나를 잃는 것은 감수한다 — 웹은 오류를 돌려줄 상대가 아니고, 계측 때문에
+             * 응시를 멈출 이유는 더더욱 없다. 대신 버렸다는 사실만 비치명 이벤트로 남긴다.
+             *
+             * 봉투가 이 메서드만 객체인 이유는 ``BridgeUserScript`` 주석에 있다.
+             */
+            guard let body = payload as? [String: Any],
+                  let name = body["name"] as? String,
+                  let paramsJson = body["params"] as? String
+            else { return }
+            guard isAnalyticsName(name), let params = parseEventParams(paramsJson) else {
+                CrashReports.recordBridgeParseFailure("logEvent")
+                return
+            }
+            onLogEvent(name, params)
 
         default:
             // 모르는 메서드. 신버전 웹이 구버전 앱에 보낸 호출일 수도 있고(메서드 추가는

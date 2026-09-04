@@ -26,7 +26,7 @@ private let jsParagraphSeparator = "\u{2029}"
 ///    본다 — 즉 우리 주입이 페이지 스크립트보다 **먼저** 끝나 있어야 한다
 ///
 /// 그래서 브리지 객체 자체를 JS로 적어 `WKUserScript`(`.atDocumentStart`)로 심는다.
-/// 값을 돌려주는 두 메서드는 JS 안의 값을 읽고, 상태를 바꾸는 네 메서드는
+/// 값을 돌려주는 두 메서드는 JS 안의 값을 읽고, 상태를 바꾸는 다섯 메서드는
 /// `window.webkit.messageHandlers.accentury.postMessage`로 네이티브에 넘긴다.
 /// **웹은 이 차이를 모른다** — `bridge.ts`는 한 글자도 바뀌지 않는다.
 ///
@@ -90,6 +90,10 @@ enum BridgeUserScript {
         (function(){ if (window.AccenturyBridge) return;
           var token = (typeof window.\(pendingSlotName) === "string") ? window.\(pendingSlotName) : "";
           try { delete window.\(pendingSlotName); } catch (e) { window.\(pendingSlotName) = ""; }
+          /* payload는 대개 문자열 하나지만 `logEvent`(KAN-33)만 인자가 둘이라 객체로 싣는다 —
+             웹 계약(`bridge.ts`)이 `logEvent(name, paramsJson)`이고, 이름을 JSON 안에 끼워 넣으면
+             네이티브가 파라미터와 같은 신뢰 수준으로 읽게 된다. 봉투의 모양을 갈라 두면 이름은
+             봉투에서, 값은 payload에서 각각 검증된다 (`AccenturyBridge`). */
           function post(method, payload){
             window.webkit.messageHandlers.\(messageHandlerName).postMessage(
               {method: method, payload: payload === undefined ? null : payload}
@@ -105,7 +109,8 @@ enum BridgeUserScript {
             requestMicPermission: function(){ post("requestMicPermission"); },
             startVoiceItem: function(json){ post("startVoiceItem", String(json)); },
             startRetest: function(){ post("startRetest"); },
-            shareResult: function(json){ post("shareResult", String(json)); }
+            shareResult: function(json){ post("shareResult", String(json)); },
+            logEvent: function(name, json){ post("logEvent", {name: String(name), params: String(json)}); }
           });
         })();
         """

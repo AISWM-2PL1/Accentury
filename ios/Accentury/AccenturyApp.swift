@@ -5,13 +5,24 @@ import SwiftUI
 @main
 struct AccenturyApp: App {
 
-    /// 안드로이드 `AccenturyApplication.onCreate`에 해당하는 자리 (KAN-180).
+    /// 안드로이드 `AccenturyApplication.onCreate`에 해당하는 자리 (KAN-180, KAN-33).
     ///
     /// 카카오 SDK는 앱 키를 **프로세스 단위로 한 번만** 등록받고, 공유를 호출하는 시점에는
     /// 이미 초기화돼 있어야 한다. SwiftUI에는 Application 클래스가 없어서 `App`의 이니셜라이저가
     /// 그 자리다 — 화면(`ContentView`)의 `onAppear`에 두면 화면이 다시 그려질 때마다 돌고,
     /// 반대로 화면보다 먼저 도는 경로에서는 초기화되지 않은 SDK를 만난다.
     init() {
+        /*
+         * 계측·크래시 SDK를 먼저 세운다 (KAN-33). 순서가 규칙이다 — Crashlytics는 초기화된
+         * 뒤부터 크래시를 잡으므로, 앱 시작에서 가장 먼저 서야 그 앞의 초기화(카카오 SDK 등)에서
+         * 나는 사고까지 리포트에 남는다.
+         *
+         * 설정 파일이 없으면 아무 일도 하지 않고 지나간다 — 그게 정상 상태다 (``FirebaseSetup``).
+         * 카카오 키 분기와 같은 모양이고 같은 이유다.
+         */
+        FirebaseSetup.start()
+        CrashReports.install()
+
         /*
          * 키가 없으면 초기화하지 않는다 — 이 분기가 카카오 경로 전체의 스위치다.
          *
