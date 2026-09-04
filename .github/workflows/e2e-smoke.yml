@@ -9,6 +9,26 @@
 #   2. workflow_dispatch 사람이 staging이나 prod에 손으로 한 번 돌린다 (prod 승격 직후).
 #   3. pull_request      스모크 자신이나 compose가 바뀐 PR에서 로컬 풀스택으로 돌린다.
 #
+# 합성 트래픽 표시 토큰은 GitHub 시크릿이 아니라 대상 환경의 SSM에서 읽는다 (2026-09-05, KAN-171
+# 리뷰 P3). 저장소 시크릿은 하나뿐인데 두 환경의 관리자 토큰이 서로 달라 한쪽만 담을 수 있었고,
+# 무엇보다 저장소 시크릿은 아무 브랜치의 워크플로나 꺼내 쓸 수 있어서 prod 관리자 토큰을 두기에
+# 맞지 않았다. deploy.yml의 staging 스모크가 이미 같은 방식이고, 배포 역할에 그 권한이
+# 있다 (infra/modules/deploy/main.tf의 ReadAdminToken). 그래서 이 워크플로에 관리자 토큰을
+# 넣어 둘 곳이 없다.
+#
+# 그 대가로 remote job이 GitHub environment를 지정한다 - OIDC 역할의 신뢰 정책이 sub를
+# repo:OWNER/REPO:environment:{env}로 묶기 때문이다. 그래서 배포 브랜치 정책이 그대로 적용된다.
+#
+#   staging 스모크는 Dev에서 돌린다 (staging environment의 정책이 Dev).
+#   prod 스모크는 Release에서 돌린다 (prod environment의 정책이 Release). prod에는 required
+#   reviewers가 걸려 있어 실행할 때마다 승인을 한 번 받는다.
+#
+# 수동 실행에 대상 주소를 받지 않는 것도 같은 이유다 (Codex 리뷰 P1). 주소를 사람이 넣게 두면
+# SSM에서 막 읽은 그 환경의 관리자 토큰이 X-Admin-Token 헤더에 실려 임의의 호스트로 나간다 -
+# 코드를 한 줄도 고치지 않고 토큰을 빼낼 수 있다. 그래서 주소는 그 environment의 변수
+# APP_DOMAIN에서 유도한다. 호출자가 주소를 정하고 싶으면 admin-token도 같이 넘겨야 하고,
+# 그때는 SSM을 아예 읽지 않는다 - 토큰의 출처와 목적지를 한쪽이 함께 정한다.
+#
 # 필수 게이트로 걸지는 KAN-128이 정한다 (티켓 - 선택).
 #
 # 경로 필터를 워크플로 레벨 paths가 아니라 job 레벨 if 스킵으로 처리하는 이유는 test.yml과
@@ -20,8 +40,10 @@ on:
   workflow_call:
     inputs:
       base-url:
-        description: 대상 BE 주소
-        required: true
+        description: >-
+          대상 BE 주소. admin-token을 함께 넘길 때만 쓴다 - 토큰의 출처와 목적지를 호출자가
+          함께 정하는 갈래다. 넘기지 않으면 그 environment의 변수 APP_DOMAIN에서 유도한다.
+        required: false
         type: string
       environment:
         description: 로그에 남길 환경 이름
@@ -37,19 +59,21 @@ on:
       admin-token:
         description: >-
           대상 환경의 accentury.admin.token (KAN-138). 이 스모크의 세션을 합성 트래픽으로
-          표시해 익명 집계(KAN-106)에서 실사용자와 갈라 놓는다. 없으면 스크립트가 시작 전에
-          멈춘다 - 표시 없는 실행은 그 환경의 완주율과 등급 분포에 영구히 남는다.
-        required: true
+          표시해 익명 집계(KAN-106)에서 실사용자와 갈라 놓는다. 표시 없는 실행은 그 환경의
+          완주율과 등급 분포에 영구히 남는다. 넘기지 않으면 job이 대상 환경의 SSM에서 직접
+          읽으므로 선택 입력이다 - 호출자가 이미 토큰을 들고 있을 때만 쓴다.
+
+          토큰을 넘길 때는 base-url도 함께 넘긴다.
+        required: false
   workflow_dispatch:
     inputs:
-      base-url:
-        description: '대상 BE 주소 (예: https://api.staging.accentury.app)'
-        required: true
-        type: string
       environment:
-        description: 로그에 남길 환경 이름
-        required: false
-        type: string
+        description: >-
+          대상 환경. GitHub environment 이름이자 SSM 접두사이므로 오타가 곧 실패다.
+          prod는 Release 브랜치에서만 돌아간다 (위 머리말).
+        required: true
+        type: choice
+        options: [staging, prod]
         default: staging
       expect-stub-scores:
         description: AI가 스텁일 때만 켠다 - 억양 점수를 해시로 예측해 대조한다
@@ -94,29 +118,87 @@ jobs:
   # 이미 떠 있는 환경(staging, prod)을 도메인 경유로 두드린다 (티켓 AC 2, 3).
   remote:
     # workflow_call로 불릴 때 github.event_name은 호출한 쪽의 이벤트(push 등)라 그것만으로는
-    # 갈래를 가를 수 없다 - 입력이 실제로 들어왔는지를 함께 본다.
-    if: github.event_name != 'pull_request' && inputs.base-url != ''
+    # 갈래를 가를 수 없다. environment는 두 입구 모두 반드시 채워지고(수동은 required, 호출은
+    # 기본값 staging) pull_request에는 inputs 자체가 없으므로, 이 하나로 세 갈래가 갈린다.
+    # base-url을 보던 예전 조건은 못 쓴다 - 그 입력이 이제 선택이라 SSM 갈래에서는 비어 있다.
+    if: inputs.environment != ''
     runs-on: ubuntu-latest
+    # 로그 라벨이 아니라 실제 GitHub environment다 (머리말). OIDC 역할의 신뢰 정책이 이 이름으로
+    # 묶여 있어서, 이 줄이 없으면 아래 역할 맡기가 sts:AssumeRoleWithWebIdentity 거부로 끝난다.
+    environment: ${{ inputs.environment }}
     timeout-minutes: 20
+    permissions:
+      contents: read
+      # OIDC 토큰 발급. 이 job만 필요하므로 워크플로 레벨이 아니라 여기에 둔다.
+      #
+      # workflow_call로 부르는 쪽은 admin-token을 넘기든 안 넘기든 자기 job에 같은 권한을
+      # 선언해야 한다 - 재사용 워크플로의 권한은 호출자 권한이 상한이고, GitHub은 단계의
+      # 조건을 따지기 전에 이 선언부터 대조하기 때문이다 (Codex 리뷰 P2). 갈래마다 job을
+      # 쪼개면 권한을 나눌 수 있지만, 지금 이 워크플로를 workflow_call로 부르는 곳이 없어
+      # (deploy.yml은 스크립트를 직접 부른다 - 위 머리말) 중복을 만들 이유가 없다.
+      id-token: write
+    env:
+      AWS_REGION: ap-northeast-2
+      SSM_PREFIX: /accentury/${{ inputs.environment }}
     steps:
       - uses: actions/checkout@v4
+
+      # 토큰의 출처를 먼저 정한다. secrets 컨텍스트는 step의 if에서 못 읽으므로 출력으로 옮긴다.
+      # 이 갈래가 아래 AWS 자격 증명 단계를 켜고 끈다 - 호출자가 토큰을 넘겼으면 SSM을 읽을
+      # 일이 없어 역할을 맡지 않는다. 단계를 건너뛰는 것일 뿐 job의 permissions 선언은 그대로라,
+      # 권한 자체는 모든 호출자에게 필요하다 (위 admin-token 설명, Codex 리뷰 P2).
+      - id: source
+        env:
+          CALLER_TOKEN: ${{ secrets.admin-token }}
+        run: |
+          set -euo pipefail
+          if [ -n "${CALLER_TOKEN:-}" ]; then
+            echo "from=caller" >> "$GITHUB_OUTPUT"
+          else
+            echo "from=ssm" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        if: steps.source.outputs.from == 'ssm'
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
       - name: ${{ inputs.environment }} 스모크
         # 입력을 셸 명령에 직접 끼워 넣지 않고 환경 변수로 넘긴다 - 손으로 넣는 값이라
         # 명령 치환이 섞이면 러너에서 그대로 실행된다.
         env:
-          BASE_URL: ${{ inputs.base-url }}
+          TOKEN_FROM: ${{ steps.source.outputs.from }}
+          CALLER_BASE_URL: ${{ inputs.base-url }}
+          CALLER_TOKEN: ${{ secrets.admin-token }}
+          APP_DOMAIN: ${{ vars.APP_DOMAIN }}
           EXPECT_STUB_SCORES: ${{ inputs.expect-stub-scores }}
-          # workflow_dispatch에는 secrets 선언이 없으므로 레포 시크릿을 그대로 읽는다.
-          # workflow_call로 불릴 때는 호출자가 넘긴 값이 같은 이름으로 들어온다.
-          SYNTHETIC_KEY: ${{ secrets.admin-token || secrets.ACCENTURY_ADMIN_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -z "$SYNTHETIC_KEY" ]; then
-            echo "관리자 시크릿이 없습니다. 표시 없는 스모크는 대상 환경의 익명 집계에" >&2
+          if [ "$TOKEN_FROM" = caller ]; then
+            # 호출자가 토큰과 주소를 함께 정한다.
+            token="$CALLER_TOKEN"
+            base_url="${CALLER_BASE_URL:?호출자가 admin-token을 넘겼으면 base-url도 넘겨야 합니다}"
+          else
+            # SSM 토큰은 그 환경의 도메인 밖으로 나가지 않는다 (머리말, Codex 리뷰 P1).
+            if [ -z "${APP_DOMAIN:-}" ]; then
+              echo "environment 변수 APP_DOMAIN이 없습니다. 환경이 철거됐거나 변수를" >&2
+              echo "채우지 않은 상태입니다 (infra/README.md \"GitHub 설정\")." >&2
+              exit 1
+            fi
+            base_url="https://$APP_DOMAIN"
+            token=$(aws ssm get-parameter --name "$SSM_PREFIX/ACCENTURY_ADMIN_TOKEN" \
+              --with-decryption --query Parameter.Value --output text)
+            # SSM에서 막 읽은 값은 아직 마스킹 대상이 아니다. 뒤 단계의 실수로 로그에 새지 않게 건다.
+            echo "::add-mask::$token"
+          fi
+          if [ -z "$token" ] || [ "$token" = None ]; then
+            echo "관리자 토큰을 얻지 못했습니다. 표시 없는 스모크는 대상 환경의 익명 집계에" >&2
             echo "영구히 남으므로 실행하지 않습니다 (KAN-138)." >&2
             exit 1
           fi
-          ARGS=(--base-url "$BASE_URL" --synthetic-key "$SYNTHETIC_KEY")
+          echo "대상 $base_url (토큰 출처 $TOKEN_FROM)"
+          ARGS=(--base-url "$base_url" --synthetic-key "$token")
           if [ "$EXPECT_STUB_SCORES" = "true" ]; then
             ARGS+=(--expect-stub-scores)
           fi
