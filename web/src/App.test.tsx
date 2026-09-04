@@ -1186,7 +1186,7 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
     expect(queue).toEqual([{ event: 'referral_opened', campaign: 'kko_share' }])
   })
 
-  it('[시작하기]는 세션이 만들어진 뒤에 시작을 센다', async () => {
+  it('인트로와 목소리 점검은 시작을 세지 않는다 — 문항 화면에 도달해야 시작이다', async () => {
     setSearch('?c=kko_share')
     stubMicrophone()
     stubSessionFetch()
@@ -1199,22 +1199,36 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
     // 웹 마이크 게이트가 비동기다
     await act(async () => {})
     await act(async () => {})
-    /*
-     * 목소리 점검은 새 이벤트를 만들지 않는다 — 사용자에게 "테스트 시작"은 여전히 한 번이고,
-     * 그 한 번은 세션이 실제로 만들어진 뒤에 센다.
-     */
     expect(queue).toEqual([{ event: 'referral_opened', campaign: 'kko_share' }])
 
     await passVoiceCheck(capture)
 
     /*
-     * 유입에는 상관 키가 없고 시작부터 붙는다 (KAN-33 AC 1). 인트로는 아직 어느 응시에도
-     * 속하지 않고, 키는 세션이 만들어진 뒤에 발급된다 (`analytics/testId.ts`).
+     * 세션은 만들어졌지만 아직 시작이 아니다. 이 전환은 문서를 다시 로드하므로 시작 계측은
+     * 다음 문서(문항 화면)가 센다 — 세션을 만드는 주체가 실행마다 다르기 때문이다
+     * (웹 단독은 이 문서가, 앱은 네이티브가 만든다). 아래 테스트가 그 자리를 본다.
      */
-    expect(queue).toEqual([
-      { event: 'referral_opened', campaign: 'kko_share' },
-      inTest({ event: 'referral_test_started', campaign: 'kko_share' }),
-    ])
+    expect(queue).toEqual([{ event: 'referral_opened', campaign: 'kko_share' }])
+  })
+
+  it('문항 화면에 처음 도달하면 시작을 센다 — 앱·웹이 같은 자리에서 세어진다', async () => {
+    setSearch('?c=kko_share&screen=test&testVersion=gn-2026.08.1&sessionId=s_web')
+    saveWebSession({
+      sessionId: 's_web',
+      sessionToken: 'st_web',
+      testVersion: 'gn-2026.08.1',
+      expiresAt: '2026-08-26T03:30:00Z',
+    })
+    const queue = stubGtag()
+
+    const { rerender } = render(<App />)
+    await act(async () => {})
+    // 같은 세션으로 화면을 다시 열면(리로드·백그라운드 복귀) 다시 세지 않는다
+    rerender(<App />)
+    await act(async () => {})
+
+    const started = queue.filter((event) => event.event === 'referral_test_started')
+    expect(started).toEqual([inTest({ event: 'referral_test_started', campaign: 'kko_share' })])
   })
 
   it('[앱 다운로드] 탭은 어느 스토어로 갔는지까지 센다', async () => {
