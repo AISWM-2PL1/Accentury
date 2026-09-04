@@ -1,0 +1,173 @@
+import { describe, expect, it, vi } from 'vitest'
+import type { FetchLike } from './fetchTestDefinition'
+import { submitVocabAnswer, VocabSubmitError, type VocabSubmission } from './submitVocabAnswer'
+
+function submission(overrides: Partial<VocabSubmission> = {}): VocabSubmission {
+  return {
+    apiBase: 'http://localhost:8080',
+    sessionId: 'sess-1',
+    itemId: 'w1',
+    choiceId: 'w1a',
+    sessionToken: 'token-1',
+    idempotencyKey: 'key-1',
+    ...overrides,
+  }
+}
+
+function jsonResponse(status: number, body: unknown): Response {
+  return { ok: status >= 200 && status < 300, status, json: async () => body } as Response
+}
+
+/** 오류 봉투(§2.3) 대역. 클라이언트가 읽지 않는 필드(correlationId)도 실물처럼 실어 둔다 */
+function envelope(code: string, message: string, retryable: boolean) {
+  return { code, message, retryable, retryAfterMs: null, correlationId: 'c_test' }
+}
+
+describe('요청 형태', () => {
+  it('명세 §3.5 그대로 보낸다 — URL·Bearer·Idempotency-Key·본문', async () => {
+    const fetchImpl = vi.fn<FetchLike>(async () => jsonResponse(200, { accepted: true, answeredCount: 1, totalCount: 10 }))
+
+    await submitVocabAnswer(submission(), fetchImpl)
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(url).toBe('http://localhost:8080/v0/sessions/sess-1/vocab-items/w1/answer')
+    expect(init?.method).toBe('POST')
+    expect(init?.headers).toEqual({
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer token-1',
+      'Idempotency-Key': 'key-1',
+    })
+    expect(JSON.parse(init?.body as string)).toEqual({ choiceId: 'w1a' })
+  })
+
+  it('빈 값이 있으면 네트워크를 타기 전에 끊는다', async () => {
+    const fetchImpl = vi.fn<FetchLike>()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await expect(submitVocabAnswer(submission({ sessionToken: ' ' }), fetchImpl)).rejects.toMatchObject({
+      name: 'VocabSubmitError',
+      retryable: false,
+      // 어느 값이 비었는지는 code에 남는다 — 화면 문구는 사용자용이라 진단이 안 실린다
+      code: 'CLIENT_MISSING_sessionToken',
+    })
+    expect(fetchImpl).not.toHaveBeenCalled()
+    vi.restoreAllMocks()
+  })
+
+  it('가드 실패 문구는 사용자용이다 — 내부 필드 이름이 화면에 나가지 않는다', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const thrown: unknown = await submitVocabAnswer(submission({ sessionId: '' }), vi.fn<FetchLike>())
+      .then(() => null)
+      .catch((e: unknown) => e)
+
+    expect(thrown).toBeInstanceOf(VocabSubmitError)
+    const { message } = thrown as VocabSubmitError
+    expect(message).toBe('답안을 보낼 수 없어요. 앱을 다시 시작해 주세요')
+    expect(message).not.toContain('sessionId')
+    vi.restoreAllMocks()
+  })
+})
+
+describe('결과 해석', () => {
+  it('200이면 SAVED다 — 본문 해석 실패가 성공을 뒤집지 않는다', async () => {
+    // json()이 터지는 200: 저장은 된 것이므로 여전히 SAVED여야 한다
+    const fetchImpl: FetchLike = async () =>
+      ({ ok: true, status: 200, json: async () => { throw new Error('본문 없음') } }) as unknown as Response
+
+    await expect(submitVocabAnswer(submission(), fetchImpl)).resolves.toEqual({ status: 'SAVED' })
+  })
+
+  it('409 ITEM_ALREADY_ANSWERED는 오류가 아니라 ALREADY_ANSWERED다 (응답 유실 복구)', async () => {
+    const fetchImpl: FetchLike = async () =>
+      jsonResponse(409, envelope('ITEM_ALREADY_ANSWERED', '이미 답변한 문항입니다.', false))
+
+    await expect(submitVocabAnswer(submission(), fetchImpl)).resolves.toEqual({ status: 'ALREADY_ANSWERED' })
+  })
+
+  it('봉투가 말한 오류는 code·message·retryable을 그대로 싣는다', async () => {
+    const fetchImpl: FetchLike = async () =>
+      jsonResponse(409, envelope('SESSION_COMPLETED', '이미 완료된 테스트입니다.', false))
+
+    const error = await submitVocabAnswer(submission(), fetchImpl).catch((e: unknown) => e)
+
+    expect(error).toBeInstanceOf(VocabSubmitError)
+    expect(error).toMatchObject({
+      code: 'SESSION_COMPLETED',
+      message: '이미 완료된 테스트입니다.',
+      retryable: false,
+    })
+  })
+
+  it('봉투를 못 읽는 HTTP 오류는 상태 코드 문구로, 재시도 가능으로 돌린다', async () => {
+    // 봉투 없는 오류의 대표: 게이트웨이가 낸 HTML 오류 페이지
+    const fetchImpl: FetchLike = async () =>
+      ({ ok: false, status: 502, json: async () => { throw new Error('HTML') } }) as unknown as Response
+
+    await expect(submitVocabAnswer(submission(), fetchImpl)).rejects.toMatchObject({
+      code: null,
+      message: '답안을 제출하지 못했습니다 (HTTP 502)',
+      retryable: true,
+    })
+  })
+
+  it('봉투 없는 403은 재시도 불가다 — WAF 기본 응답은 다시 보내도 같은 답이 온다', async () => {
+    const fetchImpl: FetchLike = async () =>
+      ({ ok: false, status: 403, json: async () => { throw new Error('HTML') } }) as unknown as Response
+
+    await expect(submitVocabAnswer(submission(), fetchImpl)).rejects.toMatchObject({
+      code: null,
+      message: '답안을 제출하지 못했습니다 (HTTP 403)',
+      retryable: false,
+    })
+  })
+
+  it('봉투 모양이 아닌 JSON 오류 본문도 상태 코드 폴백으로 간다', async () => {
+    const fetchImpl: FetchLike = async () => jsonResponse(500, { error: 'unexpected shape' })
+
+    await expect(submitVocabAnswer(submission(), fetchImpl)).rejects.toMatchObject({
+      code: null,
+      retryable: true,
+    })
+  })
+
+  it('네트워크 거부는 재시도 가능한 실패다 (멱등 키 덕에 재전송이 안전)', async () => {
+    const fetchImpl: FetchLike = async () => {
+      throw new TypeError('Failed to fetch')
+    }
+
+    await expect(submitVocabAnswer(submission(), fetchImpl)).rejects.toMatchObject({
+      name: 'VocabSubmitError',
+      code: null,
+      retryable: true,
+    })
+  })
+})
+
+describe('newIdempotencyKey', () => {
+  const V4_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+
+  it('UUID v4 형태의 서로 다른 키를 만든다', async () => {
+    const { newIdempotencyKey } = await import('./submitVocabAnswer')
+    const first = newIdempotencyKey()
+
+    expect(first).toMatch(V4_SHAPE)
+    expect(newIdempotencyKey()).not.toBe(first)
+  })
+
+  it('randomUUID가 없는 비보안 컨텍스트(개발 WebView의 http://10.0.2.2)에서도 같은 형태를 만든다', async () => {
+    const { newIdempotencyKey } = await import('./submitVocabAnswer')
+    const real = globalThis.crypto
+    // randomUUID만 없는 crypto — 보안 컨텍스트 밖의 실제 모습이다 (getRandomValues는 항상 있다)
+    vi.stubGlobal('crypto', { getRandomValues: real.getRandomValues.bind(real) })
+    try {
+      const first = newIdempotencyKey()
+
+      expect(first).toMatch(V4_SHAPE)
+      expect(newIdempotencyKey()).not.toBe(first)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})

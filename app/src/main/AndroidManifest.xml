@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!--
+      Android 11+ 패키지 가시성 (KAN-30). 이 선언이 없으면 카톡이 깔려 있어도 조회 자체가 막혀
+      ShareClient.isKakaoTalkSharingAvailable이 언제나 false가 되고, 공유가 늘 OS 시트로만 간다.
+      설치 여부를 묻는 것뿐이라 QUERY_ALL_PACKAGES(민감 권한)를 쓰지 않는다.
+
+      v2-common의 매니페스트가 같은 선언을 들고 있어(alpha·sandbox 패키지까지) 병합 결과만 보면
+      중복이다. 그래도 여기 남기는 이유: 우리 앱이 카톡 설치 여부에 기대어 동작이 갈린다는 사실은
+      의존성의 사정이 아니라 우리 기능의 전제다 - SDK 매니페스트가 조용히 바뀌면 폴백이 늘 켜지는
+      쪽으로 증상 없이 넘어간다.
+    -->
+    <queries>
+        <package android:name="com.kakao.talk" />
+    </queries>
+
+    <application
+        android:name=".AccenturyApplication"
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Accentury">
+        <!--
+          launchMode="singleTask" (KAN-32 2단계). 공유 링크는 앱이 살아 있는 동안에도 눌린다 —
+          기본 standard였다면 그때마다 MainActivity가 하나 더 쌓이고, WebView도 함께 하나 더 뜬다.
+          진행 중이던 응시 위에 인트로를 든 두 번째 WebView가 얹히는 셈이라, 뒤로 가기로만 원래
+          화면에 닿을 수 있고 녹음·업로드는 보이지 않는 화면에서 계속 돈다. singleTask면 링크가
+          살아 있는 인스턴스의 onNewIntent로 들어와 화면이 하나로 유지된다.
+        -->
+        <!--
+          런처가 여는 액티비티라 창이 뜨는 순간의 테마가 곧 스플래시다 (KAN-178). 그래서 여기만
+          Theme.Accentury.Starting이고, 위 <application>의 theme은 Theme.Accentury 그대로다 —
+          앱 전체 기본값을 스플래시 테마로 바꾸면 나중에 액티비티가 늘 때 그쪽까지 스플래시를 문다.
+          첫 프레임 뒤 실제 테마로 돌리는 것은 MainActivity의 installSplashScreen()이 한다.
+        -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.Accentury.Starting"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!--
+              공유 링크를 앱으로 받는 입구 (KAN-32 2단계).
+
+              host 목록은 web/AppLink.kt의 APP_LINK_ORIGINS와 한 몸이어야 한다 — 매니페스트만
+              늘리면 OS는 링크를 앱에 넘기는데 parseAppLink가 그 origin을 몰라 진입이 성립하지
+              않고, 반대면 코드만 알고 링크는 브라우저로 간다. 어긋나면 AppLinkTest가 이 파일을
+              직접 읽어 실패한다.
+
+              path는 정확히 /t·/t/다. prefix로 열어 두면 /privacy·/terms 같은 페이지까지 앱이
+              가져가는데, 그 화면들은 브라우저에 남아야 한다.
+
+              autoVerify는 각 host의 /.well-known/assetlinks.json이 이 앱의 서명 지문을 담고
+              있어야 성립한다 (KAN-32 4단계). 검증 전에는 링크가 앱 선택 시트로 떨어질 뿐,
+              아래 결선은 그대로 동작한다.
+            -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data android:scheme="https" />
+                <data android:host="accentury.app" />
+                <data android:host="staging.accentury.app" />
+                <data android:path="/t" />
+                <data android:path="/t/" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

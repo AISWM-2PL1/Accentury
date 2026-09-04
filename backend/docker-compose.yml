@@ -1,0 +1,12 @@
+# KAN-123 이후 스키마는 Flyway 마이그레이션이 만든다 (ddl-auto: validate).
+# ddl-auto: update 시절에 만들어진 볼륨은 Flyway 이력이 없어 기동이 막힌다 - 한 번 리셋한다:
+#   docker compose down -v && docker compose up -d
+# (2026-08-18 확정 - 로컬 개발 데이터는 버려도 된다. 이후에는 리셋이 필요 없다.)
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: accentury
+      POSTGRES_PASSWORD: local
+    # 127.0.0.1 바인딩 - 같은 네트워크의 다른 기기가 개발 DB에 접근하지 못하게 (Codex 리뷰 P1)
+    ports: ["127.0.0.1:5432:5432"]

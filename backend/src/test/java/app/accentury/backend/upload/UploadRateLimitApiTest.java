@@ -1,0 +1,148 @@
+package app.accentury.backend.upload;
+
+import app.accentury.backend.IntegrationTest;
+import org.jspecify.annotations.Nullable;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.RequestBuilder;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+
+import java.nio.charset.StandardCharsets;
+
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+/**
+ * IP 단위 업로드 제한의 API 명세 (KAN-23, 명세서 §2.5).
+ * <p>
+ * 낮은 한도로 전용 컨텍스트를 띄운다 - 본 업로드 테스트({@link VoiceUploadApiTest})는
+ * 넉넉한 한도로 실행돼 서로 간섭하지 않는다. X-Forwarded-For로 IP를 분리해
+ * 같은 컨텍스트 안의 다른 검증과도 충돌하지 않게 한다.
+ */
+@SpringBootTest(properties = "accentury.upload.rate-limit-per-minute=2")
+@AutoConfigureMockMvc
+class UploadRateLimitApiTest extends IntegrationTest {
+
+    private static final String VALID_META = """
+            {"durationMs": 3000,
+             "clientQuality": {"rms": 0.11, "peak": 0.83, "silenceRatio": 0.12, "clipped": false}}""";
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    @Test
+    void 한도_초과_업로드는_429와_Retry_After를_반환한다() throws Exception {
+        SessionHandle session = createSession();
+
+        mockMvc.perform(upload(session, "key-1", "9.9.9.1")).andExpect(status().isAccepted());
+        mockMvc.perform(upload(session, "key-2", "9.9.9.1")).andExpect(status().isAccepted());
+
+        mockMvc.perform(upload(session, "key-3", "9.9.9.1"))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.code").value("RATE_LIMITED"))
+                .andExpect(jsonPath("$.retryable").value(true))
+                .andExpect(jsonPath("$.retryAfterMs").isNumber())
+                .andExpect(header().exists(HttpHeaders.RETRY_AFTER))
+                // 필터가 직접 쓰는 조기 429도 오류 응답 전역 캐시 금지 규칙을 따른다.
+                .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"));
+    }
+
+    @Test
+    void 조기_429에도_CORS_헤더가_붙는다() throws Exception {
+        // 웹 클라이언트가 429 본문과 Retry-After를 읽으려면 필터의 조기 응답에도
+        // Access-Control-Allow-Origin이 있어야 한다 (Codex sol 리뷰 P2).
+        SessionHandle session = createSession();
+        mockMvc.perform(upload(session, "cors-1", "9.9.9.4")).andExpect(status().isAccepted());
+        mockMvc.perform(upload(session, "cors-2", "9.9.9.4")).andExpect(status().isAccepted());
+
+        mockMvc.perform(upload(session, "cors-3", "9.9.9.4", "https://web.test"))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "https://web.test"));
+    }
+
+    @Test
+    void 인코딩이나_matrix_파라미터_경로로도_제한을_우회할_수_없다() throws Exception {
+        // MVC는 %72ecording과 recording;x=1을 모두 recording으로 라우팅한다 -
+        // 필터도 같은 정규화로 매칭해야 한다 (Codex sol 리뷰 P1).
+        SessionHandle session = createSession();
+        mockMvc.perform(upload(session, "evade-1", "9.9.9.5")).andExpect(status().isAccepted());
+        mockMvc.perform(upload(session, "evade-2", "9.9.9.5")).andExpect(status().isAccepted());
+
+        mockMvc.perform(uploadAt(session, "evade-3", "9.9.9.5", "%72ecording"))
+                .andExpect(status().isTooManyRequests());
+        mockMvc.perform(uploadAt(session, "evade-4", "9.9.9.5", "recording;x=1"))
+                .andExpect(status().isTooManyRequests());
+    }
+
+    @Test
+    void 다른_IP는_제한에_걸리지_않는다() throws Exception {
+        SessionHandle session = createSession();
+        mockMvc.perform(upload(session, "fill-1", "9.9.9.2")).andExpect(status().isAccepted());
+        mockMvc.perform(upload(session, "fill-2", "9.9.9.2")).andExpect(status().isAccepted());
+        mockMvc.perform(upload(session, "fill-3", "9.9.9.2")).andExpect(status().isTooManyRequests());
+
+        mockMvc.perform(upload(session, "other-ip", "9.9.9.3")).andExpect(status().isAccepted());
+    }
+
+    // === 헬퍼 ===
+
+    private record SessionHandle(String id, String token) {
+    }
+
+    private SessionHandle createSession() throws Exception {
+        MvcResult result = mockMvc.perform(post("/v0/sessions")
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isCreated())
+                .andReturn();
+        JsonNode json = objectMapper.readTree(result.getResponse().getContentAsString());
+        return new SessionHandle(json.get("sessionId").asString(), json.get("sessionToken").asString());
+    }
+
+    private RequestBuilder upload(SessionHandle session, String idempotencyKey, String clientIp) {
+        return uploadAt(session, idempotencyKey, clientIp, "recording");
+    }
+
+    private RequestBuilder uploadAt(SessionHandle session, String idempotencyKey, String clientIp,
+                                    String lastSegment) {
+        return upload(session, idempotencyKey, clientIp, null, lastSegment);
+    }
+
+    private RequestBuilder upload(SessionHandle session, String idempotencyKey, String clientIp,
+                                  @Nullable String origin) {
+        return upload(session, idempotencyKey, clientIp, origin, "recording");
+    }
+
+    private RequestBuilder upload(SessionHandle session, String idempotencyKey, String clientIp,
+                                  @Nullable String origin, String lastSegment) {
+        // URI.create - 문자열 템플릿은 %72 같은 사전 인코딩을 재인코딩해 raw URI 재현이 안 된다.
+        var builder = multipart(java.net.URI.create(
+                "/v0/sessions/" + session.id() + "/voice-items/v1/" + lastSegment))
+                .file(new MockMultipartFile("audio", "recording.wav", "audio/wav",
+                        WavFixtures.standardWav(3000)))
+                .file(new MockMultipartFile("meta", "", "application/json",
+                        VALID_META.getBytes(StandardCharsets.UTF_8)))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + session.token())
+                .header("Idempotency-Key", idempotencyKey)
+                // 첫 값은 클라이언트 위조분, 마지막 값이 프록시가 붙인 실제 IP다 -
+                // 제한이 마지막 값을 기준으로 걸리는지까지 함께 검증한다.
+                .header("X-Forwarded-For", "203.0.113.99, " + clientIp);
+        if (origin != null) {
+            builder = builder.header(HttpHeaders.ORIGIN, origin);
+        }
+        return builder;
+    }
+}

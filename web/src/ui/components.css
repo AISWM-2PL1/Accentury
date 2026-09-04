@@ -1,0 +1,1201 @@
+/*
+ * 공통 컴포넌트 스타일 (KAN-148). 값은 전부 tokens.css의 토큰을 참조한다 —
+ * 여기에 색이나 크기를 직접 적으면 정본 밖에 네 번째 출처가 생긴다.
+ *
+ * 인라인 style이 아니라 CSS 파일인 이유: :active·:disabled·:focus-visible 같은 상태는
+ * 인라인으로 표현할 수 없다. 눌림 효과가 이 버튼의 정체성이라 상태 표현이 필수다.
+ */
+
+/*
+ * 오려 낸 종이 버튼 (KAN-161 2단계). 시각 정체성은 오프셋 종이 그림자다 — 오른쪽·아래로
+ * 어긋난 자리에 단색 면 한 겹이 깔려 종이 한 장이 떠 있는 것처럼 보이고, 누르면 그림자가
+ * 사라지면서 본체가 정확히 그만큼 내려가 바닥에 닿는다.
+ *
+ * 눌림을 `transform`으로 그리는 이유는 높이다. margin·padding으로 내리면 옆 요소가 밀려
+ * 화면이 들썩이는데, transform과 box-shadow는 둘 다 레이아웃을 건드리지 않아 버튼이
+ * 차지하는 자리가 눌림 전후로 같다.
+ */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+
+  /* ux-ui.md §5 최소선: 터치 타겟 48dp 이상 */
+  min-height: var(--touch-target-min);
+  padding: 0 var(--space-6);
+  border: none;
+  border-radius: var(--radius-md);
+
+  font-family: var(--font-body);
+  font-size: var(--text-body);
+  font-weight: var(--weight-medium);
+  line-height: 1;
+
+  cursor: pointer;
+  transition:
+    box-shadow var(--duration-press) var(--ease-out),
+    transform var(--duration-press) var(--ease-out);
+}
+
+/*
+ * 주동작. 화면에서 유일하게 잉크로 꽉 찬 면이라 눈이 먼저 닿는다. 테두리를 면과 같은 색으로
+ * 2px 두르는 것은 낭비가 아니다 - 크림 배경 위에서 잉크 면의 가장자리가 종이를 오린 자리처럼
+ * 또렷해진다. 라벨은 Jua 20px(`titleSmall`)로, 이 화면에서 CTA가 제목만큼 크다.
+ */
+.btn--primary {
+  min-height: var(--control-height-lg);
+  border: 2px solid var(--color-primary);
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  box-shadow: var(--shadow-card);
+
+  font-family: var(--font-display);
+  font-size: var(--text-title-sm);
+  font-weight: var(--weight-normal);
+  letter-spacing: 0.02em;
+}
+
+/*
+ * 보조 동작. 테두리만 두르고 그림자를 두지 않는다 - 그림자는 "떠 있다"는 뜻이라 화면에
+ * 떠 있는 종이가 둘이면 어느 쪽을 눌러야 하는지가 흐려진다. 텍스트 버튼보다는 어포던스가
+ * 분명하고 주 버튼보다는 가볍다는 자리를 테두리 하나가 잡는다.
+ */
+.btn--secondary {
+  border: 1.5px solid var(--color-control-border);
+  background: var(--color-card);
+  color: var(--color-secondary-foreground);
+  font-size: var(--text-body-sm);
+}
+
+/* 이탈·종료처럼 눌리면 안 되는 쪽. 잉크 글자만 남기고 터치 타겟 48dp는 지킨다 */
+.btn--text {
+  background: none;
+  color: var(--color-foreground);
+  padding: 0 var(--space-3);
+}
+
+/*
+ * 눌림. 종이가 바닥에 닿는 거리는 그림자가 어긋난 거리와 같아야 한다 - 두 값이 갈리면
+ * 본체가 그림자 자리를 덮지 못하고 어긋난 채로 멈춘다.
+ */
+.btn--primary:active:not(:disabled),
+.btn--secondary:active:not(:disabled) {
+  transform: translate(var(--paper-shadow-x), var(--paper-shadow-y));
+}
+
+.btn--primary:active:not(:disabled) {
+  box-shadow: none;
+}
+
+/* 글자만 있는 버튼은 움직이지 않는다 - 종이가 아니라 글씨라 내려갈 바닥이 없다 */
+.btn--text:active:not(:disabled) {
+  transform: none;
+}
+
+/*
+ * 비활성은 불투명도만 낮춘다. 회색으로 칠하면 색이 하나 더 늘고, 그 회색이 배경에 따라
+ * 대비를 잃는다 — 원래 색을 흐리게 하면 대비 비율이 함께 줄어 예측 가능하다.
+ */
+.btn:disabled {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+}
+
+/* ── 진척도 ── */
+
+/*
+ * 진행 도트 (KAN-161 2단계). 막대 하나가 아니라 문항 수만큼의 캡슐이다 — 남은 문항이
+ * 몇 개인지 세어 볼 수 있고, 채워진 칸이 늘어나는 것이 막대가 자라는 것보다 "한 문항 넘어갔다"로
+ * 읽힌다 (ux-ui.md §3 Goal-Gradient).
+ *
+ * 세 상태를 색이 아니라 **형태**로 가른다: 완료는 잉크로 찬 캡슐, 현재는 테두리가 2px로
+ * 두꺼워지고 왼쪽 절반만 찬 캡슐, 미완료는 빈 캡슐이다. `primary-dim`(#cfc5aa)으로
+ * 남은 칸을 칠하지 않는 이유는 크림 위 1.46:1이라 아무것도 안 보이기 때문이다 (정본 §7).
+ */
+.progress-indicator {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.progress-indicator__dots {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.progress-indicator__dot {
+  flex: 1 1 0;
+  height: var(--progress-dot-height);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-full);
+  background: var(--color-card);
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+
+.progress-indicator__dot[data-state='done'] {
+  background: var(--color-primary);
+}
+
+/*
+ * 현재 칸만 절반이 차 있다. 그라디언트를 쓰지만 번지는 면이 아니라 50%에서 딱 끊기는
+ * 두 색이라 결과는 잉크와 크림이 맞닿은 경계 하나다 - Papercut에서 유일하게 허용한
+ * `linear-gradient`이고, 이 자리 말고는 쓰지 않는다.
+ */
+.progress-indicator__dot[data-state='current'] {
+  border-width: 2px;
+  background: linear-gradient(90deg, var(--color-primary) 50%, var(--color-card) 50%);
+}
+
+/*
+ * 숫자 표기. 오른쪽 아래에 붙는다 - 왼쪽에서 차오르는 도트의 끝과 같은 쪽이라 눈이
+ * 도트를 훑고 나온 자리에서 숫자를 만난다.
+ */
+.progress-indicator__count {
+  text-align: right;
+  color: var(--color-muted-foreground);
+}
+
+/* ── 대기·오류 블록 ── */
+
+.status-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  text-align: center;
+}
+
+/*
+ * 부연은 대기든 오류든 흐린 잉크다 (KAN-161 2단계). 오류를 색으로 알리던 규칙이 사라졌으니
+ * 두 톤에 다른 색을 줄 이유도 없다 - 무엇이 잘못됐는지는 문구가 말하고, 스크린 리더에는
+ * `role="alert"`가 말한다. 색 면은 두지 않는다.
+ */
+.status-block__detail {
+  color: var(--color-muted-foreground);
+}
+
+/*
+ * 눈에서만 지우는 유틸리티. 요소를 없애거나 `display: none`을 주면 스크린 리더에서도 함께
+ * 사라지므로, 자리를 1px로 줄이고 잘라 내는 쪽을 쓴다 (`.choice__radio`가 같은 규칙이다).
+ *
+ * 쓰는 자리는 "그림이 이미 말하고 있어 눈에는 군더더기지만, 소리로는 그 그림이 없는" 곳이다 —
+ * 도넛 가운데의 `74점`이 무엇의 점수인지 같은 것.
+ */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ── 화면 셸 ── */
+
+/*
+ * 세 화면(인트로·업데이트 안내·문항 진행)이 같은 뼈대를 쓴다. 본문은 세로 가운데,
+ * 주버튼은 아래에 붙는 구성이다 — 시안이 모든 화면에서 지키는 배치다.
+ */
+.screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* 본문이 하나뿐인 화면(로딩·오류·대기)에서도 가운데 서게 한다. screen__body가 있으면
+     그쪽 flex:1이 이 정렬을 덮으므로 두 경우 모두 같은 셸을 쓸 수 있다 */
+  justify-content: center;
+  gap: var(--space-4);
+  min-height: 100dvh;
+  /*
+   * 위 여백이 아래보다 두 배 넘게 크다(64 / 32). 상태 표시줄을 피하려는 값이 아니라 시안의
+   * 배치다 — 화면의 첫 요소를 아래로 내려 두면 그림과 제목이 세로 가운데 가까이 앉고,
+   * 하단 CTA와의 사이가 벌어져 "누를 것은 아래 하나"가 분명해진다.
+   */
+  padding: var(--screen-padding-top) var(--space-6) var(--space-8);
+}
+
+.screen__body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-6);
+  width: 100%;
+  max-width: var(--content-max-width);
+  text-align: center;
+}
+
+/*
+ * 하단 CTA 자리 (KAN-161 3단계). 본문이 길어져도 **버튼이 화면 밖으로 밀리지 않는다** —
+ * 시안이 모든 화면에서 지키는 규칙이고, 접근성 글자 크기 200%에서 실제로 문제가 되는 자리다.
+ *
+ * `position: sticky`인 이유는 스크롤 컨테이너를 새로 만들지 않기 위해서다. 본문만 스크롤하게
+ * 하려면 본문을 감싸는 상자가 하나 더 있어야 하는데, 이 자리를 채우는 조각(어휘 문항·녹음
+ * 패널)이 본문과 하단을 **한 조각으로** 돌려주고 있어 감쌀 지점이 없다. sticky는 감싸지
+ * 않고도 같은 결과를 낸다: 내용이 짧으면 바닥에 붙어 있고, 길어지면 뷰포트 바닥에 붙어 남는다.
+ *
+ * 배경을 칠하는 것이 sticky의 짝이다 — 투명하면 아래로 지나가는 내용이 버튼 뒤로 비친다.
+ */
+.screen__footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  max-width: var(--content-max-width);
+  padding-top: var(--space-4);
+  background: var(--color-background);
+}
+
+/* ── 히어로 아이콘 ── */
+
+/*
+ * 화면을 여는 원형 아이콘. 시안이 인트로·권한 화면에서 같은 규격으로 쓴다 —
+ * 오려 낸 크림 동그라미에 잉크 테두리를 두르고 오프셋 그림자로 띄운다 (KAN-161 2단계).
+ *
+ * 잉크로 꽉 찬 원이었는데 뒤집었다: 잉크 면은 화면에서 주 버튼과 무게가 같아져
+ * 어느 쪽을 눌러야 하는지가 흐려진다. 아이콘은 누르는 것이 아니다.
+ */
+.hero-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--hero-icon-size);
+  height: var(--hero-icon-size);
+  border-radius: var(--radius-full);
+  background: var(--color-hero-start);
+  border: 1.5px solid var(--color-border);
+  box-shadow: var(--shadow-hero);
+  /* 안에 서는 것은 잉크 선화다 (KAN-161 3단계). 이모지가 들어가던 자리라 font-size로 크기를
+     주고 있었는데, 이제 크기는 아이콘 컴포넌트가 갖고 여기는 색만 물려준다 — 아이콘이 전부
+     `currentColor`라 이 한 줄이 선 색을 정한다 */
+  color: var(--color-foreground);
+  flex-shrink: 0;
+}
+
+/*
+ * 화면을 여는 히어로 자리 (KAN-161 3단계). 안에 서는 것이 SVG든 그림 파일이든 글자든
+ * 여기서 하는 일은 높이를 잡아 두는 것뿐이다 — 시안이 화면마다 다른 높이(192·176·168)를
+ * 주므로 값은 화면이 변수로 넘긴다. 높이를 미리 잡아 두면 안엣것이 그려지기 전후로 아래
+ * 요소가 오르내리지 않는다.
+ *
+ * 대기 화면은 그림 대신 `.text-hero`가 든다 (KAN-178). 슬롯 높이를 건드리지 않은 것은
+ * 의도다 — 글자 한 줄이 그림보다 낮아도 아래 제목·카드는 있던 자리에 그대로 남는다.
+ * 인트로 슬롯(192)은 사라졌다: 제목을 걷어내면서 히어로를 슬롯 밖으로 꺼냈다 (`.intro-hero`).
+ */
+.illustration {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.illustration--waiting {
+  height: 176px;
+}
+
+/*
+ * 그림 자리에 서는 글자 한 줄 (KAN-178). 처음에는 대사 카드와 같은 종이 조각(테두리 1.5px·
+ * 크림 면·오프셋 그림자)에 얹었는데, 한 화면에 종이가 두 장 겹쳐 보였다 — 바로 아래 대사
+ * 카드와 같은 두께라 히어로가 카드의 예고편처럼 읽혔다. 면을 걷어내고 잉크 글자만 남긴다.
+ *
+ * Jua 40(`--text-display`)은 팔레트에서 가장 큰 글자다. 대기 화면은 바로 아래 제목이
+ * 30·26이라 이보다 작으면 히어로가 아니라 제목이 둘인 화면이 된다.
+ *
+ * `keep-all`은 한국어에서 필수다 — 기본값이면 낱말 가운데서 잘린다. `balance`는 두 줄로
+ * 넘어갈 때 줄 길이를 맞춘다. 지원하지 않는 브라우저는 평범하게 흘려 담을 뿐이라 깨지지
+ * 않는다. 좌우 여백만 남긴 것은 긴 문구가 화면 가장자리에 붙지 않게 하려는 것이다.
+ */
+.text-hero {
+  margin: 0;
+  padding: 0 var(--space-6);
+  font-family: var(--font-display);
+  font-size: var(--text-display);
+  font-weight: var(--weight-normal);
+  line-height: var(--leading-tight);
+  color: var(--color-foreground);
+  text-align: center;
+  word-break: keep-all;
+  text-wrap: balance;
+}
+
+/*
+ * 인트로의 히어로 + 부제 (KAN-178). 중복이던 제목("사투리 억양 테스트")을 걷어내면서
+ * 히어로가 이 화면의 h1이 됐고, 그러면 부제는 제목에 딸린 줄이라 **한 덩어리로 읽혀야 한다**.
+ *
+ * 그래서 인트로에서는 히어로를 192px 슬롯 밖으로 꺼냈다(대기 화면은 `.illustration--waiting`에
+ * 그대로 둔다). 슬롯은 그림이 뜨기 전후로 아래가 오르내리지 않게 높이를 미리 잡아 두는
+ * 자리인데, 글자에는 늦게 도착할 것이 없어 잡아 둘 이유가 사라졌다. 남는 것은 40px 글자를 192px 안에 가운데 세우고 생기는
+ * 위아래 ~73px의 빈 자리뿐이고, 제목이 있던 때는 그 여백이 "히어로 밴드 / 제목 블록"의
+ * 경계로 읽혔지만 지금은 제목과 부제 사이를 벌려 놓아 부제가 카드 쪽에 붙어 보인다.
+ *
+ * 간격은 걷어낸 제목이 부제와 두던 8px 그대로다. 히어로가 30px 제목보다 크니 사이도
+ * 넓혀야 할 것 같지만, 12px로 벌려 보니 부제가 카드 쪽으로 붙어 세 덩어리처럼 읽혔다 —
+ * 아래 카드와의 간격(`.screen__body`의 24px)이 위와 비슷해지는 순간 짝이 흐려진다.
+ * 8px이면 그 차이가 세 배라 "붙은 두 줄 + 떨어진 카드"로 한 번에 갈린다.
+ */
+.intro-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+/*
+ * 결과 화면은 SVG 히어로(192×168)가 아니라 4:5 세로 캐릭터 WebP다 (KAN-162). 폭은 시안
+ * 히어로와 같은 192를 지키고 높이를 비율대로 240으로 올렸다 — 폭을 줄여 168에 맞추면
+ * 134px 안에 "호소인" 배지 같은 글자가 뭉개진다.
+ */
+.illustration--result {
+  height: 240px;
+}
+
+.tier-character__image {
+  height: 100%;
+  width: auto;
+  /*
+   * 크림 halo 4방향 2px (정본 §7). 그림 안의 종이·잉크는 테마와 무관한 고정색이라, 다크 팔레트가
+   * 오면 검정 선이 배경에 묻는다 — halo가 실루엣을 크림으로 한 겹 키워 그것을 막는다. 라이트에서는
+   * 배경과 같은 색이라 보이지 않는다. 오프셋 그림자는 걸지 않는다: 그림이 이미 자기 조각마다 종이
+   * 그림자를 갖고 있다.
+   */
+  filter: drop-shadow(2px 0 0 #f3ecd9) drop-shadow(-2px 0 0 #f3ecd9) drop-shadow(0 2px 0 #f3ecd9)
+    drop-shadow(0 -2px 0 #f3ecd9);
+}
+
+/* 그림 대신 서는 등급명. 슬롯 높이는 그대로라 아래 요소가 오르내리지 않는다 */
+.tier-character__fallback {
+  color: var(--color-foreground);
+  text-align: center;
+}
+
+/* ── 카드 ── */
+
+/*
+ * 컷아웃 카드 (정본 §8). 테두리가 1.5px인 것은 규칙이다 — 카드·선택지·버튼·곡선 레인 상자가
+ * 전부 같은 두께를 쓰고, 2px는 "지금 이것"(주 CTA·고른 선택지)만 갖는다. 카드와 배경이 같은
+ * 크림이라 **카드를 세우는 것은 색이 아니라 테두리와 그늘이다.**
+ *
+ * 여백을 카드가 직접 갖는다 (KAN-161 3단계). 예전에는 안쪽 칸들이 각자 padding을 들고 카드는
+ * `overflow: hidden`으로 모서리만 잘랐는데, 그러면 칸을 나누는 선이 카드 테두리에 닿아 격자
+ * 표처럼 보인다. 시안의 카드는 표가 아니라 여백 16을 두른 종이 한 장이다.
+ */
+.card {
+  width: 100%;
+  padding: var(--space-4);
+  background: var(--color-card);
+  border: 1.5px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-card);
+}
+
+/* 숫자 두 칸. `1fr 1fr`이라 문항 수와 예상 시간이 정확히 반씩 갖는다 — flex로 두면 글자 수가
+   많은 쪽("10문항")이 더 넓어져 가운데 선이 카드 가운데에서 벗어난다 */
+.card__stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.card__stat {
+  text-align: center;
+}
+
+/*
+ * 칸을 가르는 선. 실선이 아니라 파선인 이유는 뜻이다 — 실선은 두 칸이 다른 상자라는 뜻이고
+ * 파선은 한 종이를 접은 자국이다. 여기 둘은 같은 테스트를 두 가지로 잰 값이라 후자가 맞다.
+ * 색이 `muted-foreground`인 것도 같은 이유다: 잉크 실선이면 카드 테두리와 무게가 같아진다.
+ */
+.card__stat + .card__stat {
+  border-left: 1.5px dashed var(--color-muted-foreground);
+}
+
+.card__stat-value {
+  color: var(--color-primary);
+}
+
+/* 카드 맨 아래 한 줄. 위 숫자의 내역이라 선으로 가르지 않고 여백으로만 떨어뜨린다 —
+   구분선을 그으면 세 번째 칸처럼 보여 "10문항"과 같은 무게를 갖는다 */
+.card__footnote {
+  margin-top: var(--space-4);
+  color: var(--color-muted-foreground);
+  text-align: center;
+}
+
+/* ── 문항 화면 ── */
+
+/*
+ * 문항 진행 화면의 뼈대. 인트로와 달리 본문이 위에서부터 쌓이고 주버튼만 바닥에 붙는다 —
+ * 카드·선택지가 세로로 길어 가운데 정렬하면 문항마다 위치가 들썩인다.
+ */
+.item-screen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-height: 100dvh;
+  /* 인트로·결과와 같은 여백이다 (KAN-161 3단계). 문항 화면만 좁게 두면 음성·어휘·결과를
+     오가는 동안 좌우 폭이 바뀌어 카드가 커졌다 작아졌다 하는 것처럼 보인다 */
+  padding: var(--screen-padding-top) var(--space-6) var(--space-8);
+}
+
+/*
+ * 대사·질문 카드. 시안에서 화면의 주인공이라 그림자가 가장 깊고 모서리가 가장 크다.
+ * 높이를 고정하는 이유: 문항마다 글자 수가 달라도 카드가 들썩이지 않아야 아래 요소가
+ * 제자리에 있는 것처럼 읽힌다.
+ */
+.prompt-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: var(--prompt-card-min-height);
+  padding: var(--prompt-card-padding);
+  border: 1.5px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  background: var(--color-prompt-card-start);
+  color: var(--color-prompt-card-foreground);
+  box-shadow: var(--shadow-prompt);
+  text-align: left;
+}
+
+/*
+ * 카드 맨 위 한 줄. 알약 배지였는데 캡션으로 낮췄다 (KAN-161 2단계) — 배지는 면을 하나 더
+ * 만드는데, 카드가 이미 배경과 같은 크림이라 그 면이 카드 안에 또 카드를 그린 것처럼 보였다.
+ * "3 / 10 · 이 문장을 읽어주세요"처럼 자리와 할 일을 알리는 줄이라 흐린 잉크로 충분하다.
+ */
+.prompt-card__badge {
+  align-self: flex-start;
+  color: var(--color-prompt-card-muted);
+}
+
+
+/* ── 선택지 ── */
+
+.choice-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/*
+ * 오려 낸 종이 선택지 (KAN-161 2단계). 고르지 않은 것은 테두리만 두른 빈 칸이고,
+ * 고른 것만 테두리가 2px로 두꺼워지며 그림자를 얻어 종이 한 장이 떠오른다.
+ *
+ * 잉크 한 색이라 "고른 것"을 색으로 말할 수 없다 - 두께·그림자·✓ 표시 셋이 함께 말한다.
+ * 셋 중 어느 하나만으로도 읽히므로 색각 이상이나 대비 낮은 화면에서도 남는다 (WCAG 1.4.1).
+ */
+.choice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: var(--control-height-lg);
+  padding: var(--space-3) var(--space-4);
+  border: 1.5px solid var(--color-control-border);
+  border-radius: var(--radius-md);
+  background: var(--color-card);
+  color: var(--color-foreground);
+  font-family: var(--font-body);
+  font-size: var(--text-body);
+  font-weight: var(--weight-normal);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    box-shadow var(--duration-press) var(--ease-out),
+    transform var(--duration-press) var(--ease-out);
+}
+
+.choice--selected {
+  border-width: 2px;
+  box-shadow: var(--shadow-choice);
+  font-weight: var(--weight-medium);
+}
+
+/* 누르면 종이가 바닥에 닿는다 - 버튼과 같은 거리, 같은 규칙이다 */
+.choice:active:not(.choice--locked) {
+  transform: translate(var(--paper-shadow-x), var(--paper-shadow-y));
+  box-shadow: none;
+}
+
+.choice--locked {
+  cursor: default;
+  opacity: var(--opacity-disabled);
+}
+
+/*
+ * 고른 것의 표시. 테두리 두께·그림자와 함께 움직여 세 신호가 겹치게 한다.
+ *
+ * `✓` 글자가 아니라 SVG인 이유 (KAN-161 3단계): 이 문자는 폰트가 그리는 것이라 기기마다
+ * 굵기와 크기가 달라지고, 시스템에 따라 이모지 글꼴로 잡히면 색까지 갖는다 — 잉크 한 색
+ * 화면에서 유일한 색조가 생기는 경로였다. `display: flex`는 SVG 아래에 생기는 글줄 여백을
+ * 없앤다(인라인 요소의 baseline 자리).
+ */
+.choice__check {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--color-primary);
+}
+
+/* 표식을 숨겼으므로 포커스 링은 선택지 전체가 받는다 */
+.choice:has(.choice__radio:focus-visible) {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}
+
+/*
+ * 라디오 표식은 눈에서만 지운다 (시안: 선택지가 카드처럼 보이고 동그라미가 없다).
+ * 요소를 없애거나 display:none을 주면 라디오 그룹의 의미론과 화살표 키 이동이 함께
+ * 사라진다 - 스크린 리더·키보드 사용자에게는 그대로 두고 시각만 빼는 것이 요점이다.
+ *
+ * 포커스는 여전히 보여야 하므로(WCAG 2.4.7) 선택지 전체가 포커스 링을 받는다 —
+ * .choice:has(:focus-visible) 규칙이 아래에 있다.
+ */
+.choice__radio {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/*
+ * 대사 카드와 하단 조작부 사이의 본문 자리 (KAN-56 Stage 5). 지금은 억양 곡선 카드 하나만
+ * 들어간다. 자리를 따로 둔 이유는 아래 .item-screen__footer의 `margin-top: auto`다 — 곡선을
+ * 하단 자리에 같이 넣으면 그 auto가 곡선까지 바닥으로 밀어 대사 카드와 곡선 사이가 벌어진다.
+ */
+.item-screen__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/*
+ * 문항 화면의 주버튼 자리. 카드가 길어져도 항상 바닥에 붙는다.
+ * sticky의 근거는 `.screen__footer`와 같다 — 선택지가 넷이고 글자가 커지면 [다음]이 화면
+ * 밖으로 나가는데, 그때 버튼은 뷰포트 바닥에 붙어 남고 선택지가 그 뒤로 지나간다.
+ */
+.item-screen__footer {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  padding-top: var(--space-4);
+  background: var(--color-background);
+}
+
+/* ── 결과 화면 (KAN-29) ── */
+
+/*
+ * 종합 점수 도넛. 원호와 가운데 숫자를 겹쳐 놓는다 — 겹침을 position으로 잡는 이유는
+ * grid 한 칸에 둘을 넣으면 큰 글자 크기에서 숫자가 원을 밀어 키우기 때문이다.
+ *
+ * 크기의 기본값은 히어로 아이콘과 같은 112px이다 - 화면을 여는 원형이라는 자리가 같다.
+ * 다만 고정으로 두면 안 된다: 글자만 커지고 원이 그대로면 가운데 숫자가 링을 뚫고 나온다.
+ * overflow가 visible이라 잘리지는 않지만 링과 겹쳐 읽을 수 없게 된다 (2026-08-22 브라우저에서
+ * 글자 1.5배로 확인). 그래서 글자 크기에 비례해 같이 키운다. 계수 2.4는 세 자리 점수(100)와
+ * 그 아래 캡션까지 원 안에 들어가는 값이고, 기본 글자 크기(44px)에서는 105.6이라 112가 이겨
+ * 원래 크기가 그대로 남는다.
+ */
+.score-donut {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /*
+   * 시안의 96px (KAN-161 3단계). 화면을 여는 큰 원이었는데 점수 카드 왼쪽 칸으로 들어가면서
+   * 작아졌다 — 결과 화면에서 가장 큰 것은 이제 등급 이름(Jua 40)이고, 도넛은 그 옆의 근거다.
+   *
+   * 고정값으로 두지 않는 이유는 그대로다: 글자만 커지고 원이 그대로면 가운데 숫자가 링을
+   * 뚫고 나와 읽을 수 없게 된다 (2026-08-22 브라우저 확인). 계수 3.7은 기본 글자 크기
+   * (headline 26)에서 96.2라 시안 값이 그대로 남고, 세 자리 점수(100점)가 원 안에 들어간다.
+   */
+  width: max(96px, calc(var(--text-headline) * 3.7));
+  height: max(96px, calc(var(--text-headline) * 3.7));
+  flex-shrink: 0;
+}
+
+.score-donut__ring {
+  width: 100%;
+  height: 100%;
+  /* 원호의 시작점을 12시로 돌린다. SVG 기본은 3시라 그대로 두면 점수가 옆에서 자란다 */
+  transform: rotate(-90deg);
+}
+
+.score-donut__track,
+.score-donut__value {
+  fill: none;
+  /* 끝을 둥글게 — 0점 근처에서 각진 조각이 튀어나오는 것보다 낫다 */
+  stroke-linecap: round;
+}
+
+.score-donut__value {
+  stroke-width: 10;
+}
+
+/*
+ * 아직 안 채워진 몫 (KAN-161 3단계). 시안은 잉크를 25% 투명도로 깔았는데 그대로 옮기지
+ * 않았다 — Papercut에 반투명은 없다 (정본 §2: 오려 붙인 그림에는 비쳐 보이는 면이 없다).
+ * `muted`(#cfc5aa)로 칠하는 것도 답이 아니다: 크림 위 1.46:1이라 링이 통째로 안 보인다 (§7).
+ *
+ * 그래서 **잉크 파선 1px**이다. 가이드 곡선이 점선인 것과 같은 규칙이 여기도 선다 —
+ * 실선 채움은 "잰 값", 파선은 "아직 아닌 자리"다. 얇아서 8px 잉크 원호와 무게가 겹치지 않고,
+ * 잉크라 대비는 14.73:1이다.
+ */
+.score-donut__track {
+  stroke: var(--color-primary);
+  stroke-width: 1;
+  stroke-dasharray: 3 5;
+}
+
+.score-donut__value {
+  stroke: var(--color-primary);
+  transition: stroke-dashoffset var(--duration-reveal) var(--ease-out);
+}
+
+.score-donut__label {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: var(--leading-tight);
+}
+
+.score-donut__score {
+  color: var(--color-primary);
+}
+
+/*
+ * 등급 이름 아래의 순위·코멘트. 코멘트는 등급마다 길이가 달라서(서버 설정) 높이를
+ * 고정하지 않는다 - 잘라 내면 진단 문장의 끝이 사라진다 (AC 6항).
+ */
+.result-tier__rank {
+  color: var(--color-muted-foreground);
+  margin-top: var(--space-1);
+}
+
+.result-tier__comment {
+  color: var(--color-foreground);
+  margin-top: var(--space-3);
+  overflow-wrap: break-word;
+}
+
+/*
+ * 억양·단어 두 줄. 가로로 나누지 않고 세로로 쌓는다 - 좁은 화면과 큰 글자 크기에서
+ * 두 칸이 서로를 찌그러뜨리지 않아야 하고(AC 6항), 두 점수가 같은 너비를 갖는 편이
+ * "동등하게 본다"는 뜻과도 맞는다.
+ */
+.result-scores {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  text-align: left;
+  /* 카드 안에서 남는 폭을 전부 갖는다 — 도넛은 자기 크기만 쓰고 막대가 넓을수록 잘 읽힌다 */
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/*
+ * 점수 카드 (KAN-161 3단계). 도넛과 두 점수 줄을 가로로 나란히 둔다 — 세로로 쌓으면 같은
+ * 값을 두 번 말하는 블록이 위아래로 길게 늘어져, 종합 점수가 세부 점수의 제목처럼 보인다.
+ * 가로로 두면 "왼쪽이 합, 오른쪽이 내역"이라는 관계가 배치만으로 읽힌다.
+ */
+.result-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.score-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.score-row__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.score-row__label {
+  color: var(--color-foreground);
+}
+
+.score-row__value {
+  color: var(--color-primary);
+}
+
+/*
+ * 점수 막대. 진행 도트(.progress-indicator)와 달리 막대인 이유는 뜻이 다르기 때문이다 -
+ * 저쪽은 "몇 개 남았나"라 셀 수 있는 칸이 맞고, 이쪽은 "몇 점인가"라 연속한 양이다.
+ * 브라우저마다 <progress> 의사 요소가 갈려 셋을 다 적는다.
+ */
+.score-row__bar {
+  width: 100%;
+  height: var(--progress-bar-height);
+  /*
+   * 빈 몫을 색이 아니라 **테두리**로 그린다 (KAN-161 3단계). `muted`(#cfc5aa) 면이었는데
+   * 크림 위 1.46:1이라 막대의 오른쪽 끝이 어디인지가 보이지 않았다 — 채운 만큼만 보이고
+   * 전체 길이가 안 보이면 78점이 몇 점 만점인지 알 수 없다. 잉크 1px 윤곽이 그 그릇을 그린다.
+   */
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-full);
+  background: var(--color-card);
+  appearance: none;
+  /* 채움이 둥근 모서리 밖으로 삐져나오지 않게 자른다 — Firefox는 ::-moz-progress-bar의
+     반경만으로는 부모 모서리를 따르지 않는다 */
+  overflow: hidden;
+}
+
+.score-row__bar::-webkit-progress-bar {
+  background: var(--color-card);
+  border-radius: var(--radius-full);
+}
+
+.score-row__bar::-webkit-progress-value {
+  background: var(--color-primary);
+  border-radius: var(--radius-full);
+  transition: width var(--duration-reveal) var(--ease-out);
+}
+
+.score-row__bar::-moz-progress-bar {
+  background: var(--color-primary);
+  border-radius: var(--radius-full);
+}
+
+/* 정의·점수 버전 꼬리표. 사용자가 읽을 값이 아니라 문의를 되짚는 값이라 가장 약하게 둔다 */
+.result-version {
+  color: var(--color-muted-foreground);
+}
+
+/*
+ * 재응시 실패 안내 (KAN-34). 버튼 바로 아래 붙는 한 줄이라 블록을 새로 만들지 않고 색만
+ * 나눈다 — 두 자리(하단 footer, 만료 status-block) 모두 이미 세로 flex + gap이다.
+ *
+ * 실패 문구는 오류색, 대기 안내는 약하게. 대기는 실패가 아니라 조건이 풀리는 중이라,
+ * 같은 색으로 적으면 "또 실패했다"로 읽힌다.
+ */
+.result-retest__message {
+  color: var(--color-destructive-on-surface);
+}
+
+.result-retest__wait {
+  color: var(--color-muted-foreground);
+}
+
+/* ── 분석 대기 화면 (KAN-14, 배치는 KAN-161 3단계) ── */
+
+/*
+ * 화면 맨 위의 분석 진행 막대. 문항 진행(`.progress-indicator`)과 **다른 그림**인 것이 요점이다.
+ * 저쪽은 "내가 몇 문항 풀었나"라 셀 수 있는 캡슐이고, 이쪽은 "서버가 얼마나 처리했나"라
+ * 내가 셀 수 있는 단위가 아니다 — 같은 도트로 그리면 아직 풀 문항이 남은 것처럼 읽힌다.
+ *
+ * 두께는 `progress-bar-height` 8이다. 결과 점수 막대와 값이 같은데, 정본 §7에서 막대를
+ * 전부 8로 내리면서 갈릴 이유가 없어졌다 — 셀 수 있는 칸을 재는 `progress-dot-height`가
+ * 아니라 그릇을 그리는 막대 토큰을 쓴다.
+ */
+.analysis-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  max-width: var(--content-max-width);
+}
+
+.analysis-progress__bar {
+  height: var(--progress-bar-height);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-full);
+  background: var(--color-card);
+  overflow: hidden;
+}
+
+.analysis-progress__fill {
+  height: 100%;
+  background: var(--color-primary);
+  transition: width var(--duration-base) var(--ease-out);
+}
+
+/* 숫자는 오른쪽 아래 — 왼쪽에서 차오르는 막대의 끝과 같은 쪽이라 눈이 막대를 훑고 나온
+   자리에서 숫자를 만난다 (진행 도트의 표기와 같은 규칙) */
+.analysis-progress__count {
+  text-align: right;
+  color: var(--color-muted-foreground);
+}
+
+/*
+ * 진행 막대 아래의 본문 자리 (KAN-161 3단계 리뷰).
+ *
+ * `flex: 1`이 이 상자의 전부다. `.screen`이 `justify-content: center`라 화면의 모든 자식이
+ * 세로 가운데로 모이는데, 그 정렬이 진행 막대까지 끌어내려 위쪽 절반이 비고 막대가 화면
+ * 한가운데 떴다. 늘어나는 자식이 하나라도 있으면 자유 공간이 0이 되어 바깥의 가운데 정렬은
+ * 할 일이 없어진다 — 막대는 패딩 바로 아래, 즉 상단에 남는다.
+ *
+ * 가운데 정렬은 이 안에서만 하고, 그것도 기다리는 중일 때만이다. 재녹음 분기는 제목과 목록이
+ * 위에서부터 흘러야 눈이 목록을 훑는다 — 가운데로 모으면 목록이 화면 아래로 밀린다.
+ */
+.analysis-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  /* 늘어나는 flex 자식의 기본 `min-height: auto`는 내용보다 작아지는 것을 막는다. 목록이
+     길어졌을 때 이 상자가 화면 밖으로 자라지 않고 스크롤에 맡기려면 풀어 줘야 한다 */
+  min-height: 0;
+}
+
+.analysis-body--centered {
+  justify-content: center;
+}
+
+/*
+ * 그림·제목·세 단계를 세로로 세우는 블록. `.status-block`을 쓰지 않는 이유는 간격이다 —
+ * 저쪽은 문구 두어 줄을 묶는 자리라 gap이 12인데, 여기는 176px짜리 그림과 제목과 단계 줄이라
+ * 12로 붙이면 셋이 한 덩어리로 뭉쳐 보인다. 시안의 값은 24다.
+ */
+.analysis-waiting {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-6);
+  width: 100%;
+  max-width: var(--content-max-width);
+  text-align: center;
+}
+
+/*
+ * 세 단계 표시 — 곡선 추출 / 분포 비교 / 등급 계산.
+ *
+ * 값은 `analysisStage.ts`가 폴링 상태에서 파생한다. 여기서 하는 일은 그 번호 하나를 받아
+ * 동그라미 셋의 생김새를 정하는 것뿐이고, 상태 판정은 이 파일에 없다.
+ *
+ * 폭을 280으로 묶는 이유: 세 칸이 화면 폭을 다 쓰면 동그라미 사이가 멀어져 "이어진 한 줄"이
+ * 아니라 따로 놓인 표시 셋으로 보인다. 이어져 있어야 순서가 읽힌다.
+ */
+.analysis-steps {
+  display: flex;
+  align-items: flex-start;
+  width: 100%;
+  max-width: 280px;
+}
+
+.analysis-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+  width: 72px;
+}
+
+/*
+ * 단계 동그라미. 세 상태를 색이 아니라 **안에 든 것**으로 가른다 (정본 §7 규칙의 이 화면 판):
+ * 끝난 칸은 잉크 면에 크림 ✓, 지금 칸은 잉크 면에 크림 숫자, 아직인 칸은 크림 면에 흐린 숫자.
+ * 끝난 칸과 지금 칸이 같은 잉크 면인 것은 의도다 — 둘의 차이는 ✓와 숫자이고, "여기까지 왔다"는
+ * 덩어리가 한 색으로 이어져 보이는 편이 진행으로 읽힌다.
+ */
+.analysis-step__dot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1.5px solid var(--color-primary);
+  border-radius: var(--radius-full);
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  font-size: var(--text-caption);
+  font-weight: var(--weight-medium);
+  line-height: 1;
+}
+
+.analysis-step[data-state='todo'] .analysis-step__dot {
+  background: var(--color-card);
+  color: var(--color-muted-foreground);
+}
+
+.analysis-step__label {
+  color: var(--color-foreground);
+  white-space: nowrap;
+}
+
+.analysis-step[data-state='todo'] .analysis-step__label {
+  color: var(--color-muted-foreground);
+}
+
+/*
+ * 칸 사이를 잇는 선. 동그라미의 세로 가운데(24의 절반)에 맞추고, 좌우로 16씩 파고들어
+ * 동그라미에 닿는다 — 닿지 않으면 세 칸이 이어진 한 줄로 보이지 않는다.
+ * 지나온 구간은 잉크, 아직인 구간은 흐린 잉크다.
+ */
+.analysis-step-line {
+  flex: 1 1 0;
+  height: 1px;
+  margin: 12px -16px 0;
+  background: var(--color-muted-foreground);
+}
+
+.analysis-step-line[data-state='done'] {
+  background: var(--color-primary);
+}
+
+/* ── 분석 대기 문항 목록 (KAN-14) ── */
+
+/*
+ * 음성 5문항의 상태를 한 줄씩 세운다. 카드가 아니라 목록인 이유: 이 화면에서 사용자가
+ * 하는 일은 "내 문항이 어디까지 갔나"를 훑는 것이고, 카드로 키우면 5개가 한 화면에
+ * 들어오지 않아 훑기가 스크롤이 된다.
+ */
+.analysis-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  max-width: var(--content-max-width);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.analysis-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  /* 안에 보조 버튼(48)이 들어오는 줄이라 이미 이 높이지만, 버튼 없는 줄도 같은 높이여야
+     목록이 들쭉날쭉해 보이지 않는다 */
+  min-height: var(--touch-target-min);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-card);
+  color: var(--color-card-foreground);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+/*
+ * 문항 이름은 줄어들지 않는다 (KAN-161 3단계 리뷰).
+ *
+ * `flex: 1`이었는데 그것이 문제였다. flex-basis가 0이라 이름 칸의 폭을 내용이 아니라 남는
+ * 자리가 정하는데, 한국어는 글자 사이 어디서나 줄이 바뀌므로 min-content가 글자 하나 폭이다 —
+ * 상태 문구가 길어진 재녹음 분기("다시 녹음이 필요해요")에서 "1번 문항"이 "1번 문 / 항"으로
+ * 꺾였다. 번호는 사용자가 문항을 부르는 이름이라 두 줄로 갈리면 안 된다.
+ *
+ * 그래서 이름은 자기 크기를 지키고, 줄어드는 쪽을 상태 문구로 옮겼다. 셋 중 하나는 양보해야
+ * 하는데 버튼은 터치 타겟이라 못 줄이고, 상태는 줄바꿈이 허용되는 유일한 문구다.
+ */
+.analysis-row__name {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  text-align: left;
+}
+
+/* 남는 폭을 먹으면서 필요하면 줄어든다. `min-width: 0`이 없으면 flex 자식의 기본
+   `min-width: auto`가 min-content 아래로 못 줄어들게 막아 행이 넘친다 */
+.analysis-row__status {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--color-muted-foreground);
+  text-align: right;
+}
+
+/*
+ * 링크로 만든 버튼 (KAN-56 마이크 안내 화면의 스토어 이동). `.btn`은 <button> 기준이라
+ * 밑줄을 지울 일이 없었는데, <a>에는 브라우저 기본 밑줄과 방문 색이 붙는다.
+ */
+a.btn {
+  text-decoration: none;
+}
+
+/* ── 브라우저 녹음 패널 (KAN-56 Stage 3) ── */
+
+/*
+ * 안내·경과 문구. 하단 자리(.item-screen__footer)가 세로 flex가 아니라 블록이라 요소 사이
+ * 간격을 각자 margin으로 잡는다 — footer를 flex로 바꾸면 이미 그 자리를 쓰는 어휘 문항의
+ * 오류 문구·버튼 간격이 같이 움직인다.
+ */
+.record-hint {
+  margin: 0 0 var(--space-3);
+  color: var(--color-muted-foreground);
+  text-align: center;
+}
+
+/*
+ * 경과 시간 `00:04 / 10초` (KAN-161 4단계). 타이포는 `.type-timer`(Jua 16)가 주고 여기는
+ * 자리만 잡는다 — 시스템 폰트 14였는데, 초마다 바뀌는 숫자가 본문 글꼴로 적히면 "지금 몇 초"가
+ * 문단의 한 낱말처럼 읽혔다. 앱 녹음 화면의 타이머와 같은 슬롯이다 (정본 §3 `timer`).
+ */
+.record-elapsed {
+  margin: 0 0 var(--space-3);
+  text-align: center;
+}
+
+/* 상한은 흐린 잉크다. 앞은 바뀌는 값, 뒤는 고정 — 같은 무게면 어느 쪽이 지금인지 안 갈린다 */
+.record-elapsed__limit {
+  color: var(--color-muted-foreground);
+}
+
+/*
+ * 마지막 2초의 남은 시간 (KAN-161 3단계, 시안 2b). 잉크로 채운 알약이라 화면에서 주 버튼
+ * 다음으로 눈에 띈다 — 이 순간에만 나타나므로 무게가 겹치는 시간이 짧고, 나타났다는 사실
+ * 자체가 신호다.
+ *
+ * 색으로 위급함을 말하지 않는다 (팔레트에 빨강이 없다). 말하는 것은 **문구와 등장**이다.
+ */
+.record-countdown {
+  /* `width: fit-content` + `margin: 0 auto`로 가운데 세운다. 하단 자리(.item-screen__footer)가
+     세로 flex가 아니라 블록이라 `align-self`가 듣지 않는다 — 알약은 글자만큼만 넓어야 하므로
+     100%로 늘릴 수도 없다 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  min-height: 32px;
+  margin: 0 auto var(--space-3);
+  padding: 0 14px;
+  border-radius: var(--radius-full);
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  letter-spacing: 0.04em;
+}
+
+/* 남은 시간 게이지. 진행바(.progress-indicator)와 달리 <progress>가 아닌 이유는 이 값이
+ * 보조 정보라서다 — 같은 숫자를 바로 위 문구가 이미 글자로 읽어 주므로, 스크린 리더에는
+ * 중복이 된다(aria-hidden). 그래서 의미론 없는 <div> 두 겹으로 충분하다. */
+.record-meter {
+  height: var(--progress-bar-height);
+  margin-bottom: var(--space-4);
+  /* 점수 막대와 같은 그릇이다 (KAN-161 3단계) — `muted` 면은 크림 위에서 보이지 않아
+     남은 시간이 얼마인지 읽을 수 없었다 */
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-full);
+  background: var(--color-card);
+  overflow: hidden;
+}
+
+.record-meter__fill {
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: var(--color-primary);
+  transition: width var(--duration-base) var(--ease-out);
+}
+
+/*
+ * [재녹음] / [다음]을 나란히 둔다. 주동작이 오른쪽인 것은 시안의 규칙이고, 둘이 같은 폭을
+ * 갖는 이유는 무게가 이미 변형(text vs primary)으로 구분되기 때문이다 — 폭까지 다르면
+ * 보조 동작이 눌리지 않을 만큼 작아진다.
+ */
+.record-actions {
+  display: flex;
+  gap: var(--space-3);
+  width: 100%;
+}
+
+.record-actions > .btn {
+  flex: 1;
+}
+
+/* ── 억양 곡선 카드 (KAN-56 Stage 5) ── */
+
+/*
+ * 곡선 레인 컨테이너 (KAN-56 Stage 5, 형태는 KAN-161 2단계). 레인 하나든 둘이든 이 상자가
+ * 테두리와 모서리를 갖고, 레인 자신은 테두리를 갖지 않는다 — 레인마다 테두리를 두르면
+ * 상자 안에 상자가 겹쳐 선이 두 겹으로 보인다. 레인 사이는 1px 흐린 잉크 한 줄이 가른다.
+ *
+ * 앱 녹음 화면의 CurveCard와 같은 규격을 지키는 이유는 대사 카드와 같다: 문항이 두 런타임을
+ * 오가는데 상자가 다르게 생기면 사용자가 곡선이 무엇을 뜻하는지 두 번 배워야 한다.
+ */
+.curve-card {
+  border: 1.5px solid var(--color-curve-lane-border);
+  border-radius: var(--radius-md);
+  background: var(--color-curve-lane-surface);
+  overflow: hidden;
+}
+
+/*
+ * 레인 하나. 높이를 고정하는 이유는 곡선의 y가 0..1 비율이라서다 — 높이가 내용에 따라 변하면
+ * 같은 semitone 등락이 프레임마다 다른 화면 거리로 그려진다.
+ */
+.curve-lane {
+  position: relative;
+  height: var(--curve-lane-height);
+}
+
+/* 레인 사이 구분선. 컨테이너 테두리보다 얇고 흐리다 - 상자를 나누는 선이 상자를 두르는
+   선만큼 진하면 레인 둘이 따로 놓인 상자로 보인다 */
+.curve-lane + .curve-lane {
+  border-top: 1px solid var(--color-muted-foreground);
+}
+
+/* 라벨은 레인 좌상단에 얹는다(시안). 곡선 그리기 영역 위쪽 여백 안이라 겹치지 않는다 */
+.curve-lane__label {
+  position: absolute;
+  top: var(--space-1);
+  left: var(--space-3);
+  color: var(--color-muted-foreground);
+}
+
+/*
+ * 그리기 영역. 레인 높이에서 라벨 자리(위 16px)와 아래 여백(4px)을 뺀 만큼이다 — 앱의
+ * `padding(top = Spacing.x4, bottom = Spacing.x1)`과 같은 배분이고, 아래 여백은 곡선이
+ * 테두리에 닿지 않게 한다.
+ *
+ * **CurveLane.tsx의 DRAW_HEIGHT(100)가 이 값의 짝이다.** 좌표를 픽셀로 계산하는 쪽은
+ * 스크립트라 CSS 변수를 못 읽고, 렌더마다 실측하면 곡선 높이가 레이아웃에 되먹임된다.
+ * 토큰을 바꾸면 저쪽 상수도 같이 바꿔야 한다.
+ */
+.curve-lane__canvas {
+  display: block;
+  width: 100%;
+  height: calc(var(--curve-lane-height) - var(--space-4) - var(--space-1));
+  margin-top: var(--space-4);
+}
+
+/* ── 목소리 점검 (KAN-31 4단계) ── */
+
+/*
+ * 입력 레벨 바. 녹음 패널의 남은 시간 게이지(.record-meter)와 같은 규격이지만 눈금 하나가
+ * 더 있어 따로 둔다 — 저쪽에 눈금을 옵션으로 얹으면 두 화면이 한 클래스를 나눠 쓰면서
+ * 서로의 변경에 걸린다.
+ *
+ * overflow를 숨기지 않는 이유는 눈금이다: 채움만 잘라 내면 되는데 감추면 통과선 표시까지
+ * 함께 잘린다. 대신 채움 쪽에서 모서리를 맞춘다.
+ */
+.level-bar {
+  position: relative;
+  height: var(--progress-bar-height);
+  /* 점수 막대·녹음 게이지와 같은 그릇 (KAN-161 3단계) */
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-full);
+  background: var(--color-card);
+}
+
+.level-bar__fill {
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: var(--color-primary);
+  transition: width var(--duration-base) var(--ease-out);
+}
+
+/* 통과선. 채움 위에 그린다 — 넘어선 순간에도 선이 보여야 "통과했다"가 읽힌다 */
+.level-bar__tick {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  background: var(--color-muted-foreground);
+}

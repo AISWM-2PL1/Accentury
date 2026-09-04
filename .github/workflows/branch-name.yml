@@ -1,13 +1,14 @@
 # 브랜치 네이밍 검사 (KAN-37)
 #
 # PR의 head 브랜치명이 팀 컨벤션을 지키는지 검사합니다.
-# 규칙 문서: Notion「Accentury Github/Jira Convention」2.2
+# 규칙 문서: Notion「Accentury Github/Jira Convention」2.2 · 「Git-Flow 관련 가이드」
 #
 # 허용 형식:
 #   feature/KAN-12-voice-recording   기능 개발
 #   fix/KAN-61-upload-timeout        버그 수정
 #   chore/KAN-37-cicd                인프라·설정·CI 등 비기능 작업
-#   release/v0.1.0                   릴리즈 (예외: 이슈키 없이 버전만)
+#   Dev                              릴리즈 PR (Dev → Release)
+#   release/v0.1.0                   (예약) 버전별 릴리즈 브랜치 — 현재는 상시 Release 브랜치 + 태그 사용
 #
 # 핵심: 접두사는 소문자, 이슈키(KAN-##)는 반드시 대문자(소문자면 Jira 연동 안 됨),
 #       설명은 영문 소문자·숫자 kebab-case.
@@ -27,6 +28,11 @@ jobs:
         run: |
           echo "검사 대상 브랜치: $BRANCH"
 
+          if [ "$BRANCH" = "Dev" ]; then
+            echo "✅ 릴리즈 PR (Dev → Release) — 네이밍 검사 제외"
+            exit 0
+          fi
+
           if echo "$BRANCH" | grep -qE '^(feature|fix|chore)/KAN-[0-9]+(-[a-z0-9]+)+$'; then
             echo "✅ 브랜치명 규칙 통과"
             exit 0
@@ -43,10 +49,10 @@ jobs:
           echo "  feature/KAN-12-voice-recording   (기능)"
           echo "  fix/KAN-61-upload-timeout        (버그 수정)"
           echo "  chore/KAN-37-cicd                (인프라·설정)"
-          echo "  release/v0.1.0                   (릴리즈)"
+          echo "  Dev                              (릴리즈 PR: Dev → Release)"
           echo ""
           echo "체크리스트:"
-          echo "  - 접두사가 feature/ fix/ chore/ release/ 중 하나인가? (hotfix 미사용)"
+          echo "  - 접두사가 feature/ fix/ chore/ 중 하나인가? (hotfix 미사용)"
           echo "  - 이슈키 KAN-## 이 대문자인가? (kan-12 는 Jira 연동 안 됨)"
           echo "  - 설명이 영문 소문자·숫자 kebab-case 인가? (한글 불가)"
           echo ""

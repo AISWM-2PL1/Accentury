@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.accentury.app",
+      "sha256_cert_fingerprints": [
+        "48:C1:0D:86:23:E2:69:1A:37:5A:9B:03:82:2F:4F:84:6C:CC:01:69:25:E8:12:F6:CD:9D:94:8C:48:E3:FB:F2"
+      ]
+    }
+  }
+]

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!--
+      values-night/ 대응 폴더가 없다. 그래서 시스템이 다크여도 이 Light 테마가 그대로 쓰인다 —
+      Theme.kt가 `isSystemInDarkTheme()`을 안 보는 것과 짝을 이루는 결정이다 (정본 §7).
+
+      아래 두 줄은 그 결정을 창(window)에도 적는다. 이 앱의 배경은 테마와 무관하게 늘 크림
+      (#f3ecd9)이라 시계·배터리 아이콘은 언제나 어두워야 한다. 코드 쪽(MainActivity의
+      enableEdgeToEdge + WindowInsetsController)이 같은 값을 세우지만, 그쪽은 onCreate가
+      돌아야 적용된다 — 창이 처음 그려지는 한 프레임을 여기가 맡아 시스템 다크에서 흰 아이콘이
+      깜빡였다 사라지는 것을 막는다.
+    -->
+    <style name="Theme.Accentury" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+
+    <!--
+      스플래시 테마 (KAN-178). MainActivity가 **처음 뜰 때만** 이 테마를 쓰고, onCreate의
+      `installSplashScreen()`이 첫 프레임 뒤에 `postSplashScreenTheme`로 갈아 끼운다. 그래서
+      매니페스트의 activity theme만 이 테마로 바꾸고 Theme.Accentury 자체는 그대로 둔다 —
+      Theme.Accentury에 스플래시 항목을 넣으면 앱 창이 그 설정을 계속 이고 다닌다.
+
+      아이콘은 배경 없는 규격이다(288dp 캔버스, 가운데 192dp 원 안에 도상 — ic_splash).
+      창 배경은 런처 아이콘의 adaptive 배경과 같은 색 리소스를 재사용한다. 스플래시에서 앱으로
+      넘어가는 순간 배경색이 갈리면 한 번 깜빡인 것처럼 보인다.
+
+      아래 두 줄은 위 Theme.Accentury에 이미 있는 값을 한 번 더 적은 것이다. 이 테마의 부모가
+      Theme.SplashScreen이라 Theme.Accentury의 값이 여기로 내려오지 않는다 — 빼면 시스템
+      다크에서 스플래시가 떠 있는 동안만 흰 시계·배터리가 크림 위에 얹힌다.
+    -->
+    <style name="Theme.Accentury.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/ic_launcher_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash</item>
+        <item name="postSplashScreenTheme">@style/Theme.Accentury</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+</resources>

@@ -1,0 +1,11 @@
+# 런타임 이미지에 들어갈 필요가 없는 것들.
+# 도커는 .gitignore를 읽지 않는다 - 여기 빠진 것은 그대로 빌드 컨텍스트로 전송된다.
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+tests/
+requirements-dev.txt
+pytest.ini
+README.md

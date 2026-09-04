@@ -1,0 +1,95 @@
+import Foundation
+
+/// 공유 유입 계측 코드(`c`)가 서버 계약에 맞는지 보는 검사식 (KAN-31·KAN-32).
+/// 웹 `web/src/session/campaign.ts`의 `CAMPAIGN_TOKEN_PATTERN`, 백엔드
+/// `CreateSessionRequest.campaignToken`의 `@Pattern`과 같은 규칙이다 — 셋 중 하나만 느슨하면
+/// 앱이 통과시킨 값을 서버가 400으로 돌려준다.
+///
+/// 웹·백엔드가 쓰는 `^…$`와 뜻은 같되 끝을 `\z`로 적는다. ICU의 `$`는 마지막 개행 하나를
+/// 눈감아 주는데, 안드로이드의 `Regex.matches()`는 입력 전체가 맞아떨어질 때만 참이라
+/// `"kko_share\n"`에서 두 플랫폼의 판정이 갈린다 — 그 한 글자를 여기서 막는다.
+let campaignTokenPattern = #"\A[A-Za-z0-9._-]{1,64}\z"#
+
+/// App Link(Universal Link)로 들어온 진입 (KAN-32). 링크에서 앱이 읽어 가는 것은 계측 코드
+/// 하나뿐이라 필드도 하나다 — 이 자료형이 곧 "링크로 넘어올 수 있는 것의 전부"라는 선언이다.
+public struct AppLinkEntry: Equatable, Sendable {
+    /// `?c=` 값. 없거나 서버 계약에 어긋나면 nil이고, 그래도 진입 자체는 성립한다.
+    public let campaignToken: String?
+
+    public init(campaignToken: String?) {
+        self.campaignToken = campaignToken
+    }
+}
+
+/// 공유 링크를 앱 진입으로 해석한다 (KAN-32 1단계).
+/// `app/src/main/java/com/accentury/app/web/AppLink.kt`의 1:1 이식본이다 — 같은 링크를 두
+/// 플랫폼이 다르게 읽으면 유입 계측이 OS별로 갈린다.
+///
+/// `https://accentury.app/t?c=kko_share` 꼴만 받아들이고, 그 밖의 URL은 nil — 호출자는 nil을
+/// "이 링크는 우리 진입점이 아니다"로 읽으면 된다.
+///
+/// nil을 돌려주는 경우: url이 없거나 파싱이 안 될 때, ``webOrigin(_:)``이 없거나 `allowedOrigins`
+/// 밖일 때(§7의 보안 경계를 App Link 입구에도 그대로 적용한다), 경로가 `/t`·`/t/`가 아닐 때.
+/// 경로를 정확히 맞추는 이유는 `/t/무엇이든`·`/privacy` 같은 링크가 테스트 진입으로 둔갑하지
+/// 않게 하기 위해서다.
+///
+/// **`c` 말고는 어떤 쿼리도 읽지 않는다.** `sessionId`·`screen`·`testVersion`·`bridge`·`app`이
+/// 붙어 와도 전부 버린다 — AC "링크가 개인 결과 또는 세션 토큰을 포함하지 않는다"를 지키는 자리가
+/// 여기다. 링크는 누구나 손으로 지어낼 수 있으므로, 읽지 않는 것이 곧 남의 세션을 주입당하거나
+/// 결과 화면으로 건너뛰는 링크가 성립하지 않는다는 보증이다. 진입 URL은 앱이 ``buildWebUrl(base:appVersionName:testEntry:bridgeVersion:campaignToken:)``으로
+/// 직접 조립하고, 링크는 계측 코드 한 개만 거기에 실어 보낸다.
+///
+/// 코드가 계약에 어긋나면 진입을 막는 대신 코드만 버린다 — campaign.ts `sanitizeCampaignToken`과
+/// 같은 판단이다. 공유 링크는 메신저를 여러 번 거치며 잘리거나 트래킹 파라미터가 덧붙는 경로라
+/// 코드가 망가진 채 도착하는 일이 실제로 생기는데, 계측은 실패해도 되는 일이고 응시는 아니다.
+public func parseAppLink(_ url: String?, allowedOrigins: Set<String>) -> AppLinkEntry? {
+    guard let url, let origin = webOrigin(url), allowedOrigins.contains(origin) else { return nil }
+    guard let components = URLComponents(string: url) else { return nil }
+    // `components.path`는 이미 퍼센트 인코딩이 풀린 값이라 `/%74`도 `/t`로 인정한다 — 안드로이드의
+    // `URI.getPath()`와 같은 자리이자 같은 판정이다. 안드로이드 매니페스트의 `android:path` 필터가
+    // 디코딩된 경로로 맞추므로 OS가 `/%74`를 앱에 넘겨 주고, 경로를 어떻게 적어 오든 앱이 읽는
+    // 값은 `c` 하나뿐이라 escape로 위장해서 얻어 갈 것이 없다.
+    let path = components.path
+    guard path == "/t" || path == "/t/" else { return nil }
+    // 같은 이름이 여러 번 오면 앞엣것 하나만 읽는다 — `?c=a&c=b`처럼 값을 덧붙여 판정을 흔드는
+    // 링크에서 앱이 읽는 값이 하나로 정해져 있어야 한다.
+    // `queryItems`의 값은 `%XX`만 풀리고 `+`는 글자 그대로 남는다. 안드로이드도 form-urlencoded
+    // 규칙(`+` → 공백)을 쓰지 않고 같은 해석을 하도록 맞춰 뒀다.
+    // `queryItems`는 이름도 풀어서 준다 — `?%63=kko_share`가 `?c=kko_share`와 같은 링크라는 뜻이고,
+    // 웹의 `URLSearchParams`도 같게 읽는다. 안드로이드는 손으로 푸는 쪽이라 이름 비교 전에 같은
+    // 디코딩을 한 번 더 태워 세 소비자의 해석을 맞춰 뒀다.
+    let raw = components.queryItems?.first { $0.name == "c" }?.value
+    return AppLinkEntry(campaignToken: raw.flatMap(validCampaignToken))
+}
+
+/// 서버 계약에 맞는 값만 돌려주고, 어긋나면 nil.
+private func validCampaignToken(_ value: String) -> String? {
+    value.range(of: campaignTokenPattern, options: .regularExpression) != nil ? value : nil
+}
+
+/// Universal Link로 앱을 열 수 있는 origin (KAN-32 3단계). `Accentury/Accentury.entitlements`의
+/// `com.apple.developer.associated-domains`가 든 `applinks:` 호스트 목록과 같은 것을 가리키는
+/// 거울이다 — 한쪽만 고치면 OS는 링크를 앱으로 넘기는데 ``parseAppLink(_:allowedOrigins:)``가
+/// 그 origin을 모르는(또는 그 반대의) 어긋남이 생기므로, `AppLinkTests`가 두 목록이 같은지를
+/// entitlements 파일을 직접 읽어 검사한다.
+///
+/// 안드로이드 `web/AppLink.kt`의 `APP_LINK_ORIGINS` 자리다. 다만 거울로 삼는 상대가 다르다 —
+/// 안드로이드는 매니페스트가 경로(`/t`)까지 걸러 주지만, iOS의 associated domains는 호스트
+/// 단위라 경로 판정은 전부 ``parseAppLink(_:allowedOrigins:)`` 몫이다.
+///
+/// staging을 함께 두는 이유: 릴리스 전에 팀이 staging 버킷의 AASA로 실제 링크 탭 흐름을
+/// 확인할 수 있어야 한다. 검증은 호스트마다 `/.well-known/apple-app-site-association`이
+/// 있어야 성립한다 (KAN-32 4단계).
+public let appLinkOrigins: Set<String> = ["https://accentury.app", "https://staging.accentury.app"]
+
+/// 이 빌드가 Universal Link 진입으로 인정할 origin 전부 — ``appLinkOrigins``에 이 빌드의 웹
+/// origin을 더한다. 안드로이드 `appLinkOrigins(webUrl:)`의 이식본이다.
+///
+/// 더하는 쪽은 사실상 디버그 빌드다. 시뮬레이터의 `WEB_URL`은 `http://localhost:5173`이라
+/// HTTPS 검증이 성립하지 않는데, 이 origin이 목록에 있으면 디버그 실행 인자
+/// `-AppLinkURL "http://localhost:5173/t?c=kko_share"`로 링크 진입 경로를 그대로 밟아 볼 수 있다
+/// (AASA가 서빙되기 전에는 `xcrun simctl openurl`이 사파리만 열기 때문에 이 인자 말고는 길이 없다).
+/// 릴리스에서는 `webOrigin(WEB_URL)`이 이미 ``appLinkOrigins`` 안에 있어 아무것도 늘지 않는다.
+public func appLinkOrigins(webUrl: String) -> Set<String> {
+    appLinkOrigins.union([webOrigin(webUrl)].compactMap { $0 })
+}

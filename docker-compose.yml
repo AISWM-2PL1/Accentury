@@ -1,0 +1,97 @@
+# 로컬 풀스택 (BE + AI + DB) - KAN-120이 만든 두 이미지가 실제로 함께 뜨는지 확인하는 자리이고,
+# 전 구간 E2E 스모크(KAN-138)가 겨누는 대상이다.
+#
+#   docker compose up -d --build
+#   docker compose down -v
+#
+# 개발용 DB만 필요하면 이 파일이 아니라 backend/docker-compose.yml을 쓴다 - IDE에서 bootRun을
+# 띄우고 localhost:5432를 보는 일상 workflow는 그쪽이 정본이다. 두 스택은 포트도 볼륨도
+# 겹치지 않으므로 동시에 떠 있어도 된다.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: accentury
+      POSTGRES_PASSWORD: local
+    # 5433인 것은 오타가 아니다 - backend/docker-compose.yml의 개발 DB가 5432를 쓴다.
+    # 127.0.0.1 바인딩은 같은 네트워크의 다른 기기가 이 DB에 닿지 못하게 한다.
+    ports: ["127.0.0.1:5433:5432"]
+    volumes: ["db-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d accentury"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  ai:
+    build:
+      context: ./ai
+    environment:
+      # 이 itemId면 AI 스텁이 422 판정 실패를 낸다 - E2E 스모크(KAN-138)의 실패 갈래가
+      # RETRYABLE_FAILED를 만드는 수단이다. 평소에는 비어 있고(설정 없음과 같다), 스모크가
+      # E2E_FAIL_ITEM=v3으로 한 번 띄운 뒤 값 없이 ai만 다시 띄워 복구를 시험한다.
+      #
+      # 값 없이 다시 띄우는 것이 필요한 이유: 이 설정은 AI 기동 시 한 번만 읽히므로
+      # (ai/app/config.py의 Settings.from_env) 프로세스가 사는 동안 그 문항은 언제나 실패한다.
+      # 재업로드만으로는 복구가 성립하지 않는다.
+      ACCENTURY_AI_STUB_FAIL_ITEM: "${E2E_FAIL_ITEM:-}"
+      # BE와 나눠 갖는 내부 호출 시크릿 (KAN-36). 로컬 전용 고정값 - 아래 backend의 ACCENTURY_ANALYSIS_AITOKEN과
+      # 같은 값이어야 분석이 401로 끊기지 않는다. 운영 값은 Terraform이 SSM에 넣는다.
+      ACCENTURY_AI_INTERNAL_TOKEN: local-internal-token-0123456789abcdef
+    # 스텁 점수는 기본이 분산 모드다 (KAN-136) - correlationId를 해시해 0~100을 고르게
+    # 덮으므로 5등급 전부가 관측 가능하다(KAN-138의 등급 검산 전제).
+    # 포트를 공개하지 않는 것은 의도다 - 이 서버는 BE만 호출하는 사설망 서비스다(§1.1, NFR-SC-04).
+    # 디버깅으로 직접 찔러 봐야 하면 임시로 ports: ["127.0.0.1:8000:8000"]을 더한다.
+    healthcheck:
+      # slim 이미지에는 curl도 wget도 없다 - 이미 있는 파이썬으로 확인한다.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/internal/v0/health').read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  backend:
+    build:
+      context: ./backend
+    depends_on:
+      db: {condition: service_healthy}
+      ai: {condition: service_healthy}
+    environment:
+      # application.yml의 값은 로컬 개발(localhost) 기준이다 - 컨테이너 안에서는 서비스
+      # 이름으로 서로를 찾으므로 환경 변수로 덮는다.
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/accentury
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: local
+      # accentury.analysis.ai-base-url - 미설정이면 BE가 AI로 전달하지 않는 개발 모드로 뜬다.
+      ACCENTURY_ANALYSIS_AIBASEURL: http://ai:8000
+      # AI 내부 호출 시크릿 (KAN-36) - 위 ai의 ACCENTURY_AI_INTERNAL_TOKEN과 같은 값.
+      ACCENTURY_ANALYSIS_AITOKEN: local-internal-token-0123456789abcdef
+      # 관리자 API(§6)와 합성 트래픽 표시(KAN-138)의 공유 시크릿. 로컬 전용 고정값이다 -
+      # 이 스택은 127.0.0.1에만 바인딩되고, 운영 값은 배포 환경이 주입한다(KAN-128).
+      # 32자 미만이면 기동이 실패한다(AdminAuth.requireStrongToken).
+      # 이 값이 있어야 E2E 스모크가 자기 트래픽을 통계에서 갈라 놓을 수 있다.
+      ACCENTURY_ADMIN_TOKEN: local-e2e-admin-token-0123456789abcdef
+    ports: ["127.0.0.1:8080:8080"]
+    # 한도를 두는 이유는 Dockerfile의 MaxRAMPercentage=75를 실제로 좁은 컨테이너에서
+    # 재현하기 위해서다 - 한도가 없으면 컨테이너가 호스트 메모리(7.7GB)를 그대로 보고
+    # 힙을 5.8GB로 잡아, 그 옵션이 한 번도 검증되지 않은 채 배포된다.
+    #
+    # 실측 (2026-08-21, KAN-120):
+    #   512m -> 힙 384MB. 기동하고 POST /v0/sessions도 201을 낸다. 다만 무부하 상태에서
+    #           이미 431MB(84%)를 쓴다 - 여유가 16%뿐이라 E2E 부하에서는 위험하다.
+    #   768m -> 아래 값. E2E(KAN-138)가 도는 자리라 여유를 둔다.
+    # 운영 인스턴스 크기 산정(KAN-124)은 BE에 최소 1GB를 잡는 편이 안전하다.
+    mem_limit: 768m
+    # SIGTERM 뒤 SIGKILL까지의 유예 (KAN-166). 운영(Fargate)에서는 태스크 정의 stopTimeout 120초(infra/modules/fargate)가 같은 자리다.
+    # 로컬에서 종료 순서(readiness 하강, 요청 차단, 워커 배수)를 그대로 재현하기 위해서다.
+    stop_grace_period: 110s
+    healthcheck:
+      # JRE 이미지에도 curl이 없다 - bash의 /dev/tcp로 직접 HTTP를 말한다 (KAN-131).
+      # 상태줄의 200까지 확인해야 "포트만 열리고 컨텍스트는 못 뜬" 기동 실패를 healthy로
+      # 오인하지 않는다. ALB 대상 그룹 헬스체크(KAN-125)와 같은 경로다.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /actuator/health HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nConnection: close\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200 '"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+
+volumes:
+  db-data:

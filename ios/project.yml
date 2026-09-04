@@ -1,0 +1,138 @@
+# XcodeGen 정의 파일. **이 파일이 원본이고 Accentury.xcodeproj는 산출물이다.**
+# .xcodeproj도 커밋하지만(티켓 AC: Xcode 프로젝트가 레포에 있어야 한다) 손으로 고치지 않는다 —
+# Xcode UI에서 만진 변경은 다음 `xcodegen generate` 때 조용히 사라진다.
+# 빌드 설정을 바꿀 자리는 여기, 또는 Accentury/Config/*.xcconfig다.
+name: Accentury
+
+options:
+  bundleIdPrefix: com.accentury
+  createIntermediateGroups: true
+  generateEmptyDirectories: false
+  # 아래 두 값의 정본은 Accentury/Config/Base.xcconfig다. 여기 한 번 더 두는 이유는
+  # xcconfig가 붙지 않는 타깃(AccenturyTests)도 같은 하한·같은 Swift 버전으로 빌드하기 위해서다.
+  deploymentTarget:
+    iOS: "16.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    TARGETED_DEVICE_FAMILY: "1"
+
+configs:
+  Debug: debug
+  Release: release
+
+packages:
+  AccenturyCore:
+    path: AccenturyCore
+  # 카카오톡 공유 SDK (KAN-180). 안드로이드 `libs.kakao.share`(v2-share) 자리다 — 다만 두
+  # 플랫폼의 SDK 버전 계열이 따로 굴러서 번호는 맞지 않는다(안드로이드 2.24.0).
+  #
+  # 카카오 문서는 브랜치 master를 물라고 하지만 태그를 못 박는다: 브랜치를 물면 같은 커밋에서
+  # 어제와 오늘의 빌드가 달라지고, 공유가 깨졌을 때 우리 변경인지 SDK 변경인지 가릴 수 없다.
+  # 올릴 때는 이 한 줄을 고치고 시뮬레이터 빌드까지 확인한다.
+  KakaoOpenSDK:
+    url: https://github.com/kakao/kakao-ios-sdk
+    exactVersion: 2.29.0
+
+targets:
+  Accentury:
+    type: application
+    platform: iOS
+    sources:
+      - path: Accentury
+        excludes:
+          - "Info-Debug.plist"
+          - "Info-Release.plist"
+          - "Config"
+      # 빌드 산출물이 아니라 설정 파일이라 컴파일·복사 대상이 아니다. Xcode 네비게이터에서
+      # 열어 볼 수 있게 그룹으로만 넣는다. Local.xcconfig는 사람마다 다른 파일이라 제외한다 —
+      # 넣으면 프로젝트 파일이 기계마다 갈린다.
+      - path: Accentury/Info-Debug.plist
+        buildPhase: none
+      - path: Accentury/Info-Release.plist
+        buildPhase: none
+      - path: Accentury/Config
+        buildPhase: none
+        excludes:
+          - "Local.xcconfig"
+    configFiles:
+      Debug: Accentury/Config/Debug.xcconfig
+      Release: Accentury/Config/Release.xcconfig
+    settings:
+      base:
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        # Universal Links 입구 (KAN-32 3단계). 안드로이드 매니페스트의 `autoVerify` VIEW
+        # intent-filter 자리다.
+        #
+        # XcodeGen의 `entitlements:` 키가 아니라 빌드 설정으로 다는 이유: 그 키를 쓰면
+        # XcodeGen이 그 파일의 주인이 돼서 `generate` 때마다 내용을 새로 쓴다 — 손으로 적은
+        # 호스트 목록도 주석도 빈 `<dict/>`로 덮인다. Info-{Debug,Release}.plist를 xcconfig의
+        # INFOPLIST_FILE로 가리키는 것과 같은 방식으로, plist는 손으로 들고 배선만 여기서 한다.
+        #
+        # 파일 안의 호스트 목록은 AccenturyCore `Web/AppLink.swift`의 `appLinkOrigins`가 든
+        # 것과 같아야 하고, `AppLinkTests`가 그 entitlements 파일을 직접 읽어 대조한다 —
+        # 한쪽만 고치면 컴파일도 단위 테스트도 조용한 채로 링크만 죽는다.
+        #
+        # 실제 검증은 호스트마다 `/.well-known/apple-app-site-association`이 서빙돼야 성립하고
+        # (KAN-32 4단계), SPA 리라이트 함수가 그 경로를 예외로 빼 줘야 한다. App ID의
+        # Associated Domains capability는 자동 서명이 아카이브 때 붙인다.
+        CODE_SIGN_ENTITLEMENTS: Accentury/Accentury.entitlements
+      configs:
+        # 가짜 마이크 WAV 등 디버그 전용 자산은 릴리스 번들에 넣지 않는다 (KAN-108 §6).
+        # 안드로이드는 `src/debug/assets/`가 소스셋으로 갈려 이 일이 저절로 되지만, XcodeGen에는
+        # 구성별 소스 목록이 없어서 빌드 설정으로 뺀다 — `FAKE_MIC_ASSET` 키가 Info-Release.plist에
+        # 아예 없는 것과 같은 방향의 두 번째 잠금이다(읽는 코드도 `#if DEBUG`라 셋이 겹친다).
+        Release:
+          EXCLUDED_SOURCE_FILE_NAMES: $(SRCROOT)/Accentury/DebugResources/*
+    dependencies:
+      - package: AccenturyCore
+        product: AccenturyCore
+      # 카카오 공유 (KAN-180). Share가 Common·Template을 이미 끌고 오지만 셋 다 적는다 —
+      # 우리 코드가 `import KakaoSDKCommon`(initSDK)과 `import KakaoSDKTemplate`(피드 템플릿)을
+      # 직접 하므로, 전이 의존에 기대면 SDK가 내부 구성을 바꾸는 날 import가 끊긴다.
+      # Alamofire가 Common을 통해 따라 들어온다 — 앱에 처음 들어오는 서드파티 네트워킹
+      # 라이브러리이고, 우리 코드는 쓰지 않는다(네이티브 HTTP는 AccenturyCore Net/이 URLSession으로 한다).
+      #
+      # **AccenturyCore에는 넣지 않는다.** Core는 시뮬레이터 없이 `swift test`로 도는 순수
+      # 계층이고, 카카오 SDK는 UIKit·앱 번들(앱 키)에 매여 있다. 순수 판정(어느 통로로 갈지,
+      # 시트에 실을 문구)은 Core에 두고 SDK 호출만 앱 타깃에 남긴다.
+      - package: KakaoOpenSDK
+        product: KakaoSDKShare
+      - package: KakaoOpenSDK
+        product: KakaoSDKTemplate
+      - package: KakaoOpenSDK
+        product: KakaoSDKCommon
+
+  AccenturyTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: AccenturyTests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: "YES"
+        PRODUCT_BUNDLE_IDENTIFIER: com.accentury.app.tests
+    dependencies:
+      - target: Accentury
+
+schemes:
+  Accentury:
+    build:
+      targets:
+        Accentury: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      # 앱 계층(AccenturyTests)과 순수 Swift 계층(AccenturyCoreTests)을 한 스킴에서 같이 돌린다.
+      # Core 쪽은 `cd AccenturyCore && swift test`로도 도는데, 그쪽이 시뮬레이터 없이 훨씬 빠르다.
+      targets:
+        - AccenturyTests
+        - package: AccenturyCore/AccenturyCoreTests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release

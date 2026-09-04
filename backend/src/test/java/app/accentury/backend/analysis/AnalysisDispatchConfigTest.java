@@ -1,0 +1,73 @@
+package app.accentury.backend.analysis;
+
+import app.accentury.backend.PropertiesFixture;
+import app.accentury.backend.common.AccenturyProperties;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.junit.jupiter.api.Test;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import tools.jackson.databind.ObjectMapper;
+
+import java.time.Duration;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+/**
+ * 분석 전달 조립의 설정 검증 (KAN-24).
+ * <p>
+ * processing-timeout이 AI 재전송 최악 소요보다 짧으면 살아 있는 워커의 작업을 스위퍼가
+ * 먼저 종결한다 - 관계가 설정 두 곳에 갈라져 있어 기동 시점 검증으로 고정한다.
+ */
+class AnalysisDispatchConfigTest {
+
+    @Test
+    void 실행_잔류_한도가_재전송_최악_소요_이하면_기동을_거부한다() {
+        // ai-timeout 10s x (재시도 2 + 1) + 백오프 0.9s = 30.9s > processing-timeout 30s
+        AnalysisDispatchConfig config = new AnalysisDispatchConfig();
+        // 검증이 조립보다 먼저 실행되므로 협력자는 쓰이지 않는다.
+        assertThrows(IllegalStateException.class, () -> config.analysisDispatcher(
+                props(Duration.ofSeconds(30)), null, null, null, null, null));
+    }
+
+    @Test
+    void 기본_설정_조합은_검증을_통과해_실제_디스패처를_조립한다() {
+        // 기본값 60s > 30.9s - 기본 설정이 스스로 어긋나면 여기서 잡힌다.
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+        AnalysisDispatcher dispatcher = new AnalysisDispatchConfig().analysisDispatcher(
+                props(Duration.ofSeconds(60)), new ThreadPoolTaskExecutor(), null,
+                new AnalysisBacklog(), new ObjectMapper(), meterRegistry);
+
+        assertInstanceOf(HttpAnalysisDispatcher.class, dispatcher);
+        // 회로 상태 게이지가 등록되고 닫힘(0)으로 시작한다 (KAN-36) - CloudWatch 경보 ai-circuit-open의 입력이다.
+        assertEquals(0.0, meterRegistry.get(AnalysisDispatchConfig.CIRCUIT_STATE_METRIC).gauge().value());
+    }
+
+    @Test
+    void 종료_예산이_ai_타임아웃_이하면_기동을_거부한다() {
+        // shutdown-budget 10s <= ai-timeout 10s - 종료 때마다 실행 중 분석이 예산 초과로 실패한다 (KAN-166).
+        AccenturyProperties props = PropertiesFixture.withAnalysis(
+                PropertiesFixture.analysis(30, "http://ai.test", Duration.ofSeconds(60), Duration.ofSeconds(10)));
+
+        assertThrows(IllegalStateException.class, () -> new AnalysisDispatchConfig().analysisDispatcher(
+                props, null, null, null, null, null));
+    }
+
+    @Test
+    void 개발_모드에서는_종료_예산_검증_없이_noop_디스패처를_조립한다() {
+        // ai-base-url이 없으면 전달 자체가 없다 - 예산은 의미가 없고 검증도 돌지 않는다.
+        AccenturyProperties props = PropertiesFixture.withAnalysis(
+                PropertiesFixture.analysis(30, null, Duration.ofSeconds(60), Duration.ofSeconds(1)));
+
+        AnalysisDispatcher dispatcher = new AnalysisDispatchConfig().analysisDispatcher(
+                props, null, null, null, null, null);
+
+        assertInstanceOf(NoopAnalysisDispatcher.class, dispatcher);
+    }
+
+    /** 기본값 조합에 ai-base-url만 지정한 설정 - processing-timeout만 시나리오별로 바꾼다. */
+    private static AccenturyProperties props(Duration processingTimeout) {
+        return PropertiesFixture.withAnalysis(
+                PropertiesFixture.analysis(30, "http://ai.test", processingTimeout));
+    }
+}

@@ -1,0 +1,304 @@
+/**
+ * 앱(네이티브) ↔ 웹 브리지 래퍼 (webview-layer.md §5·§8).
+ *
+ * 네이티브가 `addJavascriptInterface`로 심어주는 `window.AccenturyBridge`를 감싼다.
+ * 브리지 호출은 반드시 이 모듈을 거친다 — 존재·타입 확인(graceful degrade)을 한 곳에 모으기 위해서다.
+ * 반대 방향(네이티브 → 웹)은 `window.AccenturyWeb` 수신 지점으로 들어오며, 그 설치도 여기서 한다.
+ */
+
+import { parseItemResult, type ItemResult } from './itemResult'
+import { parseRetestFailure, type RetestFailure } from './retestFailure'
+
+export interface AccenturyBridge {
+  /** [시작하기] → 네이티브 마이크 권한 게이트 호출 */
+  requestMicPermission(): void
+  /** VOICE 문항 진입 → 네이티브 녹음 화면 전환 (KAN-100). 인자는 [VoiceItemStart]의 JSON */
+  startVoiceItem(payloadJson: string): void
+  /** 앱이 보유한 브리지 계약 버전 */
+  getContractVersion(): number
+  /**
+   * 세션 토큰 — 어휘 답안 제출(KAN-13)의 Authorization 헤더에 쓴다. 네이티브는 origin이
+   * 허용이 아니면 빈 문자열을 준다. optional인 이유: 메서드 추가는 버전을 올리지 않으므로(§5)
+   * 이 메서드가 없는 계약 버전 1 앱이 실재할 수 있다
+   */
+  getSessionToken?(): string
+  /**
+   * 결과 화면의 [다시 테스트하기] → 네이티브 재응시 (KAN-34, KAN-107). 인자가 없는 이유는
+   * 무엇을 버릴지를 네이티브가 알기 때문이다 — 폐기할 이전 세션의 토큰은 네이티브가 들고 있다.
+   * [getSessionToken]과 같은 이유로 optional이다
+   */
+  startRetest?(): void
+  /**
+   * 결과 화면의 [친구에게 공유하기] → 네이티브 카카오톡 공유 (KAN-30). 인자는 [SharePayload]의 JSON.
+   * 카카오 SDK 호출은 네이티브 몫이다 — 앱 키·카톡 설치 여부·OS 공유 시트 폴백 전부 네이티브 사정이고,
+   * 웹은 서버가 준 카드 자산을 그대로 건넬 뿐이다. [getSessionToken]과 같은 이유로 optional이다
+   */
+  shareResult?(payloadJson: string): void
+}
+
+/**
+ * 공유 카드 자산 — 브리지를 건너 네이티브 카카오 피드 템플릿에 실릴 값이다 (KAN-30).
+ *
+ * `result/testResult.ts`의 `ResultShare`와 모양이 같지만 일부러 따로 선언한다. 저쪽의 정본은
+ * 백엔드 응답이고 이쪽의 정본은 브리지 계약이라 — [GuideF0]와 같은 이유다 — 사본을 끌어오면
+ * 백엔드 스키마 변경이 컴파일 에러 없이 payload 형태를 바꿔 §5 버전 게이트를 우회한다.
+ *
+ * **점수·세션 id·등급 코드는 싣지 않는다** (KAN-30 요구). 수신자는 남의 결과를 열어 보는 것이
+ * 아니라 자기 테스트를 새로 응시하므로, 카드에 필요한 것은 등급 문구와 캠페인 URL뿐이다.
+ */
+export interface SharePayload {
+  /** 등급별 카드 이미지 (서버가 준 값 그대로) */
+  imageUrl: string
+  /** 카드 문구 — 등급명은 들어 있지만 점수는 없다 */
+  text: string
+  /** 캠페인 파라미터가 붙은 웹 테스트 URL — 전 등급 공통 */
+  webTestUrl: string
+}
+
+/**
+ * 네이티브가 그릴 녹음 화면에 필요한 문항 컨텍스트 (KAN-100).
+ * 정의(KAN-10)를 받는 주체는 웹이므로, 네이티브는 화면을 그릴 만큼만 여기서 건네받는다.
+ *
+ * @property itemNumber 진행 표기용 순번. 1부터 시작한다 (정의의 `seq`가 아니라 사람이 읽는 번호다)
+ * @property maxDurationMs 최대 녹음 길이. VOICE 문항 정의가 들고 있는 값 그대로다
+ * @property guideF0 상단 레인에 그릴 정적 가이드 곡선 (KAN-102). 정의가 든 그대로 가공 없이
+ *   건넨다 — 곡선을 어떻게 그릴지는 전부 네이티브 사정이라, 여기서 요약하면 렌더링 규칙이
+ *   바뀔 때마다 계약도 같이 흔들린다. 필드 추가는 하위호환이라 계약 버전 1을 유지한다 (§5)
+ */
+export interface VoiceItemStart {
+  itemId: string
+  prompt: string
+  itemNumber: number
+  totalItems: number
+  maxDurationMs: number
+  guideF0: GuideF0
+}
+
+/**
+ * 브리지를 건너는 가이드 곡선 — 네이티브 `GuideF0`(VoiceItemStart.kt)와 맞춘 계약이다.
+ *
+ * `testDefinition.ts`의 GuideF0와 구조가 겹치지만 일부러 import하지 않는다. 저쪽의 정본은
+ * 백엔드 응답이고 이쪽의 정본은 브리지 계약이라, 사본(정의 미러)을 여기 끌어오면 백엔드
+ * 스키마 변경이 컴파일 에러 없이 payload 형태를 바꿔 §5 버전 게이트를 우회한다. 독립
+ * 선언이면 정의 → payload 대입 지점(VoiceItemScreen)이 구조 검사가 되어, 두 계약이
+ * 어긋나는 순간 그 자리에서 컴파일이 깨진다.
+ *
+ * 허용 밴드(bandLow/bandHigh)는 계약에 없다 — 채점 층위 데이터라 네이티브가 읽지 않고,
+ * 정의 객체를 그대로 넘기면 실제 JSON에 실려 가더라도 네이티브가 모르는 필드로 무시한다.
+ */
+export interface GuideF0 {
+  /** semitone — 화자 음역 정규화 단위. 네이티브는 semitone이 아니면 그리지 않는다 */
+  unit: string
+  /** 시간축 샘플링 간격 (ms) */
+  frameIntervalMs: number
+  /** 정규화된 semitone 배열. 무성 구간은 null (0은 유효한 값, 2026-08-17 결정) */
+  values: (number | null)[]
+}
+
+/**
+ * 네이티브 → 웹 수신 지점. 네이티브가 evaluateJavascript로 직접 부른다.
+ *
+ * 모든 슬롯이 optional이다. 수신자는 화면마다 필요한 것만 설치하고(진행 화면은 [onItemResult],
+ * 결과 화면은 [onRetestFailed]) 네이티브도 `if(!f)return false`로 없는 경우를 정상 경로로 다룬다
+ * (WebDelivery.kt) — "지금 이 화면이 듣고 있지 않다"는 오류가 아니라 흔한 상태다.
+ */
+export interface AccenturyWeb {
+  /** 문항 결과 (KAN-100). 인자는 [ItemResult]의 JSON */
+  onItemResult?(payloadJson: string): void
+  /** 재응시 실패 (KAN-34). 인자는 [RetestFailure]의 JSON. 성공은 오지 않는다 — 페이지가 리로드된다 */
+  onRetestFailed?(payloadJson: string): void
+}
+
+declare global {
+  interface Window {
+    AccenturyBridge?: AccenturyBridge
+    AccenturyWeb?: AccenturyWeb
+  }
+}
+
+/**
+ * 이 웹 빌드가 요구하는 최소 브리지 계약 버전.
+ * 계약 규칙(§5): 필드·메서드 추가는 하위호환(버전 유지), 삭제·의미 변경은 버전 증가.
+ * KAN-100의 `startVoiceItem`·`onItemResult`는 둘 다 추가라서 1을 유지한다.
+ * KAN-30의 `shareResult`도 메서드 추가라 마찬가지로 1을 유지한다 — 그래서 이 메서드가 없는
+ * 계약 버전 1 앱이 스큐 게이트를 그대로 통과하고, 래퍼가 false로 걸러 폴백으로 내려간다.
+ */
+export const REQUIRED_BRIDGE_VERSION = 1
+
+/**
+ * 앱이 로드 URL에 실어 보낸 브리지 버전(`?bridge=<n>`)을 읽는다.
+ * 없거나 정수가 아니면 null — 스큐 협상 이전의 구버전 앱이라는 뜻이다.
+ */
+export function appBridgeVersion(search: string): number | null {
+  const raw = new URLSearchParams(search).get('bridge')
+  if (raw === null || raw.trim() === '') return null
+  const n = Number(raw)
+  return Number.isInteger(n) && n >= 0 ? n : null
+}
+
+/**
+ * 버전 스큐 판정 — 판단 주체는 웹이다 (§5).
+ * 앱이 보낸 버전이 요구 버전보다 낮으면(또는 아예 없으면) 호환 불가로 본다.
+ * 앱은 그대로 두면 되므로 구버전 앱에서도 이 판정 자체는 항상 동작한다.
+ */
+export function isBridgeCompatible(search: string): boolean {
+  const version = appBridgeVersion(search)
+  return version !== null && version >= REQUIRED_BRIDGE_VERSION
+}
+
+/**
+ * 웹 단독 실행 판정 (KAN-31) — 앱이 아니라 그냥 모바일 브라우저에서 열렸는가.
+ *
+ * **브리지 객체의 부재가 판정의 근거다.** 네이티브는 `addJavascriptInterface`로 객체를
+ * 심는데, 그 주입은 페이지 스크립트가 돌기 전에 끝난다 — 우리 코드가 실행되는 시점에 객체가
+ * 없으면 앱이 아닌 것이 확실하다. 반대로 쿼리 파라미터만으로는 갈릴 수 없다: `?bridge=`가
+ * 없는 상황은 "브라우저"일 수도 "스큐 협상 이전의 구버전 앱"일 수도 있다.
+ *
+ * 그래서 **둘 다 없을 때만** 웹 단독이다. 나머지 조합은 지금까지의 판정을 그대로 둔다.
+ * - 객체는 있는데 버전이 낮거나 없다 → 구버전 앱. [isBridgeCompatible]이 업데이트 안내로 막는다.
+ * - `?bridge=`는 있는데 객체가 없다 → 앱이 연 WebView로 보고 스큐 판정을 그대로 태운다.
+ *
+ * User-Agent를 보지 않는 이유도 같다. 안드로이드 WebView의 UA는 크롬과 사실상 구분되지 않고,
+ * 구분되더라도 그건 "브라우저 엔진이 무엇인가"이지 "우리 앱 안인가"가 아니다.
+ */
+export function isStandaloneWeb(
+  search: string,
+  bridge: AccenturyBridge | undefined = window.AccenturyBridge,
+): boolean {
+  return bridge === undefined && !new URLSearchParams(search).has('bridge')
+}
+
+/**
+ * 마이크 권한 게이트 호출. 브리지가 없거나 메서드가 아니면 false를 돌려준다
+ * (§5 graceful degrade — 브라우저 단독 실행이나 계약이 어긋난 앱에서 크래시하지 않기 위함).
+ */
+export function requestMicPermission(): boolean {
+  const bridge = window.AccenturyBridge
+  if (typeof bridge?.requestMicPermission !== 'function') return false
+  bridge.requestMicPermission()
+  return true
+}
+
+/**
+ * VOICE 문항 진입을 네이티브에 알린다 (KAN-100). 성공 여부는 requestMicPermission과 같은 규칙이다 —
+ * 브리지가 없는 브라우저 단독 실행에서 false를 돌려줄 뿐 크래시하지 않는다.
+ *
+ * @JavascriptInterface는 문자열만 주고받으므로 구조체는 JSON으로 직렬화해 넘긴다.
+ */
+export function startVoiceItem(start: VoiceItemStart): boolean {
+  const bridge = window.AccenturyBridge
+  if (typeof bridge?.startVoiceItem !== 'function') return false
+  bridge.startVoiceItem(JSON.stringify(start))
+  return true
+}
+
+/**
+ * 세션 토큰을 브리지에서 읽는다 (KAN-13). 쓸 수 있는 토큰이 없으면 null —
+ * 브리지 자체가 없는 브라우저 단독 실행, 메서드가 없는 구버전 앱, 네이티브가 origin 거부로
+ * 빈 문자열을 준 경우가 전부 여기에 포함된다. 셋의 구분은 호출자 관심사가 아니다:
+ * 어느 쪽이든 "인증 헤더에 실을 값이 없다"는 같은 사실이고, 대응(제출 불가)도 같다.
+ */
+export function getSessionToken(): string | null {
+  const bridge = window.AccenturyBridge
+  if (typeof bridge?.getSessionToken !== 'function') return null
+  const token = bridge.getSessionToken()
+  return typeof token === 'string' && token.trim() !== '' ? token : null
+}
+
+/**
+ * 재응시를 네이티브에 요청한다 (KAN-34, KAN-107). 성공 여부는 [requestMicPermission]과 같은
+ * 규칙이다 — 브리지가 없는 브라우저 단독 실행에서 false를 돌려줄 뿐 크래시하지 않는다.
+ *
+ * true는 "네이티브에 요청이 닿았다"는 뜻이지 "새 세션을 받았다"는 뜻이 아니다. 결과는 두 갈래로
+ * 갈린다: 성공하면 네이티브가 WebView를 인트로 URL로 다시 로드하므로 이 페이지가 사라지고,
+ * 실패하면 [installRetestFailedReceiver]로 이유가 온다. 즉 **호출 뒤 아무 일도 일어나지 않은
+ * 것처럼 보이는 구간이 정상적으로 존재한다** — 그동안 버튼을 잠가 두는 것이 화면 몫이다.
+ *
+ * 연타는 네이티브도 막는다(SessionGateController.retestInFlight). 두 번째 요청이 나가면 첫
+ * 요청이 만든 세션이 곧바로 고아가 되기 때문인데, 그 방어는 이 함수가 true를 돌려주는 것과
+ * 무관하게 동작한다 — 여기서 true는 브리지 호출이 성사됐다는 사실만 말한다.
+ */
+export function startRetest(): boolean {
+  const bridge = window.AccenturyBridge
+  if (typeof bridge?.startRetest !== 'function') return false
+  bridge.startRetest()
+  return true
+}
+
+/**
+ * 결과 공유를 네이티브에 넘긴다 (KAN-30). 성공 여부는 [startVoiceItem]과 같은 규칙이다 —
+ * 브리지가 없는 브라우저 단독 실행에서 false를 돌려줄 뿐 크래시하지 않는다.
+ * @JavascriptInterface는 문자열만 주고받으므로 payload는 JSON으로 직렬화해 넘긴다.
+ *
+ * false는 "여기서는 네이티브 공유로 갈 수 없다"까지만 말한다 — 브라우저 단독 실행인지
+ * `shareResult`를 모르는 구버전 앱인지는 호출자 관심사가 아니고, 대응(웹 폴백)도 같다
+ * (`share/shareResult.ts`가 그 갈래를 소유한다).
+ *
+ * 반대로 true도 "카톡이 떴다"는 뜻이 아니다. 카톡 미설치 시 OS 공유 시트로 내려가는 판정도,
+ * 사용자가 공유를 취소하는 경우도 전부 네이티브 안에서 끝난다 — 웹으로 회신이 오지 않는 이유는
+ * 결과 화면이 그 결말에 따라 달라질 것이 없기 때문이다 (KAN-30 AC "공유 취소가 결과를 변경하지 않는다").
+ */
+export function shareResult(payload: SharePayload): boolean {
+  const bridge = window.AccenturyBridge
+  if (typeof bridge?.shareResult !== 'function') return false
+  bridge.shareResult(JSON.stringify(payload))
+  return true
+}
+
+/**
+ * 네이티브가 문항 결과를 돌려줄 수신 지점을 설치한다 (KAN-100). 반환값은 해제 함수다.
+ *
+ * 설치 전에 네이티브가 먼저 부를 수 있다(화면 전환 타이밍상 결과가 빨리 나오는 경우).
+ * 그래도 무해하다 — 네이티브는 수신자가 없으면 호출 없이 false를 돌려준다 (WebDelivery.kt).
+ *
+ * 들어온 문자열은 신뢰 경계 밖이라 [parseItemResult]를 통과한 것만 handler로 넘긴다.
+ * 불량 payload는 조용히 버린다 — 여기서 throw하면 예외가 네이티브의 evaluateJavascript
+ * 콜백까지 거슬러 올라가는데, 그 자리엔 사용자에게 보여줄 화면이 없다.
+ */
+export function installItemResultReceiver(handler: (result: ItemResult) => void): () => void {
+  return installReceiver('onItemResult', (payloadJson) => {
+    const result = parseItemResult(payloadJson)
+    if (result !== null) handler(result)
+  })
+}
+
+/**
+ * 네이티브가 재응시 실패를 회신할 수신 지점을 설치한다 (KAN-34 2단계). 반환값은 해제 함수다.
+ *
+ * 검증·불량 payload 처리 규칙은 [installItemResultReceiver]와 같다. 성공은 오지 않는다 —
+ * 재응시가 성공하면 네이티브가 인트로 URL로 다시 로드해 이 페이지가 통째로 사라진다.
+ */
+export function installRetestFailedReceiver(
+  handler: (failure: RetestFailure) => void,
+): () => void {
+  return installReceiver('onRetestFailed', (payloadJson) => {
+    const failure = parseRetestFailure(payloadJson)
+    if (failure !== null) handler(failure)
+  })
+}
+
+/**
+ * 수신 지점 하나를 `window.AccenturyWeb`에 끼워 넣고, 해제 함수를 돌려준다.
+ *
+ * **슬롯 단위로 갈아끼우는 것이 요점이다.** 객체를 통째로 교체하면 나중에 설치한 수신자가 먼저
+ * 설치된 다른 수신자를 지운다 — 진행 화면(onItemResult)과 결과 화면(onRetestFailed)은 실제로는
+ * 동시에 뜨지 않지만, 계약이 그 우연에 기대면 화면 하나가 늘어나는 순간 조용히 깨진다.
+ *
+ * 해제는 설치 전 값으로 되돌린다. 단순히 지우면, 같은 슬롯에 이미 다른 수신자가 있는데 덧씌운 뒤
+ * 해제한 경우 원래 수신자까지 같이 사라진다. 남은 슬롯이 하나도 없으면 객체째 지워 설치 전
+ * 상태(`undefined`)로 정확히 되돌아간다.
+ */
+function installReceiver(
+  slot: keyof AccenturyWeb,
+  receive: (payloadJson: string) => void,
+): () => void {
+  const previous = window.AccenturyWeb?.[slot]
+  window.AccenturyWeb = { ...window.AccenturyWeb, [slot]: receive }
+
+  return () => {
+    const remaining: AccenturyWeb = { ...window.AccenturyWeb }
+    if (previous === undefined) delete remaining[slot]
+    else remaining[slot] = previous
+    window.AccenturyWeb = Object.keys(remaining).length === 0 ? undefined : remaining
+  }
+}

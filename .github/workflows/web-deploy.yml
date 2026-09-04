@@ -1,0 +1,162 @@
+# 웹 번들 S3 배포 (KAN-127)
+#
+# 승격 흐름 (2026-08-17 확정): Dev 병합은 staging 버킷, Release 병합은 prod 버킷. 빌드 산출물은
+# 환경 무관이라(화면과 API가 같은 출처, 베이스 URL 주입 없음) 두 환경이 같은 빌드 절차를 쓴다.
+#
+# 자격 증명은 GitHub OIDC로 환경별 IAM 역할(accentury-{env}-github-deploy, infra/modules/deploy)을
+# 맡는다. 장기 액세스 키를 시크릿에 두지 않는다. 역할의 신뢰 정책이 sub를
+# repo:OWNER/REPO:environment:{env}로 묶으므로 job이 반드시 `environment:`를 지정해야 한다.
+# 대상 값(역할 ARN, 버킷, 배포 ID)은 그 environment의 변수다 (infra/README.md "GitHub 설정").
+#
+# 캐시 전략: 해시가 붙은 자산(assets/*)은 immutable 장기 캐시, index.html만 no-cache. 업로드
+# 순서가 곧 원자성이다 - 자산을 먼저 올리고 index.html을 마지막에 바꾼다. 중간에 실패하면 이전
+# index.html이 이전 자산을 그대로 가리킨다 (AC "실패 시 이전 상태 유지"). sync --delete를 쓰지
+# 않는다: 구 index.html을 아직 든 브라우저가 이전 자산을 받아야 하고, 등급 이미지(KAN-132)와
+# 개인정보처리방침(KAN-133)이 같은 버킷에 산다. 역할에 DeleteObject 권한도 없다.
+#
+# test.yml과 중복 실행하지 않는다: 저쪽은 pull_request, 여기는 push(병합 결과)다. 테스트 게이트는
+# PR의 web-test required check(Dev Ruleset)가 맡고, 여기서는 tsc + vite build만 다시 돈다.
+#
+# 환경이 철거된 상태(staging은 미사용 시 destroy, KAN-140)에서는 역할도 버킷도 없어 자격 증명
+# 단계가 "Not authorized to perform sts:AssumeRoleWithWebIdentity"로 실패한다 - 신뢰 정책 결함과
+# 구분이 안 되는 메시지다 (2026-08-27 PR #55 리뷰). 철거할 때 environment 변수 DEPLOY_PAUSED=true를
+# 두면 이 워크플로는 빌드까지만 하고 배포 단계를 건너뛴 채 성공으로 끝나며, 요약에 그 사실을 남긴다.
+# 재구축 뒤 변수를 지우면 다시 배포한다 (infra/README.md "teardown 절차", "GitHub 설정").
+
+name: Web Deploy
+
+on:
+  push:
+    branches: [Dev, Release]
+    # push 이벤트라 워크플로 레벨 paths를 써도 된다. required check 잠김 문제(test.yml 주석)는
+    # pull_request 검사에만 해당한다.
+    paths:
+      - 'web/**'
+      - '.github/workflows/web-deploy.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 대상 환경. 환경을 새로 지은 뒤 첫 배포나 웹 변경 없는 재배포에 쓴다.
+        required: true
+        type: choice
+        options: [staging, prod]
+        default: staging
+
+# 같은 환경으로 가는 실행이 겹치면 index.html 교체 순서가 꼬인다. 뒤쪽이 기다린다 (취소 안 함).
+concurrency:
+  group: web-deploy-${{ inputs.environment || (github.ref_name == 'Release' && 'prod' || 'staging') }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Release 푸시 = prod, Dev 푸시 = staging. 수동 실행은 입력값이 이긴다.
+    environment: ${{ inputs.environment || (github.ref_name == 'Release' && 'prod' || 'staging') }}
+    defaults:
+      run:
+        working-directory: web
+    env:
+      AWS_REGION: ap-northeast-2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      # tsc --noEmit + vite build. 환경 변수를 주지 않는다 - 산출물이 환경을 몰라야 한다.
+      - run: npm run build
+
+      - name: 환경 철거 상태 확인
+        id: gate
+        env:
+          DEPLOY_PAUSED: ${{ vars.DEPLOY_PAUSED }}
+          TARGET: ${{ inputs.environment || (github.ref_name == 'Release' && 'prod' || 'staging') }}
+        run: |
+          if [ "$DEPLOY_PAUSED" = "true" ]; then
+            echo "::notice title=배포 건너뜀::$TARGET 환경이 철거된 상태(DEPLOY_PAUSED=true)라 빌드만 하고 배포하지 않습니다. 재구축 뒤 environment 변수 DEPLOY_PAUSED를 지우면 다시 배포합니다."
+            {
+              echo "| 환경 | 커밋 | 결과 |"
+              echo "| --- | --- | --- |"
+              echo "| $TARGET | ${GITHUB_SHA} | 건너뜀 (환경 철거 중, DEPLOY_PAUSED=true) |"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "paused=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "paused=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: environment 변수 확인
+        if: steps.gate.outputs.paused != 'true'
+        env:
+          AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          WEB_BUCKET: ${{ vars.WEB_BUCKET }}
+          CLOUDFRONT_DISTRIBUTION_ID: ${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}
+        run: |
+          missing=0
+          for name in AWS_DEPLOY_ROLE_ARN WEB_BUCKET CLOUDFRONT_DISTRIBUTION_ID; do
+            if [ -z "${!name}" ]; then
+              echo "GitHub environment 변수가 비어 있습니다: $name (infra/README.md 'GitHub 설정')" >&2
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        if: steps.gate.outputs.paused != 'true'
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 해시 자산 업로드 (immutable)
+        if: steps.gate.outputs.paused != 'true'
+        env:
+          WEB_BUCKET: ${{ vars.WEB_BUCKET }}
+        run: |
+          aws s3 sync dist/ "s3://$WEB_BUCKET/" \
+            --exclude index.html \
+            --cache-control 'public, max-age=31536000, immutable' \
+            --no-progress
+
+      - name: index.html 교체 (no-cache)
+        if: steps.gate.outputs.paused != 'true'
+        env:
+          WEB_BUCKET: ${{ vars.WEB_BUCKET }}
+        run: |
+          aws s3 cp dist/index.html "s3://$WEB_BUCKET/index.html" \
+            --cache-control 'no-cache' \
+            --content-type 'text/html; charset=utf-8'
+
+      - name: CloudFront 무효화
+        if: steps.gate.outputs.paused != 'true'
+        env:
+          CLOUDFRONT_DISTRIBUTION_ID: ${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}
+        run: |
+          # /는 default_root_object로 index.html을 받지만 캐시 키는 /다. 확장자 없는 경로는
+          # SPA 재작성 Function이 /index.html로 바꿔 그 키를 쓴다 (KAN-126). 둘 다 지운다.
+          # 해시 자산은 이름이 바뀌므로 무효화 대상이 아니다.
+          id=$(aws cloudfront create-invalidation \
+            --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" \
+            --paths '/' '/index.html' \
+            --query Invalidation.Id --output text)
+          echo "무효화 $id 완료 대기"
+          aws cloudfront wait invalidation-completed \
+            --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" --id "$id"
+
+      # 어느 환경에 어느 커밋이 올라갔는지는 GitHub environment의 deployments 목록에도 남지만,
+      # 실행 요약에 한 줄 적어 두면 목록을 열지 않고도 보인다.
+      - name: 배포 기록
+        if: steps.gate.outputs.paused != 'true'
+        env:
+          WEB_BUCKET: ${{ vars.WEB_BUCKET }}
+        run: |
+          {
+            echo "| 환경 | 커밋 | 버킷 |"
+            echo "| --- | --- | --- |"
+            echo "| ${{ inputs.environment || (github.ref_name == 'Release' && 'prod' || 'staging') }} | ${GITHUB_SHA} | ${WEB_BUCKET} |"
+          } >> "$GITHUB_STEP_SUMMARY"

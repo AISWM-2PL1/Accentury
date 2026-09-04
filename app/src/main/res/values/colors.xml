@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      런처 아이콘의 adaptive 배경 (KAN-178). mipmap-anydpi/ic_launcher*.xml이 `@color`로 참조한다 —
+      단색 한 장을 drawable로 두면 값이 XML 파일에도, 여기에도 있게 된다. 값은 앱 배경과 같은
+      크림(docs/wiki/design-tokens.md §2)이고, 스플래시 창 배경(themes.xml의
+      windowSplashScreenBackground)도 이 색을 재사용한다.
+      이 값을 바꾸면 assets/app-icon/build.py의 CREAM도 같이 바꾸고 다시 돌려야 한다 —
+      검증표가 이 줄을 문자열로 확인한다.
+    -->
+    <color name="ic_launcher_background">#F3ECD9</color>
+
+    <color name="purple_200">#FFBB86FC</color>
+    <color name="purple_500">#FF6200EE</color>
+    <color name="purple_700">#FF3700B3</color>
+    <color name="teal_200">#FF03DAC5</color>
+    <color name="teal_700">#FF018786</color>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+</resources>

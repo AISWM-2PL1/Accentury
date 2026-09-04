@@ -1,0 +1,68 @@
+plugins {
+	id 'java'
+	id 'org.springframework.boot' version '4.1.0'
+	id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'app.accentury'
+version = '0.0.1-SNAPSHOT'
+
+java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(25)
+	}
+}
+
+repositories {
+	mavenCentral()
+}
+
+dependencies {
+	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	// 스키마는 Flyway 마이그레이션(db/migration)만 만든다 - ddl-auto는 validate (KAN-123).
+	implementation 'org.springframework.boot:spring-boot-starter-flyway'
+	implementation 'org.springframework.boot:spring-boot-starter-validation'
+	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+	compileOnly 'org.projectlombok:lombok'
+	runtimeOnly 'org.postgresql:postgresql'
+	// Flyway 10부터 PostgreSQL 지원이 flyway-core 밖의 별도 모듈이다 - 빠지면 기동 시
+	// "Unsupported Database: PostgreSQL"로 죽는다.
+	runtimeOnly 'org.flywaydb:flyway-database-postgresql'
+	// 배포(deploy 프로파일)에서 RDS 자격 증명을 Secrets Manager에서 연결 시점에 읽는다 (KAN-129).
+	// RDS 관리형 마스터 시크릿은 7일마다 회전되는데, 회전 뒤 인증 실패가 나면 awsSecretsManager
+	// 플러그인이 시크릿을 다시 받아 재접속하므로 앱은 회전을 모른다. 로컬과 테스트는 이 드라이버를
+	// 거치지 않는다 (application.yml 기본은 pgjdbc 직접). Java 17+ 빌드는 Boot가 주는 Jackson 3
+	// (tools.jackson)으로 시크릿 JSON을 읽는다 - 별도 jackson-databind 2.x가 필요 없다.
+	runtimeOnly 'software.amazon.jdbc:aws-advanced-jdbc-wrapper:4.4.0'
+	// wrapper 4.4.0이 빌드된 SDK 버전과 맞춘다 (POM optional 의존성이라 직접 적어야 한다). 버전은
+	// BOM 한 곳에 두어 SDK 모듈이 늘어도 서로 어긋나지 않게 한다. 플러그인은 동기 클라이언트만 쓰므로
+	// 비동기용 netty 클라이언트는 이미지에서 뺀다 (PR 리뷰).
+	implementation platform('software.amazon.awssdk:bom:2.46.10')
+	runtimeOnly('software.amazon.awssdk:secretsmanager') {
+		exclude group: 'software.amazon.awssdk', module: 'netty-nio-client'
+	}
+	// CloudWatch 지표 내보내기 (KAN-36, CloudWatchMetricsConfig). Boot 4는 이 레지스트리를 자동 구성하지
+	// 않아 직접 조립한다. 버전은 Boot가 관리하는 Micrometer BOM을 따른다. 비동기 클라이언트라 netty
+	// HTTP 클라이언트가 필요하다 - secretsmanager에서 뺀 것을 여기서 다시 넣는 셈이고, 이미지 크기보다
+	// "회로 열림을 밖에서 본다"가 우선이다 (KAN-36 사용자 결정).
+	implementation 'io.micrometer:micrometer-registry-cloudwatch2'
+	runtimeOnly 'software.amazon.awssdk:cloudwatch'
+	runtimeOnly 'software.amazon.awssdk:netty-nio-client'
+	annotationProcessor 'org.projectlombok:lombok'
+	testImplementation 'org.springframework.boot:spring-boot-starter-actuator-test'
+	testImplementation 'org.springframework.boot:spring-boot-starter-data-jpa-test'
+	testImplementation 'org.springframework.boot:spring-boot-starter-validation-test'
+	testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+	// 테스트 DB는 Testcontainers PostgreSQL이다 (KAN-123 확정) - H2 호환 모드가 못 잡는
+	// PG 전용 문법이 마이그레이션에 들어와도 테스트가 배포 전에 잡는다. Docker가 필요하다.
+	testImplementation 'org.springframework.boot:spring-boot-testcontainers'
+	testImplementation 'org.testcontainers:testcontainers-postgresql'
+	testCompileOnly 'org.projectlombok:lombok'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+	testAnnotationProcessor 'org.projectlombok:lombok'
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+}

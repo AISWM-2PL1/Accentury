@@ -1,0 +1,60 @@
+# 배포 프로파일 (KAN-129). staging과 prod가 같은 이름(deploy)으로 켠다 - SSM의
+# SPRING_PROFILES_ACTIVE=deploy (infra/modules/config). 환경 차이는 SSM에서 오는 환경 변수뿐이고,
+# 이 파일은 "배포된 환경이면 언제나 같은" 값만 담는다. 프로파일 이름이 환경 이름(staging, prod)이
+# 아닌 이유: application-staging.yml 같은 환경별 파일이 생길 여지를 없애기 위해서다 - 환경 간
+# 차이는 tfvars와 SSM 값으로만 열거돼야 한다 (KAN-140 AC).
+#
+# 여기서 비워 둔 값은 DeploymentConfigGuard가 기동 시 확인한다. 환경 변수가 빠졌을 때 main의
+# 로컬 기본값(localhost, postgres/local)으로 조용히 뜨는 대신, 무엇이 빠졌는지 나열하고 DB에
+# 닿기 전에 죽는다.
+spring:
+  datasource:
+    # SSM SPRING_DATASOURCE_URL - Terraform이 조립한다:
+    #   jdbc:aws-wrapper:postgresql://<RDS 주소>:5432/accentury?secretsManagerSecretId=<시크릿 ARN>
+    url: ""
+    # 자격 증명은 주입하지 않는다. RDS 관리형 마스터 시크릿(Secrets Manager, KAN-122)은 7일마다
+    # 자동 회전되므로 값을 SSM에 복사해 두면 첫 회전에서 접속이 끊긴다. 대신 아래 awsSecretsManager
+    # 플러그인이 연결 시점에 시크릿을 읽고, 회전 뒤 인증 실패가 나면 다시 받아 재접속한다
+    # (2026-08-25 확정). 비밀번호가 SSM, state, env 파일 어디에도 남지 않는다.
+    username: ""
+    password: ""
+    # AWS Advanced JDBC Wrapper - pgjdbc를 감싸는 드라이버 (build.gradle runtimeOnly). 로컬 개발과
+    # 테스트는 이 프로파일이 아니라서 pgjdbc를 직접 쓴다.
+    driver-class-name: software.amazon.jdbc.Driver
+    hikari:
+      # 풀이 "이 예외면 연결을 버려라"를 옳게 판단하도록 wrapper의 예외 분류를 쓴다 (wrapper 문서 권장).
+      exception-override-class-name: software.amazon.jdbc.util.HikariCPSQLException
+      data-source-properties:
+        # wrapper 기본 플러그인(auroraConnectionTracker, failover2, efm2)은 Aurora 클러스터용이다 -
+        # 단일 RDS 인스턴스에는 시크릿 플러그인만 건다.
+        wrapperPlugins: awsSecretsManager
+        wrapperDialect: rds-pg
+        # 회전 직후 인증 실패: 기본은 시크릿을 다시 받아 1회 재접속이다. 이 시간까지 백오프하며
+        # 반복하게 해서 회전 중(RDS가 비밀번호를 바꾸는 수 초)에 걸린 연결도 살린다.
+        secretsManagerConnectRetryTimeoutMs: 30000
+
+accentury:
+  result:
+    # SSM ACCENTURY_RESULT_WEBTESTURL - https://<이 환경 도메인>/t?c=kko_share. main의 기본값은 prod 도메인이라
+    # staging이 SSM 값 없이 떠도 겉보기에 멀쩡한 채 공유 카드가 prod로 연결된다 (Codex P2). 비워 두고
+    # DeploymentConfigGuard가 요구한다.
+    web-test-url: ""
+    # SSM ACCENTURY_RESULT_ASSETBASEURL - https://<이 환경 도메인>/share (KAN-132). 등급 이미지는 이 아래
+    # <code>.png다. web-test-url과 같은 이유로 비워 두고 DeploymentConfigGuard가 요구한다.
+    asset-base-url: ""
+
+# CloudWatch 지표 내보내기 (KAN-36, CloudWatchMetricsConfig). accentury.* 지표만 1분마다 올린다 - 회로 상태
+# (accentury.ai.circuit.state)는 경보 ai-circuit-open(infra/modules/monitoring)이 본다. 네임스페이스는
+# 호스트 역할의 PutMetricData 조건(compute 모듈)과 경보의 이름과 같아야 하고, 환경은 지표 차원(env)으로
+# 가른다 - 값은 기동 스크립트가 env.conf에서 backend.env로 넣는 ACCENTURY_ENV다.
+management:
+  cloudwatch:
+    metrics:
+      export:
+        enabled: true
+        namespace: accentury/backend
+        region: ap-northeast-2
+        step: 1m
+  metrics:
+    tags:
+      env: ${ACCENTURY_ENV:unknown}

@@ -1,0 +1,127 @@
+package app.accentury.backend.analytics;
+
+import app.accentury.backend.common.AdminAuth;
+import app.accentury.backend.common.ApiException;
+import app.accentury.backend.common.ErrorCode;
+import org.jspecify.annotations.Nullable;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.http.CacheControl;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
+import java.util.Locale;
+
+/**
+ * {@code GET /admin/v0/analytics} - 익명 집계 조회 (KAN-106 AC, API 명세서 §6).
+ * <p>
+ * 운영자 전용이라 세션 토큰이 아닌 <b>별도 관리자 인증</b>을 쓴다 (§6의 규약) - 검사는 버전
+ * 관리 엔드포인트(KAN-26)와 공용인 {@link AdminAuth}가 한다. 경로도 그쪽과 같은
+ * {@code /admin/v0} 아래다 - {@code /internal/v0}는 BE에서 AI 서버로 나가는 기계 간 호출의
+ * 접두사라(§4) 방향이 반대다.
+ * <p>
+ * <b>토큰({@code accentury.admin.token})을 설정해야만 생긴다</b> (2026-08-17 확정).
+ * 미설정이 기본값이라 설정을 빼먹어도 열려 있는 경로가 만들어지지 않는다 - 신뢰 프록시
+ * 목록(§2.5, KAN-28)과 같은 "안전한 기본값" 계열이다. 미설정 상태에서 이 경로는 다른 없는
+ * 경로와 똑같은 404다.
+ * <p>
+ * 응답에 개인 식별 정보가 없는 집계값뿐이라도 공개 데이터는 아니다 - 등급 분포는 출시 게이트
+ * 판단(KAN-20)에 쓰는 내부 지표다. 클라이언트 CORS allowlist는 {@code /v0/**}에만 걸려 있어
+ * (CorsConfig) 브라우저에서 교차 출처로 읽을 수 없다.
+ * <p>
+ * 함정 하나: 토큰 값을 문자열 {@code "false"}로 두면 {@code @ConditionalOnProperty}가 비활성으로
+ * 읽어 조용히 404가 된다 (빈 값은 기동 실패로 잡히는 것과 다르다, Fable 리뷰 P3). 토큰은
+ * 무작위 시크릿이라 실제로 겹칠 일은 없지만, 404가 나면 이것부터 확인한다.
+ */
+@RestController
+@RequestMapping("/admin/v0/analytics")
+@ConditionalOnProperty(prefix = "accentury.admin", name = "token")
+class AnalyticsController {
+
+    /** 두 종류를 모두 보겠다는 뜻 - {@link Traffic}의 상수가 아니라 조회 전용 값이다. */
+    private static final String ALL_TRAFFIC = "ALL";
+
+    private final AnalyticsQueryService service;
+    private final AdminAuth adminAuth;
+
+    AnalyticsController(AnalyticsQueryService service, AdminAuth adminAuth) {
+        this.service = service;
+        this.adminAuth = adminAuth;
+    }
+
+    /**
+     * 일자와 버전별 카운터, 그리고 기간 합산을 반환한다.
+     * <p>
+     * 200 조회 성공 / 400 형식 오류나 역전되거나 너무 긴 기간, 모르는 {@code traffic}
+     * ({@code VALIDATION_FAILED}) / 401 토큰 누락이나 불일치({@code ADMIN_UNAUTHORIZED}).
+     * <p>
+     * 일자를 {@code String}으로 받는 것은 인증이 첫 관문이어야 해서다 (2026-08-17 리뷰) -
+     * {@code LocalDate}로 받으면 바인딩이 인증보다 먼저 실행되어, 토큰 없는
+     * 요청이 날짜 형식 오류에 401 대신 400을 받아 미인증 호출자에게 입력 검증 피드백이 샌다.
+     *
+     * @param from    시작 일자 (포함, {@code yyyy-MM-dd}). 생략하면 {@code to}와 같은 날
+     * @param to      종료 일자 (포함). 생략하면 오늘
+     * @param traffic {@code REAL}(기본), {@code SYNTHETIC}, {@code ALL} 중 하나 (KAN-138).
+     *                기본이 {@code REAL}인 이유는 리포트가 원하는 것이 실사용자 지표이고,
+     *                검증용 스모크가 섞인 숫자를 무심코 읽는 일이 없어야 하기 때문이다.
+     * @param token   {@code X-Admin-Token} 헤더 - 설정된 값과 같아야 한다.
+     */
+    @GetMapping
+    ResponseEntity<AnalyticsResponse> query(
+            @RequestParam(required = false) @Nullable String from,
+            @RequestParam(required = false) @Nullable String to,
+            @RequestParam(required = false) @Nullable String traffic,
+            @RequestHeader(value = AdminAuth.TOKEN_HEADER, required = false) @Nullable String token) {
+        adminAuth.authorize(token);
+        return ResponseEntity.ok()
+                // 내부 지표라도 중간 캐시에 남기지 않는다. - 오류 응답과 같은 방침 (§2.3)
+                .cacheControl(CacheControl.noStore())
+                .body(service.query(parseDate("from", from), parseDate("to", to), parseTraffic(traffic)));
+    }
+
+    /**
+     * {@code traffic} 파라미터 → 필터 값. 생략은 {@code REAL}, {@code ALL}은 필터 없음(null)이다.
+     * <p>
+     * 일자와 같은 이유로 문자열을 직접 받아 여기서 푼다 - {@code Traffic}으로 받으면 바인딩이
+     * 인증보다 먼저 돌아, 토큰 없는 요청이 401 대신 400을 받는다.
+     * <p>
+     * 모르는 값은 조용히 기본값으로 접지 않고 400이다. {@code traffic=real}(소문자)이 REAL로
+     * 접히는 것은 편하지만, {@code traffic=synthetc}(오타)가 실사용자 지표로 접히면 읽는
+     * 사람은 자기가 무엇을 보고 있는지 모른 채 판단한다.
+     */
+    private static @Nullable Traffic parseTraffic(@Nullable String value) {
+        // 생략은 ALL이 아니라 REAL이다 - 아무것도 적지 않은 사람이 받아야 하는 것은 실사용자
+        // 지표다. 여기를 null로 두면 기존 호출자 전부가 조용히 합성 섞인 숫자를 받는다.
+        if (value == null || value.isBlank()) {
+            return Traffic.REAL;
+        }
+        if (ALL_TRAFFIC.equalsIgnoreCase(value)) {
+            return null;
+        }
+        try {
+            return Traffic.valueOf(value.toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw new ApiException(ErrorCode.VALIDATION_FAILED,
+                    "traffic 값이 올바르지 않습니다 (REAL, SYNTHETIC, ALL).");
+        }
+    }
+
+    /** {@code yyyy-MM-dd} 파싱 - 빈 값은 생략과 같고, 형식 오류는 파라미터 이름을 담아 400이다. */
+    private static @Nullable LocalDate parseDate(String name, @Nullable String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return LocalDate.parse(value);
+        } catch (DateTimeParseException e) {
+            throw new ApiException(ErrorCode.VALIDATION_FAILED,
+                    name + " 일자 형식이 올바르지 않습니다 (yyyy-MM-dd).");
+        }
+    }
+
+}

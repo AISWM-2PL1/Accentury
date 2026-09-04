@@ -1,0 +1,210 @@
+# 종료 처리 (KAN-166). SIGTERM(배포, 스케일인, Spot 회수)에 진행 중 요청과 분석을 마치고 나간다.
+# 순서: readiness REFUSING_TRAFFIC -> 웹 서버가 새 요청을 막고 진행 중 요청을 아래 유예 안에 마침
+# -> 분석 워커 배수(AnalysisDrainLifecycle, 예산은 accentury.analysis.shutdown-budget) -> 종료.
+# 웹 유예 15초 + 워커 예산 90초 = 105초가 컨테이너 강제 종료 상한(compose stop_grace_period 110초,
+# ECS stopTimeout 120초) 안에 들어야 한다 - 셋 중 하나를 바꾸면 나머지도 같이 본다.
+server:
+  shutdown: graceful    # 즉시 종료면 진행 중 업로드 요청이 끊긴다. 로컬과 배포가 같은 동작이어야 실증이 의미 있다.
+
+spring:
+  lifecycle:
+    # 웹 요청 유예. HTTP 요청은 전부 1초 미만(업로드 1MB, 폴링, 집계)이라 넉넉한 값이고, 티켓 표의
+    # 90초는 워커 대기와 합쳐 최악 180초라 ECS 상한을 넘어 15초로 조정했다 (2026-08-31 결정).
+    timeout-per-shutdown-phase: 15s
+  # 업로드 오디오가 디스크에 닿지 않게 한다 (FR-DP-01, Codex sol 리뷰 P1)
+  # file-size-threshold >= max-request-size라 모든 파트가 메모리에서 처리되고 임시파일이 생기지 않는다.
+  # 이 불변식은 기동 시 VoiceTempDirectory가 강제한다 - 어긋나면 컨텍스트가 뜨지 않는다 (KAN-27).
+  servlet:
+    multipart:
+      max-file-size: 1MB        # §3.3 오디오 상한과 일치 - 초과는 413 AUDIO_TOO_LARGE로 매핑된다.
+      max-request-size: 2MB     # audio + meta + multipart 오버헤드
+      file-size-threshold: 2MB
+      # 불변식이 깨졌을 때 임시파일이 공용 임시 디렉터리로 흩어지지 않게 전용 위치로 고정한다 (KAN-27).
+      location: ${accentury.upload.temp-dir}
+  datasource:
+    url: jdbc:postgresql://localhost:5432/accentury
+    username: postgres
+    password: local
+  flyway:
+    # 플레이스홀더 치환을 끈다 (KAN-26). Flyway는 기본적으로 ${...}를 치환 대상으로 읽는데,
+    # 정의 발행본을 달러 인용으로 감싸면 여는 태그 바로 뒤에 JSON의 여는 중괄호가 붙어
+    # ($definition$ + { = ...${) 값 없는 플레이스홀더로 오인되어 기동이 죽는다. 문항 문구에
+    # ${...}가 들어가도 같은 일이 난다. 치환 기능을 쓰는 마이그레이션이 하나도 없으므로
+    # 끄는 편이 안전하다 - 나중에 필요해지면 그 마이그레이션에서만 켤 방법을 찾는다.
+    placeholder-replacement: false
+  jpa:
+    hibernate:
+      # 스키마는 Flyway 마이그레이션(db/migration)만 만든다 (KAN-123) - update는 운영 DB를
+      # 조용히 변형하고 롤백이 안 된다. validate는 엔티티와 스키마가 어긋나면 기동을 막는다.
+      # 기존 로컬 DB(ddl-auto가 만든 스키마)는 Flyway 이력이 없어 기동이 막히므로 리셋한다:
+      # docker compose down -v && docker compose up -d (2026-08-18 확정 - 개발 데이터는 버려도 된다).
+      ddl-auto: validate
+    open-in-view: false
+  task:
+    execution:
+      mode: force    # analysisExecutor(4워커 AI 전달 풀) 정의가 applicationTaskExecutor 자동
+                     # 구성을 밀어내지 않게 강제한다 - 밀리면 MVC 비동기가 무제한 스레드로
+                     # 떨어지고, 미래의 @Async가 AI 전달 풀에 얹힌다 (Codex 리뷰).
+    scheduling:
+      pool-size: 4   # @Scheduled 잡이 여덟인데 기본값은 1스레드다 (Codex 리뷰) - 파일시스템을
+                     # 훑는 VoiceTempSweeper가 느린 볼륨에서 막히면 그 한 스레드를 붙잡아
+                     # AnalysisJobTimeout(30초 주기)이 멎고, 사용자가 대기 화면에 갇힌다.
+                     # AI 회로 복구 프로브(KAN-28)도 이 풀을 쓴다 - 짧은 타임아웃
+                     # (ai-health-timeout)으로 잡아 다른 잡을 밀어내지 않게 한다.
+
+# 모든 로그 줄에 correlation ID 포함 - 요청 단위 추적 (KAN-38, Codex 리뷰 P2)
+# %mask와 %maskEx는 토큰과 오디오를 출력 직전에 지우는 변환어다 (명세서 §2.6, NFR-SC-07, KAN-28) -
+# 메시지와 예외 스택트레이스 양쪽에 걸어야 새지 않는다. 등록은 logback-spring.xml이 한다.
+# %mask(%m) 뒤의 빈 옵션 {}은 오타가 아니다 - 복합 변환어의 닫는 괄호 바로 뒤에 오는 변환어를
+# logback이 해석하지 못해(%n이 그대로 찍힌다) 옵션 블록으로 끊어 준다 (LogMaskingTest가 검증).
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSS} %5p [%X{correlationId:-}] --- [%15.15t] %-40.40logger{39} : %mask(%m){}%n%maskEx"
+
+# ALB 대상 그룹 헬스체크 경로 (KAN-131, 소비처 KAN-125). health 하나만 노출하고 상세는 감춘다 -
+# 응답이 {"status":"UP"} 한 줄이라 내부 구성(DB 존재, 디스크 경로)이 밖으로 드러나지 않는다.
+# 인증이 없는 것은 의도다 - ALB가 자격 증명 없이 두드리는 경로라 인증이 걸리면 대상이 계속
+# 비정상 판정된다. 이 경로는 /v0/* 밖이라 CloudFront를 거치지 않고 ALB 내부에서만 쓰인다.
+# 노출 폭이 Boot 기본값과 같아도 명시해서 못박는다 - 기본값에 기대면 의존성 추가나 부트
+# 업그레이드가 노출 폭을 조용히 바꿔도 잡을 자리가 없다 (ActuatorHealthApiTest가 검증).
+# 나머지 관측성(메트릭 exporter, 대시보드)은 KAN-38 범위다 - KAN-27이 등록한 Micrometer
+# 게이지도 그때까지 비노출로 남는다.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health    # health 외(env, beans, metrics 등)는 web에 올리지 않는다.
+      discovery:
+        enabled: false     # /actuator 엔드포인트 목록 페이지도 끈다 - 헬스체크에 불필요하다.
+  endpoint:
+    health:
+      show-details: never      # 컴포넌트(db, diskSpace)별 세부 상태를 숨긴다.
+      show-components: never   # 컴포넌트 이름 목록도 숨긴다 - 종합 status만 남는다.
+      # readiness와 liveness 그룹 (KAN-166). /actuator/health/readiness, /liveness가 생기고
+      # readinessState, livenessState 지표가 집계 health에도 든다 - 종료 신호에 Boot가 readiness를
+      # REFUSING_TRAFFIC으로 내리면 집계 /actuator/health가 503이 돼 ALB가 대상을 빼기 시작한다.
+      # liveness는 종료 중에도 UP이라 오케스트레이터가 조기에 SIGKILL하지 않는다. 노출 폭은
+      # 여전히 health 하나다 - 두 그룹은 그 아래 경로이고 상세는 위 설정대로 숨겨진다.
+      probes:
+        enabled: true
+  # CloudWatch 지표 내보내기 (KAN-36, CloudWatchMetricsConfig). 로컬과 테스트는 끈다 - 배포 프로파일이 켠다.
+  cloudwatch:
+    metrics:
+      export:
+        enabled: false
+
+# 활성 테스트 버전과 점수 버전은 여기 없다 (KAN-26). 발행 입력이 DB로 확정되면서(2026-08-09,
+# 명세서 §6) 활성 버전은 active_test_version 한 행이 정본이 됐고, 점수 버전은 그 정의가
+# 선언한 값을 따른다. 전환은 PUT /admin/v0/active-version이고, 발행은 마이그레이션이다.
+accentury:
+  session:
+    ttl: 30m                    # 토큰 수명 - 테스트 소요 5분의 여유 배수 (명세서 §2.1, §7)
+    rate-limit-per-minute: 30   # IP당 분당 세션 생성 상한 (명세서 §2.5, KAN-28) - 인증 없는
+                                # 유일한 쓰기 경로라 IP가 유일한 키다. 공유 IP(학교, 카페 NAT)
+                                # 뒤의 동시 시작을 덮는 값. 부하 테스트 후 확정 (§7, KAN-40)
+  analysis:
+    poll-after-ms: 800               # 상태 폴링 간격 - 서버가 통제, 부하 상승 시 상향 (명세서 §5.3)
+    congested-poll-after-ms: 3000    # 혼잡 시 폴링 간격 - 분석이 밀릴 때 폴링 증폭을 막는다 (명세서 §5.3, KAN-24).
+    congestion-threshold: 30         # 혼잡 판정 - 전 인스턴스의 진행 중(PROCESSING) 분석 작업이 이 건수 이상이면 간격 상향 (KAN-167)
+    congestion-cache-ttl: 1s         # 혼잡 판정이 DB의 PROCESSING 건수를 다시 세지 않고 쓰는 시간 (KAN-167). 기준 폴링 간격(800ms)과
+                                     # 같은 자릿수라 인스턴스당 초당 count 1회로 묶이고, 판정 지연은 폴링 한 번 분량이다. 0이면 매번 센다.
+    retention: 24h                   # 분석 작업 보존 기간 - 세션, 결과와 동일 (명세서 §5.5)
+    processing-timeout: 60s          # 실행 잔류 한도 - 실행 시작 후 이 시간을 넘기면 RETRYABLE_FAILED(ANALYSIS_TIMEOUT) (KAN-24)
+    queued-timeout: 5m               # 큐 유실 한도 - 실행을 시작 못 한 채 이 시간이 지나면 정리 (프로세스 사망 대비).
+                                     # 정상 큐 소진(수 분)보다 길고, 세션 TTL(30분) 안에 복구가 보이도록 그보다 짧다.
+    # ai-base-url: http://localhost:8000    # AI 서버(FastAPI, 명세서 §4.1) - 미설정이면 전달하지 않는 개발 모드 (KAN-22).
+                                            # 배포에서는 SSM ACCENTURY_ANALYSIS_AIBASEURL이 넣고(전용 AI 호스트의 프라이빗 이름
+                                            # http://ai.accentury.internal:8000, KAN-36), deploy 프로파일은 이 값이 없으면 기동을
+                                            # 세운다 (DeploymentConfigGuard, KAN-129).
+    # ai-token: <공유 시크릿>        # AI 내부 호출 시크릿 (KAN-36) - 요청마다 X-Accentury-Internal-Token 헤더로 싣는다.
+                                     # 미설정이면 헤더를 붙이지 않는다 (로컬 개발). 배포에서는 SSM ACCENTURY_ANALYSIS_AITOKEN이
+                                     # 넣고 deploy 프로파일은 이 값이 없으면 기동을 세운다 (DeploymentConfigGuard).
+    ai-timeout: 10s                  # AI 호출 연결과 읽기 타임아웃 - 추론 P95 3초의 여유 배수
+    ai-retries: 2                    # AI 일시 장애(연결 실패, 5xx) 재전송 횟수 - 전달 시점에만 가능 (FR-DP-01)
+    dispatch-concurrency: 4          # 분석 전달 워커 수 - GPU 동시 슬롯을 넘지 않게 (명세서 §5.3)
+    ai-health-timeout: 2s            # 회로 복구 프로브(GET /internal/v0/health, 명세서 §4.2)의 타임아웃 (KAN-28) -
+                                     # 추론 없이 즉답하는 엔드포인트라 분석 호출(10초)보다 짧게 잡는다.
+    circuit-failure-threshold: 5     # AI 연속 실패 이 횟수에서 회로를 연다 (KAN-28) - 열린 동안 업로드는
+                                     # GPU 미소모 503으로 즉시 끊기고 시도 예산(명세서 §2.5)도 깎이지 않는다.
+    circuit-probe-interval: 5s       # 회로가 열린 뒤 health 프로브 간격 - 첫 프로브까지의 쿨다운도 같은 값 (KAN-28)
+    shutdown-budget: 90s             # 종료 시 실행 중 분석의 완료 대기 상한 (KAN-166). 대기 작업은 기다리지 않고
+                                     # 즉시 실패로 정리하므로 AI 호출 1회(ai-timeout)보다 길면 된다 - 기동 시 검증.
+                                     # 실모델로 ai-timeout이 오르면(KAN-172) 웹 유예 15초와 합쳐 110초 안인지 다시 본다.
+  upload:
+    rate-limit-per-minute: 30            # IP당 분당 업로드 상한 - 부하 테스트 후 확정 (명세서 §7, KAN-40)
+    session-rate-limit-per-minute: 60    # 세션당 분당 업로드 상한 (명세서 §2.5 이중 제한, KAN-28) - 정상 5건,
+                                         # 문항당 시도 상한까지 다 써도 25건이라 그 위의 여유 배수
+    # 업로드 임시파일 전용 디렉터리 (KAN-27) - 기동 시 소유자 전용(700) 권한으로 만든다.
+    # 메모리 전용 불변식이 지켜지는 한 비어 있고, 프로세스가 kill된 뒤의 잔여물만 여기 남는다.
+    temp-dir: ${java.io.tmpdir}/accentury-voice-tmp
+    temp-retention: 30m          # 잔존 임시파일 삭제 기준 (KAN-27 AC) - 이보다 오래된 파일만 청소 잡이 지운다.
+  vocab:
+    rate-limit-per-minute: 60    # 세션당 분당 어휘 답안 상한 (명세서 §2.5, KAN-28) - 정상은 5문항 x 1회다.
+  completion:
+    rate-limit-per-minute: 120   # 세션당 분당 /complete 상한 (KAN-16 AC) - pollAfterMs 800ms를 그대로 따르는
+                                 # 합법 폴링(약 75회/분)이 60초 분석 대기 중에도 걸리지 않는 여유 배수.
+                                 # 임계치는 부하 테스트 후 확정 (명세서 §5.3, §7, KAN-40)
+  # 요청 제한의 기준 IP를 정할 때 신뢰할 프록시 대역 (명세서 §2.5, KAN-28).
+  # 비어 있으면 X-Forwarded-For를 아예 읽지 않는다 - 프록시 없이 뜬 서버에서 헤더 위조로
+  # IP 제한을 우회하지 못하게 하는 기본값이다. ALB 뒤에 배포하면 반드시 그 서브넷을 넣어야
+  # 한다 (안 넣으면 전원이 ALB IP 하나를 공유해 서로의 한도를 깎는다, KAN-35/36).
+  # 배포(KAN-129): SSM ACCENTURY_TRUSTEDPROXIES=<해당 환경 VPC CIDR> 하나다. CloudFront VPC 오리진 ENI와
+  # ALB가 둘 다 VPC 안이라 XFF의 오른쪽 두 홉이 같은 대역에 들고, deploy 프로파일은 비어 있으면 기동을 세운다.
+  trusted-proxies: []    # 예: ["10.0.0.0/16"]
+  cors:
+    # 스탠드얼론 웹 테스트(KAN-31) 오리진 - 웹 배포 시 지정 (명세서 §2.5).
+    #
+    # 비어 있으면 CorsConfig가 필터를 아예 끈다. 앱을 에뮬레이터로 띄우고 웹을 dev 서버로
+    # 돌릴 때는 브라우저가 교차 출처 요청을 막아 "문항을 불러오지 못했어요"만 보이는데,
+    # 서버 로그에는 아무것도 남지 않아 원인을 짚기 어렵다. 그때는 기동 인자로 넘긴다:
+    #   ./gradlew bootRun --args="--accentury.cors.allowed-origins=http://10.0.2.2:5173,http://localhost:5173"
+    #
+    # 배포에서도 빈 배열을 유지한다 (KAN-129, 2026-08-17 확정). 화면(S3)과 API(/v0/*)를 CloudFront가
+    # 같은 도메인에서 내주므로 브라우저 입장에서 교차 출처가 아예 없고(KAN-126), 허용 목록을 두면
+    # 제3자 오리진이 세션 API를 브라우저에서 부를 길만 열린다. 앱 WebView는 CORS 대상이 아니다.
+    allowed-origins: []
+  # 익명 집계 카운터 (KAN-106, SRS FR-AN-10) - 개인 결과가 24시간 뒤 파기돼도 남는 유일한 영속
+  # 데이터다 (NFR-PR-03). 세션 ID, 토큰, IP, 개별 점수는 저장하지 않고 일자별 숫자만 더한다.
+  analytics:
+    zone: Asia/Seoul     # 집계 행의 일자 경계 (2026-08-17 확정) - 리포트를 읽는 사람의 하루와
+                         # 행의 하루가 같아야 한다. UTC면 KST 09:00에 날짜가 바뀐다.
+    max-query-days: 366  # 운영자 조회 한 번의 최대 기간 - 실수로 전 기간을 훑는 질의를 400으로 끊는다.
+  # 운영자 전용 API(명세서 §6)의 공유 시크릿 - 관리자 엔드포인트 셋이 함께 쓴다
+  # (GET /admin/v0/analytics, PUT /admin/v0/active-version, GET /admin/v0/test-definitions).
+  # 미설정이 기본값이고, 그러면 엔드포인트가 아예 등록되지 않는다(404) - 설정을 빼먹어도
+  # 열려 있는 경로가 생기지 않게 하는 안전한 기본값이다. 32자 이상이어야 기동한다.
+  # 운영에서는 환경 변수로 주입한다 (ACCENTURY_ADMIN_TOKEN). KAN-106 시절 이름은
+  # accentury.analytics.admin-token이었고 KAN-26에서 여기로 옮겼다.
+  # 값을 문자열 "false"로 두면 조건부 등록이 비활성으로 읽어 조용히 404다.
+  #
+  # 블록째 주석인 것은 의도다 - "admin:"만 남기고 아래를 다 주석 처리하면 YAML이 빈 매핑을
+  # 만들어 accentury.admin이 스칼라 null로 잡히고, 그러면 Binder가 그 값을 바로 쓰면서
+  # 다른 곳(환경 변수, @TestPropertySource)에서 준 accentury.admin.token으로 내려가지 않는다.
+  # admin:
+  #   token: ...
+  # /result 등급별 자산 (명세서 §3.7, KAN-25) - 서버가 내려주므로 앱 배포 없이 여기서 교체 (KAN-29/30)
+  # 기동 시 5개 등급 전부 존재해야 한다 (TierAssets 검증). 코멘트와 문구는 더미다 - 확정되면
+  # 여기서 교체한다. 키는 등급 code의 소문자다 (relaxed binding이 대문자 키를 보존하지 않으므로
+  # 소문자로 적고, 조회가 대소문자를 무시한다).
+  # 공유 이미지는 등급마다 URL을 적지 않는다 (KAN-132) - asset-base-url 아래 <code>.png가 자산 정본
+  # (assets/share/, KAN-162)의 파일명 규칙이고, 이미지 교체는 S3 업로드만으로 반영된다
+  # (scripts/publish-share-assets.sh). 배포에서는 환경 도메인이 SSM으로 들어온다 (application-deploy.yml).
+  result:
+    web-test-url: https://accentury.app/t?c=kko_share    # 공유 유입 계측 캠페인 파라미터가 붙은 완성 URL (2026-08-14 확정 - 전 등급 공통 고정값, KAN-30)
+    asset-base-url: https://accentury.app/share          # 등급 이미지 기준 URL - share.imageUrl = <기준>/<등급 code 소문자>.png (KAN-132)
+    tiers:
+      outsider:
+        comment: "억양도 단어도 아직 표준어에 가깝습니다. 경남 사투리 입문을 환영합니다."
+        share-text: "나는 외지인! 너도 시도해볼래?"
+      traveler:
+        comment: "여행에서 주워들은 사투리가 조금 묻어 있습니다. 아직은 손님 티가 납니다."
+        share-text: "나는 여행객! 너도 시도해볼래?"
+      wannabe:
+        comment: "사투리를 쓰고 싶은 마음은 가득한데 억양이 아직 따라오지 못했습니다."
+        share-text: "나는 사투리 호소인! 너도 시도해볼래?"
+      honorary:
+        comment: "억양은 거의 토박이인데 단어에서 들켰습니다."
+        share-text: "나는 명예주민! 너도 시도해볼래?"
+      native:
+        comment: "억양도 단어도 완벽한 경남 토박이입니다. 더 배울 것이 없습니다."
+        share-text: "나는 경남 토박이! 너도 시도해볼래?"

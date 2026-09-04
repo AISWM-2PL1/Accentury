@@ -1,0 +1,21 @@
+// Release.xcconfig — 안드로이드 buildTypes.release에 해당.
+#include "Base.xcconfig"
+
+// [xcconfig 주석 함정] `//`가 주석이므로 `$()`(빈 문자열)를 끼워 넣는다. Debug.xcconfig 참고.
+
+// prod 도메인. 화면과 API가 같은 출처(CloudFront 단일 출처, KAN-126)라 경로 없이 루트이고,
+// 그래서 두 값이 같다. 웹 번들은 Release 병합 시 KAN-127 파이프라인이 이 도메인 버킷에 올린다.
+// staging(staging.accentury.app)을 보는 빌드는 아직 없다 — 필요해지면 구성을 하나 더 만든다.
+WEB_URL = https:/$()/accentury.app
+API_BASE_URL = https:/$()/accentury.app
+
+// ATS 예외가 하나도 없는 plist. 프로덕션 빌드에 평문 통신 구멍을 두지 않는다.
+INFOPLIST_FILE = Accentury/Info-Release.plist
+
+SWIFT_COMPILATION_MODE = wholemodule
+SWIFT_OPTIMIZATION_LEVEL = -O
+VALIDATE_PRODUCT = YES
+
+// Local.xcconfig는 여기서 읽지 않는다. Base.xcconfig가 이미 한 번 읽어 ACCENTURY_TEAM_ID는
+// 들어와 있고, 위 URL 두 줄은 그 include 뒤에 있어 로컬 파일이 덮을 수 없다 — 개발자 기계의
+// 설정 파일 하나로 릴리스 빌드가 localhost를 보게 되는 사고를 구조적으로 막는다.

@@ -1,0 +1,60 @@
+# ai 전용 호스트의 운영 compose (KAN-36 A단계). staging과 prod가 이 파일 하나를 그대로 쓴다 - 환경
+# 차이는 /run/accentury/*.env(부팅마다 SSM Parameter Store에서 읽는 값)뿐이다. Terraform이 시작
+# 템플릿 user_data로 EC2의 /opt/accentury/docker-compose.yml에 놓으므로, 이 파일을 고치면 ASG가
+# 인스턴스를 교체한다 (compute/main.tf의 instance refresh - 호스트는 무상태다).
+# backend는 ECS Fargate 서비스(modules/fargate, KAN-165)라 compose 파일이 없고, 로컬 풀스택은 레포 루트의 docker-compose.yml이다.
+#
+# 값이 채워지는 경로 (accentury-up.sh가 매 기동마다 만든다):
+#   compose.env  - ECR_REGISTRY, IMAGE_TAG. 아래 image: 보간에만 쓰이고 컨테이너에는 안 들어간다.
+#   ai.env       - SSM ${prefix}/ai/* (ACCENTURY_AI_INTERNAL_TOKEN 등) + ACCENTURY_ENV.
+#
+# [배포 제약 - ai 워커 1개. scale 금지]
+# ai는 임시 디렉터리 하나를 프로세스 하나가 전용으로 쓴다 (KAN-27) - 워커를 늘리면 기동 시 도는
+# 잔여물 정리가 형제 워커가 처리 중인 오디오를 지운다. --workers 1은 ai/Dockerfile이 고정한다.
+#
+# 네트워크. 같은 호스트 시절의 internal 네트워크(게이트웨이 없음)는 쓸 수 없다 - backend 태스크가
+# 8000으로 들어와야 한다. 대신 컨테이너의 인터넷과 IMDS는 호스트 iptables가 끊고(ai-egress-guard.sh,
+# DOCKER-USER 체인) 시작 템플릿의 IMDSv2 hop limit 1이 한 겹 더 막는다. 외부 미노출은 ai-sg
+# (backend-sg만 8000, KAN-165)가 성립시킨다.
+
+# 로그 로테이션 - 호스트 디스크가 컨테이너 로그로 차지 않게 50MB로 막는다.
+x-logging: &log
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  ai:
+    image: ${ECR_REGISTRY}/accentury/ai:${IMAGE_TAG}
+    # 호스트 재부팅이나 프로세스 사망 뒤 docker가 다시 띄운다. `docker compose stop`으로 사람이
+    # 내린 경우만 예외다.
+    restart: unless-stopped
+    # 호스트 8000을 backend 태스크가 두드린다 (ai-base-url = http://ai.accentury.internal:8000). 전 인터페이스
+    # 바인딩이지만 ai-sg가 backend-sg 소스만 허용하므로 인터넷에서는 닿지 않는다. 호스트의 health 타이머
+    # (ai-health-metric.sh)도 이 포트로 127.0.0.1을 찌른다.
+    ports: ["8000:8000"]
+    # 배포에서는 내부 호출 토큰이 반드시 있어야 한다 (KAN-36, 리뷰 반영). SSM에서 토큰이 빠진 채 뜨면 검사를
+    # 건너뛰고(fail-open) health는 200이라 경보도 없다 - 이 값이 있으면 토큰 없이는 기동 자체가 실패해
+    # 컨테이너가 unhealthy로 남고 파이프라인이 롤백한다. backend의 DeploymentConfigGuard와 같은 성격이다.
+    environment:
+      ACCENTURY_AI_INTERNAL_TOKEN_REQUIRED: "true"
+    env_file:
+      - path: /run/accentury/ai.env
+        required: false
+        # raw: 값을 글자 그대로 넘긴다. 기본 형식은 $VAR 보간, 따옴표 벗기기, " #" 주석 처리를
+        # 하므로 SSM 값(내부 호출 토큰 등)이 조용히 바뀔 수 있다 (Codex P1).
+        format: raw
+    # 메모리 상한은 실모델 전환(KAN-36 B단계)에서 KAN-57 실측 RSS의 1.3배로 잡는다. 스텁(약 35MB)에는
+    # 두지 않는다 - c7i.xlarge 8GB를 스텁 혼자 쓴다.
+    logging: *log
+    healthcheck:
+      # slim 이미지에는 curl도 wget도 없다 - 이미 있는 파이썬으로 확인한다. 503 STARTING(워밍업 전)은
+      # urlopen이 예외를 던져 unhealthy로 남고, 200 UP에서만 healthy가 된다 (준비 상태 게이트, KAN-36).
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/internal/v0/health').read()"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      # 스텁은 즉시 뜨지만 실모델(KAN-22)이 워밍업(가중치 적재)을 붙이면 그 시간만큼 여유가 필요하다 -
+      # 그때 이 값을 실측으로 올린다.
+      start_period: 30s
