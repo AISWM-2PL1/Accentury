@@ -44,6 +44,26 @@ xcodebuild -project Accentury.xcodeproj -scheme Accentury \
 - `WEB_URL` / `API_BASE_URL` — Debug 빌드가 열 주소 오버라이드. 실기기는 맥의 localhost를
   모르므로 `cloudflared tunnel --url http://localhost:5173`이 준 HTTPS 주소를 넣는다.
   Release는 이 파일이 덮지 못한다 (`Config/Release.xcconfig` 주석 참고).
+- `KAKAO_NATIVE_APP_KEY` — 카카오톡 공유 앱 키 (KAN-180). 안드로이드 `local.properties`의
+  `kakaoNativeAppKey=`와 **같은 앱의 같은 키**다. 비어 있으면 카카오 경로가 꺼지고 공유가
+  OS 공유 시트로만 가며, 그게 기본 상태다 — 아래 참고.
+
+## 카카오톡 공유 (KAN-180)
+
+결과 화면의 [친구에게 공유하기]는 카톡 친구 선택을 바로 열고 등급 카드를 보낸다
+(안드로이드 KAN-30과 같은 피드 템플릿·같은 버튼 문구). 다음 셋 중 하나라도 어긋나면
+OS 공유 시트로 내려간다 — 그쪽은 텍스트 한 줄이 가는 경로다.
+
+1. `KAKAO_NATIVE_APP_KEY`가 비었다 → SDK를 초기화하지 않는다 (`AccenturyApp.swift`)
+2. 카톡이 안 깔렸다 → `ShareApi.isKakaoTalkSharingAvailable()`
+3. 카카오가 템플릿을 거부했거나 카톡 전환이 실패했다 → `Share/ResultSharer.swift`
+
+**키만으로는 부족하다.** 카카오 개발자 콘솔 [앱] › [플랫폼 키] › [네이티브 앱 키]에 iOS
+플랫폼으로 번들 ID `com.accentury.app`이 등록돼 있어야 카드가 실제로 나간다. 등록이 없으면
+키가 있어도 카카오가 요청을 거부하고, 앱은 그걸 실패로 읽어 시트로 내려간다.
+
+**시뮬레이터로는 확인할 수 없다** — 카톡이 없으므로 늘 2번에서 시트로 간다. 카드 수신은
+실기기 확인 사항이다.
 
 ## 가짜 마이크 (디버그 전용)
 

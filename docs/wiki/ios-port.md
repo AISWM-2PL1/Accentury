@@ -106,7 +106,7 @@ allowlist를 통과한 문서뿐이고, `force`는 그 문을 열지 못한다. 
 | 6b | `beginBackgroundTask` (상한 ≈30초) | 안드로이드는 프로세스가 살아 있으면 코루틴이 계속 돌지만 iOS는 백그라운드 몇 초 뒤 정지한다. `URLSessionConfiguration.background`는 **쓰지 않는다** — 본문을 파일로 요구해 녹음이 디스크에 남는다 (FR-DP-02 위반) |
 | 7b | 밴드를 그리지 않는다 | 안드로이드와 같은 판단 |
 | 7b | `FilePcmSource` 심볼이 Release에도 있다 | Core가 한 모듈이라 타입 자체는 링크된다. **결선이 없다**: 읽는 코드가 `#if DEBUG`이고, `FAKE_MIC_ASSET` 키가 `Info-Release.plist`에 없고, `DebugResources/`가 릴리스 번들에서 빠진다 |
-| 5b | 카카오 SDK 없음 | 안드로이드의 **폴백 경로에 해당하는 것**만 세웠다 — `UIActivityViewController`(카톡 설치 시 시트에 뜬다). 카카오 링크 SDK는 후속 티켓 |
+| ~~5b~~ | ~~카카오 SDK 없음~~ | KAN-180에서 해소 — 아래 §10 참고 |
 | ~~7·8~~ | ~~Jua 대신 시스템 서체~~ | KAN-178에서 해소 — 아래 참고 |
 
 ### 서체 (KAN-178에서 해소)
@@ -269,8 +269,6 @@ nil로 들고, 그러면 문항 결과 주입(`deliverResults`)이 매번 "받�
 
 ## 9. 이월
 
-- **카카오 링크 SDK** — 지금은 OS 공유 시트뿐이다. 카드 그림을 실어 보내는 정식 경로가 카카오
-  템플릿이고, 그건 KAN-30의 안드로이드 범위였다.
 - **외부 링크** — 여는 길이 아직 없다. 안드로이드가 "생기면 Custom Tabs로"라고 적어 둔 자리이고
   iOS의 대응물은 `SFSafariViewController`다.
 - **CI에 ios 잡** — `.github/workflows/test.yml`은 워크플로 레벨 `paths`가 아니라 job 레벨 `if` +
@@ -285,3 +283,53 @@ nil로 들고, 그러면 문항 결과 주입(`deliverResults`)이 매번 "받�
 - `docs/wiki/pitch-curve.md` — 곡선 파라미터와 지연 분해
 - `docs/wiki/ondevice-f0.md` — YIN·프레이머
 - 스모크 캡처·로그 — `.omc/artifacts/kan108-smoke/` (로컬 전용, 커밋되지 않는다)
+
+## 10. 카카오톡 공유 (KAN-180)
+
+§9에 "이월"로 적혀 있던 항목이다. 팀이 탑재로 정해(노션 §1 1-11) 안드로이드 KAN-30과 같은
+카드가 iOS에서도 나가게 했다.
+
+### 계층이 갈린 자리
+
+| 어디 | 무엇 | 왜 |
+| --- | --- | --- |
+| `AccenturyCore/Share/ShareCard.swift` | `chooseShareChannel`, `ShareCard`, `buildShareCard` | 통로 판정과 카드 값은 SDK 없이 정해진다. 시뮬레이터 없이 `swift test`로 도는 자리 |
+| `Accentury/Share/ResultSharer.swift` | `FeedTemplate` 매핑, SDK 호출, 폴백 순서 | 카카오 SDK는 UIKit·앱 번들(앱 키)에 매여 있어 Core에 들어갈 수 없다 |
+| `Accentury/TestFlow/TestFlowView.swift` | `routeShare` | 시트를 띄우는 건 SwiftUI 상태라 화면만 할 수 있다 |
+
+안드로이드는 `ResultSharer.kt` 한 파일이 이 셋을 다 들고 있다. iOS에서 갈린 이유는 Core가
+시뮬레이터 없이 도는 계층이라는 제약이 안드로이드에는 없어서다 — 그쪽은 `app` 모듈의
+순수 함수를 JVM 유닛 테스트가 그대로 부른다.
+
+### 폴백이 세 겹인 이유
+
+카카오 경로가 막힐 수 있는 자리가 셋이고, 어디서 막히든 끝은 OS 공유 시트다. 사용자가
+누른 건 "공유"지 "카톡 공유"가 아니므로, 아무 일도 일어나지 않은 화면을 보여주는 대신
+통로를 하나 더 내준다.
+
+1. **앱 키 없음** — SDK를 초기화조차 하지 않았으므로 조회도 하지 않는다. 레포에 키를 두지
+   않아 갓 클론한 기계의 기본 상태가 이것이다
+2. **카톡 미설치** — `ShareApi.isKakaoTalkSharingAvailable()`
+3. **카카오 실패 또는 전환 실패** — 템플릿 거부·서버 오류·콘솔 설정 불일치, 그리고
+   `UIApplication.open`이 false를 돌려주는 경우. 3번 뒷부분을 굳이 보는 이유는 설치 조회가
+   참이었다고 전환까지 보장되지 않아서다
+
+### 안드로이드와 갈리는 점
+
+- **동기 예외 경로가 없다.** 안드로이드는 SDK 호출이 `IllegalStateException`으로 끝날 수 있어
+  try/catch가 한 겹 더 있고 콜백과 겹치지 않게 하는 `handled` 플래그까지 있다. 스위프트
+  SDK에는 `throws` 경로가 없어 실패가 콜백 하나로만 온다
+- **URL scheme이 앱 키에서 파생된다.** 카톡이 공유를 마치고 돌아올 통로가
+  `kakao{네이티브 앱 키}`라 `Info-*.plist`에 `kakao$(KAKAO_NATIVE_APP_KEY)` 변수가 들어간다.
+  안드로이드에는 없는 배선이다
+- **`LSApplicationQueriesSchemes`가 필수다.** 빠지면 `canOpenURL`이 카톡 설치 여부에 무조건
+  false를 돌려주고, 빌드도 실행도 멀쩡한 채로 카카오 경로만 조용히 죽는다.
+  `AppConfigTests`가 배열의 존재를 붙드는 이유다
+
+### 코드 밖에 남은 것
+
+- 카카오 콘솔에 iOS 플랫폼(번들 `com.accentury.app`) 등록 — 없으면 키가 있어도 카드가 안 나간다
+- 실기기 카드 수신 확인. **시뮬레이터로는 확인할 수 없다** (카톡이 없어 늘 2번 폴백)
+- 전송 완료 집계는 KAN-164(BE 웹훅)다. 카카오 웹훅은 앱 키 단위라 iOS가 같은 키를 쓰는 한
+  같이 세지고, `serverCallbackArgs`는 그 티켓이 계약을 정하면 양 플랫폼에 함께 붙인다
+
