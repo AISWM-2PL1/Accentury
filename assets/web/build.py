@@ -65,6 +65,8 @@ def _load(name: str, path: Path):
 
 icon = _load("accentury_app_icon_build", REPO / "assets" / "app-icon" / "build.py")
 chars = _load("accentury_characters_build", REPO / "assets" / "characters" / "build.py")
+# 스토어 스크린샷 쪽에서 Jua 글리프 검사만 빌려 온다 (KAN-178 §6 — 가운뎃점이 두부로 새어 나간 건)
+shots = _load("accentury_screenshots_build", REPO / "assets" / "screenshots" / "build.py")
 
 # ── 상수 ────────────────────────────────────────────────────────────────────────────────────
 
@@ -166,6 +168,9 @@ def draw_og(cut: Image.Image) -> Image.Image:
     다른 점은 오른쪽에 앉는 글자다. 저쪽은 받는 사람이 이미 결과를 아는 자리라 등급명을 넣지만,
     여기는 링크를 처음 본 사람이 보는 카드라 등급이 아니라 **테스트를 권하는 한 줄**이 들어간다.
     """
+    # Pillow는 글리프가 없어도 조용히 두부(□)를 그린다 — 검증표는 다 통과하고 카톡에 나간
+    # 카드에서만 보인다. Jua는 한글·라틴·숫자와 기본 문장부호뿐이라 문구를 고칠 때마다 막는다.
+    shots.assert_glyphs(OG_TITLE)
     card = Image.new("RGBA", (OG_W, OG_H), CREAM + (255,))
 
     fig = cut.crop(cut.getbbox())
