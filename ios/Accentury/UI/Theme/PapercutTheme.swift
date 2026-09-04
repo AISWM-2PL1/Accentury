@@ -200,9 +200,21 @@ enum Papercut {
         /// 굵기가 400 하나뿐이라 그 위를 요청하면 획을 부풀린 합성 볼드가 나오고, 곡선이 뭉개져
         /// 손으로 오린 글씨가 아니라 두껍게 인쇄한 글씨로 보인다. Jua 슬롯의 ``weight``가 전부
         /// `.regular`인 것도 같은 이유라 여기서 굵기를 버려도 잃는 것이 없다.
+        ///
+        /// Jua 쪽에 `fixedSize:`를 쓴다. `Font.custom(_:size:)`는 이름과 달리 고정 크기가 아니라
+        /// 본문 텍스트 스타일을 기준으로 Dynamic Type을 따라 커지는데, 본문 슬롯이 쓰는
+        /// `.system(size:weight:)`는 따라 커지지 않는다. 둘을 섞으면 글자 크기를 키운 기기에서
+        /// 제목·타이머·CTA만 자라고 본문은 그대로라 한 화면 안에서 위계가 뒤집히고, 높이를
+        /// `controlHeightLarge`로 못 박은 버튼은 라벨이 잘린다. 아래 ``resolvedLineSpacing``도
+        /// 커지지 않은 `size`로 행간을 계산하므로 그 상태에서는 값이 어긋난다.
+        ///
+        /// 정본 §3이 슬롯마다 고정 크기를 주는 표라 이 팔레트 전체가 고정 크기를 전제로 쓰였다.
+        /// 그래서 한쪽만 커지게 두는 대신 양쪽 다 고정으로 맞춘다. Dynamic Type을 제대로
+        /// 받으려면 본문 슬롯도 `relativeTo:`로 옮겨야 하는데, 그건 정본의 고정 표를 상대 크기
+        /// 표로 다시 쓰는 일이라 이 티켓과 별개의 결정이다.
         var font: Font {
             usesJua
-                ? .custom(Papercut.juaFamily, size: size)
+                ? .custom(Papercut.juaFamily, fixedSize: size)
                 : .system(size: size, weight: weight)
         }
 
