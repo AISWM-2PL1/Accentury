@@ -39,6 +39,11 @@ struct TestFlowView: View {
     /// (안드로이드 `DisposableEffect(phase) { onDispose { ... } }`의 자리).
     @State private var shownOverlayPhase: TestFlowPhase?
 
+    /// OS 공유 시트에 실을 카드 (KAN-180). ``TestFlowModel/pendingShare``와 다른 값이다 —
+    /// 그쪽은 "웹이 공유를 요청했다"이고, 이건 "카카오로 못 가서 시트로 내려왔다"다.
+    /// 통로 판정이 끝난 뒤에만 채워지므로, 카카오로 나간 공유는 여기까지 오지 않는다.
+    @State private var sheetShare: SharePayload?
+
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -185,14 +190,16 @@ struct TestFlowView: View {
             guard !Task.isCancelled else { return }
             model.onSubmitTimeout(attemptId: attemptId)
         }
-        // 결과 공유 (KAN-30). 카카오 SDK 대신 OS 공유 시트다 — 아래 `ShareSheet` 주석 참고.
+        // 결과 공유 (KAN-30, KAN-180). 웹이 공유를 요청하면 통로부터 정한다 — 카톡이면
+        // 카카오 카드가 나가고, 아니면 아래 시트가 뜬다 (`routeShare`).
+        .onChange(of: model.pendingShare) { payload in routeShare(payload) }
         .sheet(
             isPresented: Binding(
-                get: { model.pendingShare != nil },
-                set: { if !$0 { model.consumeShare() } }
+                get: { sheetShare != nil },
+                set: { if !$0 { sheetShare = nil } }
             )
         ) {
-            if let share = model.pendingShare {
+            if let share = sheetShare {
                 ShareSheet(payload: share)
             }
         }
@@ -397,6 +404,22 @@ struct TestFlowView: View {
         }
     }
 
+    /// 웹이 요청한 공유를 통로로 보낸다 (KAN-180).
+    ///
+    /// 모델의 대기 값을 **먼저** 비우는 이유는 이 값이 "요청이 도착했다"는 신호이지 화면 상태가
+    /// 아니어서다. 시트가 뜨는 경우에는 `sheetShare`가 그 자리를 이어받고, 카카오로 나가는
+    /// 경우에는 띄울 화면 자체가 없다 — 비우지 않으면 카카오로 나간 뒤에도 대기 값이 남아
+    /// 다음 공유 요청이 같은 payload일 때 `onChange`가 울리지 않는다.
+    ///
+    /// ``ResultSharer``를 여기서 만든다: 시트를 띄우는 건 SwiftUI 상태를 건드리는 일이라
+    /// 그쪽이 직접 할 수 없고, 화면이 넘겨주는 클로저 하나로 끝난다.
+    @MainActor
+    private func routeShare(_ payload: SharePayload?) {
+        guard let payload else { return }
+        model.consumeShare()
+        ResultSharer.forApp(presentSheet: { sheetShare = $0 }).share(payload)
+    }
+
     @MainActor
     private func deliverResults() {
         guard let webView else {
@@ -558,12 +581,12 @@ private struct RecordingOverlay: View {
 
 // MARK: - 공유 시트
 
-/// 결과 공유 (KAN-30) — **iOS는 카카오 SDK를 쓰지 않는다.**
+/// 결과 공유의 **폴백 통로** (KAN-30, KAN-180). 정식 경로는 카카오 피드 템플릿이고
+/// (`Share/ResultSharer.swift`), 여기는 그쪽이 막혔을 때만 뜬다 — 앱 키가 없거나, 카톡이
+/// 안 깔렸거나, 카카오·카톡 전환이 실패한 경우다. 안드로이드 `buildSystemShareIntent`와 같은 자리다.
 ///
-/// 안드로이드는 카카오 피드 템플릿(v2)으로 카톡을 직접 열고, 미설치면 OS 공유 시트로 내려간다
-/// (`ResultSharer.kt`). iOS 쪽 카카오 링크 SDK 도입은 KAN-30의 안드로이드 범위 밖이라 이 티켓의
-/// 일이 아니고, 여기서는 안드로이드의 **폴백 경로에 해당하는 것**만 세운다 —
-/// `UIActivityViewController`에 카카오톡이 설치돼 있으면 그 항목이 그대로 뜬다.
+/// 카톡이 깔린 기기라면 이 시트에도 카카오톡 항목이 뜨지만 그건 텍스트 한 줄이 가는 경로다.
+/// 카드가 필요하면 카카오 경로여야 한다.
 ///
 /// 카드 문구와 링크는 웹이 실어 보낸 값 그대로다(서버가 정한다). 이미지 URL은 시트에 싣지
 /// 않는다 — `UIActivityViewController`에 원격 URL을 이미지로 주면 다운로드가 끝날 때까지
