@@ -39,6 +39,10 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+# 자산 폴더에 __pycache__ 를 남기지 않는다 — 커밋 대상에 섞인다. _load() 안이 아니라 여기인
+# 이유는, 이 파일 자체를 다른 모듈이 import 할 때는 _load 가 돌기 전에 컴파일이 끝나기 때문이다.
+sys.dont_write_bytecode = True
+
 ROOT = Path(__file__).resolve().parent  # assets/web
 REPO = ROOT.parent.parent
 OUT = REPO / "web" / "public"
@@ -52,8 +56,6 @@ def _load(name: str, path: Path):
     곧 종이색이라 휘도 램프로 민다. 그래서 아이콘은 아이콘 쪽, 캐릭터는 캐릭터 쪽 함수를 쓴다.
     둘 다 `if __name__ == "__main__"` 아래에서만 main()을 부르므로 읽어도 아무것도 만들지 않는다.
     """
-    # 옆 폴더에 __pycache__를 남기지 않는다 — 자산 폴더에 생기면 커밋 대상에 섞인다
-    sys.dont_write_bytecode = True
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         raise SystemExit(f"모듈을 읽을 수 없다: {path}")
@@ -197,11 +199,13 @@ def draw_og(cut: Image.Image) -> Image.Image:
     draw.rectangle([x, y, x + chip_w, y + chip_h], fill=CREAM, outline=INK, width=4)
     draw.text((x + pad_x, y + chip_h // 2), OG_TITLE, font=title_font, fill=INK, anchor="lm")
 
-    brand_font = (
-        ImageFont.truetype(str(FONT_BODY), 30, index=0)
-        if FONT_BODY.exists()
-        else ImageFont.truetype(str(FONT_JUA), 30)
-    )
+    # 브랜드 줄은 본문 고딕이지만, 그 글꼴이 없는 환경(맥 밖)에서는 Jua로 떨어진다. 그때
+    # 가운뎃점(U+00B7)이 Jua에 없어 두부가 되므로, 떨어진 경우에만 같은 검사를 건다.
+    if FONT_BODY.exists():
+        brand_font = ImageFont.truetype(str(FONT_BODY), 30, index=0)
+    else:
+        shots.assert_glyphs(OG_BRAND)
+        brand_font = ImageFont.truetype(str(FONT_JUA), 30)
     draw.text((left, OG_H - OG_PAD), OG_BRAND, font=brand_font, fill=MUTED, anchor="ls")
     return card.convert("RGB")
 

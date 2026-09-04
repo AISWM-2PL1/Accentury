@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
@@ -36,7 +36,8 @@ const linkHref = (rel: string): string =>
 /** PNG의 IHDR에서 실제 픽셀 크기를 읽는다. 선언한 크기와 파일이 갈리는 것이 여기서 잡힌다. */
 function pngSize(path: string): [number, number] {
   const buf = readFileSync(path)
-  expect(buf.subarray(1, 4).toString('ascii'), `${path}: PNG가 아니다`).toBe('PNG')
+  // 시그니처 8바이트를 다 본다 — 앞 네 글자만 보면 잘린 파일도 통과한다
+  expect(buf.subarray(0, 8).toString('hex'), `${path}: PNG가 아니다`).toBe('89504e470d0a1a0a')
   return [buf.readUInt32BE(16), buf.readUInt32BE(20)]
 }
 
@@ -57,14 +58,32 @@ describe('head 메타와 public 자산', () => {
     }
     // 이 값이 아니면 큰 이미지 카드가 아니라 작은 썸네일 카드로 그려진다
     expect(meta('meta[name="twitter:card"]')).toBe('summary_large_image')
+    // 링크 미리보기지 기사·프로필이 아니다. 값이 틀리면 받는 쪽이 다른 모양으로 그린다
+    expect(meta('meta[property="og:type"]')).toBe('website')
+  })
+
+  it('같은 태그가 두 번 있지 않다', () => {
+    /* 크롤러마다 첫 것을 쓰기도 마지막 것을 쓰기도 한다 — 둘이 있으면 어느 쪽이 나갈지가
+       받는 앱에 달리고, 우리 화면에서는 아무것도 달라 보이지 않는다. */
+    for (const selector of [
+      'meta[property="og:title"]',
+      'meta[property="og:image"]',
+      'meta[property="og:url"]',
+      'meta[name="twitter:card"]',
+      'meta[name="theme-color"]',
+      'link[rel="icon"]',
+      'link[rel="manifest"]',
+    ]) {
+      expect(head.querySelectorAll(selector).length, `${selector} 가 여러 개다`).toBe(1)
+    }
   })
 
   it('og:url과 og:image가 절대 URL이다', () => {
     // 상대 경로면 카카오가 이미지를 자기 서버로 가져가지 못해 카드가 글자만 남는다
     for (const property of ['og:url', 'og:image']) {
-      expect(meta(`meta[property="${property}"]`), `${property} 는 ${ORIGIN}으로 시작하는 절대 URL이어야 한다`).toMatch(
-        new RegExp(`^${ORIGIN}/`),
-      )
+      // 정규식을 쓰지 않는다 — 오리진의 `.`이 아무 글자나 먹어 accenturyXapp도 통과한다
+      const value = meta(`meta[property="${property}"]`)
+      expect(value.startsWith(`${ORIGIN}/`), `${property}(${value})가 ${ORIGIN}으로 시작하지 않는다`).toBe(true)
     }
   })
 
@@ -83,7 +102,10 @@ describe('head 메타와 public 자산', () => {
     const referenced = [linkHref('icon'), linkHref('apple-touch-icon'), manifestHref, meta('meta[property="og:image"]')]
     for (const reference of referenced) {
       expect(reference, '참조가 비어 있다').not.toBe('')
-      expect(() => statSync(publicPath(reference)), `${reference} 를 가리키는 파일이 public/에 없다`).not.toThrow()
+      const path = publicPath(reference)
+      expect(existsSync(path), `${reference} 를 가리키는 것이 public/에 없다`).toBe(true)
+      // 같은 이름의 디렉터리가 있으면 존재 검사만으로는 통과한다
+      expect(statSync(path).isFile(), `${reference} 는 파일이 아니다`).toBe(true)
     }
   })
 
@@ -95,8 +117,10 @@ describe('head 메타와 public 자산', () => {
   })
 
   it('manifest 아이콘이 실재하고 적힌 크기와 같다', () => {
-    expect(manifest.icons.length).toBeGreaterThan(0)
+    // 192·512는 티켓이 정한 집합이다(홈 화면 바로가기와 스플래시가 이 둘을 집는다)
+    expect(manifest.icons.map((icon: { sizes: string }) => icon.sizes).sort()).toEqual(['192x192', '512x512'])
     for (const icon of manifest.icons) {
+      expect(icon.type, `${icon.src} 에 type이 없다`).toBe('image/png')
       const [width, height] = pngSize(publicPath(icon.src))
       expect(`${width}x${height}`, `${icon.src} 의 sizes가 실제 크기와 다르다`).toBe(icon.sizes)
     }
