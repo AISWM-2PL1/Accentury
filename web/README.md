@@ -175,3 +175,7 @@ E2E_BASE_URL=https://staging.accentury.app npm run test:e2e
 - 대상 버킷, 배포 ID, IAM 역할은 GitHub environment 변수다 (infra/README.md "GitHub 설정").
 - `VITE_PLAY_STORE_URL` 같은 빌드 시점 값은 아직 주입하지 않는다 (코드 기본값). 필요해지면
   environment 변수로 넘긴다 - 두 환경이 같은 값이면 저장소 변수로 둔다.
+- 예외가 하나 있다: `VITE_GA4_MEASUREMENT_ID`(KAN-33). GitHub environment 변수
+  `GA4_MEASUREMENT_ID`를 워크플로가 빌드에 넘긴다. staging과 prod가 **다른 스트림**이어야
+  우리 확인 트래픽이 실사용 집계에 섞이지 않는다. 비워 두면 계측 없이 빌드된다 -
+  로컬 개발도 그 상태이고, 이벤트가 실제로 도는지는 콘솔의 `[track]` 로그로 본다.

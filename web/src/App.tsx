@@ -99,9 +99,12 @@ export default function App({ navigate = assignHref, voiceCheckCapture }: AppPro
          */
         userCurveCenterHz={standalone ? (loadWebSession()?.userCurveCenterHz ?? null) : null}
         onAnalysisReady={() => {
-          // 완주 계측 (KAN-31 퍼널 3번째 지점). 결과가 실제로 나온 자리라 "끝까지 갔다"를
-          // 여기서만 확실히 말할 수 있다 — 마지막 문항 제출은 아직 분석 실패로 갈 수 있다.
-          if (standalone) track({ name: 'test_completed', campaign: trackedCampaign() })
+          // 완주 계측 (퍼널). 결과가 실제로 나온 자리라 "끝까지 갔다"를 여기서만 확실히
+          // 말할 수 있다 — 마지막 문항 제출은 아직 분석 실패로 갈 수 있다.
+          //
+          // 실행을 가리지 않는다 (KAN-33). 앱 안에서는 [track]이 브리지로 넘겨 네이티브
+          // Firebase가 앱 스트림에 싣는다 — 완주율은 앱에서도 봐야 하는 값이다.
+          track({ name: 'test_completed', campaign: trackedCampaign() })
           goToResult(params.get('sessionId') ?? '', navigate)
         }}
       />
@@ -151,10 +154,15 @@ function IntroRoute({
    * 사라지므로 실사용 집계에는 영향이 없다.
    */
   useEffect(() => {
-    // 웹 단독 실행만 여기서 센다. 앱 안 이벤트는 네이티브 Firebase 몫이다 (KAN-33).
-    if (!standalone) return
+    /*
+     * 실행을 가리지 않는다 (KAN-33). 인트로를 그리는 것이 앱에서도 이 WebView라 사건이 같고,
+     * 앱 안에서는 [track]이 브리지로 넘겨 네이티브 Firebase가 앱 스트림에 싣는다 — 보내는
+     * 경로만 갈릴 뿐 세는 사건은 하나다.
+     *
+     * 앱의 정상 실행은 `campaign`이 null이고, 앱 링크(KAN-32)로 들어온 실행만 값이 붙는다.
+     */
     track({ name: 'referral_opened', campaign: trackedCampaign() })
-  }, [standalone])
+  }, [])
 
   /*
    * 마이크 권한을 받았는가 (KAN-31 4단계). 인트로가 세션 생성으로 곧장 넘어가지 않고 이 값만
@@ -387,8 +395,10 @@ function ResultRoute({
        * 갔는지는 통로를 고른 뒤에야 알 수 있는 값이고, 계측 때문에 공유가 한 틱이라도 늦으면
        * 안 된다 ([shareResult]도 [track]도 던지지 않으므로 순서만 남는 이야기다).
        *
-       * 웹 단독 실행에서만 센다. 앱 안의 같은 탭은 네이티브가 세므로(`analytics/AppEvents.kt`,
-       * KAN-33) 여기서도 세면 공유 클릭이 두 번 잡힌다 — 다운로드·유입 계측과 같은 규칙이다.
+       * **이 이벤트만 웹 단독 실행으로 제한한다.** 앱 안의 같은 탭은 네이티브가
+       * `share_tapped`로 세므로(`analytics/AppEvents.kt`) 여기서도 세면 한 번의 탭이 두 이름으로
+       * 잡힌다. 다른 퍼널 이벤트를 실행에 상관없이 보내는 것(KAN-33)과 갈리는 유일한 자리이고,
+       * 이유는 그쪽에 네이티브 짝이 없기 때문이다 — 인트로도 완주도 세는 코드는 한 곳뿐이다.
        */
       onShare={(result) => {
         const channel = shareResult(result.share)

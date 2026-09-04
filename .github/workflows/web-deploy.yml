@@ -70,8 +70,19 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
-      # tsc --noEmit + vite build. 환경 변수를 주지 않는다 - 산출물이 환경을 몰라야 한다.
+      # tsc --noEmit + vite build.
+      #
+      # 환경을 아는 값이 GA4 측정 ID 하나뿐이다 (KAN-33). 나머지는 그대로 - 산출물이 환경을
+      # 몰라야 한다는 원칙(KAN-127)에서 이 값만 빼는 이유는 계측이 환경별로 갈려야 하기
+      # 때문이다: staging과 prod가 같은 ID를 쓰면 우리가 확인하느라 도는 트래픽이 실사용
+      # 집계에 섞이고, 그러면 KAN-24(대기 시간)·KAN-21(등급 분포) 트리거의 판단 근거가 오염된다.
+      #
+      # **비어 있는 것이 정상 상태다.** 변수를 두지 않은 환경은 계측 없이 빌드된다
+      # (web/src/analytics/ga4.ts). 측정 ID는 페이지 소스에 박히는 공개 값이라 시크릿이 아니라
+      # 변수로 둔다.
       - run: npm run build
+        env:
+          VITE_GA4_MEASUREMENT_ID: ${{ vars.GA4_MEASUREMENT_ID }}
 
       - name: 환경 철거 상태 확인
         id: gate

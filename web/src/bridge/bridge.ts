@@ -34,6 +34,15 @@ export interface AccenturyBridge {
    * 웹은 서버가 준 카드 자산을 그대로 건넬 뿐이다. [getSessionToken]과 같은 이유로 optional이다
    */
   shareResult?(payloadJson: string): void
+  /**
+   * 계측 이벤트 하나를 네이티브 Firebase Analytics로 넘긴다 (KAN-33). 인자는 이벤트명과
+   * 파라미터 JSON이다 — @JavascriptInterface는 문자열만 주고받는다.
+   *
+   * 앱 안 이벤트를 웹이 아니라 네이티브가 보내는 것이 KAN-33의 결정이다: SDK가 붙여 주는
+   * 축(기기·OS·앱 버전·앱 인스턴스)은 WebView 안에서 만들 수 없고, 웹 스트림으로 보내면
+   * 앱 사용자가 웹 트래픽으로 세어진다. [getSessionToken]과 같은 이유로 optional이다
+   */
+  logEvent?(name: string, paramsJson: string): void
 }
 
 /**
@@ -122,6 +131,8 @@ declare global {
  * KAN-100의 `startVoiceItem`·`onItemResult`는 둘 다 추가라서 1을 유지한다.
  * KAN-30의 `shareResult`도 메서드 추가라 마찬가지로 1을 유지한다 — 그래서 이 메서드가 없는
  * 계약 버전 1 앱이 스큐 게이트를 그대로 통과하고, 래퍼가 false로 걸러 폴백으로 내려간다.
+ * KAN-33의 `logEvent`도 같다. 계측이 붙지 않은 구버전 앱에서 이벤트가 조용히 사라지는 것이
+ * 여기서는 맞는 동작이다 — 계측 하나 때문에 응시할 수 있는 앱을 업데이트 안내로 막을 이유가 없다.
  */
 export const REQUIRED_BRIDGE_VERSION = 1
 
@@ -242,6 +253,24 @@ export function shareResult(payload: SharePayload): boolean {
   const bridge = window.AccenturyBridge
   if (typeof bridge?.shareResult !== 'function') return false
   bridge.shareResult(JSON.stringify(payload))
+  return true
+}
+
+/**
+ * 계측 이벤트를 네이티브로 넘긴다 (KAN-33). 넘겼으면 true, 여기서는 갈 수 없으면 false다.
+ *
+ * false는 브라우저 단독 실행이거나 `logEvent`를 모르는 구버전 앱이라는 뜻인데, 호출자
+ * (`analytics/track.ts`)에게 그 구분은 관심사가 아니다 — 어느 쪽이든 "네이티브로는 못 보낸다"는
+ * 같은 사실이고 대응(gtag 경로로 내려감)도 같다. [shareResult]와 같은 규칙이다.
+ *
+ * 파라미터는 값이 전부 문자열·숫자·null인 평평한 객체다 (`analytics/events.ts`). 중첩을 두지
+ * 않는 이유는 받는 쪽 때문이다: Firebase의 이벤트 파라미터는 평평한 Bundle이라 중첩 객체를
+ * 실을 자리가 없다.
+ */
+export function logAnalyticsEvent(name: string, params: Record<string, unknown>): boolean {
+  const bridge = window.AccenturyBridge
+  if (typeof bridge?.logEvent !== 'function') return false
+  bridge.logEvent(name, JSON.stringify(params))
   return true
 }
 
