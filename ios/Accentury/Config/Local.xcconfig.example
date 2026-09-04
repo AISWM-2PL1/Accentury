@@ -15,3 +15,10 @@
 // 화면과 API가 배포와 같은 단일 출처가 된다.
 // WEB_URL = https:/$()/xxxx-yyyy.trycloudflare.com
 // API_BASE_URL = https:/$()/xxxx-yyyy.trycloudflare.com
+
+// --- 카카오톡 공유 앱 키 (KAN-180) ---
+// 카카오 개발자 콘솔 [앱] > [플랫폼 키] > [네이티브 앱 키]. 안드로이드 local.properties의
+// `kakaoNativeAppKey=`와 **같은 앱의 같은 키**다(콘솔에 iOS 플랫폼으로 번들 ID
+// com.accentury.app이 등록돼 있어야 한다).
+// 비워 두면 카카오 경로가 꺼지고 공유는 OS 공유 시트로만 간다 — 그게 기본 상태다.
+// KAKAO_NATIVE_APP_KEY = 0123456789abcdef0123456789abcdef

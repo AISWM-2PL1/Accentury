@@ -27,6 +27,20 @@ ENABLE_USER_SCRIPT_SANDBOXING = YES
 CODE_SIGN_STYLE = Automatic
 DEVELOPMENT_TEAM = $(ACCENTURY_TEAM_ID)
 
+// 카카오 네이티브 앱 키 (KAN-180). 안드로이드 `app/build.gradle.kts`의 kakaoNativeAppKey()와
+// 같은 자리이고 같은 판단이다 — **빈 값이 정상**이다. 비어 있으면 SDK를 초기화하지 않고 공유는
+// OS 공유 시트로만 간다(AccenturyApp.swift · ResultSharer). 키가 없다는 걸 빌드 시점에 알 수
+// 있으므로 카카오 경로를 아예 만들지 않는 편이, 사용자가 [공유하기]를 누른 뒤 인증 오류로
+// 떨어지는 것보다 낫다.
+//
+// 값을 넣는 자리는 둘이다. 로컬은 아래 include가 읽는 Local.xcconfig(gitignore 대상)의
+// `KAKAO_NATIVE_APP_KEY = ...`이고, 아카이브는 `xcodebuild ... KAKAO_NATIVE_APP_KEY=...`처럼
+// 명령줄 빌드 설정으로 준다(명령줄이 xcconfig보다 우선한다). **레포에는 두지 않는다.**
+//
+// 이 include '앞'에 있어야 Local.xcconfig가 덮을 수 있다. Release.xcconfig는 Local을 다시
+// 읽지 않으므로(그쪽 주석 참고) 릴리스 빌드가 이 키를 받는 경로도 이 한 줄과 명령줄뿐이다.
+KAKAO_NATIVE_APP_KEY =
+
 // 여기서 Local.xcconfig를 한 번 읽는 이유는 ACCENTURY_TEAM_ID 하나 때문이다 — Release도
 // 팀 ID는 필요하다. WEB_URL·API_BASE_URL 오버라이드는 이 지점이 아니라 Debug.xcconfig 끝의
 // 두 번째 `#include?`가 담당한다. Release의 URL은 이 include '뒤'에 놓여 있어(Release.xcconfig)

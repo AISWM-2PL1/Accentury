@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0286E8DBA30BED74F1C2AD3B /* KakaoSDKShare in Frameworks */ = {isa = PBXBuildFile; productRef = F5B3D07508A812FD7E26A278 /* KakaoSDKShare */; };
 		04A63C20DF24D5E63CDF78CA /* RecordingFileLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 704F02B2845DB68F35EE0A01 /* RecordingFileLifecycleTests.swift */; };
 		111E067F4C27A92446F1B194 /* CurvePathBuilderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE7651DEA8417312CA6605FD /* CurvePathBuilderTests.swift */; };
 		14158247BFD2031B9D6B7738 /* CurveLatencyProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 605E85B43A92125E5747AF57 /* CurveLatencyProbe.swift */; };
@@ -37,6 +38,7 @@
 		795AE3D905017B3C1F41962F /* PermissionGateModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67AD63BE69878C4E4EA59593 /* PermissionGateModelTests.swift */; };
 		8228FDF1AA5456116814791D /* CurveWiringTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1374B1AFAA9ECF82A00F0728 /* CurveWiringTests.swift */; };
 		8451F550F79240FAD6114DBB /* BridgeUserScriptTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1BE31A25BA4409D0D087717 /* BridgeUserScriptTests.swift */; };
+		87742CFC1D4AE0205D4BC31B /* KakaoSDKTemplate in Frameworks */ = {isa = PBXBuildFile; productRef = 70564E535D389FE4BC65ABC0 /* KakaoSDKTemplate */; };
 		8DE02AF5FF1FC6B1659D18D7 /* AccenturyBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2CE5A25F0FDE137C0C1ACE8 /* AccenturyBridge.swift */; };
 		8F1B9A53CDAEE4D6A8F89EC2 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37D2DAA08F2853EC2AE0D174 /* ContentView.swift */; };
 		8F6765D4C3E6F789C3722135 /* RecordButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60258D05999F9D1277CEE6B5 /* RecordButton.swift */; };
@@ -57,6 +59,7 @@
 		D1B7F74966AF95157A3892E3 /* HalftoneGrid.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2942DF00F77DB7DE3B8AB95 /* HalftoneGrid.swift */; };
 		D65BC773E51A667EA5370B97 /* UploadModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D026A48BD81029111245DD7 /* UploadModelTests.swift */; };
 		D67159D06F1C8892C958695B /* RecordingModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C932DB5B8B6841CE96814E64 /* RecordingModel.swift */; };
+		D93DEAE1AAC5C59731EE7A9F /* KakaoSDKCommon in Frameworks */ = {isa = PBXBuildFile; productRef = FF1258F7B626CBA21E416381 /* KakaoSDKCommon */; };
 		D9B4B12CAA8445E94A026C6E /* VoiceCheckModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 920EDC35F3B069BC5960F487 /* VoiceCheckModel.swift */; };
 		EA2AD6CC5E227A113595DC9B /* GuideCurveCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54D6ABD705F2CA4791966C17 /* GuideCurveCache.swift */; };
 		EF16FA13AAC3F86EF5455E0D /* MicPermission.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB797E81992F94828EE83D32 /* MicPermission.swift */; };
@@ -151,6 +154,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				5E60AE7995F74242710F685B /* AccenturyCore in Frameworks */,
+				0286E8DBA30BED74F1C2AD3B /* KakaoSDKShare in Frameworks */,
+				87742CFC1D4AE0205D4BC31B /* KakaoSDKTemplate in Frameworks */,
+				D93DEAE1AAC5C59731EE7A9F /* KakaoSDKCommon in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -425,6 +431,9 @@
 			name = Accentury;
 			packageProductDependencies = (
 				40EFC6BFA1E64779B7362D13 /* AccenturyCore */,
+				F5B3D07508A812FD7E26A278 /* KakaoSDKShare */,
+				70564E535D389FE4BC65ABC0 /* KakaoSDKTemplate */,
+				FF1258F7B626CBA21E416381 /* KakaoSDKCommon */,
 			);
 			productName = Accentury;
 			productReference = CB58377AE12082A4E6DFF97D /* Accentury.app */;
@@ -455,6 +464,7 @@
 			mainGroup = 9AE45EECD303E885B9F07C81;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				CAA935154D11E7DF71BC105F /* XCRemoteSwiftPackageReference "kakao-ios-sdk" */,
 				7778F63A93DF226A80ED400E /* XCLocalSwiftPackageReference "AccenturyCore" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -787,10 +797,36 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		CAA935154D11E7DF71BC105F /* XCRemoteSwiftPackageReference "kakao-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/kakao/kakao-ios-sdk";
+			requirement = {
+				kind = exactVersion;
+				version = 2.29.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		40EFC6BFA1E64779B7362D13 /* AccenturyCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = AccenturyCore;
+		};
+		70564E535D389FE4BC65ABC0 /* KakaoSDKTemplate */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CAA935154D11E7DF71BC105F /* XCRemoteSwiftPackageReference "kakao-ios-sdk" */;
+			productName = KakaoSDKTemplate;
+		};
+		F5B3D07508A812FD7E26A278 /* KakaoSDKShare */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CAA935154D11E7DF71BC105F /* XCRemoteSwiftPackageReference "kakao-ios-sdk" */;
+			productName = KakaoSDKShare;
+		};
+		FF1258F7B626CBA21E416381 /* KakaoSDKCommon */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CAA935154D11E7DF71BC105F /* XCRemoteSwiftPackageReference "kakao-ios-sdk" */;
+			productName = KakaoSDKCommon;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
