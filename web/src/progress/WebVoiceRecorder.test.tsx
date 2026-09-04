@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createFakeCapture, sineChunk, type FakeCapture } from '../audio/testing/fakeCapture'
 import type { Recording } from '../audio'
 import { UploadError, type UploadAccepted } from '../audio/uploadRecording'
@@ -49,6 +49,7 @@ function renderRecorder(upload: UploadMock = okUpload(), item: VoiceItem = voice
   render(
     <WebVoiceRecorder
       item={item}
+      itemNumber={3}
       upload={upload}
       onUploaded={onUploaded}
       capture={capture.factory}
@@ -58,6 +59,21 @@ function renderRecorder(upload: UploadMock = okUpload(), item: VoiceItem = voice
 }
 
 const click = (name: string) => fireEvent.click(screen.getByRole('button', { name }))
+
+/** GA4 태그 자리의 대역 (KAN-33). 도착한 이벤트를 순서대로 모은다 */
+function stubGtag(): Record<string, unknown>[] {
+  const events: Record<string, unknown>[] = []
+  window.gtag = (...args: unknown[]) => {
+    if (args[0] !== 'event') return
+    events.push({ event: args[1] as string, ...(args[2] as Record<string, unknown>) })
+  }
+  return events
+}
+
+afterEach(() => {
+  delete window.gtag
+})
+
 
 /** [녹음] → 지정한 길이만큼 발화 → [정지]. 검토 단계에서 돌아온다 */
 async function recordFor(capture: FakeCapture, durationMs: number) {
@@ -317,6 +333,7 @@ describe('캡처 실패', () => {
     render(
       <WebVoiceRecorder
         item={voiceItem()}
+        itemNumber={3}
         upload={okUpload()}
         onUploaded={onUploaded}
         capture={async () => {
@@ -432,6 +449,7 @@ describe('억양 곡선 (KAN-56 Stage 5)', () => {
     const { container } = render(
       <WebVoiceRecorder
         item={voiceItem()}
+        itemNumber={3}
         upload={okUpload()}
         onUploaded={vi.fn()}
         capture={createFakeCapture().factory}
@@ -441,5 +459,28 @@ describe('억양 곡선 (KAN-56 Stage 5)', () => {
     expect(container.querySelector('.item-screen__body .curve-card')).not.toBeNull()
     expect(container.querySelector('.item-screen__footer .curve-card')).toBeNull()
     expect(container.querySelector('.item-screen__footer .btn')).not.toBeNull()
+  })
+})
+
+describe('재녹음 계측 (KAN-33)', () => {
+  it('검토 화면의 [재녹음]은 사용자 사유로 센다 — 서버 시도는 만들어지지 않았다', async () => {
+    const events = stubGtag()
+    const { capture } = renderRecorder()
+    await recordFor(capture, 2_000)
+
+    click('재녹음')
+
+    expect(events).toEqual([{ event: 'recording_retake', item_seq: 3, reason: 'USER' }])
+  })
+
+  it('품질 게이트에 막혀 다시 읽으면 품질 사유로 센다 (KAN-28 임계치 튜닝 근거)', async () => {
+    const events = stubGtag()
+    const { capture } = renderRecorder()
+    // 1초 미만 = TOO_SHORT. [다음]이 없고 [재녹음]만 남는 자리다
+    await recordFor(capture, 300)
+
+    click('재녹음')
+
+    expect(events).toEqual([{ event: 'recording_retake', item_seq: 3, reason: 'QUALITY' }])
   })
 })

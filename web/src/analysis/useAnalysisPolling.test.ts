@@ -77,7 +77,26 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers()
+  delete window.gtag
 })
+
+/**
+ * GA4 태그 자리의 대역 (KAN-33). 이 훅이 보내는 운영 지표를 도착 순서대로 모은다 —
+ * 브리지가 없는 jsdom은 웹 단독 실행으로 판정되므로 이벤트가 이 경로로 온다 (`track.ts`).
+ */
+function stubGtag(): Record<string, unknown>[] {
+  const events: Record<string, unknown>[] = []
+  window.gtag = (...args: unknown[]) => {
+    if (args[0] !== 'event') return
+    events.push({ event: args[1] as string, ...(args[2] as Record<string, unknown>) })
+  }
+  return events
+}
+
+/** 이름으로 고른다 — 문항 종결 이벤트가 사이사이 섞여 들어오므로 인덱스로 짚지 않는다 */
+function eventsNamed(events: Record<string, unknown>[], name: string): Record<string, unknown>[] {
+  return events.filter((event) => event.event === name)
+}
 
 describe('첫 회차', () => {
   it('마운트 즉시 두 엔드포인트를 한 번씩 부른다 — 첫 간격을 기다리면 빈 화면이 생긴다', async () => {
@@ -523,5 +542,132 @@ describe('언마운트', () => {
     })
 
     expect(fetchImpl.mock.calls.length).toBe(after)
+  })
+})
+
+describe('운영 지표 계측 (KAN-33)', () => {
+  it('결과가 확정되면 대기 시간과 폴링 횟수를 보낸다 (KAN-24 트리거의 계기판)', async () => {
+    const events = stubGtag()
+    let clock = 1_000
+    const fetchImpl = fetchFor({ complete: () => jsonResponse(200, { status: 'READY' }) })
+    renderHook(() => useAnalysisPolling({ ...options(fetchImpl), now: () => clock }))
+
+    // 첫 회차가 도는 동안 4.2초가 흘렀다고 본다 — 시계는 주입값이라 타이머와 별개로 움직인다
+    clock += 4_200
+    await act(async () => {})
+
+    expect(eventsNamed(events, 'analysis_wait_duration')).toEqual([
+      // 조회는 한 번뿐이었고 그때 v2가 아직 PROCESSING이었다
+      { event: 'analysis_wait_duration', duration_ms: 4_200, pending_item_count: 1 },
+    ])
+    expect(eventsNamed(events, 'analysis_poll_count')).toEqual([
+      { event: 'analysis_poll_count', count: 1, total_elapsed_ms: 4_200 },
+    ])
+  })
+
+  it('60초 상한에 걸리면 중단을 보낸다 — GPU 밀림의 조기 신호다', async () => {
+    const events = stubGtag()
+    const fetchImpl = fetchFor({})
+    const { result } = renderHook(() => useAnalysisPolling(options(fetchImpl)))
+    await act(async () => {})
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(POLL_BUDGET_MS + 10_000)
+    })
+
+    expect(result.current.status).toEqual({ kind: 'EXHAUSTED' })
+    const abandoned = eventsNamed(events, 'poll_abandoned')
+    expect(abandoned.length).toBe(1)
+    // 아직 끝나지 않은 문항 수가 함께 간다 — 무엇을 기다리다 접었는지가 신호다
+    expect(abandoned[0].pending_item_count).toBe(1)
+    /*
+     * 예산을 다 채우고 멈추는 것이 아니라, **예산을 넘길 다음 회차를 예약하지 않고** 멈춘다
+     * (`planNextPoll`). 그래서 이 값은 60초보다 조금 작다 — 대시보드에서 "60초에서 잘렸다"를
+     * 찾을 때 정확히 60000을 기대하면 한 건도 잡히지 않는다.
+     */
+    expect(abandoned[0].elapsed_ms).toBeLessThanOrEqual(POLL_BUDGET_MS)
+    expect(abandoned[0].elapsed_ms).toBeGreaterThan(POLL_BUDGET_MS - 10_000)
+    // 완주와 중단 어느 쪽이든 회차는 함께 나간다 (정상 범위는 3~6회)
+    expect(eventsNamed(events, 'analysis_poll_count').length).toBe(1)
+    expect(eventsNamed(events, 'analysis_wait_duration')).toEqual([])
+  })
+
+  it('중단 뒤 [다시 시도]로 결과가 나와도 종결 이벤트는 한 벌뿐이다', async () => {
+    const events = stubGtag()
+    let ready = false
+    const fetchImpl = fetchFor({
+      complete: () => jsonResponse(200, ready ? { status: 'READY' } : { status: 'PROCESSING' }),
+    })
+    const { result } = renderHook(() => useAnalysisPolling(options(fetchImpl)))
+    await act(async () => {})
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(POLL_BUDGET_MS + 10_000)
+    })
+    expect(eventsNamed(events, 'poll_abandoned').length).toBe(1)
+
+    ready = true
+    await act(async () => {
+      result.current.restart()
+    })
+    await act(async () => {})
+
+    /*
+     * 재시도까지의 시간은 사용자가 언제 눌렀는지에 달린 값이라 평균 대기 시간에 섞지 않는다.
+     * 그 세션이 남기는 사실은 이미 보낸 `poll_abandoned`다.
+     */
+    expect(result.current.status).toEqual({ kind: 'READY' })
+    expect(eventsNamed(events, 'analysis_wait_duration')).toEqual([])
+    expect(eventsNamed(events, 'analysis_poll_count').length).toBe(1)
+  })
+
+  it('문항 종결은 조합당 한 번이다 — 같은 상태가 회차마다 다시 세어지지 않는다', async () => {
+    const events = stubGtag()
+    const fetchImpl = fetchFor({})
+    renderHook(() => useAnalysisPolling(options(fetchImpl)))
+    await act(async () => {})
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000)
+    })
+
+    // v1은 COMPLETED로 계속 돌아오지만 한 번만 센다. v2는 PROCESSING이라 아직 종결이 아니다
+    expect(eventsNamed(events, 'analysis_item_terminal')).toEqual([
+      { event: 'analysis_item_terminal', status: 'COMPLETED', error_code: null },
+    ])
+  })
+
+  it('실패 문항은 사유 코드와 함께, 복구되면 다시 한 번 센다', async () => {
+    const events = stubGtag()
+    let recovered = false
+    const fetchImpl = fetchFor({
+      analyses: () =>
+        jsonResponse(200, {
+          pollAfterMs: 800,
+          items: [
+            recovered
+              ? { itemId: 'v1', status: 'COMPLETED', quality: 'OK' }
+              : {
+                  itemId: 'v1',
+                  status: 'RETRYABLE_FAILED',
+                  error: { code: 'AUDIO_TOO_QUIET', retryable: true },
+                },
+          ],
+        }),
+    })
+    renderHook(() => useAnalysisPolling(options(fetchImpl)))
+    await act(async () => {})
+
+    recovered = true
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000)
+    })
+
+    /*
+     * 같은 문항이 두 번 종결한다. 둘은 다른 사실이라("어떤 품질 오류가 났나"와 "그래서
+     * 복구됐나") 문항 id로만 막으면 뒤엣것이 통째로 사라진다.
+     */
+    expect(eventsNamed(events, 'analysis_item_terminal')).toEqual([
+      { event: 'analysis_item_terminal', status: 'RETRYABLE_FAILED', error_code: 'AUDIO_TOO_QUIET' },
+      { event: 'analysis_item_terminal', status: 'COMPLETED', error_code: null },
+    ])
   })
 })

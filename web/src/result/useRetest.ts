@@ -27,6 +27,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
+import { track } from '../analytics/track'
 import { installRetestFailedReceiver, startRetest } from '../bridge/bridge'
 
 /** 남은 대기 시간을 다시 세는 간격. 화면에 초 단위로만 적으므로 1초면 충분하다 */
@@ -121,6 +122,16 @@ export function useRetest(fallback: () => void): RetestControl {
     // 버튼의 `disabled`가 1차 방어지만 상태 쪽에도 같은 문을 둔다 — 더블탭 방지가 클라이언트
     // 책임(KAN-107)이라, 잠금이 한 겹뿐이면 그 한 겹을 우회하는 순간 세션이 고아가 된다.
     if (disabled) return
+
+    /*
+     * 재응시 계측 (KAN-33). 잠금 게이트를 통과한 탭만 센다 — 잠긴 버튼을 두드린 것은 새
+     * 응시가 아니고, 그것까지 세면 재응시율이 연타 습관을 따라간다.
+     *
+     * 브리지 갈래보다 **먼저** 센다. 성공하면 네이티브가 이 페이지를 통째로 갈아치우므로
+     * (`startRetest` 주석) 호출 뒤에 셀 자리가 남아 있지 않다. 폴백(브라우저 단독·구버전 앱)도
+     * 같은 사건이라 함께 센다 — 사용자가 다시 응시하기 시작한 것은 어느 경로에서나 같다.
+     */
+    track({ name: 'retest_started' })
 
     if (!startRetest()) {
       fallback()

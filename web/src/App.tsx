@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { overallBucket } from './analytics/events'
 import { track } from './analytics/track'
 import type { CaptureFactory } from './audio'
 import { detectStorePlatform } from './audio/storeLink'
@@ -405,6 +406,23 @@ function ResultRoute({
         if (standalone) track({ name: 'share_clicked', campaign: trackedCampaign(), channel })
       }}
       retest={retest}
+      /*
+       * 결과 도착 계측 (KAN-33). 두 이벤트가 같은 순간에 나가지만 세는 것이 다르다 —
+       * `result_viewed`는 퍼널의 마지막 지점(공유 링크를 탄 사람이 여기까지 왔다)이고,
+       * `tier_assigned`는 등급 분포 편향(KAN-21)을 보는 계기판이다. 하나로 합치면 유입
+       * 코드가 없는 앱 응시가 등급 집계에서 빠지거나, 등급이 유입 퍼널의 축이 된다.
+       *
+       * 점수 원값은 싣지 않는다 — `overallBucket`이 10점 단위로 뭉갠 값만 나간다 (FR-AN-09).
+       */
+      onResultLoaded={(result) => {
+        track({ name: 'result_viewed', campaign: trackedCampaign() })
+        track({
+          name: 'tier_assigned',
+          tier_code: result.tier.code,
+          score_version: result.scoreVersion,
+          overall_bucket: overallBucket(result.scores.overall),
+        })
+      }}
       storePlatform={storePlatform}
       /*
        * 다운로드 탭 계측 (퍼널 4번째 지점, KAN-31 3단계). 링크의 이동은 이 콜백과 무관하게

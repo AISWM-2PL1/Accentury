@@ -37,8 +37,20 @@ function deliverFailure(failure: Partial<RetestFailure> = {}) {
 afterEach(() => {
   delete window.AccenturyBridge
   delete window.AccenturyWeb
+  delete window.gtag
   vi.useRealTimers()
 })
+
+/** GA4 태그 자리의 대역 (KAN-33). 도착한 이벤트를 순서대로 모은다 */
+function stubGtag(): Record<string, unknown>[] {
+  const events: Record<string, unknown>[] = []
+  window.gtag = (...args: unknown[]) => {
+    if (args[0] !== 'event') return
+    events.push({ event: args[1] as string, ...(args[2] as Record<string, unknown>) })
+  }
+  return events
+}
+
 
 describe('브리지 분기', () => {
   it('브리지가 있으면 네이티브 재응시를 부르고 폴백은 타지 않는다', () => {
@@ -262,5 +274,42 @@ describe('수신자 설치·해제 (§8)', () => {
     unmount()
     expect(window.AccenturyWeb?.onItemResult).toBe(onItemResult)
     expect(window.AccenturyWeb?.onRetestFailed).toBeUndefined()
+  })
+})
+
+describe('재응시 계측 (KAN-33)', () => {
+  it('앱 안에서는 브리지를 타고 네이티브로 간다 — 웹 스트림으로 새지 않는다', () => {
+    const events = stubGtag()
+    const logEvent = vi.fn()
+    stubBridge()
+    window.AccenturyBridge!.logEvent = logEvent
+    const { result } = renderHook(() => useRetest(vi.fn()))
+
+    act(() => result.current.onRetest())
+
+    expect(logEvent).toHaveBeenCalledWith('retest_started', '{}')
+    expect(events).toEqual([])
+  })
+
+  it('폴백(브라우저 단독·구버전 앱)도 같은 사건이라 함께 센다', () => {
+    const events = stubGtag()
+    const fallback = vi.fn()
+    const { result } = renderHook(() => useRetest(fallback))
+
+    act(() => result.current.onRetest())
+
+    expect(fallback).toHaveBeenCalledTimes(1)
+    expect(events).toEqual([{ event: 'retest_started' }])
+  })
+
+  it('잠긴 버튼을 두드린 것은 새 응시가 아니다 — 세지 않는다', () => {
+    stubBridge()
+    const { result } = renderHook(() => useRetest(vi.fn()))
+    act(() => result.current.onRetest())
+    const events = stubGtag()
+
+    act(() => result.current.onRetest())
+
+    expect(events).toEqual([])
   })
 })

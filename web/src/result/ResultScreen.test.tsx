@@ -529,3 +529,52 @@ describe('[앱 다운로드] CTA — KAN-31 2단계', () => {
     expect(download).toHaveAttribute('href', expect.stringContaining('play.google.com'))
   })
 })
+
+describe('결과 도착 통지 (KAN-33 계측 자리)', () => {
+  it('성공한 첫 조회에 한 번 부른다 — 결과를 통째로 넘긴다', async () => {
+    const onResultLoaded = vi.fn()
+    renderScreen({ onResultLoaded })
+
+    await screen.findByText('명예주민')
+
+    expect(onResultLoaded).toHaveBeenCalledTimes(1)
+    // 등급 계측이 읽을 값이 전부 들어 있다 (등급 코드·점수 버전·종합 점수)
+    expect(onResultLoaded.mock.calls[0][0]).toMatchObject({
+      tier: { code: 'HONORARY' },
+      scoreVersion: 'sv-0.3',
+      scores: { overall: 72 },
+    })
+  })
+
+  it('오류 뒤 [다시 시도]로 결과가 와도 한 번뿐이다', async () => {
+    const onResultLoaded = vi.fn()
+    let failed = false
+    const fetchImpl: FetchLike = async () => {
+      if (failed) return { ok: true, status: 200, json: async () => readyBody() } as Response
+      failed = true
+      return {
+        ok: false,
+        status: 500,
+        json: async () => envelope('INTERNAL', '문제가 생겼어요', true),
+      } as Response
+    }
+    renderScreen({ onResultLoaded, fetchImpl })
+
+    fireEvent.click(await screen.findByRole('button', { name: '다시 시도' }))
+    await screen.findByText('명예주민')
+
+    expect(onResultLoaded).toHaveBeenCalledTimes(1)
+  })
+
+  it('조회가 실패하면 부르지 않는다 — 보지 못한 결과를 봤다고 셀 수 없다', async () => {
+    const onResultLoaded = vi.fn()
+    renderScreen({
+      onResultLoaded,
+      fetchImpl: jsonFetch(500, envelope('INTERNAL', '문제가 생겼어요', true)),
+    })
+
+    await screen.findByRole('button', { name: '다시 시도' })
+
+    expect(onResultLoaded).not.toHaveBeenCalled()
+  })
+})

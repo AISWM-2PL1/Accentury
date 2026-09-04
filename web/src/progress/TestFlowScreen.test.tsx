@@ -91,6 +91,16 @@ function okFetch(): ReturnType<typeof vi.fn<FetchLike>> {
   })
 }
 
+/** GA4 태그 자리의 대역 (KAN-33). 도착한 이벤트를 순서대로 모은다 */
+function stubGtag(): Record<string, unknown>[] {
+  const events: Record<string, unknown>[] = []
+  window.gtag = (...args: unknown[]) => {
+    if (args[0] !== 'event') return
+    events.push({ event: args[1] as string, ...(args[2] as Record<string, unknown>) })
+  }
+  return events
+}
+
 /** 대역이 실제로 받은 URL들. 요청 "종류"를 세는 단언에 쓴다 */
 function urls(fetchImpl: ReturnType<typeof vi.fn<FetchLike>>): string[] {
   return fetchImpl.mock.calls.map(([input]) => String(input))
@@ -879,5 +889,67 @@ describe('분석 대기 결선 (KAN-14)', () => {
 
     const after = fetchImpl.mock.calls.filter(([url]) => String(url).endsWith('/analyses')).length
     expect(after).toBe(before + 1)
+  })
+})
+
+describe('문항 퍼널 계측 (KAN-33)', () => {
+  afterEach(() => {
+    delete window.gtag
+  })
+
+  it('문항이 뜰 때와 제출될 때를 순번·유형과 함께 센다', async () => {
+    const events = stubGtag()
+    const { capture } = renderScreen(okFetch())
+    await findRecordButton()
+
+    // 첫 문항은 1번 음성이다 (정의가 홀수 자리에 음성을 둔다)
+    expect(events).toEqual([{ event: 'item_shown', item_seq: 1, item_type: 'VOICE' }])
+
+    await recordAndSend(capture)
+
+    /*
+     * 제출과 다음 노출이 잇따라 나간다. 둘을 다 세야 "문항을 보고 그만둔 사람"과 "제출까지
+     * 한 사람"이 갈린다 — 노출만 세면 이탈 지점이 문항 단위로 보이지 않는다.
+     */
+    expect(events).toEqual([
+      { event: 'item_shown', item_seq: 1, item_type: 'VOICE' },
+      { event: 'item_submitted', item_seq: 1, item_type: 'VOICE' },
+      { event: 'item_shown', item_seq: 2, item_type: 'VOCABULARY' },
+    ])
+
+    answerVocabulary()
+    await act(async () => {})
+
+    expect(events).toContainEqual({ event: 'item_submitted', item_seq: 2, item_type: 'VOCABULARY' })
+  })
+
+  it('재녹음 결과가 다시 들어와도 제출은 한 번만 센다', async () => {
+    const events = stubGtag()
+    stubBridge()
+    // 앱 안이라 브리지로 나간다 — 계측까지 아는 브리지여야 이벤트가 gtag 대역에 잡히지 않는다
+    window.AccenturyBridge!.logEvent = (name: string, paramsJson: string) => {
+      events.push({ event: name, ...(JSON.parse(paramsJson) as Record<string, unknown>) })
+    }
+    try {
+      renderScreen(okFetch())
+      await findRecordingWait()
+
+      deliverResult('item-1')
+      await act(async () => {})
+      // 같은 문항의 결과가 한 번 더 온다 = 대기 화면에서 재녹음한 경우다
+      deliverResult('item-1')
+      await act(async () => {})
+
+      /*
+       * 상태 머신이 두 번째를 거부하므로 제출도 한 번이다. 거부까지 세면 문항 제출 수가
+       * 재녹음 횟수만큼 부풀어 오르고, 재녹음은 `recording_retake`가 따로 센다.
+       */
+      expect(events.filter((event) => event.event === 'item_submitted')).toEqual([
+        { event: 'item_submitted', item_seq: 1, item_type: 'VOICE' },
+      ])
+    } finally {
+      delete window.AccenturyBridge
+      delete window.AccenturyWeb
+    }
   })
 })

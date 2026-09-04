@@ -24,6 +24,8 @@
  */
 
 import { Fragment, useEffect, useRef } from 'react'
+import type { RetakeReason } from '../analytics/events'
+import { track } from '../analytics/track'
 import { Button, StatusBlock } from '../ui'
 import { CheckSmallIcon } from '../ui/icons'
 import { TextHero } from '../ui/TextHero'
@@ -339,7 +341,22 @@ export function AnalysisWaitingScreen({
                   : ''}
               </span>
               {onRetake !== undefined && analysis !== null && RETAKEABLE.includes(analysis.status) && (
-                <Button variant="secondary" onClick={() => onRetake(item.itemId)}>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    /*
+                     * 사유를 아는 곳이 여기뿐이다 (KAN-33). 재녹음을 실제로 여는 것은 부모의
+                     * `onRetake`인데, 그쪽은 itemId만 받으므로 이 문항이 왜 목록에 올라왔는지를
+                     * 모른다 — 사유를 부모까지 끌고 가면 계약이 계측 때문에 넓어진다.
+                     */
+                    track({
+                      name: 'recording_retake',
+                      item_seq: itemNumber,
+                      reason: retakeReason(analysis.status),
+                    })
+                    onRetake(item.itemId)
+                  }}
+                >
                   다시 녹음
                 </Button>
               )}
@@ -354,4 +371,20 @@ export function AnalysisWaitingScreen({
 /** 재녹음 대상 판정을 화면 바깥(결선·테스트)에서도 같은 규칙으로 쓰기 위해 열어 둔다 */
 export function isRetakeable(item: AnalysisItem): boolean {
   return RETAKEABLE.includes(item.status)
+}
+
+/**
+ * 재녹음의 사유 (KAN-33 `recording_retake`). 셋을 나눠야 GPU 비용·품질 임계치 중 무엇을
+ * 손봐야 하는지가 갈린다 (KAN-28).
+ *
+ * - `RETRYABLE_FAILED` → `QUALITY`: 서버가 품질을 이유로 되돌려보냈다. 임계치 튜닝 대상이다
+ * - `FAILED` → `FAILED`: 분석 자체가 실패했다. 재녹음이 유일한 복구 경로라 버튼은 주지만
+ *   (`RETAKEABLE` 주석) 원인은 품질이 아니다
+ * - `NOT_SUBMITTED` → `USER`: 실패한 적이 없다. 아직 보내지 않은 문항을 이제 녹음하는 것이라
+ *   서버가 되돌려보낸 것이 아니다 — 사유 축에서는 사용자가 시작한 녹음과 같은 자리다
+ */
+export function retakeReason(status: AnalysisItemStatus): RetakeReason {
+  if (status === 'RETRYABLE_FAILED') return 'QUALITY'
+  if (status === 'FAILED') return 'FAILED'
+  return 'USER'
 }
