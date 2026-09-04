@@ -328,6 +328,15 @@ gh variable set CLOUDFRONT_DISTRIBUTION_ID -e "$env" --body "$(terraform output 
 gh variable set APP_DOMAIN                 -e "$env" --body "$(terraform output -raw domain)"
 ```
 
+계측 변수 `GA4_MEASUREMENT_ID`(KAN-33)는 apply 출력이 아니라 Firebase 콘솔의 웹
+데이터 스트림에서 나온다 (`G-`로 시작). environment마다 **다른 스트림**을 둔다 -
+같은 ID를 쓰면 staging 확인 트래픽이 prod 집계에 섞인다. 비워 두면 그 환경의
+번들은 계측 없이 빌드되고 배포는 그대로 된다.
+
+```
+gh variable set GA4_MEASUREMENT_ID -e prod --body G-XXXXXXXXXX
+```
+
 환경을 철거해 둔 동안에는 변수 `DEPLOY_PAUSED=true`를 추가로 둔다 ("teardown
 절차"). 있으면 워크플로가 배포 단계를 건너뛰고, 재구축 뒤 지우면 다시 배포한다.
 

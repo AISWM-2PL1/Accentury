@@ -6,6 +6,7 @@ import {
   installRetestFailedReceiver,
   isBridgeCompatible,
   isStandaloneWeb,
+  logAnalyticsEvent,
   REQUIRED_BRIDGE_VERSION,
   requestMicPermission,
   shareResult,
@@ -334,5 +335,37 @@ describe('getSessionToken — 토큰 읽기 (KAN-13)', () => {
     window.AccenturyBridge = fakeBridge({ getSessionToken: () => '' })
 
     expect(getSessionToken()).toBeNull()
+  })
+})
+
+describe('logAnalyticsEvent — 계측 이벤트 전달 (KAN-33)', () => {
+  it('이벤트명과 파라미터 JSON을 네이티브에 넘기고 true를 돌려준다', () => {
+    const logEvent = vi.fn()
+    window.AccenturyBridge = fakeBridge({ logEvent })
+
+    expect(logAnalyticsEvent('tier_assigned', { tier_code: 'NATIVE', overall_bucket: 90 })).toBe(true)
+    expect(logEvent).toHaveBeenCalledWith(
+      'tier_assigned',
+      JSON.stringify({ tier_code: 'NATIVE', overall_bucket: 90 }),
+    )
+  })
+
+  it('파라미터가 없는 이벤트는 빈 객체 JSON으로 간다', () => {
+    const logEvent = vi.fn()
+    window.AccenturyBridge = fakeBridge({ logEvent })
+
+    logAnalyticsEvent('retest_started', {})
+
+    expect(logEvent).toHaveBeenCalledWith('retest_started', '{}')
+  })
+
+  it('브리지가 없으면(브라우저 단독) false — 호출자가 gtag 경로로 내려간다', () => {
+    expect(logAnalyticsEvent('referral_opened', { campaign: null })).toBe(false)
+  })
+
+  it('계측을 모르는 구버전 앱에서도 false다 (메서드 추가는 계약 버전을 올리지 않는다)', () => {
+    window.AccenturyBridge = fakeBridge() // logEvent 없음
+
+    expect(logAnalyticsEvent('referral_opened', { campaign: null })).toBe(false)
   })
 })

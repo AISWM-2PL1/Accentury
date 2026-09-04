@@ -133,7 +133,8 @@ afterEach(() => {
   setSearch('')
   // 웹 단독 세션은 실물 sessionStorage에 남는다 — 다음 테스트로 토큰이 새지 않게 지운다
   clearWebSession()
-  // 계측 큐도 실물 전역이다 (KAN-31 3단계). 남겨 두면 다음 테스트가 앞 테스트의 이벤트를 센다
+  // 계측 전역도 실물이다 (KAN-33). 남겨 두면 다음 테스트가 앞 테스트의 이벤트를 센다
+  delete window.gtag
   delete window.dataLayer
   delete (navigator as { mediaDevices?: unknown }).mediaDevices
   // 진행 화면 분기 테스트가 fetch·localStorage를 스텁한다. 실패로 중단돼도 다음 테스트에
@@ -1080,13 +1081,32 @@ describe('App — 웹 단독 결과 화면 (KAN-31 2단계)', () => {
 
 describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
   /**
-   * GA4 태그가 설치된 상태를 흉내 낸다. 큐를 만드는 것은 태그 스니펫이고(KAN-33) 웹 코드가
-   * 아니므로, 테스트가 그 자리를 대신한다 — 큐가 없는 지금 빌드의 동작은 `track.test.ts` 몫이다.
+   * GA4 태그가 설치된 상태를 흉내 낸다 — 웹 단독 실행의 전송 경로다 (KAN-33).
+   *
+   * 실물에서 `window.gtag`를 심는 것은 `analytics/ga4.ts`이고 그 동작은 `ga4.test.ts`가 본다.
+   * 여기서 확인하는 것은 **화면이 어느 지점에서 무엇을 세는가**라, 태그 자리를 대역으로 두고
+   * 도착한 이벤트만 모은다.
    */
-  function stubDataLayer(): Record<string, unknown>[] {
-    const queue: Record<string, unknown>[] = []
-    window.dataLayer = queue
-    return queue
+  function stubGtag(): Record<string, unknown>[] {
+    const events: Record<string, unknown>[] = []
+    window.gtag = (...args: unknown[]) => {
+      if (args[0] !== 'event') return
+      events.push({ event: args[1] as string, ...(args[2] as Record<string, unknown>) })
+    }
+    return events
+  }
+
+  /**
+   * 계측까지 아는 브리지 대역 = 앱 안 실행. 도착한 이벤트를 gtag 대역과 같은 모양으로 모아
+   * 두 경로를 나란히 비교할 수 있게 한다.
+   */
+  function stubBridgeWithEvents(): Record<string, unknown>[] {
+    const events: Record<string, unknown>[] = []
+    stubBridge()
+    window.AccenturyBridge!.logEvent = (name: string, paramsJson: string) => {
+      events.push({ event: name, ...(JSON.parse(paramsJson) as Record<string, unknown>) })
+    }
+    return events
   }
 
   /** §3.1 201 응답 */
@@ -1135,7 +1155,7 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
 
   it('공유 링크로 인트로가 뜨면 유입을 센다 — 다시 그려도 한 번뿐이다', () => {
     setSearch('?c=kko_share')
-    const queue = stubDataLayer()
+    const queue = stubGtag()
 
     const { rerender } = render(<App />)
     // 리렌더마다 세면 같은 화면 한 번 노출이 여러 건으로 부풀어 오른다 (KAN-33 AC)
@@ -1148,7 +1168,7 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
     setSearch('?c=kko_share')
     stubMicrophone()
     stubSessionFetch()
-    const queue = stubDataLayer()
+    const queue = stubGtag()
 
     const capture = createFakeCapture()
 
@@ -1180,7 +1200,7 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
       expiresAt: '2026-08-26T03:30:00Z',
     })
     stubResultFetch()
-    const queue = stubDataLayer()
+    const queue = stubGtag()
 
     render(<App />)
     const download = await screen.findByRole('link', { name: '앱 다운로드' })
@@ -1204,7 +1224,7 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
       expiresAt: '2026-08-26T03:30:00Z',
     })
     stubResultFetch()
-    const queue = stubDataLayer()
+    const queue = stubGtag()
     // 브리지가 없는 웹 단독 실행의 정식 통로다 — jsdom에는 없어서 심어 준다
     Object.defineProperty(navigator, 'share', {
       configurable: true,
@@ -1227,28 +1247,47 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
 
   it('앱 안 공유 탭은 웹이 세지 않는다 — 그 한 건은 네이티브가 센다 (AppEvents)', async () => {
     setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0&c=kko_share&screen=result&sessionId=s_web`)
-    stubBridge()
+    const native = stubBridgeWithEvents()
     const bridgeShare = vi.fn()
     window.AccenturyBridge!.shareResult = bridgeShare
     stubResultFetch()
-    const queue = stubDataLayer()
+    const queue = stubGtag()
 
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: '친구에게 공유하기' }))
 
     // 공유 자체는 브리지로 정상적으로 나간다 — 세지 않는 것과 보내지 않는 것은 다른 이야기다
     expect(bridgeShare).toHaveBeenCalledTimes(1)
+    // 어느 경로로도 세지 않는다. 앱의 그 한 건은 네이티브가 `share_tapped`로 센다
+    expect(native).toEqual([])
     expect(queue).toEqual([])
   })
 
-  it('앱 안 실행에서는 웹이 아무것도 세지 않는다 — 앱 이벤트는 네이티브 Firebase 몫이다 (KAN-33)', () => {
+  it('앱 안 실행의 유입은 브리지로 나간다 — GA4 웹 스트림으로는 가지 않는다 (KAN-33)', () => {
     setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0&c=kko_share`)
-    stubBridge()
-    const queue = stubDataLayer()
+    const native = stubBridgeWithEvents()
+    const queue = stubGtag()
 
     render(<App />)
 
-    // 같은 사건이 웹·네이티브 두 경로로 두 번 세어지면 퍼널의 분모가 실제보다 커진다
+    expect(screen.getByRole('button', { name: '시작하기' })).toBeInTheDocument()
+    // 세는 사건은 하나이고 경로만 갈린다. 둘 다로 가면 퍼널의 분모가 실제보다 커진다
+    expect(native).toEqual([{ event: 'referral_opened', campaign: 'kko_share' }])
+    expect(queue).toEqual([])
+  })
+
+  it('계측을 모르는 구버전 앱에서는 이벤트가 조용히 사라진다 — 응시는 그대로 된다', () => {
+    setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0&c=kko_share`)
+    stubBridge() // logEvent 없음
+    const queue = stubGtag()
+
+    render(<App />)
+
+    /*
+     * 앱 안에서는 GA4 태그를 설치하지 않으므로(`main.tsx`) 실물에는 gtag 자체가 없다. 태그
+     * 대역을 굳이 심어 두고 확인하는 것은 [track]의 판정이 그 사실에 기대지 않는다는 점이다 —
+     * 구버전 앱의 이벤트를 웹 스트림으로 흘려보내면 앱 사용자가 웹 트래픽으로 세어진다.
+     */
     expect(screen.getByRole('button', { name: '시작하기' })).toBeInTheDocument()
     expect(queue).toEqual([])
   })
