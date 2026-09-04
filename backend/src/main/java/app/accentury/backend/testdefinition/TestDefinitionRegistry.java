@@ -58,10 +58,11 @@ public class TestDefinitionRegistry {
 
     /**
      * 문항 구성 확정(2026-07-27): 세션이 응시하는 것은 음성 5 + 어휘 5 = 10문항이다. 발행본의
-     * 음성은 풀이라 5개 이상이면 되고(KAN-182), 5개는 세트 하나의 크기이자 풀의 최소 크기다.
+     * 음성과 어휘는 둘 다 풀이라 각각 5개 이상이면 되고(KAN-182 · 어휘 풀은 2026-09-04 확장),
+     * 5는 세트 하나가 각 풀에서 가져오는 수이자 풀의 최소 크기다 ({@link VoiceSets#SET_SIZE}).
      */
     static final int VOICE_SET_SIZE = VoiceSets.SET_SIZE;
-    static final int VOCABULARY_COUNT = 5;
+    static final int VOCABULARY_SET_SIZE = VoiceSets.SET_SIZE;
 
     /** 어휘 문항은 4지선다다 (SRS 확정, KAN-13). */
     static final int CHOICE_COUNT = 4;
@@ -82,7 +83,7 @@ public class TestDefinitionRegistry {
     /**
      * 발행본 하나 - 풀 정의와 거기서 유도한 세트 전부.
      *
-     * @param definition 정답 포함 풀 원본 (seq 오름차순, VOICE N + VOCABULARY 5) - 서버 내부용.
+     * @param definition 정답 포함 풀 원본 (seq 오름차순, VOICE N + VOCABULARY M) - 서버 내부용.
      *                   버전 단위 속성(testVersion, scoreVersion, dialect)을 읽는 자리다. 세션이
      *                   보는 문항 목록은 아니다 - 그것은 {@link #voiceSet(int)}의 세트 정의다.
      * @param voiceSets  세트 번호 순(1..세트 수)의 세트 - 공개 응답과 ETag를 미리 만들어 둔다.
@@ -91,8 +92,17 @@ public class TestDefinitionRegistry {
 
         /** 음성 문장 풀 크기 N */
         public int voicePoolSize() {
+            return poolSize(TestDefinition.ItemType.VOICE);
+        }
+
+        /** 어휘 풀 크기 M (KAN-182 · 2026-09-04 어휘 풀 확장). 관리자 목록에는 싣지 않는다. */
+        public int vocabularyPoolSize() {
+            return poolSize(TestDefinition.ItemType.VOCABULARY);
+        }
+
+        private int poolSize(TestDefinition.ItemType type) {
             return (int) definition.items().stream()
-                    .filter(item -> item.type() == TestDefinition.ItemType.VOICE)
+                    .filter(item -> item.type() == type)
                     .count();
         }
 
@@ -171,10 +181,11 @@ public class TestDefinitionRegistry {
         PublishedDefinition activeDefinition = published.get(activeVersion);
         require(activeDefinition != null, "활성 버전(" + activeVersion + ")의 정의가 발행되어 있지 않다");
 
-        log.info("테스트 정의 {}종 발행 완료: {} (활성: {}, 점수 버전: {}, 음성 풀 {}문항 = 세트 {}개)",
+        log.info("테스트 정의 {}종 발행 완료: {} (활성: {}, 점수 버전: {}, 음성 풀 {}문항 · 어휘 풀 {}문항 = 세트 {}개)",
                 published.size(), published.keySet(), activeVersion,
                 activeDefinition.definition().scoreVersion(),
-                activeDefinition.voicePoolSize(), activeDefinition.voiceSetCount());
+                activeDefinition.voicePoolSize(), activeDefinition.vocabularyPoolSize(),
+                activeDefinition.voiceSetCount());
     }
 
     /**
@@ -304,10 +315,11 @@ public class TestDefinitionRegistry {
      * DB 제약으로 표현할 수 있는 것은 {@code testVersion} 중복(기본 키)뿐이고, 문항 구성과
      * guideF0 밴드 길이 같은 규칙은 여전히 여기서만 걸린다.
      * <p>
-     * 문항 구성은 "음성 N (N >= 5) + 어휘 5"다 (KAN-182 - 풀 다중화로 완화). seq는 풀 기준
-     * 1..N+5 연속이어야 한다. {@code scriptKey}는 정의 단위 all-or-nothing이고 풀 안에서 중복을
-     * 거부한다. 기존 더미 정의 {@code gn-2026.08.1}(scriptKey 없음, 음성 5)은 그대로 통과한다 -
-     * 발행 후 불변(§5.4)을 지키려면 새 검증이 기존 행을 깨뜨리면 안 된다.
+     * 문항 구성은 "음성 N (N >= 5) + 어휘 M (M >= 5)"다 (KAN-182 - 풀 다중화로 완화, 어휘 풀은
+     * 2026-09-04 확장). seq는 풀 기준 1..N+M 연속이어야 한다. {@code scriptKey}는 정의 단위
+     * all-or-nothing이고 풀 안에서 중복을 거부한다. 기존 더미 정의 {@code gn-2026.08.1}(scriptKey
+     * 없음, 음성 5 + 어휘 5)은 그대로 통과한다 - 발행 후 불변(§5.4)을 지키려면 새 검증이 기존
+     * 행을 깨뜨리면 안 된다.
      */
     static void validate(TestDefinition definition) {
         require(hasText(definition.testVersion()), "testVersion이 비어 있다");
@@ -317,8 +329,8 @@ public class TestDefinitionRegistry {
         require(definition.estimatedDurationSec() > 0, "estimatedDurationSec은 양수여야 한다");
 
         List<TestDefinition.Item> items = definition.items();
-        require(items != null && items.size() >= VOICE_SET_SIZE + VOCABULARY_COUNT,
-                "문항은 음성 " + VOICE_SET_SIZE + "개 이상 + 어휘 " + VOCABULARY_COUNT + "개여야 한다");
+        require(items != null && items.size() >= VOICE_SET_SIZE + VOCABULARY_SET_SIZE,
+                "문항은 음성 " + VOICE_SET_SIZE + "개 이상 + 어휘 " + VOCABULARY_SET_SIZE + "개 이상이어야 한다");
 
         Set<String> itemIds = new HashSet<>();
         Set<Integer> seqs = new HashSet<>();
@@ -351,9 +363,9 @@ public class TestDefinitionRegistry {
                 }
             }
         }
-        require(voice >= VOICE_SET_SIZE && vocabulary == VOCABULARY_COUNT,
-                "문항 구성이 음성 " + VOICE_SET_SIZE + " 이상, 어휘 " + VOCABULARY_COUNT
-                        + "이 아니다: 음성 " + voice + ", 어휘 " + vocabulary);
+        require(voice >= VOICE_SET_SIZE && vocabulary >= VOCABULARY_SET_SIZE,
+                "문항 구성이 음성 " + VOICE_SET_SIZE + " 이상, 어휘 " + VOCABULARY_SET_SIZE
+                        + " 이상이 아니다: 음성 " + voice + ", 어휘 " + vocabulary);
         // all-or-nothing (KAN-182) - 일부만 있으면 실모델이 나머지 문항의 문장을 못 찾는다.
         require(voiceWithScriptKey == 0 || voiceWithScriptKey == voice,
                 "scriptKey는 전 음성 문항에 있거나 전부 없어야 한다: 음성 " + voice
@@ -373,11 +385,20 @@ public class TestDefinitionRegistry {
         require(guideF0.frameIntervalMs() > 0, "guideF0.frameIntervalMs는 양수여야 한다: " + item.itemId());
         require(guideF0.values() != null && !guideF0.values().isEmpty(),
                 "guideF0.values가 비어 있다: " + item.itemId());
-        // 허용 밴드는 required다 (2026-08-09 확정, §3.2, §6) - 없으면 발행 거부
-        require(guideF0.bandLow() != null && guideF0.bandLow().size() == guideF0.values().size(),
-                "guideF0.bandLow가 없거나 길이가 values와 다르다: " + item.itemId());
-        require(guideF0.bandHigh() != null && guideF0.bandHigh().size() == guideF0.values().size(),
-                "guideF0.bandHigh가 없거나 길이가 values와 다르다: " + item.itemId());
+        // 허용 밴드는 optional이다 (2026-09-04, KAN-17 산출물이 2026-08-09 확정을 뒤집었다).
+        // 정본 산출물의 1안이 "중앙선만, 밴드 없음"이라 required로 두면 실데이터가 발행 거부된다.
+        // 대신 "둘 다 있거나 둘 다 없다"를 강제한다 - 한쪽만 있는 밴드는 그릴 수 없고, 오타로
+        // 한쪽이 통째로 사라진 경우가 바로 그 모양이다 (KAN-26이 우려한 bandlow 오타).
+        boolean hasLow = guideF0.bandLow() != null;
+        boolean hasHigh = guideF0.bandHigh() != null;
+        require(hasLow == hasHigh,
+                "guideF0의 밴드는 상·하한이 둘 다 있거나 둘 다 없어야 한다: " + item.itemId());
+        if (hasLow) {
+            require(guideF0.bandLow().size() == guideF0.values().size(),
+                    "guideF0.bandLow의 길이가 values와 다르다: " + item.itemId());
+            require(guideF0.bandHigh().size() == guideF0.values().size(),
+                    "guideF0.bandHigh의 길이가 values와 다르다: " + item.itemId());
+        }
     }
 
     private static void validateVocabulary(TestDefinition.Item item) {
