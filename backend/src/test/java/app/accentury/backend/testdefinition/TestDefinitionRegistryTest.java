@@ -68,7 +68,8 @@ class TestDefinitionRegistryTest {
         assertRejected(gyeongbuk, "경남");
     }
 
-    // === 문항 구성 (2026-07-27 확정, KAN-182 완화) - 음성 N (N >= 5) + 어휘 5, seq 풀 기준 고정 ===
+    // === 문항 구성 (2026-07-27 확정, KAN-182 완화 · 2026-09-04 어휘 풀 확장)
+    //     - 음성 N (N >= 5) + 어휘 M (M >= 5), seq 풀 기준 고정 ===
 
     @Test
     void 문항이_없거나_10개_미만이면_발행_거부다() {
@@ -78,16 +79,22 @@ class TestDefinitionRegistryTest {
     }
 
     @Test
-    void 어휘가_5문항이_아니면_발행_거부다() {
-        // 어휘는 풀이 아니다 - 세트마다 그대로 5문항이므로 6개도 4개도 거부다.
-        List<TestDefinition.Item> six = new ArrayList<>(valid().items());
-        six.add(vocabulary("w6", 11));
-        assertRejected(withItems(valid(), six), "문항 구성");
-
+    void 어휘가_5문항_미만이면_발행_거부다() {
+        // 어휘도 풀이다 (2026-09-04) - 5개 이상이면 되고, 4개는 한 세트 안에서 같은 문항이
+        // 두 번 나오므로 거부다. 음성 6 + 어휘 4로 총수 검사(10)는 통과시키고 구성 검사만 본다.
         List<TestDefinition.Item> items = new ArrayList<>(valid().items());
-        items.removeIf(item -> item.itemId().equals("v5"));
-        items.add(vocabulary("w6", 9));
+        items.removeIf(item -> item.itemId().equals("w5"));
+        items.add(voice("v6", 10));
         assertRejected(withItems(valid(), items), "문항 구성");
+    }
+
+    @Test
+    void 어휘_풀이_5개를_넘는_정의는_발행된다() {
+        // 2026-09-04 - 세트 29개에 어휘 5문항이 고정이면 어느 세트나 같은 어휘를 본다.
+        List<TestDefinition.Item> items = new ArrayList<>(valid().items());
+        items.add(vocabulary("w6", 11));
+        items.add(vocabulary("w7", 12));
+        TestDefinitionRegistry.validate(withItems(valid(), items));
     }
 
     @Test
@@ -253,12 +260,32 @@ class TestDefinitionRegistryTest {
     }
 
     @Test
-    void 허용_밴드가_없으면_발행_거부다() {
-        // bandLow와 bandHigh는 required다 (2026-08-09 확정, §3.2, §6).
+    void 허용_밴드가_없어도_발행된다() {
+        // 밴드는 optional이다 (2026-09-04) - KAN-17 정본 산출물의 1안이 중앙선만 내므로
+        // required로 두면 실데이터가 발행 거부된다. 2026-08-09 확정을 뒤집은 것이다.
+        TestDefinitionRegistry.validate(
+                voiceWith(new TestDefinition.GuideF0("semitone", 21, List.of(0.1, 0.2, 0.3), null, null)));
+    }
+
+    @Test
+    void 허용_밴드가_한쪽만_있으면_발행_거부다() {
+        // 한쪽만 있는 밴드는 그릴 수 없다. bandLow를 bandlow로 오타 낸 발행본이 이 모양이라
+        // optional로 되돌린 뒤에도 이 검사는 남긴다 (KAN-26이 우려한 경우).
         assertRejected(voiceWith(new TestDefinition.GuideF0("semitone", 10, List.of(0.1, 0.2, 0.3),
-                null, List.of(1.6, 1.7, 1.8))), "bandLow");
+                null, List.of(1.6, 1.7, 1.8))), "둘 다 있거나 둘 다 없어야");
         assertRejected(voiceWith(new TestDefinition.GuideF0("semitone", 10, List.of(0.1, 0.2, 0.3),
-                List.of(-1.6, -1.7, -1.8), null)), "bandHigh");
+                List.of(-1.6, -1.7, -1.8), null)), "둘 다 있거나 둘 다 없어야");
+    }
+
+    @Test
+    void guideF0의_values에_null_원소가_있어도_발행된다() {
+        // 무성 구간과 "유효 발화 10명 미만" 칸이 null이다 (KAN-102 AC3 - 프론트가 끊어 그린다).
+        List<Double> withGap = new ArrayList<>();
+        withGap.add(0.1);
+        withGap.add(null);
+        withGap.add(0.3);
+        TestDefinitionRegistry.validate(
+                voiceWith(new TestDefinition.GuideF0("semitone", 21, withGap, null, null)));
     }
 
     @Test

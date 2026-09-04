@@ -55,3 +55,7 @@ ios/DerivedData/
 # CI는 이 파일을 base64 시크릿(RELEASE_KEYSTORE_BASE64)으로 받아 러너에서 푼다.
 *.jks
 *.keystore
+
+# 콘텐츠 발행 도구의 중간 산출물 (tools/content) - 검수표 아티팩트용이라 레포에 두지 않는다
+tools/content/__pycache__/
+tools/content/vocabulary_review.json

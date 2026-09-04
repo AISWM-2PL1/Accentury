@@ -159,6 +159,56 @@ class TestDefinitionApiTest extends IntegrationTest {
         assertEquals(List.of("v6", "w1", "v7", "w2", "v8", "w3", "v9", "w4", "v10", "w5"), ids);
     }
 
+    // === 2026-09-04 정본 콘텐츠 (V6) - 음성 145 + 어휘 145 = 세트 29개 ===
+
+    /** KAN-17 가이드 곡선과 KAN-159 문장으로 만든 정본 발행본. 어휘도 세트마다 갈린다. */
+    private static final String CONTENT = "/v0/tests/gn-2026.09.1";
+
+    @Test
+    void 정본_콘텐츠는_세트가_29개이고_어휘도_세트마다_다르다() throws Exception {
+        // 어휘 풀 다중화(2026-09-04)가 실제 DB 발행 경로에서 도는지 본다 - 세트가 29개인데
+        // 어휘가 5문항 고정이면 어느 세트를 응시하든 같은 어휘를 본다.
+        Set<String> voices = new LinkedHashSet<>();
+        Set<String> vocabulary = new LinkedHashSet<>();
+        for (int set = 1; set <= 29; set++) {
+            String body = mockMvc.perform(get(CONTENT).param("voiceSet", String.valueOf(set)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.voiceSet").value(set))
+                    .andExpect(jsonPath("$.voiceSetCount").value(29))
+                    .andExpect(jsonPath("$.items.length()").value(10))
+                    .andReturn().getResponse().getContentAsString();
+            for (JsonNode item : objectMapper.readTree(body).get("items")) {
+                Set<String> seen = "VOICE".equals(item.get("type").asString()) ? voices : vocabulary;
+                seen.add(item.get("itemId").asString());
+            }
+        }
+        assertEquals(145, voices.size(), "음성 145문항이 모두 어느 세트엔가 실린다");
+        assertEquals(145, vocabulary.size(), "어휘 145문항이 모두 어느 세트엔가 실린다");
+        mockMvc.perform(get(CONTENT).param("voiceSet", "30")).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void 정본_콘텐츠의_guideF0는_밴드_없이_중앙선만_준다() throws Exception {
+        // KAN-17 산출물의 1안이 중앙선만 낸다 (박재영 2026-09-04). 발행 검증의 밴드를
+        // optional로 되돌린 결과가 응답에 그대로 드러나는 자리다.
+        String body = mockMvc.perform(get(CONTENT)).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        JsonNode guide = objectMapper.readTree(body).get("items").get(0).get("guideF0");
+        assertEquals("semitone", guide.get("unit").asString());
+        assertTrue(guide.get("frameIntervalMs").isInt(),
+                "산출물의 실수를 반올림해 정수로 싣는다 (2026-09-04 결정)");
+        assertFalse(guide.has("bandLow"), "밴드 없이 발행된다");
+        assertFalse(guide.has("bandHigh"), "밴드 없이 발행된다");
+    }
+
+    @Test
+    void 정본_콘텐츠도_세트_응답이_200KB_기준_안이다() throws Exception {
+        // 풀 전체는 276KB다. 세트 하나만 싣는다는 KAN-182 결정이 지켜지는지 본다 (§3.2).
+        int bytes = mockMvc.perform(get(CONTENT)).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsByteArray().length;
+        assertTrue(bytes < 200 * 1024, "세트 하나의 응답이 " + bytes / 1024 + "KB다");
+    }
+
     // === KAN-10 AC - VOICE 5문항과 VOCABULARY 5문항이 구분되고 순서가 고정된다 ===
 
     @Test
