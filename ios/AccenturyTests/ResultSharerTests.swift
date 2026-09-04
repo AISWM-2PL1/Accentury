@@ -148,4 +148,104 @@ final class ResultSharerTests: XCTestCase {
         XCTAssertNil(template.content.imageWidth)
         XCTAssertNil(template.content.imageHeight)
     }
+
+    // MARK: 비동기 수명 (Codex 검증에서 잡힌 결함, 2026-09-04)
+
+    /// **아무도 sharer를 붙들지 않은 채로** 콜백이 나중에 도착해도 카톡이 열려야 한다.
+    ///
+    /// 프로덕션 결선이 정확히 이 모양이다 — `TestFlowView.routeShare`가
+    /// `ResultSharer.forApp(...).share(payload)` 한 줄로 쓰고 지나가므로, 임시 객체를
+    /// 붙들고 있는 사람이 없다. 카카오 SDK 콜백은 네트워크 왕복 뒤에 오는데 그때 객체가
+    /// 이미 해제돼 있으면 카톡 전환도 시트 폴백도 통째로 사라진다.
+    ///
+    /// 위의 다른 테스트들은 이 결함을 못 잡는다: 가짜 협력자가 콜백을 **동기로** 부르기
+    /// 때문에 그 시점의 sharer는 아직 스택에 살아 있다. 그래서 여기서는 콜백을 붙들었다가
+    /// share가 끝난 **뒤에** 부른다.
+    func testKakaoCallbackStillWorksWhenNothingRetainsTheSharer() {
+        let spy = Spy()
+        var deferred: ((URL?, Error?) -> Void)?
+        makeDeferredSharer(spy: spy, capturing: { deferred = $0 }).share(payload)
+
+        XCTAssertTrue(spy.opened.isEmpty, "콜백 전인데 벌써 열었다 - 테스트 전제가 틀렸다")
+        deferred?(URL(string: "kakaolink://send?a=b"), nil)
+
+        XCTAssertEqual([URL(string: "kakaolink://send?a=b")], spy.opened, "sharer가 콜백 전에 해제돼 카톡 전환이 유실됐다")
+        XCTAssertTrue(spy.sheets.isEmpty)
+    }
+
+    /// 같은 수명 문제가 폴백에서도 성립해야 한다 — 실패 콜백이 늦게 와도 시트는 떠야 한다.
+    /// 이쪽이 더 나쁘다: 카카오가 거절했는데 시트도 안 뜨면 사용자에게 남는 통로가 없다.
+    func testLateKakaoFailureStillReachesTheSheet() {
+        let spy = Spy()
+        var deferred: ((URL?, Error?) -> Void)?
+        makeDeferredSharer(spy: spy, capturing: { deferred = $0 }).share(payload)
+
+        deferred?(nil, TestError.rejected)
+
+        XCTAssertEqual([payload], spy.sheets, "sharer가 해제돼 폴백이 유실됐다 - 남는 통로가 없다")
+    }
+
+    /// 카카오 SDK가 콜백을 부를 때까지 sharer가 살아 있어야 한다는 것을 수명 자체로 확인한다.
+    /// 위 두 테스트가 부수효과로 같은 것을 보지만, 이 단언은 원인을 곧장 가리킨다 —
+    /// 콜백이 강하게 잡지 않으면 이 시점에 이미 nil이다.
+    func testTheSharerOutlivesTheCallItStarted() {
+        let spy = Spy()
+        var deferred: ((URL?, Error?) -> Void)?
+        weak var weakSharer: ResultSharer?
+
+        autoreleasepool {
+            let sharer = makeDeferredSharer(spy: spy, capturing: { deferred = $0 })
+            weakSharer = sharer
+            sharer.share(payload)
+        }
+
+        XCTAssertNotNil(weakSharer, "카카오 콜백을 기다리는 동안 sharer가 해제됐다")
+        deferred?(nil, TestError.rejected)
+        XCTAssertEqual([payload], spy.sheets)
+    }
+
+    /// 카카오 콜백은 즉시 오지만 열기 완료 핸들러가 늦게 오는 경우. 전환 실패를 시트로
+    /// 받아내려면 그때까지도 살아 있어야 한다.
+    func testLateOpenFailureStillReachesTheSheet() {
+        let spy = Spy()
+        var deferredOpen: ((Bool) -> Void)?
+        ResultSharer(
+            kakaoEnabled: true,
+            isTalkAvailable: { true },
+            shareViaKakao: { _, onResult in onResult(URL(string: "kakaolink://send"), nil) },
+            openUrl: { url, completion in
+                spy.opened.append(url)
+                deferredOpen = completion
+            },
+            presentSheet: { spy.sheets.append($0) }
+        ).share(payload)
+
+        XCTAssertEqual(1, spy.opened.count)
+        XCTAssertTrue(spy.sheets.isEmpty)
+
+        deferredOpen?(false)
+        XCTAssertEqual([payload], spy.sheets, "전환 실패 핸들러가 늦게 왔더니 폴백이 유실됐다")
+    }
+
+    /// 카카오 콜백을 붙들어 두는 sharer. `shareViaKakao`가 콜백을 부르지 않고 넘겨주므로
+    /// 호출자가 원하는 시점에 늦은 응답을 재현할 수 있다.
+    private func makeDeferredSharer(
+        spy: Spy,
+        capturing capture: @escaping (@escaping (URL?, Error?) -> Void) -> Void
+    ) -> ResultSharer {
+        ResultSharer(
+            kakaoEnabled: true,
+            isTalkAvailable: { spy.talkQueried += 1; return true },
+            shareViaKakao: { template, onResult in
+                spy.templates.append(template)
+                capture(onResult)
+            },
+            openUrl: { url, completion in
+                spy.opened.append(url)
+                completion(true)
+            },
+            presentSheet: { spy.sheets.append($0) }
+        )
+    }
 }
+
