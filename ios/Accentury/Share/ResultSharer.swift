@@ -90,13 +90,27 @@ final class ResultSharer {
             return
         }
 
-        shareViaKakao(kakaoFeedTemplate(from: card)) { [weak self] url, error in
-            guard let self else { return }
+        /*
+         * 콜백이 self를 **강하게** 잡는다. `[weak self]`가 여기서는 정확히 틀린다.
+         *
+         * 이 객체를 붙들고 있는 사람이 없다 - 화면은 `ResultSharer.forApp(...).share(payload)`
+         * 한 줄로 쓰고 지나가고(TestFlowView.routeShare), 그 임시 객체는 share가 반환하는
+         * 순간 해제된다. 카카오 SDK 콜백은 네트워크 왕복 뒤에 오므로, 약하게 잡으면 그때는
+         * 이미 nil이라 카톡 전환도 시트 폴백도 통째로 사라진다 - 사용자는 [친구에게
+         * 공유하기]를 눌렀는데 아무 일도 일어나지 않는 화면을 본다.
+         *
+         * 순환 참조는 생기지 않는다. self는 이 클로저를 들고 있지 않고, 클로저를 들고 있는
+         * 쪽은 카카오 SDK다. SDK가 콜백을 부르고 놓으면 self도 함께 풀린다 - 강한 캡처가
+         * 곧 "공유가 끝날 때까지만 살아 있는다"는 수명이다.
+         */
+        shareViaKakao(kakaoFeedTemplate(from: card)) { url, error in
             guard let url else {
                 NSLog("[ResultSharer] 카카오 공유 실패 - 시스템 공유 시트로 폴백: \(String(describing: error))")
                 self.presentSheet(payload)
                 return
             }
+            // 여기도 같은 이유로 강한 캡처다. 열기 완료 핸들러가 올 때까지 살아 있어야
+            // 전환 실패를 시트로 받아낼 수 있다.
             self.openUrl(url) { opened in
                 guard !opened else { return }
                 NSLog("[ResultSharer] 카톡 전환 실패 - 시스템 공유 시트로 폴백")
