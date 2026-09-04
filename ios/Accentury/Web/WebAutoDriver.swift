@@ -108,10 +108,14 @@ final class WebAutoDriver {
     /// 화면 판정과 조작을 함께 든 구동 스크립트.
     ///
     /// 화면을 **클래스 이름으로** 가른다. 문구로 가르면 카피 한 줄 바뀔 때마다 스모크가 조용히
-    /// 멈추는데, 여기 쓰는 클래스들은 전부 레이아웃이 의존하는 이름이라 그렇게 조용히 바뀌지 않는다
-    /// (`web/src/tokens.css`). 다만 누르는 **버튼**은 문구로 찾는다 — 버튼에는 안정된 클래스가
-    /// 따로 없고(`.btn.btn--primary`는 화면마다 여럿이다) 눌러야 하는 것이 무엇인지 사람이 읽는
-    /// 이름이 곧 그 문구이기 때문이다.
+    /// 멈춘다. 클래스라고 안전한 것은 아니라, KAN-178에서 인트로 히어로를 `.illustration--intro`에서
+    /// `.intro-hero`로 옮기면서 여기가 그대로 남아 스모크가 조용히 멈춘 적이 있다 — 그래서 이제
+    /// 웹 쪽 테스트(`web/src/nativeSmokeSelectors.test.ts`)가 여기 적힌 이름이 `web/src`에 아직
+    /// 있는지 본다. 이름을 바꾸는 사람이 돌리는 것은 `npm test`지 `xcodebuild test`가 아니다.
+    ///
+    /// 다만 누르는 **버튼**은 문구로 찾는다 — 버튼에는 안정된 클래스가 따로 없고
+    /// (`.btn.btn--primary`는 화면마다 여럿이다) 눌러야 하는 것이 무엇인지 사람이 읽는 이름이
+    /// 곧 그 문구이기 때문이다.
     private static func driverJs(drivesIntro: Bool) -> String {
         """
         (function(){
@@ -140,7 +144,7 @@ final class WebAutoDriver {
             if (has(".analysis-progress")) return "waiting";
             if (has(".result-tier__rank") || has(".result-scores")) return "result";
             if (has(".choice-list")) return "vocab";
-            if (has(".illustration--intro")) return "intro";
+            if (has(".intro-hero")) return "intro";
             if (has(".illustration--result")) return "result";
             /* 업데이트 안내(App.tsx)와 로드 실패는 화면 전용 클래스가 없어 문구로 가른다.
                스큐 검증(-BridgeVersionOverride)이 보는 화면이 이것이다. */
