@@ -58,6 +58,22 @@ final class RecordingModel: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 self.uiState = state
+                /*
+                 * 캡처 실패를 남기는 유일한 자리 (KAN-33). 안드로이드가 `RecordingEngine`의
+                 * `CaptureException` catch 한 곳에 붙인 것과 같은 판단이다 — 그쪽처럼 여기도
+                 * **모든 캡처 실패가 지나는 하나의 길목**이다. 세션 활성화 거부, 변환기 생성
+                 * 실패, 전화 인터럽션이 전부 `.failed`로 온다.
+                 *
+                 * 더 아래(`AudioRecorder`의 시작 실패 catch)에 붙이지 않은 이유가 그것이다:
+                 * 그 자리는 시작 단계만 보므로 녹음 도중 끊긴 실패가 빠지고, 그러면 리포트의
+                 * 분포가 실제보다 시작 실패 쪽으로 기울어 보인다.
+                 *
+                 * 사용자에게는 "녹음에 실패했어요"까지만 보인다 — 크래시가 아니라서 이 한 줄이
+                 * 없으면 실패 자체가 아무 데도 남지 않는다.
+                 */
+                if case let .failed(reason) = state {
+                    CrashReports.recordCaptureFailure(reason)
+                }
                 #if DEBUG
                 self.noteLatency(state, receivedAt: receivedAt)
                 #endif

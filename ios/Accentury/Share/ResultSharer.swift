@@ -38,6 +38,7 @@ final class ResultSharer {
     private let shareViaKakao: (FeedTemplate, @escaping (URL?, Error?) -> Void) -> Void
     private let openUrl: (URL, @escaping (Bool) -> Void) -> Void
     private let presentSheet: (SharePayload) -> Void
+    private let onLaunched: (ShareChannel) -> Void
 
     /// - Parameters:
     ///   - kakaoEnabled: 앱 키가 주입돼 SDK가 초기화됐는가. false면 [isTalkAvailable]·[shareViaKakao]는 불리지 않는다
@@ -45,18 +46,25 @@ final class ResultSharer {
     ///   - shareViaKakao: 템플릿을 카카오에 넘기고 **카톡을 열 URL**을 돌려받는다. 결과는 (url, error) 쌍이다
     ///   - openUrl: 그 URL 열기. 완료 핸들러의 Bool이 실제로 열렸는지다
     ///   - presentSheet: OS 공유 시트 띄우기. 폴백이 도착하는 유일한 자리다
+    ///   - onLaunched: 실제로 띄운 통로 (KAN-33 계측, 안드로이드 `ResultSharer`의 같은 인자).
+    ///     폴백이 얼마나 도는지를 모르면 카카오 경로의 값을 판단할 수 없다. **열지 못한 경우에는
+    ///     부르지 않는다** — 열리지 않은 화면을 "띄웠다"로 세면 통로 하나가 통째로 막힌 기기가
+    ///     집계에서 정상으로 보인다. 기본값이 있는 이유는 테스트다(공유 순서만 보는 기존 검증들이
+    ///     계측 인자를 몰라도 된다)
     init(
         kakaoEnabled: Bool,
         isTalkAvailable: @escaping () -> Bool,
         shareViaKakao: @escaping (FeedTemplate, @escaping (URL?, Error?) -> Void) -> Void,
         openUrl: @escaping (URL, @escaping (Bool) -> Void) -> Void,
-        presentSheet: @escaping (SharePayload) -> Void
+        presentSheet: @escaping (SharePayload) -> Void,
+        onLaunched: @escaping (ShareChannel) -> Void = { _ in }
     ) {
         self.kakaoEnabled = kakaoEnabled
         self.isTalkAvailable = isTalkAvailable
         self.shareViaKakao = shareViaKakao
         self.openUrl = openUrl
         self.presentSheet = presentSheet
+        self.onLaunched = onLaunched
     }
 
     func share(_ payload: SharePayload) {
@@ -69,8 +77,18 @@ final class ResultSharer {
         case .kakao:
             shareViaKakaoOrSheet(payload)
         case .systemSheet:
-            presentSheet(payload)
+            launchSheet(payload)
         }
+    }
+
+    /// 시트로 내려가는 모든 경로가 여기 하나로 모인다 — 계측을 자리마다 붙이면 폴백 갈래가 하나
+    /// 늘 때 그 자리만 세지 않는 일이 생긴다 (안드로이드 `launchSheet`와 같은 자리다).
+    ///
+    /// 안드로이드는 받을 앱이 없는 기기에서 인텐트 실행이 던져 "띄우지 못함"이 실재하지만,
+    /// iOS의 시트는 SwiftUI 상태 한 줄이라 뜨지 않는 경로가 없다. 그래서 여기서는 곧바로 센다.
+    private func launchSheet(_ payload: SharePayload) {
+        presentSheet(payload)
+        onLaunched(.systemSheet)
     }
 
     /// 카카오 경로. 어디서 막히든 끝은 시트다 — 사용자가 누른 건 "공유"지 "카톡 공유"가 아니므로,
@@ -86,7 +104,7 @@ final class ResultSharer {
     /// 않는 화면을 보게 된다 — 우리가 알 수 있는 실패를 그냥 삼킨 셈이다.
     private func shareViaKakaoOrSheet(_ payload: SharePayload) {
         guard let card = buildShareCard(payload) else {
-            presentSheet(payload)
+            launchSheet(payload)
             return
         }
 
@@ -106,24 +124,33 @@ final class ResultSharer {
         shareViaKakao(kakaoFeedTemplate(from: card)) { url, error in
             guard let url else {
                 NSLog("[ResultSharer] 카카오 공유 실패 - 시스템 공유 시트로 폴백: \(String(describing: error))")
-                self.presentSheet(payload)
+                self.launchSheet(payload)
                 return
             }
             // 여기도 같은 이유로 강한 캡처다. 열기 완료 핸들러가 올 때까지 살아 있어야
             // 전환 실패를 시트로 받아낼 수 있다.
             self.openUrl(url) { opened in
-                guard !opened else { return }
+                guard !opened else {
+                    // 카톡이 실제로 열린 유일한 자리다 (KAN-33 `share_launched`).
+                    self.onLaunched(.kakao)
+                    return
+                }
                 NSLog("[ResultSharer] 카톡 전환 실패 - 시스템 공유 시트로 폴백")
-                self.presentSheet(payload)
+                self.launchSheet(payload)
             }
         }
     }
 
     /// 프로덕션 결선.
     ///
-    /// - Parameter presentSheet: 시트를 띄울 자리. 화면(`TestFlowView`)이 넘긴다 — 시트는
-    ///   SwiftUI 상태로 뜨는 것이라 이 클래스가 직접 할 수 없고, 할 이유도 없다.
-    static func forApp(presentSheet: @escaping (SharePayload) -> Void) -> ResultSharer {
+    /// - Parameters:
+    ///   - presentSheet: 시트를 띄울 자리. 화면(`TestFlowView`)이 넘긴다 — 시트는
+    ///     SwiftUI 상태로 뜨는 것이라 이 클래스가 직접 할 수 없고, 할 이유도 없다.
+    ///   - onLaunched: 계측 (KAN-33). 창구를 들고 있는 쪽도 화면이라 같이 넘어온다.
+    static func forApp(
+        presentSheet: @escaping (SharePayload) -> Void,
+        onLaunched: @escaping (ShareChannel) -> Void = { _ in }
+    ) -> ResultSharer {
         ResultSharer(
             // 1단계에서 세운 사슬의 끝. 키가 없으면 AccenturyApp이 initSDK를 건너뛰었으므로
             // 여기서도 카카오를 부르지 않는다 - 미초기화 SDK 접근은 그 자체로 사고다.
@@ -137,7 +164,8 @@ final class ResultSharer {
             openUrl: { url, completion in
                 UIApplication.shared.open(url, options: [:], completionHandler: completion)
             },
-            presentSheet: presentSheet
+            presentSheet: presentSheet,
+            onLaunched: onLaunched
         )
     }
 }

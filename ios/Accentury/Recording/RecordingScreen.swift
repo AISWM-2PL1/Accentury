@@ -47,6 +47,13 @@ struct RecordingScreen: View {
     /// 같은 인스턴스가 남는다.
     @State private var guideCurve = GuideCurveCache()
 
+    /// 검토 화면의 [재녹음]을 눌렀다 (KAN-33 계측). 되감기는 이 화면이 직접 걸고(``RecordingModel``)
+    /// 이 콜백은 세기만 한다 — 문항 번호를 아는 쪽이 호출자라 파라미터를 여기서 만들 수 없다.
+    ///
+    /// 기본값이 있는 유일한 인자다. `.failed`의 [다시 시도]는 부르지 않는다 — 그쪽은 녹음이 아예
+    /// 안 된 자리라 "다시 읽기로 했다"는 사건이 아니고, 웹 `RetakeReason`에도 그 사유가 없다.
+    var onRetake: () -> Void = {}
+
     /// quality는 검토 상태에만 있고 화면이 넘어가는 즉시 되감기므로 호출자가 나중에 되물을 수
     /// 없다. 브리지 계약(KAN-89)이 qualityStatus를 요구해서 여기서 함께 넘긴다.
     let onNext: (_ attemptId: String, _ durationMs: Int64, _ quality: QualityStatus) -> Void
@@ -267,7 +274,10 @@ struct RecordingScreen: View {
              * 않을 만큼 작아진다.
              */
             HStack(spacing: Papercut.space3) {
-                AccenturyButton(text: "재녹음", variant: .secondary, fillsWidth: true) { model.retry() }
+                AccenturyButton(text: "재녹음", variant: .secondary, fillsWidth: true) {
+                    onRetake()
+                    model.retry()
+                }
                 AccenturyButton(
                     text: "다음",
                     enabled: review.canProceed,
