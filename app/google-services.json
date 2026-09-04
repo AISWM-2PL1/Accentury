@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "621780439159",
+    "project_id": "accentury-c2713",
+    "storage_bucket": "accentury-c2713.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:621780439159:android:f86df9b83787a9b2b43672",
+        "android_client_info": {
+          "package_name": "com.accentury.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA3k7TrbdtnldE1MV_ZEbrmundFj53_B9o"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

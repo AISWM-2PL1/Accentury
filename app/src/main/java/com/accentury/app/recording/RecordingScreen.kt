@@ -90,6 +90,15 @@ fun RecordingScreen(
      * null이면 아래 기본 안내를 쓴다.
      */
     failureMessage: String? = null,
+    /*
+     * [재녹음]을 눌렀다 (KAN-33). 되감기는 그대로 뷰모델이 하고, 이 콜백은 세기만 한다 - 계측을
+     * 화면 안에서 보내면 이 파일이 sink를 알게 되고, 그러면 미리보기와 화면 테스트가 계측기를
+     * 함께 끌고 다닌다. 기본값이 있는 이유도 같다: 이 화면은 계측 없이도 온전하다.
+     *
+     * 실패 상태의 [다시 시도]에는 붙이지 않는다. 그 자리는 녹음이 성립하지 못한 경우라 되돌릴
+     * 녹음 자체가 없고, `recording_retake`가 세는 것은 "다 읽고 나서 다시 읽기로 했다"는 판단이다.
+     */
+    onRetake: () -> Unit = {},
     viewModel: RecordingViewModel = viewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -216,7 +225,10 @@ fun RecordingScreen(
 
                 is RecordingUiState.Review -> ReviewControls(
                     state = s,
-                    onRetry = viewModel::retryRecording,
+                    onRetry = {
+                        onRetake()
+                        viewModel.retryRecording()
+                    },
                     onNext = { onNext(s.attemptId, s.durationMs, s.quality) },
                 )
 

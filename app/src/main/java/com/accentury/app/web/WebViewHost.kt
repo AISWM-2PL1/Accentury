@@ -27,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import com.accentury.app.BuildConfig
+import com.accentury.app.analytics.EventParam
 import com.accentury.app.ui.components.AccenturyButton
 import com.accentury.app.ui.components.StatusBlock
 import com.accentury.app.ui.components.StatusTone
@@ -55,6 +56,8 @@ sealed interface WebLoadState {
  * @param sessionToken 브리지 getSessionToken이 웹에 건넬 세션 토큰 공급자 (KAN-13)
  * @param onStartRetest 결과 화면의 [다시 테스트하기] (KAN-34). 메인 스레드로 온다
  * @param onShareResult 결과 화면의 [친구에게 공유하기] (KAN-30). 메인 스레드로 온다
+ * @param onLogEvent 웹이 센 계측 이벤트 (KAN-33). 이름·파라미터 검증은 브리지가 끝낸 뒤라
+ *   여기 오는 값은 GA4에 그대로 실을 수 있다. 메인 스레드로 온다
  * @param onWebViewCreated 결과를 웹으로 주입하려면(evaluateJavascript) 상위가 인스턴스를 알아야 한다
  * @param onWebViewReleased 해제된 인스턴스. 상위가 들고 있는 참조를 놓을 자리다
  */
@@ -68,6 +71,7 @@ fun WebViewHost(
     onStartVoiceItem: (VoiceItemStart) -> Unit,
     onStartRetest: () -> Unit,
     onShareResult: (SharePayload) -> Unit,
+    onLogEvent: (String, Map<String, EventParam>) -> Unit,
     modifier: Modifier = Modifier,
     timeoutMs: Long = LOAD_TIMEOUT_MS,
     onWebViewCreated: (WebView) -> Unit = {},
@@ -167,6 +171,7 @@ fun WebViewHost(
                                 onStartVoiceItem = onStartVoiceItem,
                                 onStartRetest = onStartRetest,
                                 onShareResult = onShareResult,
+                                onLogEvent = onLogEvent,
                             ),
                             "AccenturyBridge",
                         )
