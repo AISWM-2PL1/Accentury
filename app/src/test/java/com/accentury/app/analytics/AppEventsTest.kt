@@ -8,6 +8,17 @@ import org.junit.Test
 class AppEventsTest {
 
     @Test
+    fun `네이티브가 세는 공유 이벤트는 실행 하나뿐이다`() {
+        /*
+         * 탭은 웹의 `share_clicked`가 세고 앱 안에서는 브리지로 넘어온다. 네이티브가 같은 탭에
+         * 이름을 하나 더 붙이면 앱과 웹의 같은 사건이 다른 축으로 갈린다 — 그 이름이 다시 생기면
+         * 이 테스트가 아니라 컴파일이 먼저 막히지만, 남는 하나의 이름은 여기서 못박는다.
+         */
+        assertEquals("share_launched", ShareEvents.LAUNCHED)
+        assertEquals("channel", ShareEvents.PARAM_CHANNEL)
+    }
+
+    @Test
     fun `공유 통로는 집계에 쓸 snake_case 값으로 나간다`() {
         // enum 이름이 아니라 이 문자열이 집계 축이다 — 리팩터링으로 바뀌면 지난 집계와 갈라진다.
         assertEquals("kakao", channelParam(ShareChannel.KAKAO))
@@ -22,7 +33,7 @@ class AppEventsTest {
          * (`isReturnDefaultValues`) — 여기서 확인하는 것은 로그 내용이 아니라 **밖으로 새는 것이
          * 없다**는 사실이다.
          */
-        LogcatEventSink.log(ShareEvents.TAPPED)
+        LogcatEventSink.log(ShareEvents.LAUNCHED)
         LogcatEventSink.log(
             ShareEvents.LAUNCHED,
             mapOf(ShareEvents.PARAM_CHANNEL to EventParam.Text(channelParam(ShareChannel.KAKAO))),

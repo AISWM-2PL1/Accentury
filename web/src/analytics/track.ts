@@ -19,6 +19,7 @@
 
 import { isStandaloneWeb, logAnalyticsEvent } from '../bridge/bridge'
 import type { AnalyticsEvent } from './events'
+import { currentTestId } from './testId'
 
 /**
  * 이벤트 하나를 흘려보낸다.
@@ -36,7 +37,20 @@ export function track(event: AnalyticsEvent): void {
       console.debug('[track]', event)
     }
 
-    const { name, ...params } = event
+    const { name, ...eventParams } = event
+
+    /*
+     * 응시 상관 키를 공통으로 얹는다 (KAN-33 AC 1). 이벤트 유니온에 필드로 두지 않는 이유는
+     * 지점마다 다시 적어야 하는 값이 아니기 때문이다 — 어느 응시에서 일어났는가는 모든
+     * 이벤트에 똑같이 걸리는 사실이고, 지점이 하나 늘 때 그 필드만 빠뜨리면 그 이벤트는
+     * 순서 분석에서 조용히 사라진다.
+     *
+     * 세션이 생기기 전(인트로 유입)에는 값이 없다. 그 이벤트는 아직 어느 응시에도 속하지
+     * 않으므로 없는 것이 맞다 (`testId.ts`).
+     */
+    const testId = currentTestId()
+    const params: Record<string, unknown> =
+      testId === null ? eventParams : { ...eventParams, test_id: testId }
 
     // 앱 안이면 네이티브가 가져간다. 여기서 끝내는 것이 이중 집계를 막는 자리다.
     if (logAnalyticsEvent(name, params)) return

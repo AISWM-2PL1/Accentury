@@ -14,11 +14,16 @@ struct ContentView: View {
 
     var body: some View {
         #if DEBUG
-        if UserDefaults.standard.bool(forKey: "DebugSmokeMenu") {
-            DebugSmokeMenu()
-        } else {
-            TestFlowView()
+        Group {
+            if UserDefaults.standard.bool(forKey: "DebugSmokeMenu") {
+                DebugSmokeMenu()
+            } else {
+                TestFlowView()
+            }
         }
+        // `-TestCrash 1`: 스모크 메뉴 뒤가 아니라 여기인 이유는 두 화면 어느 쪽으로 떠도
+        // 같은 통로여야 해서다. 릴리스에는 이 줄째 없다 (``TestCrash``).
+        .task { TestCrash.fireIfRequested() }
         #else
         TestFlowView()
         #endif

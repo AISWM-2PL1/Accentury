@@ -10,7 +10,7 @@ final class EventParamsTests: XCTestCase {
     func testAcceptsOurSchemaNames() {
         for name in [
             "referral_opened", "item_shown", "recording_retake", "analysis_wait_duration",
-            "tier_assigned", "share_tapped", "share_launched", "duration_ms", "overall_bucket",
+            "tier_assigned", "share_clicked", "share_launched", "duration_ms", "overall_bucket",
         ] {
             XCTAssertTrue(isAnalyticsName(name), name)
         }

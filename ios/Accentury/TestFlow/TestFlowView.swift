@@ -453,11 +453,12 @@ struct TestFlowView: View {
         guard let payload else { return }
         model.consumeShare()
         /*
-         * 탭과 실행을 따로 센다 (FR-SH-06). 탭은 사용자가 한 일이고 실행은 통로가 열린 일이라,
-         * 둘의 차이가 곧 "눌렀는데 아무 데도 못 간" 비율이다 — 한 건으로 뭉치면 그 구멍이 보이지
-         * 않는다. 실행 쪽은 ``ResultSharer``가 통로까지 붙여 울린다.
+         * 탭은 여기서 세지 않는다 (FR-SH-06). 그 한 건은 웹이 `share_clicked`로 이미 세고, 앱
+         * 안에서는 브리지 `logEvent`를 타고 같은 sink로 들어온다 — 네이티브가 이름을 하나 더
+         * 붙이면 같은 탭이 앱과 웹에서 다른 축으로 갈린다. 네이티브가 세는 것은 통로가 실제로
+         * 열린 일뿐이고, 그쪽은 ``ResultSharer``가 통로를 붙여 울린다. 클릭 수와 실행 수의
+         * 차이는 그대로 "눌렀는데 아무 데도 못 간" 비율이다.
          */
-        events.log(ShareEvents.tapped)
         ResultSharer.forApp(
             presentSheet: { sheetShare = $0 },
             // 띄운 통로만 싣는다. 세션·점수는 익명 규칙에서 제외 대상이다 (``EventSink``).

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { overallBucket } from './analytics/events'
+import { clearTestId, ensureTestId } from './analytics/testId'
 import { track } from './analytics/track'
 import type { CaptureFactory } from './audio'
 import { detectStorePlatform } from './audio/storeLink'
@@ -76,6 +77,16 @@ export default function App({ navigate = assignHref, voiceCheckCapture }: AppPro
    */
   const params = new URLSearchParams(window.location.search)
   if (params.get('screen') === 'test') {
+    /*
+     * 이 응시의 계측 상관 키를 확보한다 (KAN-33 AC 1). 세션 id를 아는 자리가 진입 분기라
+     * 여기서 부른다 — [track]은 세션을 모르고, 알게 만들면 계측 창구가 진입 쿼리 규칙까지
+     * 알아야 한다 (`analytics/testId.ts`).
+     *
+     * 렌더 중에 부르는 것이 걸리지만, 같은 세션이면 저장된 값을 그대로 돌려주는 멱등 호출이고
+     * 이펙트로 미루면 첫 문항 노출(`item_shown`)이 키 없이 나간다 — 자식의 이펙트가 부모의
+     * 이펙트보다 먼저 돌기 때문이다.
+     */
+    ensureTestId(params.get('sessionId') ?? '')
     return (
       <TestFlowScreen
         apiBase={API_BASE}
@@ -122,6 +133,9 @@ export default function App({ navigate = assignHref, voiceCheckCapture }: AppPro
    * 경로도 그대로 살아 있다: 결과 화면만 따로 확인하는 개발 통로다.
    */
   if (params.get('screen') === 'result') {
+    // 문항 화면과 같은 이유다. 결과 도착 계측(`result_viewed`·`tier_assigned`)이 같은 응시로
+    // 묶여야 «시작한 사람 중 몇이 결과까지 왔나»를 셀 수 있다.
+    ensureTestId(params.get('sessionId') ?? '')
     return (
       <ResultRoute sessionId={params.get('sessionId') ?? ''} standalone={standalone} navigate={navigate} />
     )
@@ -155,6 +169,13 @@ function IntroRoute({
    * 사라지므로 실사용 집계에는 영향이 없다.
    */
   useEffect(() => {
+    /*
+     * 직전 응시의 상관 키를 버린다 (KAN-33). 인트로는 어느 응시에도 속하지 않는 화면이고,
+     * 여기 왔다는 것은 앞의 응시가 끝났다는 뜻이다 — 남겨 두면 이 유입이 직전 응시의 키를
+     * 달고 나가 순서 분석에서 A의 목록 끝에 B의 시작이 붙는다 (`analytics/testId.ts`).
+     */
+    clearTestId()
+
     /*
      * 실행을 가리지 않는다 (KAN-33). 인트로를 그리는 것이 앱에서도 이 WebView라 사건이 같고,
      * 앱 안에서는 [track]이 브리지로 넘겨 네이티브 Firebase가 앱 스트림에 싣는다 — 보내는
@@ -302,7 +323,11 @@ async function startStandaloneTest(navigate: Navigate, userCurveCenterHz: number
   /*
    * 시작 계측 (퍼널 2번째 지점). 세션이 실제로 만들어진 뒤에 센다 — 탭 시점에 세면 429나
    * 네트워크 실패로 시작하지 못한 사람까지 "시작"으로 세어져 완주율의 분모가 부풀어 오른다.
+   *
+   * 상관 키를 **먼저** 확보한다. 이 이벤트가 응시의 첫 지점이라, 여기에 키가 없으면 순서
+   * 분석의 시작점이 통째로 빠진다 (KAN-33 AC 1).
    */
+  ensureTestId(session.sessionId)
   track({ name: 'referral_test_started', campaign: trackedCampaign() })
 
   // 진입 경로(`/t`)와 나머지 쿼리(`c` 등)는 그대로 두고 화면 지정만 얹는다.
@@ -396,14 +421,18 @@ function ResultRoute({
        * 갔는지는 통로를 고른 뒤에야 알 수 있는 값이고, 계측 때문에 공유가 한 틱이라도 늦으면
        * 안 된다 ([shareResult]도 [track]도 던지지 않으므로 순서만 남는 이야기다).
        *
-       * **이 이벤트만 웹 단독 실행으로 제한한다.** 앱 안의 같은 탭은 네이티브가
-       * `share_tapped`로 세므로(`analytics/AppEvents.kt`) 여기서도 세면 한 번의 탭이 두 이름으로
-       * 잡힌다. 다른 퍼널 이벤트를 실행에 상관없이 보내는 것(KAN-33)과 갈리는 유일한 자리이고,
-       * 이유는 그쪽에 네이티브 짝이 없기 때문이다 — 인트로도 완주도 세는 코드는 한 곳뿐이다.
+       * **실행을 가리지 않는다.** 예전에는 앱 안의 같은 탭을 네이티브가 `share_tapped`로 따로
+       * 셌는데, 그러면 한 사람의 같은 행동이 플랫폼에 따라 다른 이름으로 쌓여 공유 퍼널이 둘로
+       * 갈렸다 (Codex 검증 지적, AC 8). 지금은 **클릭은 여기 하나가 세고** 네이티브는 통로가
+       * 실제로 열린 것(`share_launched`)만 센다 — 둘의 차이로 "눌렀는데 아무 데도 못 간 비율"은
+       * 그대로 나오면서 이름이 하나 줄었다.
+       *
+       * 앱 안에서는 `channel`이 `bridge`다. 그 값이 곧 "네이티브가 통로를 고르러 갔다"는 뜻이고,
+       * 어느 통로였는지는 네이티브의 `share_launched`가 말한다.
        */
       onShare={(result) => {
         const channel = shareResult(result.share)
-        if (standalone) track({ name: 'share_clicked', campaign: trackedCampaign(), channel })
+        track({ name: 'share_clicked', campaign: trackedCampaign(), channel })
       }}
       retest={retest}
       /*

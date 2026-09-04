@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AccenturyBridge } from '../bridge/bridge'
+import { clearTestId, ensureTestId } from './testId'
 import { track } from './track'
 
 beforeEach(() => {
@@ -8,6 +9,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  clearTestId()
   delete window.AccenturyBridge
   delete window.gtag
   delete window.dataLayer
@@ -115,5 +117,46 @@ describe('track — 보낼 곳이 없거나 전송이 깨져도 흐름을 끊지
     })
 
     expect(() => track({ name: 'referral_test_started', campaign: null })).not.toThrow()
+  })
+})
+
+describe('track — 응시 상관 키 (KAN-33 AC 1)', () => {
+  it('응시가 시작된 뒤에는 모든 이벤트에 같은 키가 붙는다', () => {
+    const gtag = vi.fn()
+    window.gtag = gtag
+    const testId = ensureTestId('s_1')
+
+    track({ name: 'item_shown', item_seq: 1, item_type: 'VOICE' })
+    track({ name: 'test_completed', campaign: null })
+
+    // 지점마다 다시 적는 값이 아니라 창구가 공통으로 얹는다 — 지점이 늘 때 빠뜨릴 자리가 없다
+    expect(gtag).toHaveBeenNthCalledWith(1, 'event', 'item_shown', {
+      item_seq: 1,
+      item_type: 'VOICE',
+      test_id: testId,
+    })
+    expect(gtag).toHaveBeenNthCalledWith(2, 'event', 'test_completed', {
+      campaign: null,
+      test_id: testId,
+    })
+  })
+
+  it('세션이 생기기 전(인트로 유입)에는 붙지 않는다', () => {
+    const gtag = vi.fn()
+    window.gtag = gtag
+
+    track({ name: 'referral_opened', campaign: 'kko_share' })
+
+    expect(gtag).toHaveBeenCalledWith('event', 'referral_opened', { campaign: 'kko_share' })
+  })
+
+  it('브리지 경로에도 같은 키가 실린다 — 앱·웹이 같은 축으로 묶인다', () => {
+    const logEvent = vi.fn()
+    bridgeWithLogEvent(logEvent)
+    const testId = ensureTestId('s_1')
+
+    track({ name: 'retest_started' })
+
+    expect(logEvent).toHaveBeenCalledWith('retest_started', JSON.stringify({ test_id: testId }))
   })
 })
