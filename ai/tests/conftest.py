@@ -12,6 +12,31 @@ from app.config import Settings
 from app.engine import AnalysisOutcome, AnalysisRequest
 from app.main import create_app
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """계약 적합성 스위트(KAN-137, ``tests/contract``)가 읽는 옵션.
+
+    선언이 스위트 옆이 아니라 여기 있는 이유는 pytest가 ``pytest_addoption``을 **테스트
+    루트의 conftest에서만** 읽기 때문이다 - 하위 디렉터리에 두면 그 디렉터리를 직접
+    지목해 실행할 때만 살아나고, 그냥 ``pytest``로 돌리면 옵션을 모르는 실행이 된다.
+    """
+    parser.addoption(
+        "--contract-engine",
+        default=None,
+        help=(
+            "계약 스위트가 검사할 엔진 이름 (기본: 환경 변수 ACCENTURY_AI_ANALYSIS_ENGINE, "
+            "없으면 stub). tests/contract/conftest.py의 ENGINE_PROFILES에 있는 이름이어야 한다"
+        ),
+    )
+    parser.addoption(
+        "--contract-audio",
+        default=None,
+        help=(
+            "계약 스위트가 보낼 WAV 파일 경로 (기본: 합성 사인파). 실모델로 돌릴 때는 "
+            "실제 발화 녹음을 준다 - 합성음은 판정 실패로 떨어질 수 있다"
+        ),
+    )
+
+
 #: 판정 실패 스텁을 태울 문항 - 실패 종료 경로 검증용
 FAIL_ITEM = "v5"
 
