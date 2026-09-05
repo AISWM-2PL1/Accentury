@@ -43,6 +43,7 @@ import os
 import shutil
 import signal
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -91,6 +92,14 @@ _MFA_ROOT_ENV = "MFA_ROOT_DIR"
 #: MFA 음향 모델이 있는 하위 폴더 - 위 정리에서 이것만 남긴다.
 _MFA_KEEP = "pretrained_models"
 
+#: 워커가 쓰는 캐시 디렉터리 이름 - 요청 데이터가 아니라 재사용하는 컴파일 캐시다.
+#:
+#: torch는 ``TMPDIR`` 아래에 ``torchinductor_<사용자>``를 만든다. 그 자리에 두면 두 가지가
+#: 어긋난다. 청소 잡이 30분마다 지워 매번 다시 컴파일하게 되고(KAN-27의 임시 저장소는
+#: 요청 오디오를 위한 곳이다), 임시 저장소가 디렉터리를 잔여물로 세어 ``tempFiles``가 영영
+#: 0으로 돌아오지 않는다 - KAN-38의 잔존 경보가 그 값을 본다. 홈 아래로 뺀다.
+_WORKER_CACHE_DIR = ".cache/accentury-ai"
+
 
 class _WorkerGone(RuntimeError):
     """워커가 응답을 주지 못하고 사라졌다.
@@ -104,6 +113,24 @@ class _WorkerGone(RuntimeError):
 def _package_root() -> Path:
     """``app`` 패키지를 임포트할 수 있는 디렉터리 - 자식의 작업 디렉터리다."""
     return Path(__file__).resolve().parents[1]
+
+
+def _worker_env(temp_dir: Path) -> dict[str, str]:
+    """워커 프로세스의 환경 변수.
+
+    ``TMPDIR``로 임시파일을 전용 디렉터리에 몬다 (KAN-27). 부모가 ``tempfile.tempdir``로
+    돌려 둔 것은 부모 프로세스에만 걸리므로 자식에게는 환경 변수로 줘야 하고, 그러지 않으면
+    전달본이 만드는 정렬 작업 폴더(오디오 사본이 들어간다)가 공용 ``/tmp``에 생겨 청소 잡도
+    잔존 지표도 닿지 않는다.
+
+    컴파일 캐시는 반대로 그 디렉터리 **밖**으로 뺀다 (:data:`_WORKER_CACHE_DIR`). 이미
+    설정돼 있으면 그대로 둔다 - 배포가 정한 자리를 우리가 덮지 않는다.
+    """
+    cache = Path(os.environ.get("HOME", tempfile.gettempdir())) / _WORKER_CACHE_DIR
+    env = {**os.environ, "TMPDIR": str(temp_dir)}
+    for name, sub in (("TORCHINDUCTOR_CACHE_DIR", "torchinductor"), ("TRITON_CACHE_DIR", "triton")):
+        env.setdefault(name, str(cache / sub))
+    return env
 
 
 async def _reap(process: asyncio.subprocess.Process, temp_dir: Path) -> None:
@@ -274,11 +301,8 @@ class Track1Engine:
             # 별도 세션이라 프로세스 그룹째 죽일 수 있다 - MFA가 워커의 자식이다
             start_new_session=True,
             cwd=str(_package_root()),
-            # 자식의 임시파일도 전용 디렉터리로 몬다 (KAN-27). 부모가 ``tempfile.tempdir``로
-            # 돌려 둔 것은 부모 프로세스에만 걸리므로, 자식에게는 환경 변수로 준다 - 그러지
-            # 않으면 전달본이 만드는 정렬 작업 폴더(오디오 사본이 들어간다)가 공용 /tmp에 생겨
-            # 청소 잡도 잔존 지표도 닿지 않는다
-            env={**os.environ, "TMPDIR": str(self._settings.temp_dir)},
+            # 자식의 임시파일 자리와 캐시 자리를 함께 정한다 (아래 :func:`_worker_env`)
+            env=_worker_env(self._settings.temp_dir),
             limit=_PIPE_LIMIT_BYTES,
         )
         self._process = process

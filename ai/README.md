@@ -218,4 +218,5 @@ pytest                               # 계약 스위트는 전달본이 없으�
 | `ACCENTURY_AI_TRACK1_DEVICE` | `auto` | Whisper를 올릴 장치 (`auto`면 cuda, mps, cpu 순) |
 | `ACCENTURY_AI_TRACK1_LOAD_TIMEOUT_SECONDS` | `600` | 가중치 적재의 상한 - 넘기면 워밍업 실패로 health가 `STARTING`에 머뭅니다 |
 | `ACCENTURY_AI_INTERNAL_TOKEN` | (없음) | backend와 나눠 갖는 내부 호출 시크릿 (KAN-36). 있으면 health를 뺀 모든 요청에 `X-Accentury-Internal-Token` 헤더를 요구합니다 |
+| `ACCENTURY_AI_LOG_LEVEL` | `INFO` | 앱 로그 수준. 기동 로그(`warmUp=있음`, 모델 버전)와 요청 종료 줄이 INFO입니다 |
 | `ACCENTURY_AI_INTERNAL_TOKEN_REQUIRED` | `false` | `true`면 위 토큰이 없을 때 기동이 실패합니다 (KAN-36). 운영 compose가 켭니다 |
