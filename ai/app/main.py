@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
 import tempfile
 from contextlib import asynccontextmanager, suppress
 
@@ -25,6 +26,13 @@ from app.limits import MaxBodySizeMiddleware
 from app.tempstore import VoiceTempStore
 
 log = logging.getLogger(__name__)
+
+#: 이 앱의 로그 수준. 기본이 INFO인 이유는 운영에서 읽어야 하는 줄이 대부분 INFO이기 때문이다 -
+#: 기동 시 어떤 엔진과 모델 버전이 올라왔는지(``warmUp=있음``), 요청마다의 종료 상태와 소요가
+#: 그렇다 (KAN-38의 조사 경로). uvicorn은 자기 로거만 설정하므로 이것이 없으면 루트가 WARNING에
+#: 머물러 그 줄들이 컨테이너 로그에 아예 나오지 않는다.
+LOG_LEVEL = os.environ.get("ACCENTURY_AI_LOG_LEVEL", "INFO").upper()
+logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
 
 def create_app(settings: Settings | None = None, engine: AnalysisEngine | None = None) -> FastAPI:
