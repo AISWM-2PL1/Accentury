@@ -15,9 +15,14 @@
 가중치 2.8GB가 그 안에 있다). 전달본 모듈이 없는 개발 기계에서는 사유와 함께 건너뛴다.
 
 ```bash
-docker run --rm -v "$PWD:/src" accentury-ai:dev \
-    python -m pytest /src/tests/contract --contract-audio=/src/samples/1-5.wav
+docker run --rm --platform linux/amd64 -v "$PWD:/src" -w /src \
+    -e ACCENTURY_AI_ANALYSIS_TIMEOUT_SECONDS=600 accentury-ai:dev \
+    sh -c "pip install -q --user pytest httpx && \
+           python -m pytest tests/contract --contract-audio=/src/samples/1-5.wav"
 ```
+
+운영 이미지에는 pytest가 없어 컨테이너 안에서 ``--user``로 깔고 돈다 (비루트라 시스템
+site-packages에는 못 쓴다). 자세한 것은 ``ai/README.md``의 같은 절이다.
 
 **두 가지를 맞추지 않으면 계약과 무관한 이유로 항목이 깨진다.**
 
