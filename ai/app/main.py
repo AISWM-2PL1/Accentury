@@ -1,9 +1,9 @@
 """FastAPI AI 분석 서버.
 
 이 서버는 BE만 호출할 수 있는 사설망 서비스다 (§1.1, §4, NFR-SC-04) - 퍼블릭 인터넷에
-노출하지 않는다. KAN-27 범위는 **원본 음성이 이 서버에 남지 않는 것**이고, 실제 추론과
-``/internal/v0/models``는 KAN-22가 채운다. 추론은 :mod:`app.engine`의 어댑터 뒤에 있어
-기동 시 한 번 고르면 라우트는 그것이 무엇인지 모른다 (KAN-135).
+노출하지 않는다. KAN-27 범위는 **원본 음성이 이 서버에 남지 않는 것**이다. 추론은
+:mod:`app.engine`의 어댑터 뒤에 있어 기동 시 한 번 고르면 라우트는 그것이 무엇인지
+모른다 (KAN-135) - 지금 꽂히는 것은 실모델이다 (:mod:`app.track1`, KAN-22).
 """
 
 from __future__ import annotations
@@ -68,7 +68,7 @@ def create_app(settings: Settings | None = None, engine: AnalysisEngine | None =
         # 준비 상태 게이트 (KAN-36). 엔진이 워밍업을 선언하면(가중치 적재 등, KAN-22) 그것이 끝난
         # 뒤에야 health가 UP이 된다. 워밍업은 lifespan을 붙들지 않고 뒤에서 돈다 - uvicorn은 lifespan
         # 기동이 끝나야 포트를 여는데, 그 안에서 기다리면 그동안 health는 503이 아니라 연결 거부이고
-        # 문서의 STARTING은 영영 나가지 않는다 (리뷰 지적). 스텁은 워밍업이 없어 곧바로 UP이다
+        # 문서의 STARTING은 영영 나가지 않는다 (리뷰 지적). 실모델은 가중치 적재가 끝나야 UP이다
         readiness = asyncio.create_task(_become_ready(started, resolved_engine))
         try:
             if resolved.internal_token is None:
@@ -89,6 +89,9 @@ def create_app(settings: Settings | None = None, engine: AnalysisEngine | None =
             sweeper.cancel()
             with suppress(asyncio.CancelledError):
                 await sweeper
+            # 엔진이 프로세스 밖에 쥔 것을 놓게 한다 (KAN-22의 워커 프로세스). 놓지 않으면
+            # 워커가 별도 세션이라 부모를 따라 죽지 않고 RSS 7GB대짜리 고아로 남는다
+            await _close_engine(resolved_engine)
             tempfile.tempdir = previous_tempdir
 
     app = FastAPI(title="Accentury AI", version="0.1.0", lifespan=lifespan)
@@ -145,6 +148,25 @@ async def _become_ready(app: FastAPI, engine: AnalysisEngine) -> None:
         raise
     except Exception:  # noqa: BLE001 - 어떤 실패든 준비 전으로 남기는 것이 목적이다
         log.exception("엔진 워밍업 실패 - health는 STARTING에 머문다")
+
+
+async def _close_engine(engine: AnalysisEngine) -> None:
+    """엔진의 선택 메서드 ``close``를 부른다 (KAN-22).
+
+    ``warm_up``과 대칭이다 - 없으면 아무것도 하지 않고, 코루틴이면 await, 동기면 스레드다.
+    여기서 나는 예외는 삼킨다. 종료 경로라 되살릴 것이 없고, 예외를 올리면 lifespan의
+    나머지 정리(임시 디렉터리 원복)가 건너뛰어진다.
+    """
+    close = getattr(engine, "close", None)
+    if not callable(close):
+        return
+    try:
+        if inspect.iscoroutinefunction(close):
+            await close()
+        else:
+            await asyncio.to_thread(close)
+    except Exception:  # noqa: BLE001 - 종료 중 실패로 정리를 멈추지 않는다
+        log.exception("엔진 정리 실패")
 
 
 async def _sweep_forever(store: VoiceTempStore, interval_seconds: float) -> None:

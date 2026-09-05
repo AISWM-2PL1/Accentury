@@ -78,7 +78,7 @@ Route 53 호스팅 영역 ── Porkbun에서 NS 위임 ── ACM 인증서 2�
          │  │   IMDSv2 hop limit 1, health 타이머 → CloudWatch       │
          │  │   docker compose (docker-compose.ai.yml)               │
          │  │   ┌────────────────┐                                   │
-         │  │   │ ai :8000        │ FastAPI 워커 1, 스텁 (실모델 KAN-22) │
+         │  │   │ ai :8000        │ FastAPI 워커 1 + 실모델 워커 프로세스 1 │
          │  │   └────────────────┘                                   │
          │  └──────────────────────────────────────────────────────┘
          │ 5432 (rds-sg: backend-sg만)
@@ -122,8 +122,9 @@ Route 53 호스팅 영역 ── Porkbun에서 NS 위임 ── ACM 인증서 2�
 backend는 KAN-165부터 ECS Fargate다 (온디맨드만, Spot 없음 - 2026-09-01 결정, 아래 설계
 결정 기록). 태스크 1개 고정은 backend의 인메모리 상태(요청 제한, 회로 차단기, 혼잡 판정,
 디스패처 큐) 때문이고 KAN-167(다중 인스턴스 상태 정리)과 KAN-168(오토스케일링)이 푼다.
-AI는 KAN-36 A단계로 전용 EC2에 스텁 모드로 분리됐고, 실모델 이미지 반영(B단계)과 GPU
-여부는 KAN-22, KAN-57 이후다. WAF(KAN-149)는 `modules/waf`가 us-east-1에 만들어 CloudFront
+AI는 KAN-36 A단계로 전용 EC2에 분리됐고, 2026-09-05에 실모델로 바뀌었다 (KAN-22 - `ai/Dockerfile`의
+FROM이 모델 전달본 `accentury/ai-model:<모델 해시>`다). 메모리 상한과 GPU 여부는 KAN-57 실측
+뒤에 정한다. WAF(KAN-149)는 `modules/waf`가 us-east-1에 만들어 CloudFront
 배포에 붙인다 (아래 'WAF 웹 ACL').
 
 workspace가 아니라 디렉토리 분리를 쓴다. workspace는 현재 선택된 환경이 눈에
@@ -513,6 +514,22 @@ docker image inspect "${REGISTRY}/accentury/ai-model:${MODEL_HASH}" \
 
 `linux/amd64`가 아니면 그 태그는 쓰지 않고 새 해시로 다시 올린다.
 
+### 모델 교체 (KAN-22)
+
+배포에 쓰는 태그는 **`ai/Dockerfile`의 `ARG MODEL_TAG` 한 곳**에 있다. 모델이 바뀌면 그 줄을
+새 해시로 바꾸는 것이 곧 모델 교체이고, 그 커밋의 SHA로 빌드된 `accentury/ai`가 새 모델을
+품는다 - 어느 배포가 어느 모델을 돌렸는지가 두 태그의 짝으로 남는다. 레지스트리 주소만
+`scripts/push-images.sh`가 계정에서 유도해 `--build-arg MODEL_REGISTRY`로 넘긴다.
+
+빌드 머신은 ECR에 로그인해 있어야 한다 - 베이스가 사설 레지스트리에 있으므로 로그인 없이는
+push가 아니라 빌드가 먼저 실패한다. 스크립트는 `DRY_RUN=1`에서도 로그인한다.
+
+`accentury/ai` 이미지는 이 교체로 약 8.5GB가 된다 (베이스 약 5GB + 파이썬 의존성). 같은
+리포지토리 안에서 베이스 레이어는 한 번만 저장되므로 SHA 태그마다 늘어나는 것은 앱 레이어뿐이지만,
+라이프사이클 상한 50개는 수백 MB짜리 backend 이미지 기준으로 정한 값이다 - 태그가 몇 개 쌓인
+뒤 ECR 콘솔의 리포지토리 크기로 실측하고 필요하면 `infra/bootstrap/ecr.tf`에서
+`accentury/ai`만 낮춘다 (KAN-173 후속).
+
 ## backend Fargate 서비스 (KAN-165)
 
 backend는 `modules/fargate`가 만드는 ECS Fargate 서비스다. EC2 위 docker compose(KAN-124)를
@@ -746,7 +763,7 @@ precondition이 plan에서 크기를 검사한다.
 
 | | ai 호스트 `accentury-{env}-ai` |
 | --- | --- |
-| 인스턴스 | ASG min 1 max 1, c7i.xlarge (2026-09-01 결정으로 스텁 모드부터) |
+| 인스턴스 | ASG min 1 max 1, c7i.xlarge (8GB - 실모델 RSS 7GB대를 이 컨테이너 혼자 쓴다) |
 | 보안 그룹 | ai-sg (backend-sg만 8000) |
 | 컨테이너 | ai (호스트 8000, backend 태스크만 닿는다) |
 | SSM 읽기 | `/accentury/{env}/ai/*`와 `IMAGE_TAG`만 (IAM으로도 그것만) |
@@ -855,8 +872,8 @@ gh secret delete ACCENTURY_ADMIN_TOKEN         # 지운다
 변수 `APP_DOMAIN`에서 읽으므로 넣을 입력이 환경 이름뿐이다.
 
 ```
-gh workflow run e2e-smoke.yml --ref Dev     -f environment=staging -f expect-stub-scores=true
-gh workflow run e2e-smoke.yml --ref Release -f environment=prod    -f expect-stub-scores=true
+gh workflow run e2e-smoke.yml --ref Dev     -f environment=staging
+gh workflow run e2e-smoke.yml --ref Release -f environment=prod
 ```
 
 주소를 입력으로 받지 않는 것은 의도다. 사람이 주소를 넣게 두면 SSM에서 막 읽은 그 환경의
@@ -872,8 +889,37 @@ gh workflow run e2e-smoke.yml --ref Release -f environment=prod    -f expect-stu
 적용된다. 브랜치를 틀리면 "Branch is not allowed to deploy to ..."로 막힌다. prod에는
 required reviewers가 걸려 있어 실행할 때마다 승인을 한 번 받는다.
 
-`expect-stub-scores`는 AI가 스텁일 때만 켠다. 실모델 전환(KAN-36 B단계) 뒤에는 끈다 -
-점수를 미리 알 수 없어 검산이 실패한다.
+스모크가 올리는 것은 합성 사인파라 실모델은 그것을 내용 게이트에서 판정 실패로 끊는다.
+그래서 기본 실행이 확인하는 종점은 결과가 아니라 **완료 409 `RESULT_RETAKE_REQUIRED`**다
+(업로드 -> AI -> BE 상태 기계까지가 실제로 이어졌다는 뜻이다). 결과 검산과 등급, 공유 카드까지
+보려면 그 문항들의 대본을 읽은 실제 녹음을 `--voice-wav`로 주고 스크립트를 직접 돌린다
+(`scripts/e2e_smoke.py` 머리말). 억양 점수를 예측하던 `expect-stub-scores`는 스텁과 함께
+없앴다 (2026-09-05, KAN-22).
+
+### 분석 시간 예산 (실모델, KAN-22 임시값)
+
+`modules/config`가 환경마다 넣는 값이다. 스텁 시절의 기본값(`ai-timeout` 10초)은 실모델에서
+성립하지 않는다 - 추론 1건이 14~30초라 모든 분석이 읽기 타임아웃으로 끊기고 회로가 열린다.
+
+| 파라미터 | 값 | 뜻 |
+| --- | --- | --- |
+| `ACCENTURY_ANALYSIS_AITIMEOUT` | `85s` | backend가 AI 호출에 거는 연결과 읽기 타임아웃 |
+| `ACCENTURY_ANALYSIS_PROCESSINGTIMEOUT` | `300s` | 실행 잔류 한도. `ai-timeout x 3 + 백오프`보다 길어야 backend가 뜬다 |
+| `ACCENTURY_ANALYSIS_DISPATCHCONCURRENCY` | `1` | 전달 워커 수. AI가 추론을 한 번에 하나만 돌리므로 늘리면 뒤의 요청이 AI 안에서 기다리다 타임아웃이다 |
+| `ai/ACCENTURY_AI_ANALYSIS_TIMEOUT_SECONDS` | `75` | AI 자신의 상한. backend보다 짧아야 AI가 먼저 끊고 503을 돌려준다 |
+
+정식 재확정은 KAN-172이고 지연 판정은 KAN-57이다. 값을 바꿀 때는 위 관계를 함께 본다 -
+backend는 기동 시점에 이 관계를 검사하고 어긋나면 뜨지 않는다 (`AnalysisDispatchConfig`).
+
+**`dispatch-concurrency`는 전역 상한이 아니다** (Codex sol 리뷰 P1). 태스크 하나가 보내는
+동시 호출만 묶으므로, 오토스케일링(최대 3, KAN-168)이나 롤링 배포로 태스크가 둘 이상 뜨면
+그만큼 AI에 동시에 들어간다. AI는 추론을 한 번에 하나만 돌리므로 뒤에 온 요청은 AI 안에서
+기다리다 backend의 읽기 타임아웃에 걸리고, 그 실패가 연속 5회면 회로가 열린다 (KAN-28).
+
+기다리는 요청이 **도는 추론을 방해하지는 않는다** - 취소는 자기 차례를 기다리는 지점에서
+끊기고 워커를 죽이지 않는다 (`ai/app/track1.py`). 그래서 증상은 "느려지고 일부가 재전송된다"
+이지 "전부 죽는다"가 아니다. 전역 한 건으로 묶는 일은 다중 인스턴스 상태를 다루는 KAN-167의
+몫이고, 프로토타입 트래픽(동시 응시 소수)에서는 태스크가 1개로 유지되므로 지금은 두고 본다.
 
 ### 이미 있는 SSM 파라미터 (재구축, 수동 생성분)
 

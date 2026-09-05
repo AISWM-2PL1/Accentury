@@ -20,31 +20,27 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     지목해 실행할 때만 살아나고, 그냥 ``pytest``로 돌리면 옵션을 모르는 실행이 된다.
     """
     parser.addoption(
-        "--contract-engine",
-        default=None,
-        help=(
-            "계약 스위트가 검사할 엔진 이름 (기본: 환경 변수 ACCENTURY_AI_ANALYSIS_ENGINE, "
-            "없으면 stub). tests/contract/conftest.py의 ENGINE_PROFILES에 있는 이름이어야 한다"
-        ),
-    )
-    parser.addoption(
         "--contract-audio",
         default=None,
         help=(
-            "계약 스위트가 보낼 WAV 파일 경로 (기본: 합성 사인파). 실모델로 돌릴 때는 "
-            "실제 발화 녹음을 준다 - 합성음은 판정 실패로 떨어질 수 있다"
+            "계약 스위트가 보낼 WAV 파일 경로 (기본: 합성 사인파). 성공 경로를 보려면 "
+            "실제 발화 녹음을 준다 - 합성음은 내용 게이트에서 판정 실패로 떨어진다"
         ),
     )
 
 
-#: 판정 실패 스텁을 태울 문항 - 실패 종료 경로 검증용
+#: 가짜 엔진이 판정 실패를 내는 문항 - 실패 종료 경로 검증용
 FAIL_ITEM = "v5"
 
-#: 요청에 실어 보내는 오디오 - 내용은 보지 않는다 (스텁도 가짜 엔진도 크기만 만진다)
+#: 가짜 엔진이 보고하는 modelVersion. 엔진이 스스로 보고하는 값이라는 것을 테스트가
+#: 확인할 때 쓴다 (KAN-135)
+FAKE_MODEL_VERSION = "fake-9.9"
+
+#: 요청에 실어 보내는 오디오 - 가짜 엔진은 내용을 보지 않고 크기만 만진다
 AUDIO = b"RIFF....WAVEfmt " + bytes(64)
 
 
-#: 기본 추적 ID - 스텁의 분산 모드가 점수를 뽑는 씨앗이기도 하다 (KAN-136)
+#: 기본 추적 ID (§2.2)
 CORRELATION_ID = "c_test"
 
 #: "meta의 추적 ID를 헤더와 같게 두라"는 기본값.
@@ -85,9 +81,8 @@ def post(
     """``POST /internal/v0/analyze`` 한 번.
 
     추적 ID를 **헤더와 meta로 나눠 준다**. 라우트는 헤더를 먼저 보고 없을 때만 meta를
-    보므로(§2.2), 하나로 묶어 두면 그 우선순위가 지켜지는지도, 씨앗이 어느 쪽에서 왔는지도
-    (KAN-136) 테스트가 물어볼 수 없다. 기본값은 BE가 실제로 하는 것과 같게 둘을 같은 값으로
-    채운다 (``RestAiAnalysisClient``).
+    보므로(§2.2), 하나로 묶어 두면 그 우선순위가 지켜지는지를 테스트가 물어볼 수 없다.
+    기본값은 BE가 실제로 하는 것과 같게 둘을 같은 값으로 채운다 (``RestAiAnalysisClient``).
 
     - ``correlation_id=None`` - 헤더를 아예 붙이지 않는다.
     - ``meta_correlation_id=None`` - meta에서 ``correlationId`` 키를 뺀다.
@@ -109,14 +104,19 @@ def residue(settings: Settings) -> list[str]:
 
 @pytest.fixture
 def settings(tmp_path) -> Settings:
-    # 지연 0ms - 테스트가 추론 흉내에 시간을 쓰지 않게 한다
-    return Settings(temp_dir=tmp_path / "ai-tmp", stub_delay_ms=0, stub_fail_item=FAIL_ITEM)
+    return Settings(temp_dir=tmp_path / "ai-tmp")
 
 
 @pytest.fixture
 def client(settings: Settings) -> TestClient:
+    """라우트 검증용 서버 - 엔진은 언제나 가짜다.
+
+    설정이 고르는 엔진(실모델)을 쓰지 않는 이유는 이 파일의 테스트가 **라우트의 보장**을
+    보기 때문이다 (KAN-135) - 무잔존, 봉투, 상한은 엔진 종류와 무관해야 하고, 실모델은
+    전달본 이미지 안에서만 임포트된다. 엔진 자체의 계약은 tests/contract가 본다 (KAN-137).
+    """
     # with 블록이어야 lifespan(디렉터리 준비, 청소 잡)이 돈다
-    with TestClient(create_app(settings)) as test_client:
+    with TestClient(create_app(settings, engine=FakeEngine(fail_item=FAIL_ITEM))) as test_client:
         yield test_client
 
 
@@ -130,14 +130,17 @@ class FakeEngine:
     def __init__(
         self,
         outcome: AnalysisOutcome | None = None,
-        model_version: str = "fake-9.9",
+        model_version: str = FAKE_MODEL_VERSION,
         error: Exception | None = None,
         delay_seconds: float = 0.0,
+        fail_item: str | None = None,
     ) -> None:
         self._outcome = outcome or AnalysisOutcome.ok(intonation_score=42)
         self._model_version = model_version
         self._error = error
         self._delay_seconds = delay_seconds
+        #: 이 itemId면 판정 실패(422)를 낸다 - 실패 종료 경로를 여는 수단이다
+        self._fail_item = fail_item
         #: 라우트가 넘긴 입력 - 경로와 meta를 그대로 들고 있는다
         self.seen: list[AnalysisRequest] = []
         #: 호출 시점에 오디오 파일이 실제로 있었는지 (수명 관리는 라우트 몫이다)
@@ -154,6 +157,8 @@ class FakeEngine:
             await asyncio.sleep(self._delay_seconds)
         if self._error is not None:
             raise self._error
+        if self._fail_item is not None and request.item_id == self._fail_item:
+            return AnalysisOutcome.failure(quality_code="AUDIO_TOO_QUIET", retryable=True)
         return self._outcome
 
     @property

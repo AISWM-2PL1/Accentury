@@ -20,7 +20,12 @@ TOKEN = "shared-secret-0123456789abcdef0123456789abcdef"
 
 
 def _settings(tmp_path, token: str | None = TOKEN) -> Settings:
-    return Settings(temp_dir=tmp_path / "ai-tmp", stub_delay_ms=0, internal_token=token)
+    return Settings(temp_dir=tmp_path / "ai-tmp", internal_token=token)
+
+
+def _app(settings: Settings):
+    """가짜 엔진을 꽂은 앱 - 인증은 엔진 종류와 무관하다 (KAN-135)."""
+    return create_app(settings, engine=FakeEngine())
 
 
 def _analyze(client: TestClient, headers: dict[str, str]):
@@ -54,7 +59,7 @@ def test_토큰_없는_분석_요청은_401이고_엔진에_닿지_않는다(tmp
 
 
 def test_토큰이_다르면_401이다(tmp_path):
-    with TestClient(create_app(_settings(tmp_path))) as client:
+    with TestClient(_app(_settings(tmp_path))) as client:
         response = _analyze(client, {INTERNAL_TOKEN_HEADER: TOKEN + "x"})
 
         assert response.status_code == 401
@@ -63,7 +68,7 @@ def test_토큰이_다르면_401이다(tmp_path):
 def test_토큰이_맞으면_분석이_돈다(tmp_path):
     settings = _settings(tmp_path)
 
-    with TestClient(create_app(settings)) as client:
+    with TestClient(_app(settings)) as client:
         response = _analyze(client, {INTERNAL_TOKEN_HEADER: TOKEN})
 
         assert response.status_code == 200
@@ -72,14 +77,14 @@ def test_토큰이_맞으면_분석이_돈다(tmp_path):
 
 
 def test_metrics도_토큰을_요구한다(tmp_path):
-    with TestClient(create_app(_settings(tmp_path))) as client:
+    with TestClient(_app(_settings(tmp_path))) as client:
         assert client.get("/internal/v0/metrics").status_code == 401
         assert client.get("/internal/v0/metrics", headers={INTERNAL_TOKEN_HEADER: TOKEN}).status_code == 200
 
 
 def test_health는_토큰_없이_열려_있다(tmp_path):
     # compose healthcheck와 호스트 상태 지표 프로브가 토큰 없이 두드린다
-    with TestClient(create_app(_settings(tmp_path))) as client:
+    with TestClient(_app(_settings(tmp_path))) as client:
         response = client.get("/internal/v0/health")
 
         assert response.status_code == 200
@@ -88,20 +93,20 @@ def test_health는_토큰_없이_열려_있다(tmp_path):
 
 def test_토큰이_설정되지_않은_서버는_검사를_건너뛴다(tmp_path):
     # 로컬 개발 편의 - 배포에서는 Terraform이 언제나 값을 넣는다
-    with TestClient(create_app(_settings(tmp_path, token=None))) as client:
+    with TestClient(_app(_settings(tmp_path, token=None))) as client:
         assert _analyze(client, {}).status_code == 200
 
 
 def test_배포_모드에서_토큰이_없으면_기동이_실패한다(tmp_path):
     # SSM에서 토큰이 빠진 채 뜨면 fail-open인데 health는 UP이라 아무도 모른다 - 기동을 세운다 (리뷰)
-    required = Settings(temp_dir=tmp_path / "ai-tmp", stub_delay_ms=0, internal_token_required=True)
+    required = Settings(temp_dir=tmp_path / "ai-tmp", internal_token_required=True)
 
     with pytest.raises(ValueError, match="ACCENTURY_AI_INTERNAL_TOKEN"):
         create_app(required)
 
     # 토큰이 있으면 그대로 뜬다
-    with TestClient(create_app(Settings(temp_dir=tmp_path / "ai-tmp", stub_delay_ms=0,
-                                        internal_token_required=True, internal_token=TOKEN))) as client:
+    with TestClient(_app(Settings(temp_dir=tmp_path / "ai-tmp",
+                                  internal_token_required=True, internal_token=TOKEN))) as client:
         assert client.get("/internal/v0/health").status_code == 200
 
 
@@ -125,7 +130,7 @@ def _wait_health(client: TestClient, status: int, timeout: float = 3.0) -> bool:
 
 def test_워밍업_전에는_health가_503_STARTING이다(tmp_path):
     # with 블록 없이 만들면 lifespan이 돌지 않는다 - 프로세스는 떴지만 준비 전인 상태다
-    client = TestClient(create_app(_settings(tmp_path)))
+    client = TestClient(_app(_settings(tmp_path)))
 
     response = client.get("/internal/v0/health")
 

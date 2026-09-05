@@ -1,20 +1,17 @@
 """분석 엔진 어댑터 경계 (KAN-135).
 
-라우트가 아는 것은 :class:`AnalysisEngine` 하나다 - 스텁이 붙어 있든 실모델(KAN-22)이
-붙어 있든 ``POST /internal/v0/analyze``의 코드는 같다. 갈아끼우기가 목적의 절반이고,
-나머지 절반은 **보장이 엔진 종류와 무관하게 걸리는 것**이다. 임시파일 수명(KAN-27),
-추론 상한, 오디오 파트 상한(413), §4.1 응답 봉투 조립은 전부 이 경계 바깥(라우트와
-공용 계층)에 남는다. 엔진이 하는 일은 "디스크에 놓인 오디오 하나를 보고 점수를 말한다"
-하나뿐이다.
+라우트가 아는 것은 :class:`AnalysisEngine` 하나다 - 어떤 엔진이 붙어 있든
+``POST /internal/v0/analyze``의 코드는 같다. 갈아끼우기가 목적의 절반이고, 나머지 절반은
+**보장이 엔진 종류와 무관하게 걸리는 것**이다. 임시파일 수명(KAN-27), 추론 상한, 오디오
+파트 상한(413), §4.1 응답 봉투 조립은 전부 이 경계 바깥(라우트와 공용 계층)에 남는다.
+엔진이 하는 일은 "디스크에 놓인 오디오 하나를 보고 점수를 말한다" 하나뿐이다.
 
-실모델이 들어올 때 이 파일에서 사라지는 것은 :class:`StubEngine`뿐이고, 프로토콜과
-라우트는 그대로 남는다.
+2026-09-05에 실모델(KAN-22)이 붙으면서 스텁은 이 파일에서 사라졌다. 경계가 예고한 대로
+프로토콜과 라우트는 그대로 남았고 바뀐 것은 :func:`create_engine`이 만드는 것뿐이다.
 """
 
 from __future__ import annotations
 
-import asyncio
-import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -23,8 +20,12 @@ from typing import Any, Literal, Protocol
 
 from app.config import Settings
 
-#: 엔진 이름 - :func:`create_engine`이 고르는 값이다. 실모델은 KAN-22가 하나 더 만든다.
-STUB_ENGINE = "stub"
+#: 엔진 이름 - :func:`create_engine`이 고르는 값이다.
+#:
+#: 지금은 하나뿐이지만 이름을 남겨 둔다. 설정이 이름으로 고르는 구조라야 모르는 값에
+#: 기동을 세울 수 있고(아래 :func:`create_engine`), 배포 환경이 무엇을 띄웠는지가 로그와
+#: 설정 양쪽에 남는다.
+TRACK1_ENGINE = "track1"
 
 STATUS_OK: Literal["OK"] = "OK"
 STATUS_FAILED: Literal["FAILED"] = "FAILED"
@@ -74,20 +75,18 @@ class AnalysisRequest:
     meta: Mapping[str, Any]
     #: 라우트가 정한 추적 ID (§2.2) - 헤더가 우선이고 없을 때만 meta다.
     #:
-    #: 라우트가 로그에 찍는 값과 **같은 값**이어야 한다. 스텁의 분산 모드가 이것을 점수의
-    #: 씨앗으로 쓰기 때문이다 (KAN-136) - 출처가 갈리면 헤더만 보내는 호출자(수동 데모,
-    #: KAN-138 스모크)에게 씨앗이 빈 문자열이 되어 모든 요청이 같은 점수를 받는다. 없애려던
-    #: 고정 점수가 조용히 돌아오는 자리이고, 로그는 헤더에서 뽑은 ID를 찍으니 원인도 안 보인다.
-    #: 지금 BE가 헤더와 meta 양쪽에 같은 값을 넣어(``RestAiAnalysisClient``) 우연히 맞는 것을
-    #: 계약으로 오해하지 않는다.
+    #: 라우트가 로그에 찍는 값과 **같은 값**이어야 한다. 엔진이 meta에서 따로 뽑으면
+    #: 헤더만 보내는 호출자(수동 데모, KAN-138 스모크)에게 두 값이 갈리고, 그때 로그의
+    #: 추적 ID로는 그 요청을 다시 찾을 수 없다. 지금 BE가 헤더와 meta 양쪽에 같은 값을
+    #: 넣어(``RestAiAnalysisClient``) 우연히 맞는 것을 계약으로 오해하지 않는다.
     #:
     #: 비워 두고 만들면 meta에서 떨어뜨린다 - 라우트를 거치지 않는 호출자용 편의다.
     correlation_id: str = ""
 
     def __post_init__(self) -> None:
         # meta는 BE가 보낸 값 그대로라 타입이 어긋날 수 있다 - 문자열이 아니면 빈 문자열로
-        # 접는다. 접지 않으면 :meth:`StubEngine.hashed_score`가 ``encode()``에서 터져
-        # 500이 되고, BE는 그것을 일시 장애로 보고 재전송 예산을 태운다
+        # 접는다. 접지 않으면 이 값을 문자열로 다루는 쪽(로그 포맷, 엔진)이 터져 500이
+        # 되고, BE는 그것을 일시 장애로 보고 재전송 예산을 태운다
         resolved = _text(self.correlation_id) or _text(self.meta.get("correlationId"))
         object.__setattr__(self, "correlation_id", resolved)
 
@@ -113,7 +112,7 @@ class AnalysisOutcome:
     quality_code: str = QUALITY_OK
     #: 실패가 재시도로 풀릴 수 있는지 (§4.1). 성공 응답에는 실리지 않는다.
     retryable: bool = False
-    #: §4.1 segments - 스텁은 비우고 실모델(KAN-22)이 채운다.
+    #: §4.1 segments - 실모델이 구간 피드백을 싣는다 (KAN-22).
     segments: Sequence[Mapping[str, Any]] = ()
 
     def __post_init__(self) -> None:
@@ -243,17 +242,22 @@ class AnalysisEngine(Protocol):
     선택 메서드 ``warm_up`` (KAN-36): 정확히 이 이름으로 ``async def warm_up(self) -> None``
     (또는 동기 ``def warm_up(self) -> None`` - 앱이 스레드로 넘긴다)을 두면 앱이 기동 뒤 그것을
     먼저 돌리고, 끝나야 health가 UP이 된다. 실모델(KAN-22)은 가중치 적재를 여기 둔다. 이름이
-    다르면 조용히 건너뛰므로 기동 로그의 ``warmUp=있음``으로 확인한다. Protocol은 선택 메서드를
-    표현하지 못해 여기 적어 둔다.
+    다르면 조용히 건너뛰므로 기동 로그의 ``warmUp=있음``으로 확인한다.
+
+    선택 메서드 ``close`` (KAN-22): ``async def close(self) -> None``을 두면 앱이 내려갈 때
+    부른다. 워커 프로세스나 GPU 컨텍스트처럼 프로세스 밖에 있는 자원을 놓는 자리다 -
+    두지 않으면 부모가 죽어도 그것들이 남는다.
+
+    Protocol은 선택 메서드를 표현하지 못해 여기 적어 둔다.
     """
 
     @property
     def model_version(self) -> str:
         """이 엔진이 스스로 보고하는 버전.
 
-        설정값이 아니다 (KAN-135) - 실모델은 자기가 실제로 적재한 가중치의 버전을 내고,
-        스텁은 ``stub-0.1``을 낸다. 설정으로 덮어쓸 수 있게 두면 배포 환경이 부른 이름과
-        실제 돌고 있는 것이 어긋나도 아무도 모른다.
+        설정값이 아니다 (KAN-135) - 실모델은 자기가 실제로 적재한 가중치의 버전을 낸다.
+        설정으로 덮어쓸 수 있게 두면 배포 환경이 부른 이름과 실제 돌고 있는 것이 어긋나도
+        아무도 모른다.
         """
 
     async def analyze(self, request: AnalysisRequest) -> AnalysisOutcome:
@@ -278,100 +282,6 @@ class AnalysisEngine(Protocol):
         """
 
 
-class StubEngine:
-    """실모델이 오기 전까지의 자리 지킴 (KAN-27에서 이어온 동작 그대로).
-
-    **실모델 전환 시 이 클래스는 통째로 제거된다** (KAN-22). 지연 흉내, 점수 산출, 실패
-    스텁은 전부 앱과 BE의 경로를 시험하기 위한 장치이고 어느 것도 분석 규칙이 아니다.
-    특히 :meth:`hashed_score`의 해시는 **추론이 아니다** - 오디오를 한 바이트도 보지 않고
-    추적 ID만 본다. 점수 분포를 넓히는 일(KAN-136)도 이 클래스 안에서만 하고, 실모델이
-    오면 이 파일에서 함께 사라진다.
-    """
-
-    #: 스텁의 정체. 설정으로 바꾸지 않는다 - 이 값이 보이면 스텁이 돌고 있다는 뜻이어야 한다.
-    MODEL_VERSION = "stub-0.1"
-
-    #: correlationId를 해시해 0~100을 고르게 덮는 모드 (KAN-136 - 기본값).
-    SCORE_MODE_HASHED = "hashed"
-    #: 설정한 점수 하나를 늘 그대로 내는 모드 (KAN-27의 동작). 회귀 테스트와 계약
-    #: 테스트가 검산할 기준값을 두는 자리다.
-    SCORE_MODE_FIXED = "fixed"
-    #: 고를 수 있는 모드의 정본 - :class:`app.config.Settings`가 이 목록을 참조한다.
-    SCORE_MODES = (SCORE_MODE_HASHED, SCORE_MODE_FIXED)
-
-    #: 억양 원점수의 상한 (§4.3의 0~100 스케일). 해시를 이 폭에 접는다.
-    MAX_SCORE = 100
-
-    def __init__(self, settings: Settings) -> None:
-        self._delay_seconds = settings.stub_delay_ms / 1000
-        self._score_mode = settings.stub_score_mode
-        self._intonation_score = settings.stub_intonation_score
-        self._fail_item = settings.stub_fail_item
-        # 모르는 모드는 기동을 세운다 - :func:`create_engine`이 모르는 엔진 이름에 그러는
-        # 것과 같은 이유다. 오타를 고정 모드로 접어 두면, 분산을 켰다고 믿는 환경이 점수
-        # 하나만 내보내면서 아무 신호도 남기지 않는다. 데모에서 등급 셋만 나오는 것을
-        # 결과 화면 버그로 오해하게 되는 자리다
-        if self._score_mode not in self.SCORE_MODES:
-            raise ValueError(
-                f"알 수 없는 스텁 점수 모드: {self._score_mode!r} "
-                f"(가능한 값: {', '.join(self.SCORE_MODES)})"
-            )
-        # 고정 모드에서만 쓰는 값이지만 모드와 무관하게 본다 - 설정은 배포 때 한 번 정해지고
-        # 모드는 나중에 뒤집히므로, 범위 밖 값이 남아 있으면 뒤집는 날 드러난다. 그때
-        # 드러나는 모양은 요청마다 :class:`AnalysisOutcome`이 터지는 500이고, BE는 그것을
-        # 일시 장애로 보고 재전송 예산이 마를 때까지 같은 실패를 반복한다
-        if not 0 <= self._intonation_score <= self.MAX_SCORE:
-            raise ValueError(
-                f"스텁 억양 점수가 0~{self.MAX_SCORE} 밖이다: {self._intonation_score}"
-            )
-
-    @property
-    def model_version(self) -> str:
-        return self.MODEL_VERSION
-
-    @staticmethod
-    def hashed_score(correlation_id: str) -> int:
-        """correlationId 하나를 0~100의 억양 원점수로 접는다 (KAN-136).
-
-        **추론이 아니다.** 오디오는 한 바이트도 보지 않는다 - 5등급이 전부 관측되는 데모
-        데이터를 만드는 장치일 뿐이다.
-
-        해시는 ``blake2b``다. 파이썬 내장 ``hash()``는 문자열에 프로세스마다 다른 시드를
-        쓰므로(``PYTHONHASHSEED``), 같은 correlationId가 서버를 다시 띄운 뒤 다른 점수를
-        낸다 - BE 재전송 멱등(§4.1)과 E2E 재현성(KAN-138)이 거기서 깨진다.
-
-        101로 나눈 나머지를 쓴다 - 0~100 어느 값도 같은 확률로 나온다(치우침은
-        ``101/2**64`` 수준이라 없는 것과 같다). 문항 5개 원점수의 평균이 곧 억양 점수라
-        (BE ``ScoreAggregator``), 이 함수가 고르게 덮어야 세션 점수가 넓게 퍼진다.
-
-        **itemId는 섞지 않는다.** 앱은 업로드마다 새 UUID를 발급하므로(``UploadClient``)
-        정상 세션의 문항 5개는 이미 서로 독립이고, itemId를 더해도 분포는 달라지지 않는다.
-        대신 correlationId 하나만 보는 덕에, 수동 데모나 E2E가 한 세션의 다섯 요청에 같은
-        ``X-Correlation-Id``를 고정하면 다섯 문항이 같은 점수가 되어 세션 억양 점수를 0이든
-        100이든 원하는 자리로 끌 수 있다 - 특정 등급 화면을 재현하는 수단이다 (KAN-138).
-        """
-        digest = hashlib.blake2b(correlation_id.encode("utf-8"), digest_size=8).digest()
-        return int.from_bytes(digest, "big") % (StubEngine.MAX_SCORE + 1)
-
-    async def analyze(self, request: AnalysisRequest) -> AnalysisOutcome:
-        if self._delay_seconds:
-            await asyncio.sleep(self._delay_seconds)
-        # 모델이 그러듯 파일을 실제로 한 번 만진다 - 라우트가 넘긴 경로가 살아 있는지까지 본다
-        request.audio_path.stat()
-        if self._fail_item and request.item_id == self._fail_item:
-            return AnalysisOutcome.failure(quality_code="AUDIO_TOO_QUIET", retryable=True)
-        return AnalysisOutcome.ok(intonation_score=self._score_for(request))
-
-    def _score_for(self, request: AnalysisRequest) -> int:
-        if self._score_mode == self.SCORE_MODE_FIXED:
-            return self._intonation_score
-        # correlationId가 비는 것은 BE 계약 위반이지만(§4.1 meta 필수) 여기서 끊지 않는다.
-        # 스텁이 낼 수 있는 것은 500뿐이고 BE는 그것을 일시 장애로 보고 재전송하므로,
-        # 같은 요청이 예산이 마를 때까지 반복된다. 빈 문자열도 해시는 결정적이라 재전송
-        # 멱등은 그대로 지켜진다 - 계약 위반을 잡는 자리는 BE 쪽이다
-        return self.hashed_score(request.correlation_id)
-
-
 def require_reportable_version(engine: AnalysisEngine) -> AnalysisEngine:
     """엔진이 쓸 만한 ``modelVersion``을 보고하는지 기동 시 확인한다.
 
@@ -393,11 +303,17 @@ def require_reportable_version(engine: AnalysisEngine) -> AnalysisEngine:
 def create_engine(settings: Settings) -> AnalysisEngine:
     """설정이 지정한 엔진을 만든다 (기동 시 1회).
 
-    모르는 이름이면 기동을 세운다 - 스텁으로 조용히 흘러가면, 실모델을 띄웠다고 믿는
-    환경이 고정 점수를 내보내면서 아무 신호도 남기지 않는다.
+    모르는 이름이면 기동을 세운다 - 아무거나 만들어 흘려보내면, 무엇을 띄웠다고 믿는
+    환경이 다른 것을 돌리면서 아무 신호도 남기지 않는다.
+
+    실모델 임포트를 함수 안에서 하는 이유는 둘이다. 이 파일은 :mod:`app.track1`이
+    거꾸로 임포트하므로 위에서 부르면 순환이 되고, 무엇보다 엔진을 만들지 않는 경로
+    (테스트가 가짜 엔진을 꽂는 경우)까지 전달본 모듈을 찾게 만들 이유가 없다.
     """
-    if settings.analysis_engine == STUB_ENGINE:
-        return StubEngine(settings)
+    if settings.analysis_engine == TRACK1_ENGINE:
+        from app.track1 import Track1Engine  # noqa: PLC0415 - 순환 임포트를 피한다
+
+        return Track1Engine(settings)
     raise ValueError(
-        f"알 수 없는 분석 엔진: {settings.analysis_engine!r} (가능한 값: {STUB_ENGINE})"
+        f"알 수 없는 분석 엔진: {settings.analysis_engine!r} (가능한 값: {TRACK1_ENGINE})"
     )

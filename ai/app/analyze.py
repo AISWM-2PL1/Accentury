@@ -1,9 +1,8 @@
 """``POST /internal/v0/analyze`` (API 명세서 §4.1).
 
 이 엔드포인트에서 완성된 것은 **오디오의 수명 관리와 응답 봉투**다. 점수를 만드는 일은
-:mod:`app.engine`의 어댑터 뒤에 있고, 지금 꽂혀 있는 것은 고정 점수 스텁이다. 실제
-추론(F0 추출, guideF0 정렬, 점수 산출)은 KAN-22가 엔진 구현 하나로 들어오며, 그때
-이 파일은 고치지 않는다 (KAN-135).
+:mod:`app.engine`의 어댑터 뒤에 있다. 실모델(전사, 정렬, 참조 거리, 점수)이 엔진 구현
+하나로 들어올 때 이 파일은 한 줄도 고치지 않았다 (KAN-135, KAN-22).
 
 경로는 엔진 종류와 무관하게 같다 - 받은 오디오를 파일로 한 번 내려놓고, 엔진에 상한을
 걸어 넘기고, 응답을 만들고, 그 파일을 지운다. "무잔존", 추론 상한, 오디오 상한(413)이
@@ -92,7 +91,7 @@ async def analyze(
             # (app.engine.AnalysisEngine.analyze)
             async with asyncio.timeout(settings.analysis_timeout_seconds):
                 # 추적 ID는 라우트가 정한 것 하나만 쓴다 - 엔진이 meta에서 따로 뽑으면
-                # 헤더만 보내는 호출자에게 로그의 ID와 스텁 점수의 씨앗이 갈린다 (KAN-136)
+                # 헤더만 보내는 호출자에게 로그의 ID와 엔진이 본 ID가 갈린다 (§2.2)
                 outcome = await engine.analyze(
                     AnalysisRequest(
                         audio_path=path, meta=parsed, correlation_id=correlation_id
@@ -172,7 +171,7 @@ async def analyze(
             "quality": {"code": outcome.quality_code},
             "segments": list(outcome.segments),
             # 세션이 고정한 점수 버전을 그대로 되돌려준다 - BE가 불일치를 계약 위반으로
-            # 끊으므로(§5.4), 스텁이 제 버전을 지어내면 전 요청이 INTERNAL_ERROR가 된다
+            # 끊으므로(§5.4), 엔진이 제 버전을 지어내면 전 요청이 INTERNAL_ERROR가 된다
             "scoreVersion": score_version,
             "modelVersion": engine.model_version,
             "processingMs": processing_ms,

@@ -5,25 +5,29 @@
 통과시킨 적이 없고 BE와 AI 서버를 실제로 붙여 본 적도 없다 (BE 테스트는 AI를 목으로
 대체한다). 이 스크립트가 그 자리를 메운다.
 
-    scripts/e2e_smoke.py --base-url http://127.0.0.1:8080
     scripts/e2e_smoke.py --base-url https://api.staging.accentury.app
-    scripts/e2e_smoke.py --base-url http://127.0.0.1:8080 \
-        --fail-item v3 --recover-cmd 'docker compose up -d --no-deps --wait ai'
+    scripts/e2e_smoke.py --base-url https://api.staging.accentury.app \
+        --voice-wav samples/1-5.wav
 
-대상은 ``--base-url`` 하나로만 갈린다 - 로컬 compose, staging, prod에서 같은 스크립트가
-같은 시나리오를 돈다 (티켓 Requirements).
+대상은 ``--base-url`` 하나로만 갈린다 - staging과 prod에서 같은 스크립트가 같은 시나리오를
+돈다 (티켓 Requirements).
 
-특정 등급 재현
---------------
-종합 점수는 억양과 단어 두 축으로 정해지므로(§4.3) 한 축만 고정해서는 5등급을 다 볼 수
-없다. gn-2026.08.1에서 첫 선택지 전략은 단어 60점에 묶여 억양을 0으로 눌러도 종합이 20,
-즉 여행객이 바닥이다. 두 손잡이를 같이 쓴다.
+두 갈래로 갈리는 이유 (2026-09-05, KAN-22)
+------------------------------------------
+AI가 실모델이 되면서 **합성 사인파로는 점수가 나오지 않는다.** 채점의 첫 단계가 대본과
+발화 내용을 대조하는 게이트라, 대본을 읽지 않은 소리는 판정 실패(§2.4)로 끊긴다. 그래서
+기본 실행은 여기까지를 확인한다.
 
-    --pin-intonation 0   --vocab-choice-index 2   # 종합 0   -> 외지인
-    --pin-intonation 30  --vocab-choice-index 1   # 종합 33  -> 여행객
-    --pin-intonation 60  --vocab-choice-index 1   # 종합 53  -> 사투리 호소인
-    --pin-intonation 60  --vocab-choice-index 0   # 종합 60  -> 명예주민
-    --pin-intonation 100 --vocab-choice-index 0   # 종합 87  -> 경남 토박이
+    업로드 -> AI 판정 실패 -> 완료 409 RESULT_RETAKE_REQUIRED (§3.6)
+
+전 구간(결과 검산, 등급, 공유 카드)까지 보려면 **대본을 읽은 실제 녹음**을 준다.
+``--voice-wav``에 ``<itemId>.wav``가 든 디렉터리를 주면 문항마다 그 파일을 올리고, 분석이
+성공하면 스크립트가 결과를 sv-0.3 집계식으로 검산한다. 발행본은 문항마다 문장이 다르므로
+(KAN-182의 세트) 파일 하나로는 한 문항만 맞고 나머지는 게이트에 걸린다 - 그때는 스크립트가
+통과가 아니라 실패로 끊는다. 세션이 고른 세트는 정의 조회 로그의 itemId로 확인한다.
+
+억양 점수를 원하는 값으로 고정하던 손잡이(``--pin-intonation``)는 스텁 전용이라 함께
+없앴다 - 실모델은 오디오만 본다.
 
 표준 라이브러리만 쓴다. 스모크 한 번 돌리자고 배포 파이프라인(KAN-128) 러너에 pip install을
 시키면 그 설치 실패가 곧 배포 게이트 실패가 되기 때문이다. 파일 하나를 복사해 어디서든
@@ -44,18 +48,19 @@ from __future__ import annotations
 
 import argparse
 import datetime
-import hashlib
+import contextlib
 import http.client
+import io
 import json
 import math
 import struct
-import subprocess
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import wave
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -134,10 +139,13 @@ AUDIO_TONE_HZ = 220.0
 #: 요청 하나의 상한. BE의 AI 호출 타임아웃이 10초라 업로드 202가 그보다 늦게 오지는 않는다.
 DEFAULT_REQUEST_TIMEOUT = 15.0
 
-#: 세션 하나의 분석이 전부 끝나기를 기다리는 상한. BE의 processing-timeout(60초)과
-#: queued-timeout(5분) 사이다 - 정상이면 스텁 지연 1.5초 x (5문항 / 워커 4) 수준이고,
-#: 이 상한에 걸린다는 것은 분석이 밀렸거나 죽었다는 뜻이다.
-DEFAULT_ANALYSIS_TIMEOUT = 180.0
+#: 세션 하나의 분석이 전부 끝나기를 기다리는 상한.
+#:
+#: 실모델은 문항 하나를 전사와 정렬로 채점하고(08-30 실측 14~30초) 배포에서는 전달 워커가
+#: 1개라(KAN-22의 dispatch-concurrency) 5문항이 차례로 돈다. 그래서 스텁 시절의 180초로는
+#: 정상 실행도 이 상한에 걸린다. BE의 queued-timeout(5분)보다 길게 두어, 여기서 걸리는 것이
+#: "분석이 밀렸다"가 아니라 "BE 쪽 정리도 안 돌았다"는 뜻이 되게 한다.
+DEFAULT_ANALYSIS_TIMEOUT = 420.0
 
 #: 429를 만났을 때 물러설 최대 횟수. IP 분당 업로드 상한이 30이라 한 번의 창을 넘길 수
 #: 있으면 충분하다.
@@ -150,15 +158,6 @@ FALLBACK_RETRY_AFTER_MS = 2_000
 MAX_UNAVAILABLE_RETRIES = 3
 UNAVAILABLE_BACKOFF_MS = 3_000
 
-#: 복구 명령이 끝난 뒤 한 박자 쉬는 시간. 컨테이너가 healthy여도 BE 쪽에는 방금 사라진
-#: 주소를 가리키는 커넥션과 DNS 캐시가 남아 있을 수 있다 - 그 구간에 올린 첫 건이 애먼
-#: ANALYSIS_UNAVAILABLE로 죽는 것을 줄인다. 남는 경우는 :func:`upload_until_completed`가 받는다.
-RECOVER_SETTLE_MS = 3_000
-
-#: 재업로드로도 풀리는 일시 장애 코드 (§2.4). 판정 실패(AUDIO_TOO_QUIET 등)는 여기 없다 -
-#: 같은 오디오에 같은 답이 오므로 다시 올려도 결과가 같다.
-TRANSIENT_FAILURE_CODES = frozenset({"ANALYSIS_UNAVAILABLE", "ANALYSIS_TIMEOUT", "INTERNAL_ERROR"})
-
 
 CORRELATION_HEADER = "X-Correlation-Id"
 
@@ -168,12 +167,21 @@ ADMIN_TOKEN_HEADER = "X-Admin-Token"
 #: 표시 없이 두드려도 통계가 오염되지 않는 대상 - 로컬 스택뿐이다.
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"})
 
+#: AI가 "요청은 정상인데 점수를 낼 수 없다"고 판정한 사유 (§2.4, ai/app/engine.py의 같은 집합).
+#:
+#: 합성 오디오로 도는 기본 실행이 닿아야 하는 실패는 이 넷뿐이다. `ANALYSIS_TIMEOUT`이나
+#: `ANALYSIS_UNAVAILABLE`, `INTERNAL_ERROR`는 **인프라가 고장 난 것**이고, 그것을 재응시
+#: 갈래로 받아 주면 깨진 이미지에 verified 태그가 붙는다 (Codex sol 리뷰 P1).
+JUDGED_QUALITY_CODES = frozenset({
+    "ANALYSIS_MISREAD", "AUDIO_TOO_QUIET", "AUDIO_TOO_LONG", "AUDIO_FORMAT_UNSUPPORTED",
+})
+
 
 def new_correlation_id() -> str:
     """요청 하나의 추적 ID. 앱(UploadClient)이 업로드마다 새로 발급하는 것을 그대로 따른다.
 
     CorrelationIdFilter가 받아들이는 형식([A-Za-z0-9._-]{1,64})을 지킨다 - 벗어나면 서버가
-    버리고 새로 발급하므로, 스텁 점수 예측(:func:`hashed_score`)이 통째로 어긋난다.
+    버리고 새로 발급해, 이 스크립트가 찍은 ID로는 서버 로그에서 그 요청을 찾을 수 없다.
     """
     return "e2e-" + uuid.uuid4().hex
 
@@ -359,41 +367,6 @@ class Client:
 
 
 # ---------------------------------------------------------------------------
-# AI 스텁 점수 예측 (KAN-136)
-# ---------------------------------------------------------------------------
-
-
-def hashed_score(correlation_id: str) -> int:
-    """추적 ID 하나를 0~100의 억양 원점수로 접는다.
-
-    AI 스텁(``ai/app/engine.py``의 ``StubEngine.hashed_score``)과 **같은 식**이다.
-    같은 값을 두 곳에 적는 것은 중복이 아니라 검산의 전제다 - 서버에서 가져와 쓰면
-    BE가 추적 ID를 AI로 전파하지 않아 모든 문항이 같은 점수를 받는 회귀(KAN-136이
-    경고한 바로 그 자리)를 이 스크립트가 눈치채지 못한다.
-
-    실모델(KAN-22)이 붙은 환경에서는 성립하지 않으므로 ``--expect-stub-scores``로만 쓴다.
-    """
-    digest = hashlib.blake2b(correlation_id.encode("utf-8"), digest_size=8).digest()
-    return int.from_bytes(digest, "big") % 101
-
-
-def correlation_id_for_score(target: int) -> str:
-    """해시가 ``target``이 되는 추적 ID를 찾는다 (``--pin-intonation``).
-
-    한 세션의 음성 5문항에 이 ID 하나를 고정하면 다섯 점수가 같아지고, 억양 점수가 곧
-    ``target``이 된다 - 고정 75점 시절에는 볼 수 없던 등급(외지인, 경남 토박이)까지
-    실제 응답으로 재현하는 수단이다 (KAN-136이 명시한 KAN-138 용도).
-    """
-    prefix = "e2e-pin-" + uuid.uuid4().hex[:12] + "-"
-    for suffix in range(100_000):
-        candidate = "%s%d" % (prefix, suffix)
-        if hashed_score(candidate) == target:
-            return candidate
-    # 101가지 값이 고르게 나오므로 여기 닿을 확률은 사실상 0이다.
-    raise SmokeFailure("억양 %d점을 만드는 추적 ID를 찾지 못했다." % target)
-
-
-# ---------------------------------------------------------------------------
 # 업로드 페이로드
 # ---------------------------------------------------------------------------
 
@@ -418,6 +391,16 @@ def wav_bytes(duration_ms: int = AUDIO_DURATION_MS) -> bytes:
     )
     header += b"data" + struct.pack("<I", len(data))
     return header + data
+
+
+def wav_duration_ms(audio: bytes) -> int:
+    """WAV 헤더에서 길이를 읽는다 (``--voice-wav``).
+
+    meta의 ``durationMs``는 필수이고 §3.3의 상한(10초)과 대조되므로, 준 파일의 실제 길이를
+    실어야 한다 - 합성음의 값을 그대로 쓰면 서버가 보는 길이와 어긋난다.
+    """
+    with contextlib.closing(wave.open(io.BytesIO(audio))) as source:
+        return round(source.getnframes() * 1000 / source.getframerate())
 
 
 def upload_meta(duration_ms: int = AUDIO_DURATION_MS) -> Dict[str, Any]:
@@ -616,10 +599,16 @@ def upload_voice(
     scenario: Scenario,
     item_id: str,
     correlation_id: str,
+    audio: Optional[bytes] = None,
 ) -> Dict[str, Any]:
-    """음성 1건 업로드 (§3.3). 202 응답을 돌려준다."""
-    audio = wav_bytes()
-    content_type, body = multipart_body(audio, upload_meta(), item_id + ".wav")
+    """음성 1건 업로드 (§3.3). 202 응답을 돌려준다.
+
+    ``audio``를 주면 그것을 올린다 (``--voice-wav``의 실제 녹음). 주지 않으면 합성 사인파다 -
+    실모델은 그것을 판정 실패로 끊는다 (머리말).
+    """
+    payload = wav_bytes() if audio is None else audio
+    meta = upload_meta() if audio is None else upload_meta(wav_duration_ms(audio))
+    content_type, body = multipart_body(payload, meta, item_id + ".wav")
     path = "/v0/sessions/%s/voice-items/%s/recording" % (
         urllib.parse.quote(scenario.session.session_id),
         urllib.parse.quote(item_id),
@@ -720,16 +709,16 @@ def poll_analyses(
     scenario: Scenario,
     first_wait_ms: int,
     analysis_timeout: float,
-    allow_failed: Sequence[str] = (),
 ) -> Dict[str, Dict[str, Any]]:
     """일괄 상태 조회를 pollAfterMs에 맞춰 돌며 모든 음성 문항이 정착하기를 기다린다 (§3.4).
 
-    ``allow_failed``에 적힌 문항만 RETRYABLE_FAILED로 끝나도 좋다 - 실패 갈래가 겨누는
-    문항이다. 그 문항이 **정말로** 실패했는지를 강제하는 것은 호출부의 몫이다. 나머지 문항의
-    실패와 복구 불가(FAILED)는 기다려도 달라지지 않으므로 즉시 끊는다.
+    성공과 실패 어느 쪽으로 정착하든 돌려준다 - 어느 쪽이 맞는지는 무엇을 올렸는지에
+    달렸고(머리말의 두 갈래), 그 판단은 호출부가 한다. 여기서 강제하는 것은 **정착한
+    항목의 봉투가 §3.4 계약을 지키는지**다. 완료면 quality가 OK여야 하고, 실패면 error에
+    코드와 불리언 retryable이 있어야 한다 - 실패 쪽 봉투가 깨지면 앱이 재녹음 안내를
+    만들지 못한다 (KAN-25).
     """
     path = "/v0/sessions/%s/analyses" % urllib.parse.quote(scenario.session.session_id)
-    allowed_failed = set(allow_failed)
     voice_ids = scenario.definition.voice_ids()
     deadline = time.monotonic() + analysis_timeout
 
@@ -761,21 +750,19 @@ def poll_analyses(
                        "완료 문항의 quality가 OK가 아니다 (§3.4): %s" % item)
                 expect("error" not in item, "완료 문항에 error가 실렸다 (§3.4): %s" % item)
                 continue
-            if status == "RETRYABLE_FAILED":
-                expect(item_id in allowed_failed,
-                       "예상하지 않은 문항이 실패했다: %s -> %s" % (item_id, item))
+            if status in ("RETRYABLE_FAILED", "FAILED"):
                 error = item.get("error") or {}
-                expect(error.get("retryable") is True,
-                       "RETRYABLE_FAILED인데 error.retryable이 true가 아니다 (§3.4): %s" % item)
+                expect(error.get("retryable") is (status == "RETRYABLE_FAILED"),
+                       "%s인데 error.retryable이 맞지 않다 (§3.4): %s" % (status, item))
                 expect(isinstance(error.get("code"), str) and error["code"],
                        "실패 문항에 error.code가 없다 (§3.4): %s" % item)
                 continue
-            raise SmokeFailure("문항이 복구 불가로 끝났다: %s -> %s" % (item_id, item))
+            raise SmokeFailure("문항 상태가 §3.4 계약 밖이다: %s -> %s" % (item_id, item))
 
         settled = {
             item_id: item
             for item_id, item in by_item.items()
-            if item.get("status") in ("COMPLETED", "RETRYABLE_FAILED")
+            if item.get("status") in ("COMPLETED", "RETRYABLE_FAILED", "FAILED")
         }
         if len(settled) == len(voice_ids):
             summary = ", ".join("%s=%s" % (i, by_item[i]["status"]) for i in voice_ids)
@@ -789,43 +776,6 @@ def poll_analyses(
                    {i: by_item[i].get("status") for i in voice_ids})
             )
         wait_ms = poll_after
-
-
-def upload_until_completed(
-    client: Client,
-    scenario: Scenario,
-    item_id: str,
-    correlation_id: str,
-    analysis_timeout: float,
-    tries: int = 3,
-) -> Dict[str, Any]:
-    """문항 하나를 재업로드해 COMPLETED까지 되돌린다.
-
-    실패 사유를 두 갈래로 나누는 것이 이 함수의 전부다.
-
-    * 일시 장애(:data:`TRANSIENT_FAILURE_CODES`)는 다시 올리면 풀린다 (§3.3 - 새 키로 다시
-      올린다). 복구 직후가 특히 그런데, AI 컨테이너가 방금 교체돼 BE의 커넥션 풀과 DNS 캐시가
-      잠깐 사라진 주소를 가리킬 수 있기 때문이다. 이 실패들은 AI에 닿지 못한 것이라 문항당
-      시도 상한(§2.5)도 깎지 않는다.
-    * 판정 실패(AUDIO_TOO_QUIET 등)는 같은 오디오에 같은 답이 온다. 복구 뒤에 이것이 나오면
-      스텁이 여전히 이 문항을 실패시키고 있다는 뜻이므로 - 복구 명령이 듣지 않았다 - 즉시 끊는다.
-    """
-    for attempt in range(1, tries + 1):
-        accepted = upload_voice(client, scenario, item_id, correlation_id)
-        statuses = poll_analyses(
-            client, scenario, accepted["pollAfterMs"], analysis_timeout, allow_failed=[item_id]
-        )
-        item = statuses[item_id]
-        if item["status"] == "COMPLETED":
-            return accepted
-        code = (item.get("error") or {}).get("code")
-        expect(code in TRANSIENT_FAILURE_CODES,
-               "재업로드한 %s가 %s로 실패했다 - 복구 명령이 ACCENTURY_AI_STUB_FAIL_ITEM을 "
-               "지우지 못한 것으로 보인다: %s" % (item_id, code, item))
-        expect(attempt < tries,
-               "재업로드 %d회에도 %s가 완료되지 않았다: %s" % (tries, item_id, item))
-        log("  일시 장애(%s) - %s를 다시 올린다 (%d/%d)" % (code, item_id, attempt + 1, tries))
-    raise SmokeFailure("도달할 수 없는 경로")  # pragma: no cover
 
 
 def complete(client: Client, scenario: Scenario, analysis_timeout: float) -> None:
@@ -867,7 +817,6 @@ def fetch_result(client: Client, scenario: Scenario) -> Dict[str, Any]:
 def verify_result(
     scenario: Scenario,
     result: Dict[str, Any],
-    expected_intonation: Optional[int],
     expected_vocabulary: int,
 ) -> None:
     """결과 응답을 sv-0.3 집계식으로 검산한다 (§4.3, 티켓 AC).
@@ -936,31 +885,8 @@ def verify_result(
     expect(isinstance(result.get("expiresAt"), str) and result["expiresAt"],
            "결과에 expiresAt이 없다 (§3.7): %s" % result.get("expiresAt"))
 
-    if expected_intonation is not None:
-        expect(intonation == expected_intonation,
-               "억양 점수가 AI 스텁 해시 기대값과 다르다: 기대 %d, 응답 %d. "
-               "BE가 X-Correlation-Id를 AI로 전파하지 않거나 스텁이 hashed 모드가 아니다 (KAN-136)."
-               % (expected_intonation, intonation))
-
     log("  검산 통과: 억양 %d, 단어 %d, 종합 %d -> %s(%s)"
         % (intonation, vocabulary, overall, code, name))
-
-
-def resolve_expected_intonation(scenario: Scenario, args: argparse.Namespace) -> Optional[int]:
-    """검산할 억양 점수. 확인할 근거가 없으면 None이다.
-
-    ``--pin-intonation``은 요청이 아니라 **기대**로 다룬다 (Codex sol 리뷰 P2). 고정해 놓고
-    확인하지 않으면, 추적 ID 전파가 끊겨 고정이 아무 효력도 없는 서버에서도 통과한다 -
-    특정 등급을 재현하려고 켠 옵션이 정작 그 등급이 나왔는지를 안 보는 셈이다.
-
-    고정하지 않았다면 ``--expect-stub-scores``를 켠 경우에만 예측할 수 있다. 문항마다 다른
-    추적 ID를 썼으므로 다섯 해시의 사사오입 평균이 억양 점수다 (§4.3).
-    """
-    if args.pin_intonation is not None:
-        return args.pin_intonation
-    if args.expect_stub_scores:
-        return predicted_intonation(scenario)
-    return None
 
 
 def resolve_expected_vocabulary(scenario: Scenario, args: argparse.Namespace) -> int:
@@ -977,17 +903,6 @@ def resolve_expected_vocabulary(scenario: Scenario, args: argparse.Namespace) ->
            "%s / 선택지 %d번 조합의 단어 점수 기대값을 모른다. 발행본의 정답표로 계산해 "
            "EXPECTED_VOCABULARY에 한 줄을 더하거나, --expect-vocabulary로 넘긴다." % key)
     return known
-
-
-def predicted_intonation(scenario: Scenario) -> int:
-    """스크립트가 보낸 추적 ID로 억양 점수를 미리 계산한다 (``--expect-stub-scores``).
-
-    문항 점수는 AI 원점수를 20점 만점으로 환산한 값이고 억양 점수는 그 합이라, 결국
-    원점수 다섯의 사사오입 평균과 같다 (§4.3).
-    """
-    voice_ids = scenario.definition.voice_ids()
-    raw = [hashed_score(scenario.scored_correlation_ids[item_id]) for item_id in voice_ids]
-    return round_half_up(sum(raw), len(raw))
 
 
 # ---------------------------------------------------------------------------
@@ -1045,7 +960,8 @@ def analytics_snapshot(
 def verify_traffic_separation(
     before: Dict[str, Dict[str, int]],
     after: Dict[str, Dict[str, int]],
-    sessions: int,
+    started: int,
+    completed: int,
     local: bool,
 ) -> None:
     """스모크가 만든 응시와 완주가 합성 쪽에만 쌓였는지 확인한다.
@@ -1055,7 +971,7 @@ def verify_traffic_separation(
     로컬은 이 스크립트 말고 아무도 두드리지 않으므로 등호가 성립하고, 표시가 통째로
     듣지 않는 회귀는 거기서 걸린다.
     """
-    for key, expected in (("started", sessions), ("completed", sessions)):
+    for key, expected in (("started", started), ("completed", completed)):
         moved = after["SYNTHETIC"][key] - before["SYNTHETIC"][key]
         expect(moved >= expected,
                "합성 %s 카운터가 %d만큼 늘지 않았다 (실제 %d) - 표시가 듣지 않았다 (KAN-138)."
@@ -1092,9 +1008,7 @@ def finish_scenario(client: Client, scenario: Scenario, args: argparse.Namespace
     """완료 -> 결과 조회 -> 검산 -> 재조회 동일성 확인."""
     complete(client, scenario, args.analysis_timeout)
     result = fetch_result(client, scenario)
-    verify_result(scenario, result,
-                  resolve_expected_intonation(scenario, args),
-                  resolve_expected_vocabulary(scenario, args))
+    verify_result(scenario, result, resolve_expected_vocabulary(scenario, args))
     verify_share_image(client.base_url, result)
 
     # 결과 화면 재진입(새로고침, 앱 복귀)이 같은 답을 받는지 (KAN-25 AC).
@@ -1103,101 +1017,98 @@ def finish_scenario(client: Client, scenario: Scenario, args: argparse.Namespace
     return result
 
 
-def run_happy_path(client: Client, args: argparse.Namespace) -> Dict[str, Any]:
-    """정상 시나리오 - 세션 생성부터 결과 조회까지 한 번도 끊기지 않는 길."""
-    scenario = start_scenario(client, "정상 시나리오", args)
+def verify_retake_required(
+    client: Client, scenario: Scenario, failed_items: Sequence[str]
+) -> None:
+    """실패한 문항이 남아 있으면 완료가 409 RESULT_RETAKE_REQUIRED다 (§3.6).
 
-    pinned = correlation_id_for_score(args.pin_intonation) if args.pin_intonation is not None else None
-    first_wait_ms = 0
-    for item in scenario.definition.voice_items:
-        # 고정하지 않으면 앱과 같이 업로드마다 새 추적 ID를 쓴다 - 스텁 점수 분산(KAN-136)이
-        # 문항별로 실제로 갈리는 상태에서 등급까지 검증하기 위해서다 (티켓 Requirements).
-        correlation_id = pinned or new_correlation_id()
-        accepted = upload_voice(client, scenario, item["itemId"], correlation_id)
-        first_wait_ms = max(first_wait_ms, accepted["pollAfterMs"])
-
-    submit_all_vocab(client, scenario)
-
-    poll_analyses(client, scenario, first_wait_ms, args.analysis_timeout)
-    return finish_scenario(client, scenario, args)
-
-
-def run_failure_branch(client: Client, args: argparse.Namespace) -> Dict[str, Any]:
-    """실패 갈래 - RETRYABLE_FAILED를 만들고 재업로드로 복구해 완주한다 (티켓 Requirements).
-
-    전제는 AI가 ``ACCENTURY_AI_STUB_FAIL_ITEM=<fail-item>``으로 떠 있는 것이다. 그 설정은
-    기동 시 한 번만 읽히므로(``ai/app/config.py``의 ``Settings.from_env``를 ``main.py``의
-    ``create_app``이 1회 호출한다) 그 문항은 프로세스가
-    사는 동안 언제나 422로 떨어진다 - 같은 문항을 다시 올리는 것만으로는 복구가 성립하지
-    않는다. 그래서 복구 지점에서 ``--recover-cmd``를 실행해 AI를 그 설정 없이 다시 띄운다.
-    BE와 DB는 그대로 살아 있으므로 세션과 이미 성공한 문항은 유지된다.
+    앱이 재녹음 화면으로 안내하는 근거이고(KAN-25), 합성 오디오로 도는 기본 실행이 실제로
+    닿는 종점이다 - 여기까지 오면 업로드부터 AI, BE 상태 기계까지가 실제 HTTP로 한 번
+    이어졌다는 뜻이다.
     """
-    scenario = start_scenario(client, "실패 갈래 (%s 실패 후 재업로드 복구)" % args.fail_item, args)
-    fail_item = args.fail_item
-    expect(fail_item in scenario.definition.voice_ids(),
-           "--fail-item %s가 이 테스트 버전의 음성 문항이 아니다: %s"
-           % (fail_item, scenario.definition.voice_ids()))
-
-    pinned = correlation_id_for_score(args.pin_intonation) if args.pin_intonation is not None else None
-    first_wait_ms = 0
-    for item in scenario.definition.voice_items:
-        correlation_id = pinned or new_correlation_id()
-        accepted = upload_voice(client, scenario, item["itemId"], correlation_id)
-        first_wait_ms = max(first_wait_ms, accepted["pollAfterMs"])
-
-    submit_all_vocab(client, scenario)
-
-    statuses = poll_analyses(
-        client, scenario, first_wait_ms, args.analysis_timeout, allow_failed=[fail_item]
-    )
-    failed = statuses[fail_item]
-    expect(failed["status"] == "RETRYABLE_FAILED",
-           "%s가 RETRYABLE_FAILED로 끝나지 않았다 (%s) - AI가 "
-           "ACCENTURY_AI_STUB_FAIL_ITEM=%s로 떠 있는지 확인한다."
-           % (fail_item, failed.get("status"), fail_item))
-    log("  실패 확인 %s error=%s" % (fail_item, failed.get("error")))
-
-    # 실패 문항이 남아 있는 동안 완료는 409 RESULT_RETAKE_REQUIRED다 (§3.6) - 앱이 재녹음
-    # 화면으로 안내하는 근거이고, 이 갈래가 실제로 그 응답을 내는지 여기서 확인한다.
-    complete_path = "/v0/sessions/%s/complete" % urllib.parse.quote(scenario.session.session_id)
+    path = "/v0/sessions/%s/complete" % urllib.parse.quote(scenario.session.session_id)
     headers = dict(scenario.session.auth())
     headers["Idempotency-Key"] = "e2e-complete-" + uuid.uuid4().hex
-    response = client.request("POST", complete_path, headers=headers, body=b"")
+    response = client.request("POST", path, headers=headers, body=b"")
     expect(response.status == 409, "실패 문항이 있는데 완료가 409가 아니다: " + response.describe())
     envelope = response.json()
     expect(envelope.get("code") == "RESULT_RETAKE_REQUIRED",
            "완료 오류 코드가 RESULT_RETAKE_REQUIRED가 아니다 (§3.6): %s" % envelope)
-    expect(envelope.get("retakeItems") == [fail_item],
-           "retakeItems가 실패 문항과 다르다 (§3.6): %s" % envelope)
+    expect(sorted(envelope.get("retakeItems") or []) == sorted(failed_items),
+           "retakeItems가 실패한 문항과 다르다 (§3.6): %s vs %s"
+           % (envelope.get("retakeItems"), list(failed_items)))
     log("  완료 409 RESULT_RETAKE_REQUIRED retakeItems=%s" % envelope.get("retakeItems"))
 
-    run_recover_command(args.recover_cmd)
-    time.sleep(RECOVER_SETTLE_MS / 1000)
 
-    # 재업로드는 새 시도다 (§3.3) - 키를 새로 만드는 것이 upload_voice의 기본 동작이다.
-    correlation_id = pinned or new_correlation_id()
-    accepted = upload_until_completed(
-        client, scenario, fail_item, correlation_id, args.analysis_timeout
-    )
-    expect(accepted["attempt"] >= 2,
-           "재업로드인데 attempt가 2 이상이 아니다 (§3.3): %s" % accepted)
-    log("  복구 확인 %s -> COMPLETED (attempt=%d)" % (fail_item, accepted["attempt"]))
+def voice_audio(args: argparse.Namespace, item_id: str) -> Optional[bytes]:
+    """이 문항에 올릴 오디오. ``None``이면 합성 사인파다.
 
-    return finish_scenario(client, scenario, args)
-
-
-def run_recover_command(command: str) -> None:
-    """AI를 STUB_FAIL_ITEM 없이 다시 띄운다.
-
-    레포 루트에서 돌린다 - ``docker compose ...``가 compose 파일을 찾는 자리이고,
-    ``scripts/push-images.sh``도 같은 규칙이다. 셸을 거치므로 파이프와 여러 명령을 그대로
-    쓸 수 있다.
+    ``--voice-wav``는 파일 하나이거나 디렉터리다. 디렉터리면 ``<itemId>.wav``를 찾는다 -
+    발행본의 음성 5문항은 서로 다른 문장이라(KAN-182의 세트) 녹음 하나로는 다섯을 모두
+    통과시킬 수 없기 때문이다 (Codex sol 리뷰 P2). 파일 하나를 주는 형태는 다섯 문항이
+    같은 문장인 정의(픽스처, 더미 정의)에서만 성립한다.
     """
-    repo_root = Path(__file__).resolve().parent.parent
-    log("  복구 명령 실행: %s (cwd=%s)" % (command, repo_root))
-    completed = subprocess.run(command, shell=True, cwd=str(repo_root))
-    expect(completed.returncode == 0,
-           "복구 명령이 실패했다 (exit %d): %s" % (completed.returncode, command))
+    given = args.voice_wav
+    if given is None:
+        return None
+    if given.is_dir():
+        recording = given / (item_id + ".wav")
+        expect(recording.is_file(),
+               "--voice-wav 디렉터리에 %s의 녹음이 없다: %s. 이 세션이 고른 음성 문항은 "
+               "세션마다 다를 수 있다 (KAN-182의 세트) - 정의 조회 로그의 itemId로 파일 "
+               "이름을 맞춘다." % (item_id, recording))
+        return recording.read_bytes()
+    return given.read_bytes()
+
+
+def run_scenario(client: Client, args: argparse.Namespace) -> bool:
+    """세션 생성부터 종점까지 한 번. 완주했으면 참을 돌려준다.
+
+    종점은 무엇을 올렸는지에 달렸다 (머리말). 합성 사인파는 실모델의 내용 게이트에 막혀
+    재응시 갈래로 가고, 대본을 읽은 녹음(``--voice-wav``)은 결과까지 간다. 어느 쪽이든
+    **끝까지 가는 것**이 스모크의 통과 조건이다 - 중간에 멈추는 상태는 없다.
+    """
+    scenario = start_scenario(client, "전 구간 시나리오", args)
+
+    first_wait_ms = 0
+    for item in scenario.definition.voice_items:
+        # 앱과 같이 업로드마다 새 추적 ID를 쓴다 - 로그에서 문항별로 되짚을 수 있어야 한다
+        accepted = upload_voice(
+            client, scenario, item["itemId"], new_correlation_id(),
+            audio=voice_audio(args, item["itemId"]),
+        )
+        first_wait_ms = max(first_wait_ms, accepted["pollAfterMs"])
+
+    submit_all_vocab(client, scenario)
+
+    statuses = poll_analyses(client, scenario, first_wait_ms, args.analysis_timeout)
+    failed = [
+        item_id for item_id in scenario.definition.voice_ids()
+        if statuses[item_id].get("status") != "COMPLETED"
+    ]
+    if not failed:
+        finish_scenario(client, scenario, args)
+        return True
+
+    codes = {i: (statuses[i].get("error") or {}).get("code") for i in failed}
+    log("  음성 %d문항이 실패로 정착: %s" % (len(failed), codes))
+    # 판정 실패만 재응시 갈래다. 타임아웃이나 회로 열림, 내부 오류는 AI가 아픈 것이고,
+    # 그것을 여기서 받아 주면 깨진 배포가 스모크를 통과한다 (Codex sol 리뷰 P1)
+    infra = {i: code for i, code in codes.items() if code not in JUDGED_QUALITY_CODES}
+    if infra:
+        raise SmokeFailure(
+            "판정 실패가 아닌 사유로 문항이 죽었다: %s. AI가 응답하지 못했거나(타임아웃, "
+            "회로 열림) 내부 오류다 - 재응시 갈래로 넘기지 않는다." % infra
+        )
+    if args.voice_wav:
+        # 실제 녹음을 줬는데 실패했다면 그 파일이 이 문항의 대본과 다르거나 AI가 아픈
+        # 것이다. 재응시 갈래로 조용히 넘어가면 전 구간 검산을 건너뛴 실행이 통과로 적힌다
+        raise SmokeFailure(
+            "--voice-wav를 줬는데 음성 문항이 실패했다: %s. 녹음이 이 문항들의 대본과 "
+            "같은 문장인지, AI 로그에 판정 사유가 무엇으로 남았는지 확인한다." % codes
+        )
+    verify_retake_required(client, scenario, failed)
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -1217,19 +1128,12 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
                         help="요청 하나의 상한(초). 기본 %.0f" % DEFAULT_REQUEST_TIMEOUT)
     parser.add_argument("--analysis-timeout", type=float, default=DEFAULT_ANALYSIS_TIMEOUT,
                         help="분석과 완료를 기다릴 상한(초). 기본 %.0f" % DEFAULT_ANALYSIS_TIMEOUT)
-    parser.add_argument("--fail-item", metavar="ITEM_ID",
-                        help="실패 갈래를 돌린다. AI가 ACCENTURY_AI_STUB_FAIL_ITEM=<ITEM_ID>로 떠 있어야 한다. "
-                             "--recover-cmd와 함께 쓴다.")
-    parser.add_argument("--recover-cmd", metavar="COMMAND",
-                        help="실패 갈래의 복구 지점에서 실행할 명령. AI를 STUB_FAIL_ITEM 없이 다시 띄운다. "
-                             "예: 'docker compose up -d --no-deps --wait ai'")
-    parser.add_argument("--expect-stub-scores", action="store_true",
-                        help="억양 점수를 AI 스텁 해시(KAN-136)로 예측해 응답과 대조한다. "
-                             "실모델(KAN-22)이 붙은 환경에서는 쓰지 않는다.")
-    parser.add_argument("--pin-intonation", type=int, metavar="SCORE",
-                        help="음성 5문항에 같은 추적 ID를 고정해 억양 점수를 이 값(0~100)으로 만든다. "
-                             "이 값은 결과에서 그대로 검산한다. 도달 등급은 단어 점수와 함께 정해지므로 "
-                             "--vocab-choice-index를 같이 쓴다.")
+    parser.add_argument("--voice-wav", type=Path, metavar="PATH",
+                        help="음성 문항에 올릴 실제 녹음 (16kHz mono 16-bit PCM WAV, 10초 이하). "
+                             "디렉터리를 주면 문항마다 <itemId>.wav를 찾고, 파일 하나를 주면 다섯 "
+                             "문항에 같은 것을 올린다 - 발행본은 문항마다 문장이 다르므로 보통 "
+                             "디렉터리다. 대본을 읽은 녹음이어야 분석이 성공하고, 그때만 결과 "
+                             "검산까지 간다. 주지 않으면 합성 사인파를 올려 재응시 갈래를 돈다.")
     parser.add_argument("--vocab-choice-index", type=int, default=0, metavar="N",
                         help="어휘 문항에서 고를 선택지의 인덱스(0부터). 단어 점수를 옮기는 손잡이다. "
                              "gn-2026.08.1에서는 0=60점, 1=40점, 2와 3=0점이다.")
@@ -1246,20 +1150,12 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--verbose", action="store_true", help="요청과 응답 상태를 한 줄씩 찍는다.")
     args = parser.parse_args(argv)
 
-    if args.pin_intonation is not None and not 0 <= args.pin_intonation <= 100:
-        parser.error("--pin-intonation은 0~100이어야 합니다.")
+    if args.voice_wav is not None and not (args.voice_wav.is_file() or args.voice_wav.is_dir()):
+        parser.error("--voice-wav 경로가 없습니다: %s" % args.voice_wav)
     if args.vocab_choice_index < 0:
         parser.error("--vocab-choice-index는 0 이상이어야 합니다.")
     if args.expect_vocabulary is not None and not 0 <= args.expect_vocabulary <= 100:
         parser.error("--expect-vocabulary는 0~100이어야 합니다.")
-    if args.fail_item and not args.recover_cmd:
-        parser.error(
-            "--fail-item에는 --recover-cmd가 필요합니다. "
-            "ACCENTURY_AI_STUB_FAIL_ITEM은 AI 기동 시 한 번만 읽히므로, "
-            "복구하려면 그 설정 없이 AI를 다시 띄워야 합니다."
-        )
-    if args.recover_cmd and not args.fail_item:
-        parser.error("--recover-cmd는 --fail-item과 함께 씁니다.")
     if not args.synthetic_key and not is_local(args.base_url) and not args.allow_real_traffic:
         parser.error(
             "원격 대상에는 --synthetic-key가 필요합니다. 표시가 없으면 이 스모크의 응시와 완주가 "
@@ -1283,19 +1179,15 @@ def main(argv: Sequence[str]) -> int:
         window = analytics_window(client, args.synthetic_key) if args.synthetic_key else None
         before = analytics_snapshot(client, args.synthetic_key, window) if window else None
 
-        sessions = 0
-        if args.fail_item:
-            # 실패 갈래를 먼저 돈다. AI가 아직 STUB_FAIL_ITEM을 물고 있어 정상 시나리오가
-            # 그 문항에서 걸리기 때문이다. 복구 명령이 AI를 깨끗하게 되돌린 뒤에야 정상
-            # 시나리오가 성립한다.
-            run_failure_branch(client, args)
-            sessions += 1
-        run_happy_path(client, args)
-        sessions += 1
+        completed = run_scenario(client, args)
 
         if before is not None:
             after = analytics_snapshot(client, args.synthetic_key, window)
-            verify_traffic_separation(before, after, sessions, is_local(client.base_url))
+            # 완주는 세션이 결과까지 갔을 때만 오른다 - 재응시 갈래에서는 응시만 오른다
+            verify_traffic_separation(
+                before, after, started=1, completed=1 if completed else 0,
+                local=is_local(client.base_url),
+            )
     except SmokeFailure as failure:
         log("실패: %s" % failure)
         return 1

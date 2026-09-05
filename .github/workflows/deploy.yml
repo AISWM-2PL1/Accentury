@@ -133,8 +133,9 @@ jobs:
     if: >-
       !cancelled() && needs.build.result != 'failure' && needs.build.outputs.paused != 'true'
     runs-on: ubuntu-latest
-    # 반영 최대 (ai 15분 + backend 20분) + 롤백 최대 (backend 10분 + ai 15분) + 스모크.
-    timeout-minutes: 75
+    # 반영 최대 (ai 26분 + backend 20분) + 롤백 최대 (backend 10분 + ai 26분) + 스모크.
+    # ai가 늘어난 것은 실모델 이미지의 pull과 가중치 적재 때문이다 (KAN-22).
+    timeout-minutes: 110
     environment: ${{ inputs.environment || (github.ref_name == 'Release' && 'prod' || 'staging') }}
     env:
       TARGET_ENV: ${{ inputs.environment || (github.ref_name == 'Release' && 'prod' || 'staging') }}
@@ -301,7 +302,9 @@ jobs:
             cid=$(docker compose --env-file /run/accentury/compose.env ps -q "$svc")
             if [ -z "$cid" ]; then echo "컨테이너 없음: $svc"; exit 1; fi
             st=starting
-            for i in $(seq 1 60); do
+            # 600초까지 기다린다 (KAN-22). ai 컨테이너는 Whisper 가중치 2.8GB를 올린 뒤에야 UP이라
+            # (준비 상태 게이트) 스텁 시절의 300초로는 정상 기동이 시간 초과로 찍힌다.
+            for i in $(seq 1 120); do
               st=$(docker inspect -f '{{.State.Health.Status}}' "$cid" 2>/dev/null || echo missing)
               if [ "$st" = healthy ]; then break; fi
               if [ "$st" = unhealthy ]; then echo "$svc unhealthy"; docker logs --tail 60 "$cid"; exit 1; fi
@@ -327,9 +330,10 @@ jobs:
             echo "SSM $SSM_PREFIX/IMAGE_TAG 쓰기 실패 - 반영하지 않습니다."; exit 1
           fi
           sed "s/__EXPECTED_TAG__/$tag/" remote.sh > "remote-$tag.sh"
-          # 원격 실행 상한 840초 (accentury-up.sh 재시도 약 4분 + pull + healthy 대기 5분 + 전파 재시도).
-          # 아래 대기 루프는 이보다 길어야(900초) 명령이 아직 도는데 롤백을 겹쳐 보내는 일이 없다 (Codex P2).
-          jq -n --rawfile s "remote-$tag.sh" '{commands: [$s], executionTimeout: ["840"]}' > params.json
+          # 원격 실행 상한 1500초 (accentury-up.sh 재시도 약 4분 + 압축 4.3GB pull + healthy 대기 10분 +
+          # 전파 재시도). 실모델 이미지가 되면서 pull과 워밍업이 둘 다 길어졌다 (KAN-22).
+          # 아래 대기 루프는 이보다 길어야(1560초) 명령이 아직 도는데 롤백을 겹쳐 보내는 일이 없다 (Codex P2).
+          jq -n --rawfile s "remote-$tag.sh" '{commands: [$s], executionTimeout: ["1500"]}' > params.json
 
           # 조회 재시도: 성공하면 stdout을 그대로 내보내고, n회 모두 실패하면 1을 돌려준다. 반영 전후의 단발
           # describe가 일시 스로틀 한 번으로 실행 전체를 "결과 불명"으로 만들지 않게 한다 (리뷰 반영).
@@ -357,7 +361,7 @@ jobs:
             echo "Run Command $cmd (태그 $tag, 호스트 $host)"
             status=Pending
             api_errors=0
-            for i in $(seq 1 180); do
+            for i in $(seq 1 312); do
               if out=$(aws ssm list-command-invocations --command-id "$cmd" --query 'CommandInvocations[0].Status' --output text 2>&1); then
                 api_errors=0
                 status="$out"
@@ -382,7 +386,7 @@ jobs:
             done
             case "$status" in
               Success|Failed|TimedOut|Cancelled|Undeliverable|Terminated) ;;
-              *) echo "900초 안에 끝나지 않았습니다 ($host, 마지막 상태 $status). 자동 롤백하지 않습니다."; return 2 ;;
+              *) echo "1560초 안에 끝나지 않았습니다 ($host, 마지막 상태 $status). 자동 롤백하지 않습니다."; return 2 ;;
             esac
             echo "--- 원격 출력 ($host) ---"
             aws ssm list-command-invocations --command-id "$cmd" --details \
@@ -651,7 +655,7 @@ jobs:
         run: |
           token=$(aws ssm get-parameter --name "$SSM_PREFIX/ACCENTURY_ADMIN_TOKEN" --with-decryption --query Parameter.Value --output text)
           echo "::add-mask::$token"
-          python3 scripts/e2e_smoke.py --base-url "https://$APP_DOMAIN" --synthetic-key "$token" --expect-stub-scores
+          python3 scripts/e2e_smoke.py --base-url "https://$APP_DOMAIN" --synthetic-key "$token"
 
       # 반영과 스모크를 모두 통과한 SHA에만 verified 태그를 붙인다. prod 승격이 이 표시를 요구한다.
       # 같은 매니페스트에 태그를 하나 더 붙이는 것이라 IMMUTABLE 리포지토리에서도 허용된다. 재실행으로
