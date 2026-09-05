@@ -156,11 +156,18 @@ AI 서버는 backend와 다른 EC2에서 돕니다 (KAN-36 A단계). 같은 comp
 사유와 함께 건너뜁니다 - 조용히 통과시키지 않습니다.
 
 ```bash
-docker build -t accentury-ai:dev ai                       # 베이스가 모델 이미지입니다 (약 8.5GB)
-docker run --rm -v "$PWD/ai:/src" accentury-ai:dev \
-    python -m pytest /src/tests/contract \
-    --contract-audio=/src/samples/1-5.wav                 # 실제 발화 WAV
+# 레포 루트에서. 베이스가 모델 이미지라 ECR 로그인이 먼저 필요합니다 (infra/README.md "모델 교체").
+docker build --platform linux/amd64 -t accentury-ai:dev ai
+docker run --rm --platform linux/amd64 -v "$PWD/ai:/src" -w /src \
+    -e ACCENTURY_AI_ANALYSIS_TIMEOUT_SECONDS=600 accentury-ai:dev \
+    sh -c "pip install -q --user pytest httpx && \
+           python -m pytest tests/contract --contract-audio=/src/samples/1-5.wav"
 ```
+
+운영 이미지에는 pytest가 없어서 컨테이너 안에서 `--user`로 한 번 깔고 돕니다 (비루트라 시스템
+site-packages에는 못 씁니다). 마운트한 체크아웃의 `app/`이 임포트되므로 지금 고치고 있는 코드가
+검사 대상이고, 모델과 참조는 이미지의 `/app/src`에서 옵니다. 상한을 600초로 올린 것은 x86
+에뮬레이션(애플 실리콘)에서 추론 1건이 40초대이기 때문입니다 - 실제 x86 호스트에서는 기본값이면 됩니다.
 
 둘을 맞추지 않으면 계약과 무관한 이유로 항목이 깨집니다.
 
