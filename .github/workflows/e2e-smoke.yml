@@ -7,7 +7,10 @@
 #                        이 입구 대신 같은 job에서 scripts/e2e_smoke.py를 직접 부른다 - SSM에서
 #                        읽은 관리자 토큰을 job output으로 넘기면 GitHub이 마스킹 값이라며 버려서다.
 #   2. workflow_dispatch 사람이 staging이나 prod에 손으로 한 번 돌린다 (prod 승격 직후).
-#   3. pull_request      스모크 자신이나 compose가 바뀐 PR에서 로컬 풀스택으로 돌린다.
+#
+# PR에서 로컬 풀스택으로 돌리던 세 번째 갈래는 2026-09-05에 없앴다 (KAN-22). AI 서버의 베이스가
+# 채점 모델 전달본이 되면서 러너에서 스택을 띄울 수 없게 됐고, 스텁도 함께 사라졌다. 이제 이
+# 스모크가 도는 곳은 이미 떠 있는 환경뿐이다.
 #
 # 합성 트래픽 표시 토큰은 GitHub 시크릿이 아니라 대상 환경의 SSM에서 읽는다 (2026-09-05, KAN-171
 # 리뷰 P3). 저장소 시크릿은 하나뿐인데 두 환경의 관리자 토큰이 서로 달라 한쪽만 담을 수 있었고,
@@ -52,11 +55,6 @@ on:
           고르기 때문이다 - 안 적으면 조용히 staging을 두드리게 된다.
         required: true
         type: string
-      expect-stub-scores:
-        description: AI가 스텁일 때만 켠다 - 억양 점수를 해시로 예측해 대조한다 (KAN-136)
-        required: false
-        type: boolean
-        default: false
     secrets:
       admin-token:
         description: >-
@@ -77,46 +75,8 @@ on:
         type: choice
         options: [staging, prod]
         default: staging
-      expect-stub-scores:
-        description: AI가 스텁일 때만 켠다 - 억양 점수를 해시로 예측해 대조한다
-        required: false
-        type: boolean
-        default: false
-  pull_request:
 
 jobs:
-  changes:
-    runs-on: ubuntu-latest
-    # 배포 파이프라인과 수동 실행에는 경로 필터가 뜻이 없다 - 대상은 이미 떠 있는 환경이다.
-    if: github.event_name == 'pull_request'
-    outputs:
-      smoke: ${{ steps.filter.outputs.smoke }}
-    steps:
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            smoke:
-              - 'scripts/e2e_smoke.py'
-              - 'scripts/e2e-smoke-local.sh'
-              - 'docker-compose.yml'
-              - '.github/workflows/e2e-smoke.yml'
-
-  # PR에서 로컬 풀스택(BE + AI + DB)을 띄워 전 시나리오를 돌린다 (티켓 AC 1).
-  # backend/**와 ai/**는 필터에 넣지 않았다 - 두 이미지를 매번 처음부터 빌드하는 값이
-  # 대부분의 PR에서는 과하고, 서버 변경의 상시 검증은 test.yml의 단위/통합 테스트가 맡는다.
-  # 배포 전 전 구간 확인은 staging 반영 직후의 workflow_call이 담당한다.
-  compose:
-    needs: changes
-    if: needs.changes.outputs.smoke == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      # 러너의 python3(3.12)로 충분하다 - 스크립트가 표준 라이브러리만 쓴다.
-      - name: 로컬 compose 스모크
-        run: bash scripts/e2e-smoke-local.sh
-
   # 이미 떠 있는 환경(staging, prod)을 도메인 경유로 두드린다 (티켓 AC 2, 3).
   remote:
     # workflow_call로 불릴 때 github.event_name은 호출한 쪽의 이벤트(push 등)라 그것만으로는
@@ -180,7 +140,6 @@ jobs:
           CALLER_BASE_URL: ${{ inputs.base-url }}
           CALLER_TOKEN: ${{ secrets.admin-token }}
           APP_DOMAIN: ${{ vars.APP_DOMAIN }}
-          EXPECT_STUB_SCORES: ${{ inputs.expect-stub-scores }}
         run: |
           set -euo pipefail
           if [ "$TOKEN_FROM" = caller ]; then
@@ -206,8 +165,4 @@ jobs:
             exit 1
           fi
           echo "대상 $base_url (토큰 출처 $TOKEN_FROM)"
-          ARGS=(--base-url "$base_url" --synthetic-key "$token")
-          if [ "$EXPECT_STUB_SCORES" = "true" ]; then
-            ARGS+=(--expect-stub-scores)
-          fi
-          python3 scripts/e2e_smoke.py "${ARGS[@]}"
+          python3 scripts/e2e_smoke.py --base-url "$base_url" --synthetic-key "$token"

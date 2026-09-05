@@ -49,6 +49,13 @@ npm run build      # tsc --noEmit + vite build
 
 ### 브라우저 E2E (KAN-181)
 
+> **2026-09-05부터 이 스택이 없다 (KAN-22).** AI 서버의 베이스가 채점 모델 전달본(약 4GB,
+> linux/amd64, RSS 7GB대)이 되면서 개발 기계와 CI 러너에서 띄울 수 없게 됐고, 스텁도 함께
+> 제거됐다. 그래서 루트 `docker-compose.yml`에 `ai`가 없고 분석은 완료되지 않는다 - 분석까지
+> 가는 스펙(`full-run`, `retake`)은 지금 돌릴 스택이 없다. 화면 전환과 녹음만 보는
+> `smoke.spec.ts`는 BE + DB만으로도 의미가 있다. 아래 절차는 AI 대역이 다시 생겼을 때를
+> 위해 남겨 둔다.
+
 vitest가 못 보는 것을 실제 Chromium에서 본다 — `getUserMedia`·`AudioContext`·`AudioWorklet`,
 그리고 문서를 통째로 다시 읽는 화면 전환. 가짜 마이크로 앱 디버그 빌드와 **같은 WAV**를
 흘려 넣어(`app/src/debug/assets/fake_mic.wav`) 인트로부터 결과 화면까지 걸어간다.

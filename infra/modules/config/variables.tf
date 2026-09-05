@@ -38,3 +38,32 @@ variable "ai_dns_name" {
   type        = string
   description = "backend가 AI를 부르는 프라이빗 DNS 이름 (network 모듈 출력 ai_dns_name, KAN-36). ACCENTURY_ANALYSIS_AIBASEURL = http://<이 값>:8000"
 }
+
+variable "analysis_ai_timeout" {
+  type        = string
+  description = "backend가 AI 호출에 거는 연결/읽기 타임아웃 (accentury.analysis.ai-timeout). 실모델 추론 1건보다 넉넉해야 한다 (KAN-22 임시값, KAN-172 재확정)."
+  default     = "85s"
+}
+
+variable "analysis_processing_timeout" {
+  type        = string
+  description = "실행 잔류 한도 (accentury.analysis.processing-timeout). ai-timeout x 3 + 백오프보다 길어야 기동이 통과한다 (AnalysisDispatchConfig)."
+  default     = "300s"
+}
+
+variable "analysis_dispatch_concurrency" {
+  type        = number
+  description = "분석 전달 워커 수 (accentury.analysis.dispatch-concurrency). AI가 추론을 한 번에 하나만 돌리므로 태스크 하나가 보내는 동시 호출을 1로 묶는다 (KAN-22). 태스크 여러 개가 동시에 뜨면 그만큼은 여전히 겹친다 - 아래 README 참고."
+  default     = 1
+
+  validation {
+    condition     = var.analysis_dispatch_concurrency >= 1
+    error_message = "analysis_dispatch_concurrency는 1 이상이어야 합니다."
+  }
+}
+
+variable "ai_analysis_timeout_seconds" {
+  type        = number
+  description = "AI 서버가 분석 1건에 거는 상한(초, ACCENTURY_AI_ANALYSIS_TIMEOUT_SECONDS). backend의 analysis_ai_timeout보다 짧아야 한다 (KAN-22)."
+  default     = 75
+}

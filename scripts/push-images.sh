@@ -39,9 +39,12 @@ build_and_push() {
   local ref="${REGISTRY}/${repo}:${SHA}"
 
   echo "==> ${repo}:${SHA} 빌드"
+  # ai 이미지의 베이스는 같은 계정의 ECR에 있는 모델 전달본이다 (KAN-22). 레지스트리 주소만
+  # 넘기고 태그는 ai/Dockerfile이 쥔다 - 모델 교체가 그 파일 한 줄이어야 하기 때문이다.
   # 확장을 ${...+...}로 감싼 이유가 있다. macOS 기본 bash(3.2)는 set -u 아래에서 빈 배열의
   # "${arr[@]}"를 unbound variable로 친다 - PLATFORM을 주지 않는 기본 사용법에서 첫 빌드부터 죽는다.
-  docker build ${PLATFORM_ARG[@]+"${PLATFORM_ARG[@]}"} -t "$ref" "$context"
+  docker build ${PLATFORM_ARG[@]+"${PLATFORM_ARG[@]}"} \
+    --build-arg "MODEL_REGISTRY=${REGISTRY}" -t "$ref" "$context"
 
   if [[ "${DRY_RUN:-0}" == "1" ]]; then
     echo "    DRY_RUN - 푸시하지 않고 넘어갑니다: ${ref}"
@@ -53,10 +56,10 @@ build_and_push() {
   echo "    ${ref}"
 }
 
-if [[ "${DRY_RUN:-0}" != "1" ]]; then
-  aws ecr get-login-password --region "$AWS_REGION" \
-    | docker login --username AWS --password-stdin "$REGISTRY" > /dev/null
-fi
+# DRY_RUN에서도 로그인한다 - ai 이미지의 베이스가 이 레지스트리의 accentury/ai-model이라
+# (KAN-22) 로그인 없이는 push가 아니라 빌드가 먼저 실패한다.
+aws ecr get-login-password --region "$AWS_REGION" \
+  | docker login --username AWS --password-stdin "$REGISTRY" > /dev/null
 
 build_and_push ./backend accentury/backend
 build_and_push ./ai      accentury/ai

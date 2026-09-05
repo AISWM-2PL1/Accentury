@@ -4,8 +4,8 @@
 전부 같은 답을 내야 한다 - 어느 하나가 깨지면 BE 쪽에서 무슨 일이 벌어지는지를 항목마다
 주석에 적어 두었다. 계약이 추상적인 규칙이 아니라 BE의 구체적인 고장이기 때문이다.
 
-엔진마다 다른 것은 :data:`tests.contract.conftest.ENGINE_PROFILES` 표에 있고, 이 파일의
-본문은 엔진 이름을 모른다 - 엔진을 갈아끼울 때 여기는 고치지 않는다 (KAN-137 AC).
+엔진이 하나가 되면서 프로파일 표는 접었다 (KAN-22) - 항목마다 무엇을 기대하는지가 이제
+본문에 그대로 적혀 있다. 표를 되살릴 때는 엔진이 둘 이상이 되는 날이다.
 
 | 항목 | 근거 |
 | --- | --- |
@@ -26,10 +26,12 @@ import pytest
 
 from app.engine import JUDGED_QUALITY_CODES
 from tests.contract.conftest import (
+    MODEL_VERSION_PREFIX,
     SCORE_VERSION,
-    EngineProfile,
     analyze,
+    budget,
     contract_meta,
+    default_audio,
     residue,
 )
 
@@ -75,7 +77,7 @@ def _score(response) -> int:
     return _ok(response)["intonationScore"]
 
 
-def test_성공_응답이_명세_4_1_봉투다(client, settings, audio, profile: EngineProfile):
+def test_성공_응답이_명세_4_1_봉투다(client, settings, audio):
     # 필드가 빠지거나 타입이 어긋나면 BE는 성공 응답을 계약 위반으로 끊고 **그 거절을
     # 회로 차단기의 실패로 센다** - 엔진 하나의 버그가 서비스 전체의 회로를 여는 형태로
     # 번지는 자리다 (RestAiAnalysisClient.completed)
@@ -94,8 +96,8 @@ def test_성공_응답이_명세_4_1_봉투다(client, settings, audio, profile:
     # modelVersion이 비면 BE가 성공 응답을 끊는다 - 엔진이 자기 정체를 보고하는 값이고
     # 설정으로 덮어쓰지 않는다 (KAN-135)
     assert isinstance(body["modelVersion"], str) and body["modelVersion"]
-    if profile.model_version is not None:
-        assert body["modelVersion"] == profile.model_version
+    # 적재 전의 자리표시자가 아니라 엔진이 실제로 올린 가중치의 버전이어야 한다 (KAN-135)
+    assert body["modelVersion"].startswith(MODEL_VERSION_PREFIX), body["modelVersion"]
 
     assert residue(settings) == []
 
@@ -123,14 +125,9 @@ def test_동일_입력_반복_분석_오차가_2점_이내다(client, settings, 
     assert residue(settings) == []
 
 
-def test_같은_오디오면_추적_ID가_달라도_같은_점수다(
-    client, settings, audio, profile: EngineProfile
-):
-    # 점수는 오디오에서 나와야 하고 요청 메타에서 나오면 안 된다. 스텁은 correlationId를
-    # 해시하므로(KAN-136) 성립할 수 없는 명제라 프로파일이 이 항목을 끈다
-    if not profile.score_depends_on_audio:
-        pytest.skip(f"{profile.name} 엔진은 오디오로 점수를 내지 않는다 (프로파일 선언)")
-
+def test_같은_오디오면_추적_ID가_달라도_같은_점수다(client, settings, audio):
+    # 점수는 오디오에서 나와야 하고 요청 메타에서 나오면 안 된다 - 추적 ID가 점수에
+    # 섞이면 같은 녹음의 재전송(KAN-24)마다 다른 점수가 저장된다
     first = _score(analyze(client, audio, correlation_id="c_seed_a"))
     second = _score(analyze(client, audio, correlation_id="c_seed_b"))
 
@@ -139,23 +136,26 @@ def test_같은_오디오면_추적_ID가_달라도_같은_점수다(
     assert residue(settings) == []
 
 
-def test_분석이_예산을_넘기면_503이다(slow_client, slow_settings, audio):
+def test_분석이_예산을_넘기면_503이다(client, settings, audio):
     # 503은 BE가 일시 장애로 보고 재전송 예산 안에서 다시 시도하는 신호다 (§4.1).
     #
     # 이 항목은 상한이 걸리는지만 보는 것이 아니라 **엔진이 이벤트 루프를 막지 않는지**를
     # 본다 (app.engine.AnalysisEngine.analyze의 계약 1). 동기 추론을 async def 안에서
     # 그대로 돌리면 asyncio.timeout이 끼어들 틈이 없어 여기가 200으로 떨어지고, 그때는
-    # 임시파일 수명과 서버 전체의 응답성이 그 추론에 묶인다
-    response = analyze(slow_client, audio, correlation_id="c_timeout")
+    # 임시파일 수명과 서버 전체의 응답성이 그 추론에 묶인다.
+    #
+    # **이 항목이 도는 동안 워커가 죽는다** - 취소가 실제로 닿는다는 것이 계약이기
+    # 때문이다 (app.track1). 뒤이은 항목의 첫 요청은 재적재를 기다렸다가 정상으로 돌아온다
+    with budget(client, 0.01):
+        response = analyze(client, audio, correlation_id="c_timeout")
 
     assert response.status_code == 503, response.text
     assert response.json()["status"] == "FAILED"
-    assert residue(slow_settings) == []
-    # **취소가 실제로 엔진에 닿았는지는 이 스위트가 보지 못한다** (계약 2, Codex sol 리뷰 P1).
-    # asyncio.to_thread로 넘긴 추론은 503 뒤에도 계속 돌지만 HTTP 밖에서는 관측되지
-    # 않는다. 엔진이 "진행 중 추론 수"를 보고하는 훅을 두면(KAN-22) 그때 항목을 더한다.
-    # 여기서 확인할 수 있는 데까지는 확인한다 - 끊긴 뒤에도 서버가 계속 요청을 받는다
-    assert slow_client.get("/internal/v0/health").json()["status"] == "UP"
+    assert residue(settings) == []
+    # 취소가 워커까지 닿았는지는 HTTP 밖이라 여기서 보지 못한다 - 그 검사는 어댑터의
+    # 단위 테스트가 프로세스 pid로 한다 (tests/test_track1.py). 여기서 확인할 수 있는
+    # 데까지는 확인한다: 끊긴 뒤에도 서버가 계속 요청을 받는다
+    assert client.get("/internal/v0/health").json()["status"] == "UP"
 
 
 def test_오디오_상한을_넘으면_413이다(client, settings):
@@ -210,16 +210,14 @@ def test_scoreVersion을_그대로_에코백한다(client, settings, audio):
     assert residue(settings) == []
 
 
-def test_판정_실패가_2_4_계약을_지킨다(client, settings, audio, profile: EngineProfile):
+def test_판정_실패가_2_4_계약을_지킨다(client, settings):
     # 요청은 정상인데 점수를 낼 수 없는 경우다 (§4.1의 422). BE는 §2.4 ErrorCode에 없는
     # 이름을 받으면 계약 위반으로 끊고 그 문항은 재시도 없이 죽는다 - 서술적인 코드를
-    # 지어내면 사용자가 문항을 잃는다
-    if profile.judged_failure_item is None:
-        pytest.skip(f"{profile.name} 엔진은 판정 실패를 유도할 문항이 없다 (프로파일 미선언)")
-
-    response = analyze(
-        client, audio, item_id=profile.judged_failure_item, correlation_id="c_judged"
-    )
+    # 지어내면 사용자가 문항을 잃는다.
+    #
+    # 합성 사인파를 보내 유도한다 - 대본을 읽은 발화가 아니므로 내용 게이트(§4-2)가 잡는다.
+    # ``--contract-audio``와 무관하게 늘 같은 입력이라 이 항목만은 재현이 보장된다
+    response = analyze(client, default_audio(), correlation_id="c_judged")
 
     assert response.status_code == 422, response.text
     body = response.json()
@@ -232,35 +230,24 @@ def test_판정_실패가_2_4_계약을_지킨다(client, settings, audio, profi
     assert residue(settings) == []
 
 
-def test_scriptKey가_없는_meta를_프로파일대로_다룬다(
-    client, settings, audio, profile: EngineProfile
-):
-    # 실모델은 scriptKey로 문장을 찾는다 (KAN-182 계약). 정의에 scriptKey가 없으면 BE가
-    # 필드를 생략해 보내므로, 그 meta에 엔진이 무엇을 하는지가 계약의 일부다.
-    # 스텁은 무시하고(회귀 없음) 실모델의 거절 방식은 KAN-22가 정한다
-    expected = profile.missing_script_key
-    if expected is None:
-        pytest.skip(
-            f"{profile.name} 엔진의 scriptKey 없는 meta 처리가 아직 정해지지 않았다 "
-            "(KAN-22가 정하면 ENGINE_PROFILES의 missing_script_key를 채운다)"
-        )
-
+def test_scriptKey가_없는_meta는_비재전송으로_거절된다(client, settings, audio):
+    # 실모델은 scriptKey로만 문장을 찾는다 (KAN-182 계약, 문항 번호로는 못 찾는다). 정의에
+    # scriptKey가 없으면 BE가 필드를 생략해 보내므로, 그 meta에 엔진이 무엇을 하는지가
+    # 계약의 일부다.
+    #
+    # 2026-09-05 결정: 비재전송 판정 실패(422)다. 무시하고 분석하면 대본 없이 채점한
+    # 점수가 정상값처럼 나가고, 재전송 가능으로 내면 정의가 바뀌지 않는 한 결과가 같은
+    # 요청을 BE가 예산이 마를 때까지 반복한다
     response = analyze(
         client, audio, meta_json=contract_meta(correlation_id="c_no_script", script_key=None)
     )
 
-    if expected == "ignored":
-        body = _ok(response)
-        assert 0 <= body["intonationScore"] <= 100
-    else:
-        # 정의된 거절 - 비재전송 FAILED(422)이거나 400이다. 재전송 가능으로 내면 BE가
-        # 예산이 마를 때까지 같은 요청을 반복한다 (정의가 바뀌지 않는 한 결과도 같다)
-        assert response.status_code in (400, 422), response.text
-        body = response.json()
-        assert body["status"] == "FAILED"
-        if response.status_code == 422:
-            assert body["retryable"] is False
-            assert body["quality"]["code"] in JUDGED_QUALITY_CODES
+    assert response.status_code in (400, 422), response.text
+    body = response.json()
+    assert body["status"] == "FAILED"
+    if response.status_code == 422:
+        assert body["retryable"] is False
+        assert body["quality"]["code"] in JUDGED_QUALITY_CODES
 
     assert residue(settings) == []
 
