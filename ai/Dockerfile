@@ -56,5 +56,10 @@ USER accentury
 
 EXPOSE 8000
 
+# 베이스가 물려주는 ENTRYPOINT를 지운다. 모델 전달본 이미지는 `python`을 진입점으로 두고
+# `src/scoring/serve.py`를 CMD로 주는 CLI라(KAN-159), 그대로 두면 아래 CMD가
+# `python uvicorn app.main:app ...`으로 실행돼 컨테이너가 기동 즉시 죽는다.
+ENTRYPOINT []
+
 # --workers 1은 위 배포 제약의 강제다. 값을 올리기 전에 반드시 임시 디렉터리를 나눈다.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
