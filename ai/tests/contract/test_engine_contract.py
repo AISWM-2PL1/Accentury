@@ -253,10 +253,18 @@ def test_scriptKey가_없는_meta는_비재전송으로_거절된다(client, set
 
 
 def test_모든_항목을_돌린_뒤에도_잔존_파일이_없다(client, settings):
-    # 항목마다 디렉터리를 보지만 서버 자신의 계수도 함께 본다 - 삭제에 실패한 파일이
-    # 있으면 tempDeleteFailures가 오른다 (KAN-38이 이 지표를 소비한다)
+    # 디렉터리를 직접 보는 것이 정본이다 - 이것이 비어 있으면 어느 종료 경로도 오디오를
+    # 남기지 않았다는 뜻이다 (KAN-27 AC-1)
+    assert residue(settings) == []
+
+    # 서버 자신의 계수도 함께 본다 - 삭제나 훑기에 실패한 것이 있으면 여기가 오른다
+    # (KAN-38이 이 지표를 소비한다).
+    #
+    # ``tempFiles``는 보지 않는다. 그 값은 **마지막 스윕 시점의 스냅샷**이고(app.tempstore),
+    # 스윕은 진행 중인 요청의 임시파일과 정렬 작업 폴더도 잔존으로 센다 - 실모델은 분석
+    # 1건이 수십 초라 5분마다 도는 스윕이 그 한가운데 떨어지면 이 값이 1이 된다. 그것은
+    # 잔여물이 아니라 그 순간 살아 있던 요청이다 (2026-09-05 실모델 실행에서 확인).
     metrics = client.get("/internal/v0/metrics").json()
 
-    assert metrics["tempFiles"] == 0
     assert metrics["tempDeleteFailures"] == 0
-    assert residue(settings) == []
+    assert metrics["tempScanFailures"] == 0

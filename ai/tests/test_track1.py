@@ -31,7 +31,8 @@ FAKE_MODEL_VERSION = "track1-fake+0000000"
 
 #: 가짜 전달본. 진짜와 같은 이름(``Track1Scorer``), 같은 생성자, 같은 ``score`` 계약이다.
 #:
-#: ``ACCENTURY_TEST_SLOW``가 켜지면 채점이 오래 걸린다 - 취소 항목이 그 사이에 끊는다.
+#: ``scriptKey``가 ``slow``면 채점이 오래 걸린다 - 취소 항목이 그 사이에 끊는다. 환경
+#: 변수가 아니라 키로 고르는 이유는 취소 뒤 재적재한 워커에는 느림이 없어야 하기 때문이다.
 #: 정렬 작업 폴더를 흉내 내어 임시 디렉터리에 ``track1-`` 폴더를 하나 만들어 두는 것도
 #: 일부러다. 진짜 전달본이 거기에 오디오 사본을 두기 때문이다.
 _FAKE_SERVE = '''
@@ -58,9 +59,9 @@ class Track1Scorer:
         self.sentences = sentences
 
     def score(self, wav, script_key, transcript=None, with_feedback=True):
-        if script_key not in ("1|5",):
+        if script_key not in ("1|5", "slow"):
             raise KeyError(f"서비스 문장이 아니다: {{script_key!r}}")
-        if os.environ.get("ACCENTURY_TEST_SLOW"):
+        if script_key == "slow":
             # 정렬 작업 폴더를 만들어 둔 채 오래 돈다 - 취소되면 이것이 남는다
             workdir = Path(tempfile.mkdtemp(prefix="track1-"))
             (workdir / "u.wav").write_bytes(b"audio")
@@ -152,20 +153,19 @@ def test_서비스_문장이_아닌_scriptKey는_비재전송_판정_실패다(t
         assert outcome.retryable is False
 
 
-def test_취소는_워커_프로세스까지_닿고_잔여물을_남기지_않는다(tmp_path, transfer, monkeypatch):
+def test_취소는_워커_프로세스까지_닿고_잔여물을_남기지_않는다(tmp_path, transfer):
     """엔진 계약 2번 - 취소가 실제로 닿는다.
 
     스레드로 넘겼다면 여기서 프로세스가 살아 있고, 라우트가 지운 오디오를 계속 붙들고
     있게 된다. 워커가 만든 정렬 작업 폴더(오디오 사본이 든다)도 함께 사라져야 한다 (KAN-27).
     """
-    monkeypatch.setenv("ACCENTURY_TEST_SLOW", "1")
     settings = _settings(tmp_path, transfer)
     engine = Track1Engine(settings)
 
     async def scenario():
         await engine.warm_up()
         pid = engine._process.pid  # noqa: SLF001 - 프로세스가 정말 죽는지가 이 항목의 전부다
-        analysis = asyncio.create_task(engine.analyze(_request(settings)))
+        analysis = asyncio.create_task(engine.analyze(_request(settings, script_key="slow")))
         # 워커가 정렬 작업 폴더를 만들 때까지 기다린다
         for _ in range(200):
             await asyncio.sleep(0.05)
@@ -182,6 +182,38 @@ def test_취소는_워커_프로세스까지_닿고_잔여물을_남기지_않�
 
     assert not _alive(pid), "취소 뒤에도 워커가 살아 있다 - 계약 2 위반"
     assert [entry.name for entry in settings.temp_dir.iterdir()] == ["audio-x.wav"]
+
+
+def test_취소_직후의_요청이_재적재를_기다렸다_정상으로_돌아온다(tmp_path, transfer):
+    """취소는 재적재를 뒤에서 시작한다 - 그 워커를 준비 전에 쓰면 안 된다.
+
+    준비 메시지를 기다리는 코루틴과 요청 코루틴이 같은 파이프를 동시에 읽으면 asyncio가
+    거절하고, 요청은 계약과 무관한 오류로 죽는다. KAN-137 계약 스위트가 실모델에서 잡은
+    자리이고(2026-09-05), 여기서는 그것을 초 단위로 재현한다.
+    """
+    settings = _settings(tmp_path, transfer)
+    engine = Track1Engine(settings)
+
+    async def scenario():
+        await engine.warm_up()
+        analysis = asyncio.create_task(engine.analyze(_request(settings, script_key="slow")))
+        for _ in range(200):
+            await asyncio.sleep(0.05)
+            if any(entry.name.startswith("track1-") for entry in settings.temp_dir.iterdir()):
+                break
+        analysis.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await analysis
+        try:
+            # 재적재가 아직 도는 중이다 - 이 요청은 그것을 기다렸다가 정상으로 끝나야 한다
+            return await engine.analyze(_request(settings))
+        finally:
+            await engine.close()
+
+    outcome = asyncio.run(scenario())
+
+    assert outcome.status == "OK"
+    assert outcome.intonation_score == 87
 
 
 def test_워커가_죽으면_다음_요청이_새_워커로_간다(tmp_path, transfer):

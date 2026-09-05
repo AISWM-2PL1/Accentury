@@ -263,17 +263,25 @@ class Track1Engine:
     # ── 워커 수명 ────────────────────────────────────────────────────────────
 
     async def _ensure_worker(self) -> None:
-        """워커가 살아 있게 만든다 - 이미 살아 있으면 아무것도 하지 않는다.
+        """요청을 받을 수 있는 워커가 있게 만든다.
 
         여러 호출자가 동시에 들어와도 적재는 한 번이다. 먼저 온 쪽이 만든 시작 작업을
         나머지가 함께 기다린다.
+
+        **적재 중이면 프로세스가 있어도 기다린다.** 취소 뒤에는 재적재가 뒤에서 돌고 있는데
+        (:meth:`_restart_in_background`), 그 워커를 준비되기 전에 쓰면 준비 메시지를 기다리는
+        코루틴과 이 요청이 같은 파이프를 동시에 읽는다 - asyncio가 그것을 거부해 요청이
+        계약과 무관한 오류로 죽는다 (KAN-137 스위트가 잡은 자리).
         """
+        starting = self._start_task
+        if starting is not None and not starting.done():
+            # shield로 감싼다 - 이 요청이 상한에 걸려 취소돼도 적재 자체는 이어져야 한다.
+            # 취소마다 적재를 접으면 뒤이은 요청이 매번 처음부터 다시 올린다
+            await asyncio.shield(starting)
+            return
         if self._process is not None and self._process.returncode is None:
             return
-        if self._start_task is None or self._start_task.done():
-            self._start_task = asyncio.create_task(self._start_worker())
-        # shield로 감싼다 - 이 요청이 상한에 걸려 취소돼도 적재 자체는 이어져야 한다.
-        # 취소마다 적재를 접으면 뒤이은 요청이 매번 처음부터 다시 올린다
+        self._start_task = asyncio.create_task(self._start_worker())
         await asyncio.shield(self._start_task)
 
     async def _start_worker(self) -> None:
@@ -305,28 +313,34 @@ class Track1Engine:
             env=_worker_env(self._settings.temp_dir),
             limit=_PIPE_LIMIT_BYTES,
         )
-        self._process = process
         try:
             async with asyncio.timeout(self._settings.track1_load_timeout_seconds):
                 message = await self._read_message(process)
         except BaseException:
             # 취소든 상한이든 임포트 실패든 결과는 같다 - 반쯤 올라온 워커를 남기지 않는다
-            self._terminate_worker("가중치 적재 실패")
+            self._kill(process, "가중치 적재 실패")
             raise
         if message.get("type") != _READY or not message.get("modelVersion"):
-            self._terminate_worker("워커가 준비를 알리지 않았다")
+            self._kill(process, "워커가 준비를 알리지 않았다")
             raise RuntimeError(f"트랙 1 워커의 준비 메시지가 계약과 다르다: {message}")
+        # **여기서야 공개한다.** 준비 전에 :attr:`_process`에 넣으면 적재를 기다리는 이
+        # 코루틴과 요청 코루틴이 같은 stdout을 동시에 읽는다 (위 :meth:`_ensure_worker` 주석)
+        self._process = process
         self._model_version = str(message["modelVersion"])
         log.info("트랙 1 워커 준비 완료 modelVersion=%s", self._model_version)
 
     def _terminate_worker(self, reason: str) -> None:
-        """워커를 프로세스 그룹째 죽인다 - 동기 함수인 것이 중요하다.
+        """지금 쓰는 워커를 죽이고 자리를 비운다."""
+        process = self._process
+        self._process = None
+        self._kill(process, reason)
+
+    def _kill(self, process: asyncio.subprocess.Process | None, reason: str) -> None:
+        """프로세스 하나를 그룹째 죽인다 - 동기 함수인 것이 중요하다.
 
         취소 처리 안에서 부르므로 여기서 ``await``하면 두 번째 취소가 끼어들어 죽이다 만
         상태로 빠져나갈 수 있다.
         """
-        process = self._process
-        self._process = None
         if process is None or process.returncode is not None:
             return
         log.warning("트랙 1 워커를 종료한다 reason=%s pid=%s", reason, process.pid)
@@ -397,7 +411,9 @@ class Track1Engine:
         line = await process.stdout.readline()
         if not line:
             code = process.returncode
-            self._terminate_worker("워커가 응답 전에 종료됐다")
+            if process is self._process:
+                self._process = None
+            self._kill(process, "워커가 응답 전에 종료됐다")
             raise _WorkerGone(f"트랙 1 워커가 응답 없이 종료됐다 (exit={code})")
         return json.loads(line)
 
