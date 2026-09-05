@@ -36,8 +36,18 @@ class SsmEnvironmentBindingTest {
     /** Terraform이 만드는 파라미터 이름 - `"${var.ssm_prefix}/NAME"` 자리. */
     private static final Pattern TERRAFORM_NAME = Pattern.compile("\\$\\{var\\.ssm_prefix}/([A-Z0-9_]+)\"");
 
-    /** 가드 정본 밖에서 Terraform이 추가로 만드는 이름 - 프로파일 스위치는 검증 대상이 아니라 검증을 켜는 값이다. */
-    private static final Set<String> TERRAFORM_ONLY = Set.of("SPRING_PROFILES_ACTIVE");
+    /**
+     * 가드 정본 밖에서 Terraform이 추가로 만드는 이름.
+     * <p>
+     * 프로파일 스위치는 검증 대상이 아니라 검증을 켜는 값이고, 분석 시간 예산 셋(KAN-22)은 없어도
+     * 기동이 되는 조정값이다 - 없으면 application.yml의 기본값으로 뜬다. 가드에 넣으면 "없으면
+     * 기동을 세운다"가 되어, 값 하나 지웠다고 배포가 멎는다.
+     */
+    private static final Set<String> TERRAFORM_ONLY = Set.of(
+            "SPRING_PROFILES_ACTIVE",
+            "ACCENTURY_ANALYSIS_AITIMEOUT",
+            "ACCENTURY_ANALYSIS_PROCESSINGTIMEOUT",
+            "ACCENTURY_ANALYSIS_DISPATCHCONCURRENCY");
 
     /** 가드 정본에는 있지만 Terraform이 만들지 않는 이름 - 자격 증명은 Secrets Manager에서 온다. */
     private static final Set<String> GUARD_ONLY = Set.of(
@@ -73,6 +83,18 @@ class SsmEnvironmentBindingTest {
                 assertEquals(ssm.get(name.ssmName()), binder.bind(name.property(), String.class).get(), name.label());
             }
         }
+        // 가드 밖의 조정값(KAN-22)도 이름 그대로의 환경 변수로 닿아야 한다 - 여기가 아니면
+        // 이름이 한 글자 틀려도 아무 데서도 드러나지 않고, 배포는 스텁 시절 기본값(10초)으로 뜬다.
+        StandardEnvironment tuned = new StandardEnvironment();
+        tuned.getPropertySources().addFirst(new SystemEnvironmentPropertySource("tuned-systemEnvironment",
+                Map.of("ACCENTURY_ANALYSIS_AITIMEOUT", "85s",
+                        "ACCENTURY_ANALYSIS_PROCESSINGTIMEOUT", "300s",
+                        "ACCENTURY_ANALYSIS_DISPATCHCONCURRENCY", "1")));
+        Binder tunedBinder = Binder.get(tuned);
+        assertEquals("85s", tunedBinder.bind("accentury.analysis.ai-timeout", String.class).get());
+        assertEquals("300s", tunedBinder.bind("accentury.analysis.processing-timeout", String.class).get());
+        assertEquals(1, tunedBinder.bind("accentury.analysis.dispatch-concurrency", Integer.class).get());
+
         // 목록 프로퍼티는 쉼표 한 줄이 원소로 갈라져야 한다 (ClientIps가 List<String>으로 받는다).
         assertEquals(List.of("10.1.0.0/16"),
                 binder.bind(DeploymentConfigGuard.TRUSTED_PROXIES.property(), Bindable.listOf(String.class)).get());

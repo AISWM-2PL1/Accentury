@@ -126,3 +126,44 @@ resource "aws_ssm_parameter" "ai_token_ai" {
   type  = "SecureString"
   value = random_password.ai_internal_token.result
 }
+
+# 실모델 전환에 맞춘 분석 시간 예산 (KAN-22, 임시값 - 정식 재확정은 KAN-172).
+#
+# 스텁 시절의 기본값(ai-timeout 10초)은 실모델에서 성립하지 않는다. 추론 1건이 08-30 실측으로
+# 14~30초이고(KAN-159, 도커 amd64에서는 MFA만 23초) x86 CPU에서는 더 걸린다 - 기본값을 그대로
+# 두면 모든 분석이 읽기 타임아웃으로 끊겨 재전송 예산만 태우고 회로가 열린다.
+#
+# 값 사이의 관계는 backend가 기동 시점에 강제한다 (AnalysisDispatchConfig).
+#
+#   processing-timeout > ai-timeout x (재시도 2 + 1) + 백오프 0.9초   -> 300 > 255.9
+#   shutdown-budget(90초, 코드 기본값) > ai-timeout                    -> 90 > 85
+#
+# dispatch-concurrency를 1로 내리는 것이 이 조합의 핵심이다. AI는 추론을 한 번에 하나만 돌리므로
+# (워커 프로세스 1개, GPU 슬롯 1) 4개를 동시에 보내면 뒤의 셋은 앞의 추론이 끝나기를 AI 안에서
+# 기다리다 읽기 타임아웃에 걸린다 - 늘린 상한이 그대로 무의미해지는 자리다.
+resource "aws_ssm_parameter" "analysis_ai_timeout" {
+  name  = "${var.ssm_prefix}/ACCENTURY_ANALYSIS_AITIMEOUT"
+  type  = "String"
+  value = var.analysis_ai_timeout
+}
+
+resource "aws_ssm_parameter" "analysis_processing_timeout" {
+  name  = "${var.ssm_prefix}/ACCENTURY_ANALYSIS_PROCESSINGTIMEOUT"
+  type  = "String"
+  value = var.analysis_processing_timeout
+}
+
+resource "aws_ssm_parameter" "analysis_dispatch_concurrency" {
+  name  = "${var.ssm_prefix}/ACCENTURY_ANALYSIS_DISPATCHCONCURRENCY"
+  type  = "String"
+  value = tostring(var.analysis_dispatch_concurrency)
+}
+
+# AI 자신의 분석 상한 (초). backend의 읽기 타임아웃보다 짧게 둔다 - 그래야 AI가 스스로 끊고
+# 503을 돌려주고(BE는 일시 장애로 보고 재전송한다) 멈춘 추론이 임시파일을 붙들지 않는다.
+# 반대로 두면 BE가 먼저 포기하는데 AI는 계속 추론해 GPU 슬롯과 임시파일이 그만큼 더 남는다.
+resource "aws_ssm_parameter" "ai_analysis_timeout_seconds" {
+  name  = "${var.ssm_prefix}/ai/ACCENTURY_AI_ANALYSIS_TIMEOUT_SECONDS"
+  type  = "String"
+  value = tostring(var.ai_analysis_timeout_seconds)
+}
