@@ -39,8 +39,12 @@ DEFAULT_MAX_AUDIO_BYTES = 1_048_576
 #: 오디오 파트 상한만으로는 파싱이 끝난 뒤에야 걸러진다 (Codex sol 리뷰 P2).
 DEFAULT_MAX_REQUEST_BYTES = 2 * 1_048_576
 
-#: 붙일 분석 엔진 (KAN-135). 지금은 실모델 하나뿐이다 (KAN-22).
+#: 붙일 분석 엔진 (KAN-135). 기본은 실모델이고, 개발 기계용 가짜 엔진(``fake``)이 하나 더 있다
+#: (:mod:`app.fake`, PR #87 리뷰 반영).
 DEFAULT_ANALYSIS_ENGINE = "track1"
+
+#: 가짜 엔진의 응답 지연 (ms) - 앱의 대기 화면이 실제로 그려지는지 볼 수 있을 만큼만 둔다.
+DEFAULT_FAKE_DELAY_MS = 1500
 
 #: 전달본 모듈이 있는 디렉터리 - 워커가 ``sys.path``에 넣는다 (KAN-159의 이미지 배치).
 DEFAULT_TRACK1_SRC_DIR = Path("/app/src")
@@ -80,6 +84,10 @@ class Settings:
     track1_device: str = "auto"
     #: 가중치 적재의 상한 (초)
     track1_load_timeout_seconds: float = DEFAULT_TRACK1_LOAD_TIMEOUT_SECONDS
+    #: 가짜 엔진(:mod:`app.fake`)이 판정 실패를 내는 itemId - E2E의 실패 갈래 수단. ``None``이면 없다
+    fake_fail_item: str | None = None
+    #: 가짜 엔진의 응답 지연 (ms)
+    fake_delay_ms: int = DEFAULT_FAKE_DELAY_MS
     #: backend와 나눠 갖는 내부 호출 시크릿 (KAN-36, :mod:`app.auth`). 비어 있으면 검사를
     #: 건너뛴다 - 로컬 개발 편의이고, 배포에서는 Terraform이 언제나 채운다
     internal_token: str | None = None
@@ -122,6 +130,8 @@ class Settings:
                     "ACCENTURY_AI_TRACK1_LOAD_TIMEOUT_SECONDS", DEFAULT_TRACK1_LOAD_TIMEOUT_SECONDS
                 )
             ),
+            fake_fail_item=source.get("ACCENTURY_AI_FAKE_FAIL_ITEM") or None,
+            fake_delay_ms=int(source.get("ACCENTURY_AI_FAKE_DELAY_MS", DEFAULT_FAKE_DELAY_MS)),
             internal_token=source.get("ACCENTURY_AI_INTERNAL_TOKEN") or None,
             internal_token_required=_truthy(source.get("ACCENTURY_AI_INTERNAL_TOKEN_REQUIRED")),
         )

@@ -4,11 +4,13 @@
 규칙들. **돌리는 법은 [web/README.md](../../web/README.md)가 정본이고, 여기는 왜 그렇게
 만들었는지를 적는다.**
 
-> **2026-09-05부터 이 스택이 없다 (KAN-22).** AI 서버가 채점 모델 전달본을 베이스로 하면서
-> 개발 기계와 CI 러너에서 띄울 수 없게 됐고, 스텁(`ACCENTURY_AI_STUB_FAIL_ITEM`)과
-> `scripts/e2e-smoke-local.sh`도 함께 사라졌다. 아래 글의 "AI 스텁"과 `E2E_FAIL_ITEM` 이야기는
-> 그 시절의 설계 기록이다. CI job은 내렸고 스펙 파일은 남아 있다 - 러너가 감당할 수 있는
-> AI 대역이 생기면 되살린다.
+> **스택의 AI는 가짜 엔진이다 (2026-09-06, KAN-22 PR #87 리뷰 반영).** AI 서버가 채점 모델
+> 전달본을 베이스로 하면서 개발 기계와 CI 러너에서 띄울 수 없게 됐고, 2026-09-05에 스텁
+> (`ACCENTURY_AI_STUB_FAIL_ITEM`)과 `scripts/e2e-smoke-local.sh`가 사라졌다. 그러자 분석까지
+> 가는 스펙이 돌릴 스택을 잃어, 같은 앱을 `ACCENTURY_AI_ANALYSIS_ENGINE=fake`로 띄우는 `ai`
+> 서비스를 루트 compose에 되살렸다 (`ai/app/fake.py`, 실패 문항은 `ACCENTURY_AI_FAKE_FAIL_ITEM`).
+> 아래 글의 "AI 스텁"은 그 가짜 엔진으로 읽으면 된다. CI job은 내린 채이고 스펙 파일은 남아
+> 있다 - slim 이미지라 러너에서도 뜨므로 되살리는 것은 별도 결정이다.
 
 ## 왜 한 겹 더 두는가
 

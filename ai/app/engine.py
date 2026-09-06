@@ -27,6 +27,9 @@ from app.config import Settings
 #: 설정 양쪽에 남는다.
 TRACK1_ENGINE = "track1"
 
+#: 개발 기계용 가짜 엔진의 이름 (:mod:`app.fake`). 배포에서는 기동이 거부된다.
+FAKE_ENGINE = "fake"
+
 STATUS_OK: Literal["OK"] = "OK"
 STATUS_FAILED: Literal["FAILED"] = "FAILED"
 
@@ -314,6 +317,11 @@ def create_engine(settings: Settings) -> AnalysisEngine:
         from app.track1 import Track1Engine  # noqa: PLC0415 - 순환 임포트를 피한다
 
         return Track1Engine(settings)
+    if settings.analysis_engine == FAKE_ENGINE:
+        from app.fake import FakeEngine  # noqa: PLC0415 - 같은 이유
+
+        return FakeEngine(settings)
     raise ValueError(
-        f"알 수 없는 분석 엔진: {settings.analysis_engine!r} (가능한 값: {TRACK1_ENGINE})"
+        f"알 수 없는 분석 엔진: {settings.analysis_engine!r} "
+        f"(가능한 값: {TRACK1_ENGINE}, {FAKE_ENGINE})"
     )

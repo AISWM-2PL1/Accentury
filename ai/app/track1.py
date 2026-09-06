@@ -175,11 +175,17 @@ def _purge_worker_temp(temp_dir: Path) -> None:
         ]
     except OSError:
         return
+    failed = 0
     for entry in leftovers:
-        # 경로를 로그에 남기지 않는다 - 건수만이다 (NFR-SC-07)
-        shutil.rmtree(entry, ignore_errors=True)
+        try:
+            shutil.rmtree(entry)
+        except OSError:
+            failed += 1
     if leftovers:
-        log.warning("워커가 남긴 정렬 작업 폴더를 지웠다 count=%d", len(leftovers))
+        # 경로를 로그에 남기지 않는다 - 건수만이다 (NFR-SC-07). 실패 건수를 따로 세는 이유는
+        # 오디오 사본이 남은 것을 조용히 성공으로 넘기지 않기 위해서다 (PR #87 리뷰 P3)
+        log.warning("워커가 남긴 정렬 작업 폴더를 지웠다 count=%d failed=%d",
+                    len(leftovers) - failed, failed)
 
 
 class Track1Engine:
@@ -294,6 +300,13 @@ class Track1Engine:
             "device": self._settings.track1_device,
         }
         log.info("트랙 1 워커 기동 - 가중치 적재를 시작한다 spec=%s", spec)
+        # 죽인 워커의 거두기(:func:`_reap`)가 끝난 뒤에 올린다 (PR #87 리뷰). 그 작업이 정렬
+        # 작업 폴더와 MFA 작업 폴더를 지우는데, 새 워커가 그 사이에 같은 자리에 쓰기 시작하면
+        # 적재 중인 워커의 파일을 지우는 창이 생긴다. SIGKILL 뒤라 보통 즉시 끝나는 대기다.
+        # gather가 아니라 wait다 - 이 적재가 취소되면(앱 종료의 close) gather는 거두기까지
+        # 함께 취소해 워커가 좀비로 남는다. wait는 기다리던 쪽만 접는다
+        if self._reaping:
+            await asyncio.wait(list(self._reaping))
         # 앞선 워커가 SIGKILL로 남긴 정렬 작업 폴더를 먼저 치운다 - 그 안에 오디오 사본이 있다
         _purge_worker_temp(self._settings.temp_dir)
         process = await asyncio.create_subprocess_exec(
@@ -495,12 +508,17 @@ def _worker_main(argv: list[str]) -> int:
         if not line:
             continue
         request = json.loads(line)
-        try:
-            envelope = scorer.score(request["audioPath"], request["scriptKey"])
-        except KeyError:
-            # 서비스 문장이 아닌 키 - 전달본이 입력 자체를 계약 밖으로 보고 던지는 유일한 예외다
+        script_key = request["scriptKey"]
+        if not _is_service_sentence(scorer, script_key):
+            # 서비스 문장이 아닌 키 - score()를 부르기 **전에** 가른다 (PR #87 리뷰 P2). 예전에는
+            # score() 전체를 except KeyError로 감쌌는데, 그러면 전달본이 참조나 중간 결과 dict의
+            # 키 하나를 놓친 서버 결함까지 "서비스 문장이 아닌 scriptKey"로 둔갑해 사용자가
+            # 비재전송 판정 실패로 문항을 잃고, 로그는 조사를 엉뚱한 데로 보냈다
             _send(channel, {"type": _RESULT, "ok": False, "kind": _UNKNOWN_SCRIPT_KEY})
-        except Exception as error:  # noqa: BLE001 - 어떤 실패든 부모가 500으로 옮긴다
+            continue
+        try:
+            envelope = scorer.score(request["audioPath"], script_key)
+        except Exception as error:  # noqa: BLE001 - 어떤 실패든(KeyError 포함) 부모가 500으로 옮긴다
             # **예외 메시지를 싣지 않는다** (§2.6, NFR-SC-07). 전사(사용자가 말한 내용)가
             # 예외 문자열에 실릴 수 있고, 부모는 이 값을 예외로 다시 던져 스택트레이스와
             # 함께 컨테이너 로그에 남긴다 - 그 경로로 발화 내용이 로그에 고이는 자리다
@@ -540,6 +558,25 @@ def _worker_main(argv: list[str]) -> int:
     return 0
 
 
+def _is_service_sentence(scorer: Any, script_key: Any) -> bool:
+    """``scriptKey``가 전달본의 서비스 문장 목록에 있는가.
+
+    전달본은 ``sentences``(script_key -> 문장 항목)를 들고 있고 ``score()``의 첫 검사가 그
+    조회다 (``serve.py``). 같은 검사를 여기서 먼저 해야 그 뒤의 ``KeyError``를 모델 내부
+    오류로 다룰 수 있다. 목록을 노출하지 않는 전달본이면 판단할 수 없으므로 통과시킨다 - 그때는
+    ``score()``의 ``KeyError``가 500이 되고 BE가 재전송한다 (과거처럼 판정 실패로 접지 않는다).
+    """
+    if not isinstance(script_key, str):
+        return False
+    sentences = getattr(scorer, "sentences", None)
+    if sentences is None:
+        return True
+    try:
+        return script_key in sentences
+    except TypeError:
+        return True
+
+
 def _clear_mfa_workspace() -> None:
     """MFA가 남긴 코퍼스 작업 폴더를 지운다 (KAN-27).
 
@@ -553,16 +590,21 @@ def _clear_mfa_workspace() -> None:
         entries = list(root.iterdir())
     except OSError:
         return
+    failed = 0
     for entry in entries:
         if entry.name == _MFA_KEEP:
             continue
-        if entry.is_dir():
-            shutil.rmtree(entry, ignore_errors=True)
-        else:
-            try:
+        try:
+            if entry.is_dir():
+                shutil.rmtree(entry)
+            else:
                 entry.unlink()
-            except OSError:
-                pass
+        except OSError:
+            failed += 1
+    if failed:
+        # 삭제 실패를 삼키지 않는다 (PR #87 리뷰 P3) - 오디오에서 뽑은 특징이 남은 것이고, 잔존
+        # 지표(KAN-38)는 임시 디렉터리만 보므로 여기 말고는 아무도 모른다. 경로는 남기지 않는다
+        log.warning("MFA 작업 폴더 정리 실패 count=%d root=%s", failed, root)
 
 
 def _send(channel: Any, message: dict[str, Any]) -> None:

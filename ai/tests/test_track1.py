@@ -24,7 +24,7 @@ import pytest
 
 from app.config import Settings
 from app.engine import AnalysisRequest
-from app.track1 import LOADING_MODEL_VERSION, Track1Engine
+from app.track1 import LOADING_MODEL_VERSION, Track1Engine, _is_service_sentence
 
 #: 가짜 전달본이 보고하는 버전 - 엔진이 이 값을 그대로 물어 와야 한다 (KAN-135)
 FAKE_MODEL_VERSION = "track1-fake+0000000"
@@ -56,11 +56,16 @@ class Track1Scorer:
     def __init__(self, ref_dir=None, sentences=None, stt=True, whisper_device="auto"):
         self.model_version = "{model_version}"
         self.ref_dir = ref_dir
-        self.sentences = sentences
+        # 진짜 전달본과 같은 모양 - script_key -> 문장 항목. 어댑터가 score() 전에 이 목록을 본다
+        self.sentences = {{"1|5": {{"대본": "내일 잔치가 있어서"}}, "slow": {{"대본": "느린 문장"}},
+                          "broken": {{"대본": "참조가 빠진 문장"}}}}
 
     def score(self, wav, script_key, transcript=None, with_feedback=True):
-        if script_key not in ("1|5", "slow"):
+        if script_key not in self.sentences:
             raise KeyError(f"서비스 문장이 아니다: {{script_key!r}}")
+        if script_key == "broken":
+            # 전달본 내부의 dict 조회 실패를 흉내 낸다 - 서비스 문장인데 참조가 빠진 경우
+            raise KeyError("reference_1|7")
         if script_key == "slow":
             # 정렬 작업 폴더를 만들어 둔 채 오래 돈다 - 취소되면 이것이 남는다
             workdir = Path(tempfile.mkdtemp(prefix="track1-"))
@@ -151,6 +156,45 @@ def test_서비스_문장이_아닌_scriptKey는_비재전송_판정_실패다(t
         assert outcome.failed is True
         assert outcome.quality_code == "ANALYSIS_MISREAD"
         assert outcome.retryable is False
+
+
+def test_모델_내부의_KeyError는_사용자_잘못이_아니라_서버_오류다(tmp_path, transfer):
+    # PR #87 리뷰 P2. 예전에는 score() 전체를 except KeyError로 감싸, 전달본이 참조나 중간 결과
+    # dict의 키 하나를 놓친 서버 결함이 "서비스 문장이 아닌 scriptKey"(비재전송 판정 실패)로
+    # 둔갑했다. 사용자는 문항을 잃고 BE는 재전송하지 않으며 로그는 조사를 엉뚱한 데로 보냈다.
+    settings = _settings(tmp_path, transfer)
+    engine = Track1Engine(settings)
+
+    async def scenario():
+        await engine.warm_up()
+        try:
+            with pytest.raises(RuntimeError, match="트랙 1 추론 실패: KeyError"):
+                await engine.analyze(_request(settings, script_key="broken"))
+            # 워커는 살아 있다 - 예외는 응답이지 워커의 죽음이 아니다
+            정상 = await engine.analyze(_request(settings))
+        finally:
+            await engine.close()
+        return 정상
+
+    정상 = asyncio.run(scenario())
+
+    assert 정상.failed is False
+
+
+def test_서비스_문장_판정은_전달본의_목록으로_한다():
+    # 목록이 없는 전달본은 판단할 수 없으므로 통과시킨다 - 그때 KeyError는 500이 되고 BE가
+    # 재전송한다 (과거처럼 판정 실패로 접지 않는다)
+    class 목록_있음:
+        sentences = {"1|5": {}}
+
+    class 목록_없음:
+        pass
+
+    assert _is_service_sentence(목록_있음(), "1|5") is True
+    assert _is_service_sentence(목록_있음(), "9|9") is False
+    assert _is_service_sentence(목록_있음(), None) is False
+    assert _is_service_sentence(목록_없음(), "9|9") is True
+    assert _is_service_sentence(목록_없음(), None) is False
 
 
 def test_취소는_워커_프로세스까지_닿고_잔여물을_남기지_않는다(tmp_path, transfer):

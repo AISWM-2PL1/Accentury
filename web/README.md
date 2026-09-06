@@ -49,12 +49,12 @@ npm run build      # tsc --noEmit + vite build
 
 ### 브라우저 E2E (KAN-181)
 
-> **2026-09-05부터 이 스택이 없다 (KAN-22).** AI 서버의 베이스가 채점 모델 전달본(약 4GB,
-> linux/amd64, RSS 7GB대)이 되면서 개발 기계와 CI 러너에서 띄울 수 없게 됐고, 스텁도 함께
-> 제거됐다. 그래서 루트 `docker-compose.yml`에 `ai`가 없고 분석은 완료되지 않는다 - 분석까지
-> 가는 스펙(`full-run`, `retake`)은 지금 돌릴 스택이 없다. 화면 전환과 녹음만 보는
-> `smoke.spec.ts`는 BE + DB만으로도 의미가 있다. 아래 절차는 AI 대역이 다시 생겼을 때를
-> 위해 남겨 둔다.
+> **AI는 가짜 엔진이다 (2026-09-06, KAN-22 PR #87 리뷰 반영).** AI 서버의 운영 이미지는 베이스가
+> 채점 모델 전달본(약 4GB, linux/amd64, RSS 7GB대)이라 개발 기계에서 뜨지 않는다. 2026-09-05에
+> 스텁을 지우면서 이 스택에서 AI를 뺐다가, 분석까지 가는 스펙(`full-run`, `retake`)이 돌릴 스택을
+> 잃어 같은 앱을 `ACCENTURY_AI_ANALYSIS_ENGINE=fake`로 띄우는 `ai` 서비스를 되살렸다
+> (`ai/Dockerfile.fake`, 점수는 해시). 실패 문항은 `E2E_FAIL_ITEM`으로 고른다 - compose가
+> `ACCENTURY_AI_FAKE_FAIL_ITEM`으로 넘긴다. CI의 web-e2e job은 아직 내려간 상태다.
 
 vitest가 못 보는 것을 실제 Chromium에서 본다 — `getUserMedia`·`AudioContext`·`AudioWorklet`,
 그리고 문서를 통째로 다시 읽는 화면 전환. 가짜 마이크로 앱 디버그 빌드와 **같은 WAV**를
@@ -125,7 +125,7 @@ npx playwright show-trace test-results/<실패한-스펙>/trace.zip
 
 #### 실패 갈래 돌리기
 
-`retake.spec.ts`는 AI 스텁이 특정 문항을 반드시 실패시키는 스택에서만 의미가 있고,
+`retake.spec.ts`는 가짜 AI가 특정 문항을 반드시 실패시키는 스택에서만 의미가 있고,
 `full-run.spec.ts`는 반대로 그 설정이 없어야 통과한다. 한 스택이 둘을 동시에 만족할 수 없어
 **대칭 스킵**으로 갈랐다 — 스택을 갈아 끼우고 두 번 돌린다.
 
