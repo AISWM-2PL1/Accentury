@@ -46,7 +46,7 @@ spring:
                      # 구성을 밀어내지 않게 강제한다 - 밀리면 MVC 비동기가 무제한 스레드로
                      # 떨어지고, 미래의 @Async가 AI 전달 풀에 얹힌다 (Codex 리뷰).
     scheduling:
-      pool-size: 4   # @Scheduled 잡이 여덟인데 기본값은 1스레드다 (Codex 리뷰) - 파일시스템을
+      pool-size: 4   # @Scheduled 잡이 아홉인데 기본값은 1스레드다 (Codex 리뷰) - 파일시스템을
                      # 훑는 VoiceTempSweeper가 느린 볼륨에서 막히면 그 한 스레드를 붙잡아
                      # AnalysisJobTimeout(30초 주기)이 멎고, 사용자가 대기 화면에 갇힌다.
                      # AI 회로 복구 프로브(KAN-28)도 이 풀을 쓴다 - 짧은 타임아웃
@@ -183,6 +183,16 @@ accentury:
   # 다른 곳(환경 변수, @TestPropertySource)에서 준 accentury.admin.token으로 내려가지 않는다.
   # admin:
   #   token: ...
+  # 카카오톡 공유 웹훅 수신 (명세서 §3.8, KAN-164). kakao-admin-key는 카카오디벨로퍼스 콘솔의 앱
+  # Admin 키이고, 카카오가 웹훅마다 Authorization: KakaoAK {키}로 싣는다 - 검증은 그 일치 확인이
+  # 전부다. 미설정이 기본값이고, 그러면 웹훅 경로(POST /v0/share/kakao/webhook)가 아예 등록되지
+  # 않는다(404) - admin.token과 같은 안전한 기본값이다. 운영에서는 환경 변수로 주입한다
+  # (ACCENTURY_SHARE_KAKAOADMINKEY, SSM SecureString). admin과 같은 이유로 블록째 주석이다.
+  # receipt-retention은 중복 콜백을 거르는 수신 기록(X-Kakao-Resource-ID)의 보존 기간이다 -
+  # 카카오의 재전송 간격을 모르므로 세션의 24시간보다 넉넉한 7일이 기본값이다.
+  # share:
+  #   kakao-admin-key: ...
+  #   receipt-retention: 7d
   # /result 등급별 자산 (명세서 §3.7, KAN-25) - 서버가 내려주므로 앱 배포 없이 여기서 교체 (KAN-29/30)
   # 기동 시 5개 등급 전부 존재해야 한다 (TierAssets 검증). 코멘트와 문구는 더미다 - 확정되면
   # 여기서 교체한다. 키는 등급 code의 소문자다 (relaxed binding이 대문자 키를 보존하지 않으므로

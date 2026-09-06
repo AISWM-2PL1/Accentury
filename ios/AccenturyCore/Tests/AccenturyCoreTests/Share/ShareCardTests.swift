@@ -56,4 +56,13 @@ final class ShareCardTests: XCTestCase {
         XCTAssertNil(buildShareCard(SharePayload(imageUrl: "", text: "x", webTestUrl: "https://accentury.app/t")))
         XCTAssertNil(buildShareCard(SharePayload(imageUrl: "https://a/b.png", text: "x", webTestUrl: "")))
     }
+
+    // MARK: 웹훅 파라미터
+
+    /// 카카오는 이 값을 전송 완료 웹훅에 그대로 실어 서버로 보낸다 (KAN-164). 세션 id나 점수가
+    /// 섞이면 서버 집계가 익명이 아니게 되므로, 키가 하나이고 값이 상수라는 것을 못박는다.
+    /// 안드로이드 `kakaoServerCallbackArgs()`와 같은 내용이어야 서버가 한 캠페인으로 센다.
+    func testServerCallbackArgsCarryOnlyTheCampaignConstant() {
+        XCTAssertEqual(["campaign": "kko_share"], kakaoServerCallbackArgs())
+    }
 }

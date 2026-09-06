@@ -18,6 +18,20 @@ private const val TAG = "ResultSharer"
 private const val SHARE_BUTTON_TITLE = "나도 테스트하기"
 
 /**
+ * 카카오 공유 웹훅이 서버로 되돌려 주는 사용자 정의 파라미터 (KAN-164, FR-SH-06).
+ *
+ * 카카오는 사용자가 카톡에서 실제로 보냈을 때 우리 서버(`POST /v0/share/kakao/webhook`)로 콜백을
+ * 주는데, **이 파라미터가 없으면 콜백 자체가 오지 않는다** (카카오 문서). 값은 캠페인 상수 하나뿐이다 -
+ * 세션 id나 점수를 실으면 서버 집계가 익명이 아니게 되므로 여기서부터 막는다. 키 이름 `campaign`과
+ * 값 `kko_share`는 서버(`KakaoShareWebhookController`)와 웹 테스트 URL의 캠페인 파라미터(`?c=kko_share`)가
+ * 같이 쓰는 값이다.
+ */
+const val KAKAO_SHARE_CAMPAIGN = "kko_share"
+
+/** [KAKAO_SHARE_CAMPAIGN] 하나로 이뤄진 `serverCallbackArgs`. 순수 함수라 내용을 테스트로 못박는다. */
+fun kakaoServerCallbackArgs(): Map<String, String> = mapOf("campaign" to KAKAO_SHARE_CAMPAIGN)
+
+/**
  * 결과가 나가는 통로 (KAN-30).
  *
  * 티켓이 요구한 폴백은 [SYSTEM_SHEET]다 — 카카오 문서가 권하는 WebSharerClient(브라우저로 카카오
@@ -209,7 +223,8 @@ class ResultSharer(
             kakaoEnabled = BuildConfig.KAKAO_NATIVE_APP_KEY.isNotBlank(),
             isTalkAvailable = { ShareClient.instance.isKakaoTalkSharingAvailable(activity) },
             shareViaKakao = { template, onResult ->
-                ShareClient.instance.shareDefault(activity, template) { result, error ->
+                // serverCallbackArgs가 있어야 카카오가 전송 완료 웹훅을 보낸다 (KAN-164).
+                ShareClient.instance.shareDefault(activity, template, kakaoServerCallbackArgs()) { result, error ->
                     onResult(result?.intent, error)
                 }
             },

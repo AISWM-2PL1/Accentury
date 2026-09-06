@@ -3,6 +3,8 @@ package app.accentury.backend.analytics;
 import app.accentury.backend.IntegrationTest;
 import app.accentury.backend.common.AccenturyProperties;
 import app.accentury.backend.common.AdminAuth;
+import app.accentury.backend.share.ShareDailyCounter;
+import app.accentury.backend.share.ShareDailyCounterRepository;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -47,6 +49,9 @@ class AnalyticsApiTest extends IntegrationTest {
     private DailyCounterStore store;
 
     @Autowired
+    private ShareDailyCounterRepository shareCounters;
+
+    @Autowired
     private TransactionTemplate transactionTemplate;
 
     @Autowired
@@ -61,8 +66,14 @@ class AnalyticsApiTest extends IntegrationTest {
      */
     @BeforeEach
     void seed() {
-        transactionTemplate.executeWithoutResult(tx ->
-                entityManager.createQuery("delete from DailyCounter").executeUpdate());
+        transactionTemplate.executeWithoutResult(tx -> {
+            entityManager.createQuery("delete from DailyCounter").executeUpdate();
+            entityManager.createQuery("delete from ShareDailyCounter").executeUpdate();
+            // 공유 전송 완료 (KAN-164) - 3/1에 2건, 3/2에 1건. 운영과 같은 upsert 경로로 심는다.
+            shareCounters.countSent(ShareDailyCounter.idOf(DAY, "kko_share"), DAY, "kko_share");
+            shareCounters.countSent(ShareDailyCounter.idOf(DAY, "kko_share"), DAY, "kko_share");
+            shareCounters.countSent(ShareDailyCounter.idOf(NEXT_DAY, "kko_share"), NEXT_DAY, "kko_share");
+        });
         // 3/1 sv-0.3: 시도 10, 완주 4 (명예주민 3 + 경남 토박이 1), 억양 합 300 / 단어 240 / 종합 280
         insert(DAY, "sv-0.3", 10, 4, 0, 0, 0, 3, 1, 300, 240, 280, 4);
         // 3/1 sv-0.4: 같은 일자 다른 점수 버전 - 등급 경계가 달라 섞으면 안 되므로 별도 행이다.
@@ -152,6 +163,27 @@ class AnalyticsApiTest extends IntegrationTest {
     }
 
     @Test
+    void 공유_전송_완료는_일자와_캠페인별_별도_표로_실린다() throws Exception {
+        // 키가 (일자, 캠페인)이라 rows에 섞이지 않는다 (KAN-164). 두 번 센 날은 2다 - upsert가 더한다.
+        mockMvc.perform(query(DAY, NEXT_DAY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.shares.rows.length()").value(2))
+                .andExpect(jsonPath("$.shares.rows[0].date").value("2026-03-01"))
+                .andExpect(jsonPath("$.shares.rows[0].campaign").value("kko_share"))
+                .andExpect(jsonPath("$.shares.rows[0].sent").value(2))
+                .andExpect(jsonPath("$.shares.rows[1].date").value("2026-03-02"))
+                .andExpect(jsonPath("$.shares.rows[1].sent").value(1))
+                .andExpect(jsonPath("$.shares.totalSent").value(3));
+        // 트래픽 필터의 영향을 받지 않는다 - 웹훅은 세션과 연결되지 않아 합성인지 알 수 없다.
+        mockMvc.perform(get(URL).header(AdminAuth.TOKEN_HEADER, TOKEN)
+                        .param("from", DAY.toString()).param("to", NEXT_DAY.toString())
+                        .param("traffic", "SYNTHETIC"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rows.length()").value(0))
+                .andExpect(jsonPath("$.shares.totalSent").value(3));
+    }
+
+    @Test
     void 카운터가_없는_기간은_빈_행과_null_평균이다() throws Exception {
         mockMvc.perform(query(LocalDate.of(2026, 1, 1), LocalDate.of(2026, 1, 2)))
                 .andExpect(status().isOk())
@@ -159,7 +191,9 @@ class AnalyticsApiTest extends IntegrationTest {
                 .andExpect(jsonPath("$.totals.sessionsStarted").value(0))
                 // 0으로 나누지 않는다 - 없는 평균은 0이 아니라 null이다.
                 .andExpect(jsonPath("$.totals.averages").doesNotExist())
-                .andExpect(jsonPath("$.totals.completionRate").doesNotExist());
+                .andExpect(jsonPath("$.totals.completionRate").doesNotExist())
+                .andExpect(jsonPath("$.shares.rows.length()").value(0))
+                .andExpect(jsonPath("$.shares.totalSent").value(0));
     }
 
     @Test

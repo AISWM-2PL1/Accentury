@@ -116,6 +116,8 @@ public final class PropertiesFixture {
                 result,
                 analytics,
                 admin,
+                // 웹훅 검증 키 없음 - 기본 상태다 (KAN-164). 수신 기록 보존 기간은 main 기본값과 같은 7일.
+                new AccenturyProperties.Share(null, Duration.ofDays(7)),
                 trustedProxies);
     }
 }

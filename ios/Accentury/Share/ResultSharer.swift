@@ -157,7 +157,11 @@ final class ResultSharer {
             kakaoEnabled: AppConfig.kakaoNativeAppKey != nil,
             isTalkAvailable: { ShareApi.isKakaoTalkSharingAvailable() },
             shareViaKakao: { template, onResult in
-                ShareApi.shared.shareDefault(templatable: template) { result, error in
+                // serverCallbackArgs가 있어야 카카오가 전송 완료 웹훅을 보낸다 (KAN-164).
+                ShareApi.shared.shareDefault(
+                    templatable: template,
+                    serverCallbackArgs: kakaoServerCallbackArgs()
+                ) { result, error in
                     onResult(result?.url, error)
                 }
             },

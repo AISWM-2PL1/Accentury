@@ -69,10 +69,11 @@ class DeploymentConfigGuard {
     static final SsmName ADMIN_TOKEN = new SsmName("accentury.admin.token", "ACCENTURY_ADMIN_TOKEN");
     static final SsmName WEB_TEST_URL = new SsmName("accentury.result.web-test-url", "ACCENTURY_RESULT_WEBTESTURL");
     static final SsmName ASSET_BASE_URL = new SsmName("accentury.result.asset-base-url", "ACCENTURY_RESULT_ASSETBASEURL");
+    static final SsmName KAKAO_ADMIN_KEY = new SsmName("accentury.share.kakao-admin-key", "ACCENTURY_SHARE_KAKAOADMINKEY");
 
     /** 배포에서 값이 와야 하는 프로퍼티 전부 (자격 증명 둘은 Secrets Manager URL이면 비어 있어도 된다). */
     static final List<SsmName> SSM_NAMES = List.of(DATASOURCE_URL, DATASOURCE_USERNAME, DATASOURCE_PASSWORD,
-            AI_BASE_URL, AI_TOKEN, TRUSTED_PROXIES, ADMIN_TOKEN, WEB_TEST_URL, ASSET_BASE_URL);
+            AI_BASE_URL, AI_TOKEN, TRUSTED_PROXIES, ADMIN_TOKEN, WEB_TEST_URL, ASSET_BASE_URL, KAKAO_ADMIN_KEY);
 
     /**
      * JDBC URL에 이 파라미터가 <b>값과 함께</b> 있으면 자격 증명은 AWS Advanced JDBC Wrapper의
@@ -138,6 +139,11 @@ class DeploymentConfigGuard {
         // staging이 값 없이 뜨면 공유 카드 이미지가 prod 버킷을 가리킨다.
         if (isBlank(binder, ASSET_BASE_URL.property())) {
             missing.add(ASSET_BASE_URL.label());
+        }
+        // 카카오 웹훅 검증 키 (KAN-164) - 없으면 웹훅 경로가 등록되지 않아(404) 카카오의 콜백이 전부 버려지고,
+        // 헬스체크는 UP이라 전송 완료 수가 0으로만 보인다. Terraform이 자리를 만들고 값은 콘솔에서 옮겨 넣는다.
+        if (isBlank(binder, KAKAO_ADMIN_KEY.property())) {
+            missing.add(KAKAO_ADMIN_KEY.label());
         }
         return missing;
     }

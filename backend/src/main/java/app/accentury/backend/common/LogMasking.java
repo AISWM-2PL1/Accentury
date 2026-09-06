@@ -33,6 +33,13 @@ public final class LogMasking {
     private static final Pattern SESSION_TOKEN = Pattern.compile("\\bst_[A-Za-z0-9_-]{8,}");
 
     /**
+     * 카카오 웹훅의 {@code Authorization: KakaoAK ...} 값 (KAN-164) - {@link #BEARER}와 같은 자리다.
+     * 헤더 이름 없이 값만 찍혀도 걸린다. 이 값은 앱 Admin 키라 새면 카카오 관리 API까지 열린다.
+     */
+    private static final Pattern KAKAO_AK = Pattern.compile(
+            "(?i)\\bKakaoAK\\s+(?!\\*\\*\\*)[^\\s\",;}]+");
+
+    /**
      * {@code Authorization} 헤더 값 전체 - <b>스킴을 가리지 않는다</b>.
      * <p>
      * {@link #BEARER}만 두면 {@code Basic}, {@code Digest}, 사설 스킴의 자격증명이 그대로
@@ -70,6 +77,11 @@ public final class LogMasking {
      * {@code ACCENTURY_AI_INTERNAL_TOKEN}도 같은 값이라 함께 넣는다 (compose 설정이 backend 로그에
      * 덤프될 수 있다).
      * <p>
+     * 카카오 웹훅 검증 키(KAN-164)도 같다 - 설정 키 {@code kakao-admin-key}와
+     * {@code accentury.share.kakao-admin-key}, 바인딩된 필드 {@code kakaoAdminKey}, 환경 변수
+     * {@code ACCENTURY_SHARE_KAKAOADMINKEY}/{@code ACCENTURY_SHARE_KAKAO_ADMIN_KEY}. 헤더로 오는 형태
+     * ({@code Authorization: KakaoAK ...})는 {@link #AUTHORIZATION}과 {@link #KAKAO_AK}가 잡는다.
+     * <p>
      * 따옴표로 열린 값은 <b>닫는 따옴표까지</b> 통째로 받는다 - 공백을 만나면 멈추게 두면
      * {@code "opaque value"} 같은 값의 뒷부분이 로그에 그대로 남고, 열린 따옴표만 닫혀
      * JSON 한 줄이 깨진다. 따옴표가 없으면 예전처럼 공백에서 끊는다 -
@@ -79,7 +91,9 @@ public final class LogMasking {
             "(?i)\\b(sessionToken|X-Admin-Token|adminToken|admin-token|accentury\\.admin\\.token"
                     + "|ACCENTURY_ADMIN_?TOKEN|ACCENTURY_ANALYTICS_ADMIN_?TOKEN"
                     + "|X-Accentury-Internal-Token|aiToken|ai-token|accentury\\.analysis\\.ai-token"
-                    + "|ACCENTURY_ANALYSIS_AI_?TOKEN|ACCENTURY_AI_INTERNAL_?TOKEN)\\b"
+                    + "|ACCENTURY_ANALYSIS_AI_?TOKEN|ACCENTURY_AI_INTERNAL_?TOKEN"
+                    + "|kakaoAdminKey|kakao-admin-key|accentury\\.share\\.kakao-admin-key"
+                    + "|ACCENTURY_SHARE_KAKAO_?ADMIN_?KEY)\\b"
                     + "(\"?\\s*[=:]\\s*)(?:\"([^\"\\r\\n]*)\"|([^\\s\",;}]+))");
 
     /**
@@ -137,6 +151,7 @@ public final class LogMasking {
             return text;
         }
         String masked = BEARER.matcher(text).replaceAll("Bearer ***");
+        masked = KAKAO_AK.matcher(masked).replaceAll("KakaoAK ***");
         masked = AUTHORIZATION.matcher(masked).replaceAll(LogMasking::maskAuthorization);
         masked = SESSION_TOKEN.matcher(masked).replaceAll("st_***");
         masked = NAMED_SECRET.matcher(masked).replaceAll(matchResult -> {
