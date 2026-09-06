@@ -93,7 +93,8 @@ class KakaoShareWebhookController {
     }
 
     /**
-     * 204 받았다 (새로 셌든 중복이라 안 셌든 - 카카오에게 둘은 같은 "잘 받았다"다) /
+     * 200 받았다 (새로 셌든 중복이라 안 셌든 - 카카오에게 둘은 같은 "잘 받았다"다. 문서는 2xx라고
+     * 하지만 200만 성공으로 보고 나머지를 재전송한다는 보고가 있어 204가 아니라 200이다, Codex 리뷰) /
      * 400 리소스 ID 누락이나 길이 초과, 본문 상한 초과 ({@code VALIDATION_FAILED}) /
      * 401 {@code Authorization} 누락이나 불일치 ({@code SHARE_WEBHOOK_UNAUTHORIZED}).
      */
@@ -108,7 +109,7 @@ class KakaoShareWebhookController {
         boolean counted = counters.recordSent(id, campaign, Instant.now());
         // 리소스 ID는 카카오가 만든 불투명 값이라 남긴다 - 중복 콜백을 추적하는 유일한 단서다.
         log.info("카카오 공유 웹훅 수신 campaign={} counted={} resourceId={}", campaign, counted, id);
-        return ResponseEntity.noContent().build();
+        return ResponseEntity.ok().build();
     }
 
     private static String requireResourceId(@Nullable String resourceId) {

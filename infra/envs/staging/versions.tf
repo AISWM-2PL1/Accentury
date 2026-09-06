@@ -2,8 +2,9 @@
 # terraform.tfvars와 backend.tf(state key)뿐이다 (KAN-140 AC).
 
 terraform {
-  # 1.10 미만은 S3 백엔드의 use_lockfile(네이티브 잠금)이 없다.
-  required_version = ">= 1.10.0"
+  # 1.10 미만은 S3 백엔드의 use_lockfile(네이티브 잠금)이 없다. 1.11 미만은 write-only 인자
+  # (modules/config의 aws_ssm_parameter.value_wo, KAN-164)가 없어 plan부터 실패한다.
+  required_version = ">= 1.11.0"
 
   required_providers {
     aws = {
