@@ -51,7 +51,10 @@ public class ShareDailyCounter {
         // JPA 전용 - 행은 upsert가 만든다.
     }
 
-    /** 키 셋 → 식별자. 같은 키는 언제나 같은 문자열이라 upsert의 충돌 대상이 한 행으로 좁혀진다. */
+    /**
+     * 키 셋 → 식별자. upsert의 충돌 대상은 이 값이 아니라 유니크 키({@code stat_date, campaign})다 - 식별자는
+     * 첫 행이 태어날 때 채워지는 PK이고, 같은 키는 언제나 같은 문자열이라 조회({@code findById})가 키 셋만으로 된다.
+     */
     public static String idOf(LocalDate statDate, String campaign) {
         return statDate + KEY_SEPARATOR + campaign;
     }

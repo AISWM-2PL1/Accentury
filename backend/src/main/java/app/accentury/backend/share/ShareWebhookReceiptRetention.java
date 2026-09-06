@@ -32,8 +32,8 @@ public class ShareWebhookReceiptRetention {
         this.properties = properties;
     }
 
-    /** 다른 정리 잡(15분, 25분 지연)과 시작 시점만 어긋나게 둔다 - 같은 순간의 삭제 몰림 방지 */
-    @Scheduled(initialDelay = 35, fixedDelay = 60, timeUnit = TimeUnit.MINUTES)
+    /** 다른 정리 잡(분석 15분, 어휘 25분, 결과 35분 지연)과 시작 시점만 어긋나게 둔다 - 같은 순간의 삭제 몰림 방지 */
+    @Scheduled(initialDelay = 45, fixedDelay = 60, timeUnit = TimeUnit.MINUTES)
     @Transactional
     public void purgeExpired() {
         Instant cutoff = Instant.now().minus(properties.share().receiptRetention());

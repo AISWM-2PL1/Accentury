@@ -19,7 +19,6 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.UncheckedIOException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -138,38 +137,34 @@ class KakaoShareWebhookController {
             String encoding = request.getCharacterEncoding();
             return new String(bytes, encoding != null ? encoding : StandardCharsets.UTF_8.name());
         } catch (IOException e) {
-            throw new UncheckedIOException(e);
+            // 인증을 통과한 호출자가 본문을 다 보내지 않고 끊었다 (Content-Length보다 짧은 전송 등). 서버
+            // 잘못이 아니므로 500과 ERROR 스택트레이스가 아니라 400으로 끝낸다 (Claude 리뷰)
+            throw new ApiException(ErrorCode.REQUEST_REJECTED, "본문을 끝까지 받지 못했습니다.");
         }
     }
 
     /**
-     * 본문의 {@code campaign} - JSON 객체로 읽히면 그 필드, 아니면 폼 인코딩으로 다시 푼다. 어느 쪽에도
-     * 없거나 형식이 틀리면 {@code unknown}이다.
+     * 본문의 {@code campaign} - JSON으로 읽히면 그 안에서만 찾고, JSON이 아닐 때만 폼 인코딩으로 푼다.
+     * 어느 쪽에도 없거나 형식이 틀리면 {@code unknown}이다.
+     * <p>
+     * 폼 폴백은 <b>파싱 실패</b>에만 건다 (Claude 리뷰). "JSON인데 campaign이 없다"까지 폼으로 넘기면 JSON 문자열
+     * 값 안의 {@code &campaign=zzz&}를 폼 파서가 집어 존재하지 않는 캠페인 행을 만든다.
      */
     private String campaignOf(String body) {
         if (body.isBlank()) {
             return UNKNOWN_CAMPAIGN;
         }
-        String campaign = jsonCampaign(body);
-        if (campaign == null) {
+        String campaign;
+        try {
+            JsonNode field = objectMapper.readTree(body).path(CAMPAIGN_KEY);
+            campaign = field.isString() ? field.asString() : null;
+        } catch (JacksonException notJson) {
             campaign = formCampaign(body);
         }
         if (campaign == null || !CAMPAIGN.matcher(campaign).matches()) {
             return UNKNOWN_CAMPAIGN;
         }
         return campaign;
-    }
-
-    /** JSON 객체의 {@code campaign} 문자열 - JSON이 아니거나 객체가 아니거나 키가 없으면 null. */
-    private @Nullable String jsonCampaign(String body) {
-        JsonNode root;
-        try {
-            root = objectMapper.readTree(body);
-        } catch (JacksonException e) {
-            return null;
-        }
-        JsonNode campaign = root.path(CAMPAIGN_KEY);
-        return campaign.isString() ? campaign.asString() : null;
     }
 
     /**
