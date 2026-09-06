@@ -19,9 +19,11 @@ import java.util.Map;
  * @param zone   일자 경계를 정한 타임존 - 이 값을 모르면 "8월 17일"이 언제인지 알 수 없다.
  * @param rows   일자와 버전별 한 줄 - 저장된 행 그대로다.
  * @param totals 기간 전체 합산 - 버전이 섞이므로 등급 분포와 평균은 참고값이다.
+ * @param shares 카카오톡 공유 전송 완료 수 (KAN-164) - 키가 (일자, 캠페인)이라 {@code rows}와 다른 표다.
+ *               세션과 연결되지 않으므로 {@code traffic} 필터의 영향을 받지 않는다.
  */
 public record AnalyticsResponse(LocalDate from, LocalDate to, String zone,
-                                List<Row> rows, Counts totals) {
+                                List<Row> rows, Counts totals, Shares shares) {
 
     /**
      * @param date         집계 일자 ({@code zone} 기준)
@@ -84,5 +86,23 @@ public record AnalyticsResponse(LocalDate from, LocalDate to, String zone,
 
     /** 점수 평균 (0~100) */
     public record Averages(double intonation, double vocabulary, double overall) {
+    }
+
+    /**
+     * 공유 전송 완료 (KAN-164, FR-SH-06). 카카오 웹훅이 알려 준 수라 앱의 {@code share_launched}
+     * (띄운 수)와 다르고, 둘의 차이가 "카톡은 열었지만 보내지 않은 비율"이다.
+     *
+     * @param rows      일자와 캠페인별 한 줄 - 저장된 행 그대로다.
+     * @param totalSent 기간 전체 합산
+     */
+    public record Shares(List<ShareRow> rows, long totalSent) {
+    }
+
+    /**
+     * @param date     집계 일자 ({@code zone} 기준)
+     * @param campaign 앱이 웹훅에 실어 보낸 캠페인 상수 ({@code kko_share}). 형식이 틀린 콜백은 {@code unknown}이다.
+     * @param sent     전송 완료 수
+     */
+    public record ShareRow(LocalDate date, String campaign, long sent) {
     }
 }

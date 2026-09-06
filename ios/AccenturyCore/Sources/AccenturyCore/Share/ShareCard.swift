@@ -4,6 +4,19 @@ import Foundation
 /// 안드로이드 `ResultSharer.kt`의 `SHARE_BUTTON_TITLE`과 같은 값이어야 한다 (KAN-30, KAN-180).
 public let shareButtonTitle = "나도 테스트하기"
 
+/// 카카오 공유 웹훅이 서버로 되돌려 주는 캠페인 상수 (KAN-164, FR-SH-06). 안드로이드
+/// `ResultSharer.kt`의 `KAKAO_SHARE_CAMPAIGN`과 같은 값이어야 한다.
+///
+/// 카카오는 사용자가 카톡에서 실제로 보냈을 때 우리 서버(`POST /v0/share/kakao/webhook`)로 콜백을
+/// 주는데, `serverCallbackArgs`가 없으면 콜백 자체가 오지 않는다 (카카오 문서). 값은 이 상수
+/// 하나뿐이다 - 세션 id나 점수를 실으면 서버 집계가 익명이 아니게 되므로 여기서부터 막는다.
+public let kakaoShareCampaign = "kko_share"
+
+/// ``kakaoShareCampaign`` 하나로 이뤄진 `serverCallbackArgs`. 순수 함수라 내용을 테스트로 못박는다.
+public func kakaoServerCallbackArgs() -> [String: String] {
+    ["campaign": kakaoShareCampaign]
+}
+
 /// 결과가 나가는 통로 (KAN-180). 안드로이드 `ResultSharer.kt`의 `ShareChannel`과 같다.
 ///
 /// 티켓이 요구한 폴백은 [systemSheet]다 — 카카오 문서가 권하는 웹 공유(브라우저로 카카오 공유

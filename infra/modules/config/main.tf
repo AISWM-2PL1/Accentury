@@ -167,3 +167,23 @@ resource "aws_ssm_parameter" "ai_analysis_timeout_seconds" {
   type  = "String"
   value = tostring(var.ai_analysis_timeout_seconds)
 }
+
+# 카카오톡 공유 웹훅의 검증 키 (KAN-164). 카카오가 웹훅마다 Authorization: KakaoAK {앱 Admin 키}로 싣고,
+# backend는 그 값이 이 파라미터와 같을 때만 전송 완료로 센다. 값은 우리가 발급하는 난수가 아니라
+# 카카오디벨로퍼스 콘솔([앱 설정] > [앱 키] > Admin 키)에서 읽어 오는 것이라 Terraform이 만들 수 없다.
+# 그래서 자리만 만들고 값은 밖에서 넣는다 - 첫 apply 뒤에 한 번:
+#   aws ssm put-parameter --overwrite --type SecureString --name /accentury/{env}/ACCENTURY_SHARE_KAKAOADMINKEY --value '<Admin 키>'
+# 그 다음 backend 태스크를 새로 띄운다 (secrets는 태스크 시작 시 한 번 읽힌다, README "카카오 공유 웹훅" 절).
+# 자리 표시 값으로 뜬 backend는 웹훅을 전부 401로 거부한다 - 카운트가 새지도 부풀지도 않고, 로그에서 보인다.
+# 두 환경이 같은 카카오 앱을 쓰므로 값도 같다.
+#
+# value가 아니라 value_wo(write-only)다 (Codex sol 리뷰 P2). value로 두고 ignore_changes를 걸면 갱신 diff만
+# 억제될 뿐 refresh가 실제 값을 읽어 state에 평문으로 남긴다 - 손으로 넣은 Admin 키가 state 읽는 쪽에
+# 노출되는 자리다. write-only 인자는 provider가 read 때 value를 state에 두지 않고(has_value_wo만 남는다)
+# 밖에서 바꾼 값과의 drift도 보지 않는다. 자리 표시 값을 다시 쓰게 하려면 value_wo_version을 올린다.
+resource "aws_ssm_parameter" "kakao_admin_key" {
+  name             = "${var.ssm_prefix}/ACCENTURY_SHARE_KAKAOADMINKEY"
+  type             = "SecureString"
+  value_wo         = "unset-put-parameter-after-apply"
+  value_wo_version = 1
+}

@@ -122,6 +122,32 @@ class LogMaskingTest extends IntegrationTest {
     }
 
     @Test
+    void 카카오_웹훅_검증_키도_지운다() {
+        // 카카오가 웹훅마다 싣는 앱 Admin 키 (KAN-164). 새면 우리 서버만이 아니라 카카오 관리 API까지
+        // 열리는 값이라 헤더, 값만 찍힌 경우, 설정 키, 바인딩 필드, 환경 변수 전부를 본다.
+        String masked = LogMasking.mask("Authorization: KakaoAK 0123456789abcdef0123456789abcdef 로 인증 실패");
+        assertFalse(masked.contains("0123456789abcdef"), masked);
+        assertTrue(masked.contains("***"), masked);
+        assertEquals("KakaoAK ***",
+                LogMasking.mask("KakaoAK 0123456789abcdef0123456789abcdef"),
+                "헤더 이름 없이 값만 찍힌 경우");
+        assertEquals("accentury.share.kakao-admin-key=***",
+                LogMasking.mask("accentury.share.kakao-admin-key=0123456789abcdef0123456789abcdef"),
+                "설정 키로 찍힌 경우");
+        assertEquals("""
+                {"kakaoAdminKey": "***"}""",
+                LogMasking.mask("""
+                        {"kakaoAdminKey": "0123456789abcdef0123456789abcdef"}"""),
+                "바인딩된 필드로 찍힌 경우");
+        assertEquals("ACCENTURY_SHARE_KAKAOADMINKEY=***",
+                LogMasking.mask("ACCENTURY_SHARE_KAKAOADMINKEY=0123456789abcdef0123456789abcdef"),
+                "환경 변수(대시 제거형)로 찍힌 경우");
+        assertEquals("ACCENTURY_SHARE_KAKAO_ADMIN_KEY=***",
+                LogMasking.mask("ACCENTURY_SHARE_KAKAO_ADMIN_KEY=0123456789abcdef0123456789abcdef"),
+                "환경 변수(밑줄 분리형)로 찍힌 경우");
+    }
+
+    @Test
     void 값에_공백이_있어도_따옴표_끝까지_지운다() {
         // 공백에서 끊으면 뒷부분이 로그에 그대로 남고, 열린 따옴표만 닫혀 JSON 한 줄이
         // 깨진다 - 마스킹이 유출과 로그 수집 실패를 동시에 만드는 자리다.

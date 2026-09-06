@@ -27,6 +27,7 @@ import java.util.Map;
  * @param result         결과 응답의 등급별 자산과 공유 URL (KAN-25)
  * @param analytics      익명 집계 카운터의 일자 경계와 조회 상한 (KAN-106)
  * @param admin          운영자 전용 API(§6)의 공유 시크릿 (KAN-106, KAN-26)
+ * @param share          카카오톡 공유 웹훅의 검증 키와 수신 기록 보존 기간 (KAN-164)
  * @param trustedProxies 요청 제한의 기준 IP를 정할 때 신뢰하는 프록시 대역 (KAN-28, §2.5).
  *                       CIDR 또는 단일 IP 목록이고, 직접 접속한 상대가 이 목록에 들어야만
  *                       {@code X-Forwarded-For}를 읽는다. 비어 있으면 헤더를 무시하고 접속 IP만
@@ -40,7 +41,7 @@ public record AccenturyProperties(Session session,
                                   @DefaultValue Vocab vocab,
                                   @DefaultValue Completion completion, @DefaultValue Cors cors,
                                   @DefaultValue Result result, @DefaultValue Analytics analytics,
-                                  @DefaultValue Admin admin,
+                                  @DefaultValue Admin admin, @DefaultValue Share share,
                                   @DefaultValue List<String> trustedProxies) {
 
     /**
@@ -229,6 +230,23 @@ public record AccenturyProperties(Session session,
      *              바뀐다 - 아직 배포 전이라 옮길 설정이 없다.
      */
     public record Admin(@Nullable String token) {
+    }
+
+    /**
+     * 카카오톡 공유 웹훅 수신 (§3.8, KAN-164).
+     *
+     * @param kakaoAdminKey    카카오디벨로퍼스 콘솔의 앱 Admin 키. 카카오가 웹훅마다
+     *                         {@code Authorization: KakaoAK {이 값}}으로 싣고, 검증은 그 일치 확인이
+     *                         전부다 (서명 알고리즘이 없다). <b>미설정이 기본값이고, 그러면 웹훅
+     *                         경로 자체가 등록되지 않는다</b> (404) - {@link Admin#token()}과 같은
+     *                         안전한 기본값이다. 검사는 {@code KakaoWebhookAuth}가 한 곳에서 한다.
+     *                         운영에서는 SSM {@code ACCENTURY_SHARE_KAKAOADMINKEY}로 들어온다.
+     * @param receiptRetention 중복 콜백을 거르는 수신 기록({@code share_webhook_receipt})의 보존
+     *                         기간 - 지나면 정리 잡이 지운다. 카카오의 재전송 간격을 모르므로
+     *                         세션과 결과의 24시간보다 넉넉히 잡는다.
+     */
+    public record Share(@Nullable String kakaoAdminKey,
+                        @DefaultValue("7d") Duration receiptRetention) {
     }
 
     /**

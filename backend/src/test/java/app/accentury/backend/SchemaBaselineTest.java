@@ -84,6 +84,15 @@ class SchemaBaselineTest extends IntegrationTest {
         assertEquals(1, applied, "V2 발행 마이그레이션이 성공 상태로 기록되어야 한다");
     }
 
+    /** 카카오 공유 웹훅 집계 (KAN-164) - 카운터와 수신 기록 두 테이블이 V7로 들어온다. */
+    @Test
+    void 공유_웹훅_마이그레이션이_적용되어_있다() {
+        Integer applied = jdbc.queryForObject(
+                "select count(*) from flyway_schema_history where version = '7' and success",
+                Integer.class);
+        assertEquals(1, applied, "V7 공유 웹훅 마이그레이션이 성공 상태로 기록되어야 한다");
+    }
+
     /**
      * 세트 다중화 (KAN-182) - 세션과 결과의 voice_set은 기본값 1이다. 세트를 모르는 옛 바이너리가
      * 컬럼 없이 INSERT해도 세트 1 세션이 되어야 한다 (롤백 호환).
@@ -258,7 +267,11 @@ class SchemaBaselineTest extends IntegrationTest {
                 "test_definition", Set.of("pk_test_definition"),
                 "active_test_version", Set.of("pk_active_test_version"),
                 "active_version_audit", Set.of("pk_active_version_audit",
-                        "ix_active_version_audit_recorded_at"));
+                        "ix_active_version_audit_recorded_at"),
+                // KAN-164 카카오 공유 웹훅 (V7) - 수신 기록은 보존 기간 삭제가 received_at으로 탄다.
+                "share_daily_counter", Set.of("pk_share_daily_counter", "ux_share_daily_counter_key"),
+                "share_webhook_receipt", Set.of("pk_share_webhook_receipt",
+                        "ix_share_webhook_receipt_received_at"));
 
         Map<String, Set<String>> actual = new TreeMap<>();
         jdbc.query("select tablename, indexname from pg_indexes"

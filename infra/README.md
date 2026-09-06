@@ -805,7 +805,7 @@ docker compose exec ai python -c "import urllib.request; urllib.request.urlopen(
 | --- | --- | --- |
 | `IMAGE_TAG` | ai 호스트 compose.env, backend 태스크 정의 image (Terraform data 소스) | 두 서비스가 같은 SHA 태그를 쓴다. **없으면 ai 기동 실패, plan 실패.** 파이프라인(KAN-128)이 쓴다 |
 | `ai/*` (하위 경로 전부) | ai.env (ai 호스트만) | ai 컨테이너 환경 변수. 지금은 내부 호출 토큰 하나 (KAN-36). 실모델 설정은 KAN-22가 이 경로 아래 어떤 이름으로든 더한다 - 이 호스트가 읽는 것은 이 경로뿐이라 이름 규칙이 없다 |
-| 그 외 전부 (`modules/config` 출력 8개) | backend 태스크 정의 secrets (KAN-165) | backend 컨테이너 환경 변수. 태스크 시작 시 실행 역할이 읽는다 (아래 표, KAN-129) |
+| 그 외 전부 (`modules/config` 출력 9개) | backend 태스크 정의 secrets (KAN-165) | backend 컨테이너 환경 변수. 태스크 시작 시 실행 역할이 읽는다 (아래 표, KAN-129) |
 
 backend 환경 변수는 전부 Terraform `modules/config`가 만든다 - 값이 다른 모듈의
 출력(RDS 주소, 시크릿 ARN, VPC CIDR, 도메인)이라 손으로 넣으면 재구축 때 어긋난다.
@@ -816,7 +816,7 @@ fargate 모듈이 config의 파라미터 이름 목록을 그대로 태스크 �
 
 | `/accentury/{env}/` 아래 | 값 | 타입 |
 | --- | --- | --- |
-| `SPRING_PROFILES_ACTIVE` | `deploy` (두 환경 동일). 이 프로파일에서만 backend가 아래 7개 누락 시 기동을 세운다 (`DeploymentConfigGuard`) | String |
+| `SPRING_PROFILES_ACTIVE` | `deploy` (두 환경 동일). 이 프로파일에서만 backend가 아래 8개 누락 시 기동을 세운다 (`DeploymentConfigGuard`) | String |
 | `SPRING_DATASOURCE_URL` | `jdbc:aws-wrapper:postgresql://<RDS 주소>:5432/accentury?secretsManagerSecretId=<마스터 시크릿 ARN>` | String |
 | `ACCENTURY_ANALYSIS_AIBASEURL` | `http://ai.accentury.internal:8000` (프라이빗 영역의 고정 이름, 두 환경 동일, KAN-36) | String |
 | `ACCENTURY_ANALYSIS_AITOKEN` | `random_password` 48자 영숫자. backend가 AI 호출마다 `X-Accentury-Internal-Token`으로 싣는다 (KAN-36) | SecureString |
@@ -824,6 +824,7 @@ fargate 모듈이 config의 파라미터 이름 목록을 그대로 태스크 �
 | `ACCENTURY_RESULT_WEBTESTURL` | `https://<도메인>/t?c=kko_share` | String |
 | `ACCENTURY_RESULT_ASSETBASEURL` | `https://<도메인>/share` (KAN-132). backend가 등급 code를 붙여 `share.imageUrl`을 만든다. 이미지는 웹 버킷 `share/<code>.png` (`scripts/publish-share-assets.sh`) | String |
 | `ACCENTURY_ADMIN_TOKEN` | `random_password` 48자 영숫자. 관리자 API(§6)와 E2E 스모크(KAN-138)가 쓴다 | SecureString |
+| `ACCENTURY_SHARE_KAKAOADMINKEY` | 카카오디벨로퍼스 콘솔의 앱 Admin 키 (KAN-164). Terraform은 자리 표시 값으로 만들고(write-only `value_wo`라 state에 값이 남지 않는다) apply 뒤 `put-parameter --overwrite`로 넣는다 (아래 "카카오 공유 웹훅" 절). 두 환경 같은 값 | SecureString |
 | `ai/ACCENTURY_AI_INTERNAL_TOKEN` | `ACCENTURY_ANALYSIS_AITOKEN`과 같은 난수. ai 서버가 health를 뺀 모든 요청에서 대조한다 (KAN-36). ai 호스트 역할만 읽는다 | SecureString |
 
 **DB 사용자 이름과 비밀번호 파라미터는 없다.** RDS 관리형 마스터 시크릿은 7일마다
@@ -865,6 +866,47 @@ apply나 재발급으로 토큰이 바뀌어도 GitHub 쪽에 맞춰 줄 것이 
 gh secret list                                 # ACCENTURY_ADMIN_TOKEN이 보이면
 gh secret delete ACCENTURY_ADMIN_TOKEN         # 지운다
 ```
+
+### 카카오 공유 웹훅 검증 키 (KAN-164)
+
+카카오톡 공유의 "전송 완료"는 카카오가 우리 서버로 보내는 웹훅(`POST /v0/share/kakao/webhook`,
+API 명세서 §3.8)으로만 셀 수 있고, backend는 그 요청의 `Authorization: KakaoAK {앱 Admin 키}`가
+SSM `ACCENTURY_SHARE_KAKAOADMINKEY`와 같을 때만 받는다. 이 키는 카카오디벨로퍼스 콘솔이 발급한
+값이라 Terraform이 만들 수 없다 - `modules/config`는 자리 표시 값으로 파라미터를 만들되 write-only
+인자(`value_wo`)라 손으로 넣은 값을 state에 읽어 들이지도, 되돌리지도 않는다. apply 뒤에 한 번 넣는다. 자리 표시 값으로 뜬 backend는 웹훅을
+전부 401로 거부한다 (카운트가 부풀지 않고, 로그 `SHARE_WEBHOOK_UNAUTHORIZED`로 보인다).
+
+1. 콘솔 [내 애플리케이션] > 앱 > [앱 설정] > [앱 키]에서 **Admin 키**를 읽는다 (네이티브 앱 키가
+   아니다 - 그것은 앱 빌드에 들어가는 공개 값이다).
+2. 환경마다 값을 넣고 backend 태스크를 새로 띄운다 (secrets는 태스크 시작 시 한 번 읽힌다).
+
+   ```
+   aws ssm put-parameter --overwrite --type SecureString \
+     --name /accentury/staging/ACCENTURY_SHARE_KAKAOADMINKEY --value '<Admin 키>'
+   aws ecs update-service --cluster accentury-staging --service backend --force-new-deployment
+   ```
+
+3. 콘솔 [앱 설정] > [카카오톡 공유] > [카카오톡 공유 웹훅]에 URL을 **POST**로 등록한다 -
+   `https://accentury.app/v0/share/kakao/webhook`. 카카오 앱이 하나라 웹훅 URL도 하나이고,
+   그래서 실제 콜백은 prod로만 온다. staging은 아래 curl로 카카오를 흉내 내어 확인한다.
+4. 확인 - 같은 `X-Kakao-Resource-ID`를 두 번 보내면 카운터가 1만 오른다.
+
+   ```
+   KEY=$(aws ssm get-parameter --with-decryption --name /accentury/staging/ACCENTURY_SHARE_KAKAOADMINKEY --query Parameter.Value --output text)
+   curl -sS -o /dev/null -w '%{http_code}\n' -X POST https://staging.accentury.app/v0/share/kakao/webhook \
+     -H "Authorization: KakaoAK $KEY" -H 'X-Kakao-Resource-ID: manual-check-1' \
+     -H 'Content-Type: application/json' -d '{"CHAT_TYPE":"MemoChat","HASH_CHAT_ID":"x","campaign":"kko_share"}'
+   # 폼 인코딩도 같은 결과여야 한다 (카카오가 어느 쪽으로 보내든 받는다)
+   curl -sS -o /dev/null -w '%{http_code}\n' -X POST https://staging.accentury.app/v0/share/kakao/webhook \
+     -H "Authorization: KakaoAK $KEY" -H 'X-Kakao-Resource-ID: manual-check-2' \
+     -H 'Content-Type: application/x-www-form-urlencoded' -d 'CHAT_TYPE=MemoChat&HASH_CHAT_ID=x&campaign=kko_share'
+   ADMIN=$(aws ssm get-parameter --with-decryption --name /accentury/staging/ACCENTURY_ADMIN_TOKEN --query Parameter.Value --output text)
+   curl -sS "https://staging.accentury.app/admin/v0/analytics" -H "X-Admin-Token: $ADMIN" | jq .shares
+   ```
+
+키를 재발급하면(콘솔에서 Admin 키 재발급) 2번을 다시 한다. 웹훅은 앱이 `serverCallbackArgs`에
+`campaign=kko_share`를 실어야 온다 - 그 인자가 없는 앱 빌드(KAN-164 이전)에서는 카카오가 콜백을
+보내지 않으므로, 실제 전송이 0으로 보이면 앱 버전부터 본다.
 
 ### 원격 스모크 수동 실행 (KAN-138)
 

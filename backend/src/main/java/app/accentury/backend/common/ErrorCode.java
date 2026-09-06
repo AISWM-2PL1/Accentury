@@ -59,6 +59,11 @@ public enum ErrorCode {
     // 발행 검증이 경북 정의를 애초에 싣지 않으므로 지금은 도달하지 않는 방어선이다.
     ADMIN_DIALECT_NOT_ALLOWED(HttpStatus.CONFLICT, false, "MVP에서 활성화할 수 없는 방언의 정의입니다."),
 
+    // === SHARE_* : 카카오톡 공유 웹훅 (§3.8, KAN-164) ===
+    // 호출자가 앱이 아니라 카카오 서버라 ADMIN_*처럼 §2.4 밖의 별도 묶음이다. 헤더 누락, 다른 스킴,
+    // 키 불일치를 구분하지 않는다 - 카카오가 아닌 호출자에게 무엇이 틀렸는지 알려 줄 이유가 없다.
+    SHARE_WEBHOOK_UNAUTHORIZED(HttpStatus.UNAUTHORIZED, false, "카카오 공유 웹훅 인증에 실패했습니다."),
+
     // === 공통 ===
     VALIDATION_FAILED(HttpStatus.BAD_REQUEST, false, "요청 값이 올바르지 않습니다."),
     RESOURCE_NOT_FOUND(HttpStatus.NOT_FOUND, false, "요청한 리소스를 찾을 수 없습니다."),
