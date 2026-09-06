@@ -75,7 +75,7 @@ class KakaoShareWebhookApiTest extends IntegrationTest {
         String resourceId = newResourceId();
 
         mockMvc.perform(webhook(resourceId).header(HttpHeaders.AUTHORIZATION, "KakaoAK " + KEY))
-                .andExpect(status().isNoContent());
+                .andExpect(status().isOk());
 
         assertEquals(before + 1, sent(CAMPAIGN));
         assertTrue(receipts.findById(resourceId).isPresent(), "받은 리소스 ID가 기록되어야 다음 중복을 거른다");
@@ -84,7 +84,7 @@ class KakaoShareWebhookApiTest extends IntegrationTest {
     @Test
     void 관리자_집계_조회에_전송_수가_실린다() throws Exception {
         mockMvc.perform(webhook(newResourceId()).header(HttpHeaders.AUTHORIZATION, "KakaoAK " + KEY))
-                .andExpect(status().isNoContent());
+                .andExpect(status().isOk());
         String today = LocalDate.now(properties.analytics().zone()).toString();
 
         mockMvc.perform(get("/admin/v0/analytics").header(AdminAuth.TOKEN_HEADER, ADMIN_TOKEN)
@@ -129,10 +129,10 @@ class KakaoShareWebhookApiTest extends IntegrationTest {
         String resourceId = newResourceId();
 
         mockMvc.perform(webhook(resourceId).header(HttpHeaders.AUTHORIZATION, "KakaoAK " + KEY))
-                .andExpect(status().isNoContent());
-        // 두 번째도 204다 - 카카오에게 중복은 "잘 받았다"와 같은 답이어야 재전송이 멈춘다.
+                .andExpect(status().isOk());
+        // 두 번째도 200이다 - 카카오에게 중복은 "잘 받았다"와 같은 답이어야 재전송이 멈춘다.
         mockMvc.perform(webhook(resourceId).header(HttpHeaders.AUTHORIZATION, "KakaoAK " + KEY))
-                .andExpect(status().isNoContent());
+                .andExpect(status().isOk());
 
         assertEquals(before + 1, sent(CAMPAIGN));
     }
@@ -170,20 +170,20 @@ class KakaoShareWebhookApiTest extends IntegrationTest {
         mockMvc.perform(webhook(newResourceId()).header(HttpHeaders.AUTHORIZATION, "KakaoAK " + KEY)
                         .content("""
                                 {"CHAT_TYPE": "MemoChat", "HASH_CHAT_ID": "h"}"""))
-                .andExpect(status().isNoContent());
+                .andExpect(status().isOk());
         // 형식을 어긴 값 - 자유 문자열을 그대로 두면 앱 버그나 위조가 DB에 임의 문자열을 남긴다.
         mockMvc.perform(webhook(newResourceId()).header(HttpHeaders.AUTHORIZATION, "KakaoAK " + KEY)
                         .content("""
                                 {"campaign": "st_session-token|score=97"}"""))
-                .andExpect(status().isNoContent());
+                .andExpect(status().isOk());
         // JSON이 아닌 본문
         mockMvc.perform(webhook(newResourceId()).header(HttpHeaders.AUTHORIZATION, "KakaoAK " + KEY)
                         .contentType(MediaType.TEXT_PLAIN).content("not json"))
-                .andExpect(status().isNoContent());
+                .andExpect(status().isOk());
         // 본문 없음
         mockMvc.perform(post(URL).header(HttpHeaders.AUTHORIZATION, "KakaoAK " + KEY)
                         .header(RESOURCE_ID_HEADER, newResourceId()))
-                .andExpect(status().isNoContent());
+                .andExpect(status().isOk());
 
         assertEquals(before + 4, sent("unknown"));
         assertEquals(campaignBefore, sent(CAMPAIGN), "형식을 어긴 값이 정상 캠페인에 합산되면 안 된다");
@@ -200,7 +200,7 @@ class KakaoShareWebhookApiTest extends IntegrationTest {
                         .header(RESOURCE_ID_HEADER, newResourceId())
                         .contentType(MediaType.APPLICATION_FORM_URLENCODED)
                         .content("CHAT_TYPE=MemoChat&HASH_CHAT_ID=h%2Fx&campaign=kko_share&TEMPLATE_ID=10000"))
-                .andExpect(status().isNoContent());
+                .andExpect(status().isOk());
 
         assertEquals(before + 1, sent(CAMPAIGN));
     }
