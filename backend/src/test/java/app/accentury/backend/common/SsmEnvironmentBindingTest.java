@@ -19,6 +19,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
@@ -100,6 +101,17 @@ class SsmEnvironmentBindingTest {
         assertEquals(List.of("10.1.0.0/16"),
                 binder.bind(DeploymentConfigGuard.TRUSTED_PROXIES.property(), Bindable.listOf(String.class)).get());
         assertEquals(List.of(), DeploymentConfigGuard.missing(environment));
+    }
+
+    @Test
+    void 카카오_웹훅_키의_자리_표시_값이_Terraform과_같다() throws IOException {
+        // backend는 이 값으로 뜨면 모든 웹훅을 거부한다 (KakaoWebhookAuth). 두 쪽이 어긋나면 자리 표시 값이
+        // 유효한 키로 통과해 위조 콜백이 카운터를 올린다.
+        Path main = Path.of("..", "infra", "modules", "config", "main.tf");
+        assumeTrue(Files.exists(main), "infra/modules/config/main.tf 없음 - 모노레포 밖 실행");
+        assertTrue(Files.readString(main).contains("value_wo         = \""
+                        + app.accentury.backend.share.KakaoWebhookAuth.PLACEHOLDER + "\""),
+                "main.tf의 kakao_admin_key 자리 표시 값이 backend의 KakaoWebhookAuth.PLACEHOLDER와 다르다");
     }
 
     @Test

@@ -71,14 +71,16 @@ class KakaoShareWebhookApiTest extends IntegrationTest {
 
     @Test
     void 카카오가_알려_온_전송은_카운터를_1_올린다() throws Exception {
-        long before = sent(CAMPAIGN);
-        String resourceId = newResourceId();
+        withinOneDay(() -> {
+            long before = sent(CAMPAIGN);
+            String resourceId = newResourceId();
 
-        mockMvc.perform(webhook(resourceId).header(HttpHeaders.AUTHORIZATION, "KakaoAK " + KEY))
-                .andExpect(status().isOk());
+            mockMvc.perform(webhook(resourceId).header(HttpHeaders.AUTHORIZATION, "KakaoAK " + KEY))
+                    .andExpect(status().isOk());
 
-        assertEquals(before + 1, sent(CAMPAIGN));
-        assertTrue(receipts.findById(resourceId).isPresent(), "받은 리소스 ID가 기록되어야 다음 중복을 거른다");
+            assertEquals(before + 1, sent(CAMPAIGN));
+            assertTrue(receipts.findById(resourceId).isPresent(), "받은 리소스 ID가 기록되어야 다음 중복을 거른다");
+        });
     }
 
     @Test
@@ -110,7 +112,7 @@ class KakaoShareWebhookApiTest extends IntegrationTest {
         mockMvc.perform(webhook(newResourceId()))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("SHARE_WEBHOOK_UNAUTHORIZED"));
-        // 다른 스킴에 맞는 키 - 스킴까지 카카오의 것이어야 한다
+        // 다른 스킴에 맞는 키 - 스킴까지 카카오의 것이어야 한다.
         mockMvc.perform(webhook(newResourceId()).header(HttpHeaders.AUTHORIZATION, "Bearer " + KEY))
                 .andExpect(status().isUnauthorized());
         // 스킴만 있고 키가 없음
@@ -125,16 +127,18 @@ class KakaoShareWebhookApiTest extends IntegrationTest {
 
     @Test
     void 같은_리소스_ID의_콜백은_한_번만_센다() throws Exception {
-        long before = sent(CAMPAIGN);
-        String resourceId = newResourceId();
+        withinOneDay(() -> {
+            long before = sent(CAMPAIGN);
+            String resourceId = newResourceId();
 
-        mockMvc.perform(webhook(resourceId).header(HttpHeaders.AUTHORIZATION, "KakaoAK " + KEY))
-                .andExpect(status().isOk());
-        // 두 번째도 200이다 - 카카오에게 중복은 "잘 받았다"와 같은 답이어야 재전송이 멈춘다.
-        mockMvc.perform(webhook(resourceId).header(HttpHeaders.AUTHORIZATION, "KakaoAK " + KEY))
-                .andExpect(status().isOk());
+            mockMvc.perform(webhook(resourceId).header(HttpHeaders.AUTHORIZATION, "KakaoAK " + KEY))
+                    .andExpect(status().isOk());
+            // 두 번째도 200이다 - 카카오에게 중복은 "잘 받았다"와 같은 답이어야 재전송이 멈춘다.
+            mockMvc.perform(webhook(resourceId).header(HttpHeaders.AUTHORIZATION, "KakaoAK " + KEY))
+                    .andExpect(status().isOk());
 
-        assertEquals(before + 1, sent(CAMPAIGN));
+            assertEquals(before + 1, sent(CAMPAIGN));
+        });
     }
 
     @Test
@@ -163,6 +167,7 @@ class KakaoShareWebhookApiTest extends IntegrationTest {
 
     @Test
     void 캠페인이_없거나_형식이_틀리면_unknown으로_센다() throws Exception {
+        withinOneDay(() -> {
         long before = sent("unknown");
         long campaignBefore = sent(CAMPAIGN);
 
@@ -189,20 +194,36 @@ class KakaoShareWebhookApiTest extends IntegrationTest {
         assertEquals(campaignBefore, sent(CAMPAIGN), "형식을 어긴 값이 정상 캠페인에 합산되면 안 된다");
         assertTrue(counters.findById(ShareDailyCounter.idOf(today(), "st_session-token|score=97")).isEmpty(),
                 "어긴 값 그대로의 행이 생기면 안 된다");
+        });
     }
 
     @Test
     void 폼_인코딩_본문도_캠페인을_읽는다() throws Exception {
         // 카카오 콜백이 폼 인코딩으로 온다는 보고가 있어 JSON과 함께 받는다 (Codex sol 리뷰 P2).
-        long before = sent(CAMPAIGN);
+        withinOneDay(() -> {
+            long before = sent(CAMPAIGN);
 
-        mockMvc.perform(post(URL).header(HttpHeaders.AUTHORIZATION, "KakaoAK " + KEY)
-                        .header(RESOURCE_ID_HEADER, newResourceId())
-                        .contentType(MediaType.APPLICATION_FORM_URLENCODED)
-                        .content("CHAT_TYPE=MemoChat&HASH_CHAT_ID=h%2Fx&campaign=kko_share&TEMPLATE_ID=10000"))
+            mockMvc.perform(post(URL).header(HttpHeaders.AUTHORIZATION, "KakaoAK " + KEY)
+                            .header(RESOURCE_ID_HEADER, newResourceId())
+                            .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                            .content("CHAT_TYPE=MemoChat&HASH_CHAT_ID=h%2Fx&campaign=kko_share&TEMPLATE_ID=10000"))
+                    .andExpect(status().isOk());
+
+            assertEquals(before + 1, sent(CAMPAIGN));
+        });
+    }
+
+    @Test
+    void JSON_본문의_문자열_값_안에_든_폼_조각은_캠페인이_아니다() throws Exception {
+        // 폼 폴백은 JSON 파싱 실패에만 건다 (Claude 리뷰). campaign이 문자열이 아닌 유효한 JSON의 다른 값에
+        // 폼 조각이 들어 있어도 존재하지 않는 캠페인 행이 생기면 안 된다.
+        mockMvc.perform(webhook(newResourceId()).header(HttpHeaders.AUTHORIZATION, "KakaoAK " + KEY)
+                        .content("""
+                                {"campaign": 1, "HASH_CHAT_ID": "a&campaign=zzz&b"}"""))
                 .andExpect(status().isOk());
 
-        assertEquals(before + 1, sent(CAMPAIGN));
+        assertTrue(counters.findById(ShareDailyCounter.idOf(today(), "zzz")).isEmpty(),
+                "JSON 문자열 값 안의 폼 조각이 캠페인으로 잡히면 안 된다");
     }
 
     @Test
@@ -227,6 +248,23 @@ class KakaoShareWebhookApiTest extends IntegrationTest {
         mockMvc.perform(get(URL).header(HttpHeaders.AUTHORIZATION, "KakaoAK " + KEY)
                         .header(RESOURCE_ID_HEADER, newResourceId()))
                 .andExpect(status().isMethodNotAllowed());
+    }
+
+    /**
+     * 일자 카운터를 읽고 쓰는 본문을 KST 하루가 바뀌지 않은 실행에서만 유효로 친다 - 자정을 사이에 두면 before는
+     * 어제 행, after는 오늘 행이라 헛되이 실패한다 (AnalyticsApiTest와 같은 가드, Claude 리뷰).
+     */
+    private void withinOneDay(Body body) throws Exception {
+        LocalDate day;
+        do {
+            day = today();
+            body.run();
+        } while (!day.equals(today()));
+    }
+
+    @FunctionalInterface
+    private interface Body {
+        void run() throws Exception;
     }
 
     private static MockHttpServletRequestBuilder webhook(String resourceId) {

@@ -65,7 +65,7 @@ Route 53 호스팅 영역 ── Porkbun에서 NS 위임 ── ACM 인증서 2�
   │   서비스 backend  태스크 1~3개(요청 수 목표 추적, KAN-168), 롤링 배포, 회로 차단기 + 자동 롤백 │
   │   태스크 정의 accentury-{env}-backend  0.5 vCPU / 2 GB, x86_64   │
   │   ┌──────────────┐  awsvpc ENI + 퍼블릭 IP                      │
-  │   │ backend :8080│ Spring Boot, secrets = SSM 7개, 로그 → CloudWatch │
+  │   │ backend :8080│ Spring Boot, secrets = SSM 8개, 로그 → CloudWatch │
   │   └──┬───────┬───┘  stopTimeout 120초 (KAN-166), 회로 상태 지표    │
   └──────┼───────┼───────────────────────────────────────────────┘
          │       │ http://ai.accentury.internal:8000
@@ -90,7 +90,7 @@ Route 53 호스팅 영역 ── Porkbun에서 NS 위임 ── ACM 인증서 2�
   └──────────────────────────────────────────────────────────┘
 
 밖으로 거는 연결 (퍼블릭 서브넷 + 퍼블릭 IP라 NAT도 VPC 엔드포인트도 없다)
-  ├─ backend 태스크, 실행 역할: ECR pull, CloudWatch Logs, SSM /accentury/{env}/* 7개 → secrets   KAN-165
+  ├─ backend 태스크, 실행 역할: ECR pull, CloudWatch Logs, SSM /accentury/{env}/* 8개 → secrets   KAN-165
   │    (태스크가 시작할 때 ECS 에이전트가 읽어 컨테이너 env로 준다. 정본은 config 모듈 KAN-129)
   ├─ backend 태스크, 태스크 역할: Secrets Manager RDS 마스터 시크릿(연결 시점, 7일 회전 추종)  KAN-129
   │    CloudWatch PutMetricData accentury/backend (Micrometer, 회로 상태)                    KAN-36
@@ -140,7 +140,7 @@ diff -r infra/envs/staging infra/envs/prod
 
 ## 사전 요건
 
-- Terraform >= 1.10 (S3 네이티브 잠금 `use_lockfile` 필요. 2026-08-24 기준
+- Terraform >= 1.11 (S3 네이티브 잠금 `use_lockfile`은 1.10부터, write-only 인자 `value_wo`는 1.11부터. 2026-08-24 기준
   로컬 설치 1.15.8에서 확인했고, DynamoDB 잠금 테이블은 필요 없다.)
 - AWS CLI 프로파일(accentury-cli, ap-northeast-2). Terraform 실행용이다. 배포
   파이프라인은 이 프로파일이 아니라 GitHub OIDC 역할을 쓴다 (KAN-127, 아래
@@ -540,7 +540,7 @@ backend는 `modules/fargate`가 만드는 ECS Fargate 서비스다. EC2 위 dock
 | 클러스터 | `accentury-{env}`, 용량 공급자 `FARGATE`만 | `FARGATE_SPOT`은 연결하지 않는다 (2026-09-01 결정). Container Insights 끔 |
 | 태스크 정의 | 패밀리 `accentury-{env}-backend`, 0.5 vCPU / 2 GB, `X86_64`, 컨테이너 `backend` 1개 | image = ECR `accentury/backend:<SSM IMAGE_TAG>`, secrets = SSM 파라미터 8개 (아래 표), `stopTimeout` 120초, awslogs `/accentury/{env}/backend`(14일), 컨테이너 healthCheck = compose와 같은 bash `/dev/tcp` 검사 |
 | 서비스 | `backend`, 처음 desired 1, 용량 공급자 전략 `FARGATE` weight 1 | 롤링 배포(min 100% / max 200%), 회로 차단기 + 자동 롤백, `health_check_grace_period_seconds` 150초(실측 기반, 아래), 퍼블릭 서브넷 + 퍼블릭 IP, `backend-sg`, 대상 그룹 ip:8080. 태스크 수는 그 뒤 오토스케일링이 1~3에서 조절하고 Terraform은 `desired_count`를 다시 보지 않는다 (다음 절, KAN-168) |
-| 실행 역할 | `accentury-{env}-backend-execution` | `AmazonECSTaskExecutionRolePolicy`(ECR pull, 로그) + 이 환경 config 파라미터 7개의 `ssm:GetParameters`. ECS 에이전트 몫이라 컨테이너 안에서는 보이지 않는다 |
+| 실행 역할 | `accentury-{env}-backend-execution` | `AmazonECSTaskExecutionRolePolicy`(ECR pull, 로그) + 이 환경 config 파라미터 8개의 `ssm:GetParameters`. ECS 에이전트 몫이라 컨테이너 안에서는 보이지 않는다 |
 | 태스크 역할 | `accentury-{env}-backend-task` | RDS 마스터 시크릿 `GetSecretValue` + `cloudwatch:PutMetricData`(네임스페이스 `accentury/backend` 조건). 애플리케이션이 SDK 기본 체인으로 받는다 - IMDS hop limit 조정이 없다 |
 
 **이미지 태그의 정본은 SSM `IMAGE_TAG` 하나다.** Terraform은 그 값을 data 소스로 읽어 태스크
@@ -874,7 +874,13 @@ API 명세서 §3.8)으로만 셀 수 있고, backend는 그 요청의 `Authoriz
 SSM `ACCENTURY_SHARE_KAKAOADMINKEY`와 같을 때만 받는다. 이 키는 카카오디벨로퍼스 콘솔이 발급한
 값이라 Terraform이 만들 수 없다 - `modules/config`는 자리 표시 값으로 파라미터를 만들되 write-only
 인자(`value_wo`)라 손으로 넣은 값을 state에 읽어 들이지도, 되돌리지도 않는다. apply 뒤에 한 번 넣는다. 자리 표시 값으로 뜬 backend는 웹훅을
-전부 401로 거부한다 (카운트가 부풀지 않고, 로그 `SHARE_WEBHOOK_UNAUTHORIZED`로 보인다).
+전부 401로 거부한다 - backend가 그 리터럴을 키로 인정하지 않는다 (카운트가 부풀지 않고, 로그
+`SHARE_WEBHOOK_UNAUTHORIZED`로 보인다).
+
+**순서: 두 환경 모두 apply가 먼저, 이 코드를 실은 이미지 배포는 그다음이다** (위 "등급 공유 이미지" 절과 같은
+규칙). `DeploymentConfigGuard`가 이 파라미터를 필수로 보므로, apply로 태스크 정의에 secret이 들어가기
+전에 KAN-164 코드가 배포되면 새 태스크가 `ACCENTURY_SHARE_KAKAOADMINKEY` 누락으로 기동을 세우고
+파이프라인이 롤백한다. 즉 KAN-164 PR 병합 전에 staging과 prod에서 apply한다.
 
 1. 콘솔 [내 애플리케이션] > 앱 > [앱 설정] > [앱 키]에서 **Admin 키**를 읽는다 (네이티브 앱 키가
    아니다 - 그것은 앱 빌드에 들어가는 공개 값이다).
@@ -896,7 +902,7 @@ SSM `ACCENTURY_SHARE_KAKAOADMINKEY`와 같을 때만 받는다. 이 키는 카�
    curl -sS -o /dev/null -w '%{http_code}\n' -X POST https://staging.accentury.app/v0/share/kakao/webhook \
      -H "Authorization: KakaoAK $KEY" -H 'X-Kakao-Resource-ID: manual-check-1' \
      -H 'Content-Type: application/json' -d '{"CHAT_TYPE":"MemoChat","HASH_CHAT_ID":"x","campaign":"kko_share"}'
-   # 폼 인코딩도 같은 결과여야 한다 (카카오가 어느 쪽으로 보내든 받는다)
+   # 폼 인코딩도 같은 결과여야 한다. 카카오가 어느 쪽으로 보내든 받는다.
    curl -sS -o /dev/null -w '%{http_code}\n' -X POST https://staging.accentury.app/v0/share/kakao/webhook \
      -H "Authorization: KakaoAK $KEY" -H 'X-Kakao-Resource-ID: manual-check-2' \
      -H 'Content-Type: application/x-www-form-urlencoded' -d 'CHAT_TYPE=MemoChat&HASH_CHAT_ID=x&campaign=kko_share'
@@ -906,7 +912,11 @@ SSM `ACCENTURY_SHARE_KAKAOADMINKEY`와 같을 때만 받는다. 이 키는 카�
 
 키를 재발급하면(콘솔에서 Admin 키 재발급) 2번을 다시 한다. 웹훅은 앱이 `serverCallbackArgs`에
 `campaign=kko_share`를 실어야 온다 - 그 인자가 없는 앱 빌드(KAN-164 이전)에서는 카카오가 콜백을
-보내지 않으므로, 실제 전송이 0으로 보이면 앱 버전부터 본다.
+보내지 않으므로, 실제 전송이 0으로 보이면 앱 버전부터 본다. 앱이 맞는데도 0이면 엣지에서 막혔는지 본다 -
+WAF의 AWS 관리 규칙(KAN-149)은 `/recording`만 제외하고 이 경로에도 Block으로 걸려 있어, 카카오의 요청이
+봇 UA나 UA 없음으로 분류되면 backend 로그에 아무 흔적 없이 CloudFront가 403을 낸다. us-east-1의 WAF 로그
+그룹(아래 "WAF 웹 ACL" 절)에서 `/v0/share/kakao/webhook`의 BLOCK을 찾고, 있으면 그 규칙에
+`rule_action_override`(Count)나 scope-down 제외를 더한다.
 
 ### 원격 스모크 수동 실행 (KAN-138)
 
@@ -997,7 +1007,7 @@ backend는 기동 시점에 이 관계를 검사하고 어긋나면 뜨지 않�
 따옴표, `#`, 공백)는 그대로 컨테이너에 들어간다 - ai 호스트는 env_file을 `format: raw`로
 읽어 Compose의 보간과 따옴표 처리를 끄고, ECS secrets는 값을 그대로 env로 준다. 시크릿은
 SecureString으로 두면 되고(AWS 관리 키라 별도 kms 권한 불요), 실행 역할은 자기 환경의
-파라미터 7개만, ai 호스트 역할은 자기 하위 경로만 읽는다. ai 호스트의 env 파일은 tmpfs라
+파라미터 8개만, ai 호스트 역할은 자기 하위 경로만 읽는다. ai 호스트의 env 파일은 tmpfs라
 재부팅 시 사라졌다가 다시 만들어진다 (낡은 사본이 쌓이지 않는다). docker 자체는 컨테이너
 환경 변수를 `/var/lib/docker/containers/*/config.v2.json`(암호화된 루트 볼륨, root 전용)에
 기록하므로 호스트 디스크에 평문이 전혀 없는 것은 아니다. Fargate 태스크는 호스트가 없어
@@ -1546,7 +1556,7 @@ terraform destroy
   롤링 배포와 회로 차단기 판정이 2분 30초씩 늦다).
 - **실행 역할과 태스크 역할 분리 (KAN-165)**: EC2 시절 인스턴스 역할 하나가 ECR pull, SSM,
   Secrets Manager, CloudWatch를 다 가졌다. 실행 역할(ECS 에이전트 몫: ECR pull, awslogs,
-  secrets 주입용 `ssm:GetParameters` 7개)은 컨테이너 안에서 보이지 않고, 태스크 역할
+  secrets 주입용 `ssm:GetParameters` 8개)은 컨테이너 안에서 보이지 않고, 태스크 역할
   (애플리케이션 몫: RDS 시크릿, PutMetricData)만 SDK 기본 체인으로 흘러간다. 신뢰 정책에
   `aws:SourceAccount`, `aws:SourceArn` 조건을 둔다 (AWS 문서의 혼동된 대리인 방지).
   SecureString은 AWS 관리 키라 kms 권한이 따로 없다.

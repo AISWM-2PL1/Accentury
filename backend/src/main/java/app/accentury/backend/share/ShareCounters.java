@@ -47,7 +47,7 @@ public class ShareCounters {
     @Transactional
     public boolean recordSent(String resourceId, String campaign, Instant at) {
         if (receipts.insertIfAbsent(resourceId, at) == 0) {
-            log.info("카카오 공유 웹훅 중복 콜백 - 세지 않는다 resourceId={}", resourceId);
+            log.info("카카오 공유 웹훅 중복 콜백이라 세지 않는다. resourceId={}", resourceId);
             return false;
         }
         LocalDate date = LocalDate.ofInstant(at, zone);

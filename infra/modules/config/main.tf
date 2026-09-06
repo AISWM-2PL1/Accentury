@@ -174,7 +174,8 @@ resource "aws_ssm_parameter" "ai_analysis_timeout_seconds" {
 # 그래서 자리만 만들고 값은 밖에서 넣는다 - 첫 apply 뒤에 한 번:
 #   aws ssm put-parameter --overwrite --type SecureString --name /accentury/{env}/ACCENTURY_SHARE_KAKAOADMINKEY --value '<Admin 키>'
 # 그 다음 backend 태스크를 새로 띄운다 (secrets는 태스크 시작 시 한 번 읽힌다, README "카카오 공유 웹훅" 절).
-# 자리 표시 값으로 뜬 backend는 웹훅을 전부 401로 거부한다 - 카운트가 새지도 부풀지도 않고, 로그에서 보인다.
+# 자리 표시 값으로 뜬 backend는 웹훅을 전부 401로 거부한다 - backend가 이 리터럴을 키로 인정하지 않기 때문이고
+# (KakaoWebhookAuth.PLACEHOLDER, SsmEnvironmentBindingTest가 대조), 그래서 카운트가 새지도 부풀지도 않는다.
 # 두 환경이 같은 카카오 앱을 쓰므로 값도 같다.
 #
 # value가 아니라 value_wo(write-only)다 (Codex sol 리뷰 P2). value로 두고 ignore_changes를 걸면 갱신 diff만
