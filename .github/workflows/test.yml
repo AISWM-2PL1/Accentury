@@ -99,7 +99,8 @@ jobs:
   # (DB + AI + BE) 위에서 돌았는데, AI 서버의 베이스가 채점 모델 전달본이 되면서 러너에서
   # 띄울 수 없게 됐다 - 4GB 이미지에 RSS 7GB대이고 추론 1건이 14~30초다. 스펙 파일
   # (web/e2e)은 남겨 두었고, 분석이 필요한 전 구간 확인은 staging 스모크가 맡는다
-  # (deploy.yml). 되살리려면 러너가 감당할 수 있는 AI 대역이 먼저 있어야 한다.
+  # (deploy.yml). 2026-09-06에 루트 compose의 ai가 가짜 엔진(ai/Dockerfile.fake, slim)으로
+  # 되살아나 러너에서도 뜨므로, 이 job을 되살리는 것은 별도 결정이다 (PR #87 리뷰).
 
   # SPA 재작성 Function과 App Link 검증 파일 (KAN-32 4단계). 의존성이 없어 setup-node만으로
   # 돌고 몇 초 만에 끝난다 - CloudFront Function은 배포해야만 도는 코드라 이 job이 없으면

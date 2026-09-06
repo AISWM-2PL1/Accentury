@@ -58,9 +58,9 @@ AI 서버는 backend와 다른 EC2에서 돕니다 (KAN-36 A단계). 같은 comp
 | 라우트 (`app/analyze.py`) | 임시파일 수명, 추론 상한, 오디오 파트 상한(413), §4.1 봉투 조립 |
 | 엔진 (`app/engine.py`) | 오디오 1건 -> 상태, 억양 점수, 신뢰도, 품질 코드, `segments` |
 
-- 엔진은 기동 시 `ACCENTURY_AI_ANALYSIS_ENGINE`으로 한 번만 고릅니다 (지금은 `track1`
-  하나입니다). 모르는 이름이면 기동이 실패합니다 - 아무거나 만들어 흘려보내면 무엇을
-  띄웠다고 믿는 환경이 다른 것을 돌리면서 아무 신호도 남기지 않기 때문입니다.
+- 엔진은 기동 시 `ACCENTURY_AI_ANALYSIS_ENGINE`으로 한 번만 고릅니다 - 실모델 `track1`(기본값)과
+  개발 기계용 `fake` 둘입니다. 모르는 이름이면 기동이 실패합니다 - 아무거나 만들어 흘려보내면
+  무엇을 띄웠다고 믿는 환경이 다른 것을 돌리면서 아무 신호도 남기지 않기 때문입니다.
 - `modelVersion`은 설정이 아니라 엔진이 스스로 보고합니다. 실모델은 적재한 참조 stamp와
   코드 해시, Whisper 저장소가 들어간 `track1-...` 문자열을 냅니다. 비어 있으면 기동이
   실패합니다 - BE가 성공 응답을 계약 위반으로 끊고 회로 차단기를 세우기 때문입니다.
@@ -85,8 +85,13 @@ AI 서버는 backend와 다른 EC2에서 돕니다 (KAN-36 A단계). 같은 comp
     `numpy.float32`, `numpy.int64`면 거절됩니다 - 파이썬 `float`/`int`의 하위 타입이
     아니라서, 막지 않으면 응답 조립 시점에 500이 되고 BE가 재전송 예산을 태웁니다.
     엔진은 파이썬 기본 타입으로 변환해서 냅니다.
-- 스텁 엔진은 2026-09-05에 제거했습니다 (KAN-22). 로컬 풀스택과 E2E도 함께 정리했습니다 -
-  실모델은 개발 기계(arm64)와 CI 러너에서 돌릴 수 없기 때문입니다.
+- 스텁 엔진은 2026-09-05에 제거했습니다 (KAN-22). 실모델은 개발 기계(arm64)와 CI 러너에서
+  돌릴 수 없어 로컬 풀스택과 E2E가 함께 사라졌는데, 그러자 앱과 웹의 완주 확인이 돌릴 스택을
+  통째로 잃었습니다 (PR #87 리뷰). 그래서 `fake` 엔진(`app/fake.py`)을 두었습니다 -
+  `ACCENTURY_AI_ANALYSIS_ENGINE=fake`로 명시해야 켜지고, 점수는 `correlationId`의 해시라
+  추론이 아니며(`modelVersion`이 `fake-0.1`로 나가 정체가 드러납니다), 배포 compose가 켜는
+  `ACCENTURY_AI_INTERNAL_TOKEN_REQUIRED=true`와는 양립하지 않아 운영에서는 기동이 거부됩니다.
+  루트 `docker-compose.yml`의 `ai`가 이 엔진으로 뜹니다 (`ai/Dockerfile.fake`, slim 이미지).
 
 ### 실모델 어댑터 (KAN-22)
 
@@ -205,8 +210,14 @@ pytest                               # 계약 스위트는 전달본이 없으�
 ```
 
 `uvicorn app.main:app`을 개발 기계에서 그냥 띄우면 워밍업이 실패해 health가 `STARTING`에
-머뭅니다 - 전달본 모듈(`/app/src`)이 없기 때문입니다. 서버를 실제로 돌리려면 모델 이미지를
-베이스로 한 컨테이너로 띄웁니다 (`docker build -t accentury-ai:dev ai`, amd64).
+머뭅니다 - 전달본 모듈(`/app/src`)이 없기 때문입니다. 실모델을 실제로 돌리려면 모델 이미지를
+베이스로 한 컨테이너로 띄웁니다 (`docker build -t accentury-ai:dev ai`, amd64). 앱과 웹의
+흐름만 보려면 가짜 엔진으로 띄웁니다 - 전달본 없이 뜨고 점수는 해시입니다.
+
+```bash
+ACCENTURY_AI_ANALYSIS_ENGINE=fake .venv/bin/uvicorn app.main:app --port 8000
+# 또는 루트에서 docker compose up -d --build  (DB + 가짜 AI + BE)
+```
 
 ## 설정 (환경 변수)
 
@@ -218,7 +229,9 @@ pytest                               # 계약 스위트는 전달본이 없으�
 | `ACCENTURY_AI_ANALYSIS_TIMEOUT_SECONDS` | `90` | 분석 1건의 상한 - 넘기면 503이고 워커가 죽습니다 (재적재가 뒤따릅니다) |
 | `ACCENTURY_AI_MAX_AUDIO_BYTES` | `1048576` | 오디오 파트 상한 (§3.3과 동일) |
 | `ACCENTURY_AI_MAX_REQUEST_BYTES` | `2097152` | 요청 본문 전체 상한 - multipart 파싱 전에 끊습니다 |
-| `ACCENTURY_AI_ANALYSIS_ENGINE` | `track1` | 붙일 분석 엔진 - 모르는 이름이면 기동이 실패합니다 |
+| `ACCENTURY_AI_ANALYSIS_ENGINE` | `track1` | 붙일 분석 엔진 - `track1`(실모델) 또는 `fake`(개발 기계용, 해시 점수). 모르는 이름이면 기동이 실패합니다 |
+| `ACCENTURY_AI_FAKE_FAIL_ITEM` | (없음) | `fake` 전용. 이 itemId면 재전송 가능한 판정 실패(`AUDIO_TOO_QUIET`)를 냅니다 - E2E 실패 갈래의 수단 |
+| `ACCENTURY_AI_FAKE_DELAY_MS` | `1500` | `fake` 전용. 응답 지연 - 앱의 대기 화면이 실제로 그려지는지 볼 수 있을 만큼 |
 | `ACCENTURY_AI_TRACK1_SRC_DIR` | `/app/src` | 전달본 모듈이 있는 디렉터리 (워커가 `sys.path`에 넣습니다) |
 | `ACCENTURY_AI_TRACK1_REF_DIR` | (없음) | 참조 분포 폴더. 비우면 전달본의 기본값 - 이미지 안에서는 같이 실린 참조입니다 |
 | `ACCENTURY_AI_TRACK1_SENTENCES` | (없음) | 서비스 문장 목록. 비우면 전달본의 기본값 |

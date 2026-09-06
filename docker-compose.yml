@@ -1,13 +1,13 @@
-# 로컬 스택 (BE + DB).
+# 로컬 풀스택 (BE + 가짜 AI + DB) - 앱과 웹의 완주 확인, 브라우저 E2E(KAN-181)가 겨누는 대상이다.
 #
-# [AI는 없다 - 2026-09-05, KAN-22]
-# AI 서버의 베이스 이미지가 채점 모델 전달본(약 4GB, linux/amd64)이 되면서 개발 기계에서
-# 띄울 수 없게 됐다. 스텁을 지운 것이 그 결정의 다른 쪽 면이다 - 로컬에서 스텁을 계속
-# 돌리면 "여기서 되던 것"이 배포에서 처음 실패하는 자리가 늘어난다.
-#
-# 그래서 이 스택의 BE는 accentury.analysis.ai-base-url 없이 뜨고(NoopAnalysisDispatcher),
-# 음성 분석은 전달되지 않아 PROCESSING으로 남다가 RETRYABLE_FAILED로 정리된다. 분석이
-# 필요한 확인은 staging에서 한다 (deploy.yml의 스모크, ai/tests/contract).
+# [AI는 가짜 엔진이다 - 2026-09-06, KAN-22 PR #87 리뷰 반영]
+# AI 서버의 운영 이미지는 베이스가 채점 모델 전달본(약 4GB, linux/amd64, RSS 7GB대)이라 개발
+# 기계에서 뜨지 않는다. 2026-09-05에 스텁을 지우면서 이 스택에서 AI를 뺐는데, 그러자 에뮬레이터와
+# 휴대폰의 완주 확인, web/e2e의 full-run과 retake가 돌릴 스택을 통째로 잃었다. 그래서 같은
+# FastAPI 앱을 slim 이미지(ai/Dockerfile.fake)에 얹고 ACCENTURY_AI_ANALYSIS_ENGINE=fake로 띄운다 -
+# 점수는 correlationId의 해시이고 추론이 아니다 (ai/app/fake.py). 이 엔진은 배포 compose의
+# ACCENTURY_AI_INTERNAL_TOKEN_REQUIRED=true와 양립하지 않아 운영에서는 기동이 거부된다.
+# 실모델이 필요한 확인은 여전히 staging에서 한다 (deploy.yml의 스모크, ai/tests/contract).
 #
 #   docker compose up -d --build
 #   docker compose down -v
@@ -31,18 +31,43 @@ services:
       timeout: 3s
       retries: 12
 
+  ai:
+    build:
+      context: ./ai
+      dockerfile: Dockerfile.fake
+    environment:
+      # 이 itemId면 가짜 엔진이 422 판정 실패를 낸다 - E2E의 실패 갈래(retake)가 RETRYABLE_FAILED를
+      # 만드는 수단이다. 평소에는 비어 있고, E2E_FAIL_ITEM=v3으로 ai만 다시 띄워 쓴다 (web/README.md).
+      # 설정은 기동 시 한 번만 읽히므로(Settings.from_env) 값을 비워 다시 띄워야 복구된다.
+      ACCENTURY_AI_FAKE_FAIL_ITEM: "${E2E_FAIL_ITEM:-}"
+      # BE와 나눠 갖는 내부 호출 시크릿 (KAN-36). 로컬 전용 고정값 - 아래 backend의 ACCENTURY_ANALYSIS_AITOKEN과
+      # 같은 값이어야 분석이 401로 끊기지 않는다. 운영 값은 Terraform이 SSM에 넣는다.
+      ACCENTURY_AI_INTERNAL_TOKEN: local-internal-token-0123456789abcdef
+    # 포트를 공개하지 않는 것은 의도다 - 이 서버는 BE만 호출하는 사설망 서비스다(§1.1, NFR-SC-04).
+    # backend를 호스트에서 띄우려면 오버레이로 8000만 연다 (web/README.md).
+    healthcheck:
+      # slim 이미지에는 curl도 wget도 없다 - 이미 있는 파이썬으로 확인한다.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/internal/v0/health').read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
   backend:
     build:
       context: ./backend
     depends_on:
       db: {condition: service_healthy}
+      ai: {condition: service_healthy}
     environment:
       # application.yml의 값은 로컬 개발(localhost) 기준이다 - 컨테이너 안에서는 서비스
       # 이름으로 서로를 찾으므로 환경 변수로 덮는다.
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/accentury
       SPRING_DATASOURCE_USERNAME: postgres
       SPRING_DATASOURCE_PASSWORD: local
-      # accentury.analysis.ai-base-url을 일부러 주지 않는다 - AI가 없는 스택이다 (머리말).
+      # accentury.analysis.ai-base-url - 미설정이면 BE가 AI로 전달하지 않는 개발 모드로 뜬다.
+      ACCENTURY_ANALYSIS_AIBASEURL: http://ai:8000
+      # AI 내부 호출 시크릿 (KAN-36) - 위 ai의 ACCENTURY_AI_INTERNAL_TOKEN과 같은 값.
+      ACCENTURY_ANALYSIS_AITOKEN: local-internal-token-0123456789abcdef
       # 관리자 API(§6)와 합성 트래픽 표시(KAN-138)의 공유 시크릿. 로컬 전용 고정값이다 -
       # 이 스택은 127.0.0.1에만 바인딩되고, 운영 값은 배포 환경이 주입한다(KAN-128).
       # 32자 미만이면 기동이 실패한다(AdminAuth.requireStrongToken).

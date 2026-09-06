@@ -138,14 +138,18 @@ async def analyze(
             engine_ms,
             round(limit_ms),
         )
-    # 오디오 바이트도, 점수도 로그에 남기지 않는다 (§2.6, NFR-SC-07) - 크기와 추적 ID만이다
+    # 오디오 바이트도, 점수도 로그에 남기지 않는다 (§2.6, NFR-SC-07) - 크기와 추적 ID만이다.
+    # 두 버전은 싣는다 (KAN-22 AC6 "버전이 모든 결과와 로그에") - 응답 봉투와 같은 값이라
+    # 로그만으로도 어느 모델과 점수 규칙이 그 결과를 냈는지 추적된다
     log.info(
-        "분석 종료 correlationId=%s itemId=%s bytes=%d status=%s ms=%d",
+        "분석 종료 correlationId=%s itemId=%s bytes=%d status=%s ms=%d scoreVersion=%s modelVersion=%s",
         correlation_id,
         item_id,
         size,
         outcome.status,
         processing_ms,
+        score_version,
+        engine.model_version,
     )
 
     # 봉투 조립은 엔진 밖이다 (KAN-135) - scoreVersion과 processingMs는 엔진이 알 바가
