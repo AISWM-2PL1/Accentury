@@ -6,7 +6,8 @@ import WebKit
 /// 안드로이드 `AccenturyBridge.kt`의 이식본이고, JS 쪽 절반은 ``BridgeUserScript``다.
 ///
 /// 최소 표면 원칙 — 화면 전환(KAN-100)·답안 제출 인증(KAN-13)·재응시(KAN-34)·결과 공유(KAN-30)·
-/// 계측(KAN-33)까지 필요한 일곱 메서드만 둔다. 늘리기 전에 웹에서 해결 가능한지 먼저 볼 것.
+/// 계측(KAN-33)·외부 링크(KAN-177)까지 필요한 여덟 메서드만 둔다. 늘리기 전에 웹에서 해결
+/// 가능한지 먼저 볼 것.
 /// 그중 값을 돌려주는 둘(`getContractVersion`·`getSessionToken`)은 여기로 오지 않는다 —
 /// JS 안에서 끝난다 (``BridgeUserScript`` 참고).
 ///
@@ -40,6 +41,10 @@ struct BridgeDispatcher {
     /// 웹이 센 계측 이벤트 (KAN-33). 이름과 파라미터는 여기 도착하기 전에 이미 GA4 규격으로
     /// 좁혀져 있다 — 받는 쪽(``EventSink``)은 이름을 손대지 않는다.
     let onLogEvent: (String, [String: EventParam]) -> Void
+
+    /// 앱 밖으로 열 링크 (KAN-177). ``AccenturyCore/externalUrlToOpen(_:allowedHosts:)``을
+    /// 통과한 URL만 온다 — 어떻게 열지는 창구 너머가 정한다 (``ExternalBrowser``의 Safari 시트).
+    let onOpenExternalUrl: (String) -> Void
 
     /// 메시지 한 건을 처리한다. 조건에 맞지 않으면 **조용히** 아무 일도 하지 않는다.
     ///
@@ -105,6 +110,23 @@ struct BridgeDispatcher {
                 return
             }
             onLogEvent(name, params)
+
+        case "openExternalUrl":
+            /*
+             * 인트로의 개인정보처리방침 링크 (KAN-177). 여는 주체가 네이티브인 이유는 웹이 열 수
+             * 없기 때문이다 — WebView는 allowlist 밖 URL의 로드를 막고(§7) 그 검사가 곧 보안
+             * 경계이며, `target="_blank"`는 `uiDelegate`가 없어 앱 안에서 아무 일도 하지 않는다.
+             *
+             * 여기서 거르는 것의 무게가 위 case들과 다르다: 이 값은 화면에 그려지고 마는 게
+             * 아니라 **앱이 여는 주소**가 된다. 그래서 https와 호스트를 다시 본다
+             * (`shareResult`가 카드 URL을 다시 보는 것과 같은 이유다).
+             */
+            guard let url = payload as? String else { return }
+            guard let target = externalUrlToOpen(url) else {
+                CrashReports.recordBridgeParseFailure("openExternalUrl")
+                return
+            }
+            onOpenExternalUrl(target)
 
         default:
             // 모르는 메서드. 신버전 웹이 구버전 앱에 보낸 호출일 수도 있고(메서드 추가는

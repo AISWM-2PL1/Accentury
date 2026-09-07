@@ -178,4 +178,56 @@ final class WebConfigTests: XCTestCase {
             isAllowedWebUrl("https://WEB.Example.com/intro", allowedOrigins: ["https://web.example.com"])
         )
     }
+
+    // MARK: - externalUrlToOpen: 앱 밖으로 내보낼 URL (KAN-177)
+
+    /// 우리 도메인의 https 문서는 그대로 돌려준다.
+    func testOurOwnHttpsDocumentsPassThroughUnchanged() {
+        XCTAssertEqual(
+            "https://accentury.app/privacy.html",
+            externalUrlToOpen("https://accentury.app/privacy.html")
+        )
+        XCTAssertEqual(
+            "https://staging.accentury.app/privacy.html",
+            externalUrlToOpen("https://staging.accentury.app/privacy.html")
+        )
+    }
+
+    /// 경로와 포트가 달라도 호스트만 맞으면 통과한다 — `isAllowedWebUrl`과 갈리는 지점이다.
+    func testPathAndPortDoNotMatterOnlyTheHost() {
+        XCTAssertEqual(
+            "https://accentury.app/legal/privacy.html",
+            externalUrlToOpen("https://accentury.app/legal/privacy.html")
+        )
+    }
+
+    /// 목록 밖 호스트는 거절한다. 접미사 비교가 아니라 완전 일치다.
+    func testHostsOutsideTheListAreRejected() {
+        XCTAssertNil(externalUrlToOpen("https://evil.example.com/privacy.html"))
+        XCTAssertNil(externalUrlToOpen("https://accentury.app.evil.example.com/privacy.html"))
+    }
+
+    /// https가 아니면 거절한다.
+    func testNonHttpsSchemesAreRejected() {
+        XCTAssertNil(externalUrlToOpen("http://accentury.app/privacy.html"))
+        XCTAssertNil(externalUrlToOpen("javascript:alert(1)"))
+        XCTAssertNil(externalUrlToOpen("accentury://privacy"))
+    }
+
+    /// 파서를 갈라 놓을 수 있는 문자는 거절한다 — 검사에 쓰는 `URLComponents`와 실제로 여는
+    /// `URL`이 그 문자에서 host를 다르게 읽을 여지를 애초에 없앤다 (안드로이드와 같은 자리).
+    func testCharactersThatCanSplitTheTwoParsersAreRejected() {
+        XCTAssertNil(externalUrlToOpen("https://accentury.app@evil.example.com/privacy.html"))
+        XCTAssertNil(externalUrlToOpen("https://accentury.app\\@evil.example.com/privacy.html"))
+        XCTAssertNil(externalUrlToOpen("https://accentury.app/priv acy.html"))
+        XCTAssertNil(externalUrlToOpen("https://accentury.app/privacy.html\n"))
+    }
+
+    /// 빈 값과 형식이 아닌 값은 거절한다.
+    func testEmptyAndMalformedValuesAreRejected() {
+        XCTAssertNil(externalUrlToOpen(nil))
+        XCTAssertNil(externalUrlToOpen(""))
+        XCTAssertNil(externalUrlToOpen("not a url"))
+    }
+
 }

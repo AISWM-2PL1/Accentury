@@ -73,6 +73,13 @@ struct TestFlowView: View {
                      * `web/src/analytics/events.ts` 하나다. 값 검증은 브리지가 이미 끝냈다.
                      */
                     onLogEvent: { name, params in events.log(name, params) },
+                    /*
+                     * 인트로의 개인정보처리방침 링크 (KAN-177). 앱에 설정 화면이 없어 방침으로
+                     * 가는 길이 이것뿐이고, WebView 안에서 열면 인트로가 사라져 돌아올 길이 없다 —
+                     * iOS에는 시스템 뒤로가기조차 없다. 그래서 인트로 위에 Safari 시트를 덮는다
+                     * (``ExternalBrowser``). URL 검증은 브리지가 이미 끝냈다.
+                     */
+                    onOpenExternalUrl: { ExternalBrowser.open($0) },
                     onWebViewCreated: { created in
                         webView = created
                         #if DEBUG
