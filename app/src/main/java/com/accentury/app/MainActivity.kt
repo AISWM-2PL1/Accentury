@@ -100,6 +100,7 @@ import com.accentury.app.upload.UploadState
 import com.accentury.app.upload.UploadStatusBar
 import com.accentury.app.upload.UploadViewModel
 import com.accentury.app.web.AppLinkEntry
+import com.accentury.app.web.ExternalBrowser
 import com.accentury.app.web.TestEntry
 import com.accentury.app.web.WebViewHost
 import com.accentury.app.web.appLinkOrigins
@@ -526,6 +527,13 @@ private fun TestFlow(appLink: StateFlow<AppLinkEntry?>, modifier: Modifier = Mod
                  * `web/src/analytics/events.ts` 하나다. 값 검증은 브리지가 이미 끝냈다.
                  */
                 onLogEvent = { name, params -> events.log(name, params) },
+                /*
+                 * 인트로의 개인정보처리방침 링크 (KAN-177). 앱에 설정 화면이 없어 방침으로
+                 * 가는 길이 이것뿐이고, WebView 안에서 열면 인트로가 사라져 돌아올 길이 없다 —
+                 * 그래서 인트로 위에 Custom Tabs 시트를 덮는다 (ExternalBrowser).
+                 * URL 검증은 브리지가 이미 끝냈다.
+                 */
+                onOpenExternalUrl = { ExternalBrowser.open(context, it) },
                 onWebViewCreated = { webView = it },
                 // 내가 들고 있는 인스턴스일 때만 놓는다 — 재생성 순서에 따라 새 WebView가 먼저
                 // 등록된 뒤 옛 것이 해제될 수 있고, 그때 방금 받은 참조를 지우면 안 된다.

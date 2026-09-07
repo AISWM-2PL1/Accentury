@@ -79,6 +79,19 @@ object CrashReports {
         record("audio_capture_failed: $reason")
     }
 
+    /**
+     * 외부 링크를 열지 못했다 ([com.accentury.app.web.ExternalBrowser]).
+     *
+     * 개인정보처리방침으로 가는 길이 앱 안에 이것뿐이라(설정 화면이 없다, KAN-177) 조용히
+     * 실패하면 링크가 죽었다는 사실을 아무도 모른다. 사용자에게는 아무 일도 일어나지 않은
+     * 것으로 보이는 실패라 특히 그렇다.
+     *
+     * @param reason 고정 어휘. URL은 싣지 않는다 — [recordBridgeParseFailure]와 같은 규칙이다
+     */
+    fun recordExternalLinkFailure(reason: String) {
+        record("external_link_failed: $reason")
+    }
+
     private fun record(message: String) {
         val client = crashlytics ?: return
         // 계측·보고가 사용자 흐름을 끊으면 안 된다 (EventSink.log와 같은 규칙).
