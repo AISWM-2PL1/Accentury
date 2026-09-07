@@ -13,7 +13,7 @@
 - 본문 정본: [`infra/privacy/privacy.html`](../../infra/privacy/privacy.html) — 14개 절
 - 계약 테스트: [`infra/privacy/privacy.test.mjs`](../../infra/privacy/privacy.test.mjs) 13건 (1항 표 검사는 행 목록으로 확장한다 — KAN-164 행 포함), CI `edge-test` 잡에 결선 (`.github/workflows/test.yml`)
 - 호스팅과 게시 경로: **KAN-133** — `infra/privacy/README.md`, `scripts/publish-privacy.sh`
-- 앱 안 링크: **KAN-177** · 스토어 등록: **KAN-174**(Play) **KAN-175**(App Store)
+- 앱 안 링크: **KAN-177** — 인트로 하단 한 줄, 구현 완료. 계약과 여는 방법은 [`webview-bridge.md` §4](webview-bridge.md), URL 정본은 `web/src/legal/privacyPolicy.ts` · 스토어 등록: **KAN-174**(Play) **KAN-175**(App Store)
 - 광고 도입: **KAN-196**(앱 SDK·동의 UI·ATT·스토어 신고) **KAN-197**(웹 광고)
 - 카카오 공유 웹훅 수신: **KAN-164** — 이 브랜치 분기 뒤 Dev에 병합됐고 1·5·9항에 반영했다
 
