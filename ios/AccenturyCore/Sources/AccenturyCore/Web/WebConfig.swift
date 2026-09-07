@@ -111,3 +111,40 @@ public func isAllowedWebUrl(_ url: String?, allowedOrigins: Set<String>) -> Bool
     guard let url, let origin = webOrigin(url) else { return false }
     return allowedOrigins.contains(origin)
 }
+
+/// 앱 밖 브라우저로 열어도 되는 호스트 (KAN-177). 안드로이드 `EXTERNAL_LINK_HOSTS`의 이식본이다.
+///
+/// 지금 여기로 나가는 링크는 개인정보처리방침 하나뿐이다 (`web/src/legal/privacyPolicy.ts`).
+/// 그런데도 목록을 두는 이유는 **여는 주소를 정하는 쪽이 웹**이기 때문이다 — WebView에 실린
+/// 스크립트가 부르는 메서드라, 넘어온 값을 그대로 열면 앱이 아무 주소나 여는 창구가 된다.
+///
+/// `staging`이 함께 있는 이유는 스테이징 웹이 자기 도메인의 방침을 가리키기 때문이다
+/// (`VITE_PRIVACY_POLICY_URL`). 시뮬레이터의 `webUrl`(로컬 Vite)에서 파생하지 않는 것도 같은
+/// 사정이다 — 방침 문서는 로컬에 없고 늘 우리 도메인에 있다.
+public let externalLinkHosts: Set<String> = ["accentury.app", "staging.accentury.app"]
+
+/// 브리지가 받은 외부 URL을 열어도 되는지 판정한다 (KAN-177). 열어도 되면 그 URL, 아니면 nil.
+///
+/// ``isAllowedWebUrl(_:allowedOrigins:)``과 판정 대상이 다르다. 저쪽은 **WebView가 로드할** URL을
+/// origin 단위로 보고, 이쪽은 **앱 밖으로 내보낼** URL을 호스트 단위로 본다 — 포트·경로가
+/// 문서마다 다를 수 있어서 origin 일치를 요구하면 방침 문서를 옮기는 날 링크가 조용히 죽는다.
+///
+/// https만 통과시킨다. 방침 문서는 어느 환경에서도 HTTPS로 서므로 http를 받아 줄 이유가 없고,
+/// `javascript:`·앱 스킴은 host가 없어 자동으로 걸린다.
+///
+/// `user@host` 꼴과 역슬래시·공백을 따로 막는 이유는 **파서가 둘**이기 때문이다. 여기서 쓰는
+/// `URLComponents`와 실제로 여는 `URL`(``SFSafariViewController``에 넘긴다)이 그 문자들에서
+/// host를 다르게 읽을 수 있어, 검사에 쓴 호스트와 열리는 호스트가 갈릴 여지가 남는다.
+/// 애초에 방침 URL에는 없는 문자다 — 안드로이드 `externalUrlToOpen`도 같은 자리를 막는다.
+public func externalUrlToOpen(_ url: String?, allowedHosts: Set<String> = externalLinkHosts) -> String? {
+    guard let url else { return nil }
+    let hasRiskyCharacter = url.unicodeScalars.contains { scalar in
+        scalar == "\\" || scalar.properties.isWhitespace || scalar.value < 0x20
+    }
+    guard !hasRiskyCharacter else { return nil }
+    guard let components = URLComponents(string: url) else { return nil }
+    guard components.scheme?.lowercased() == "https" else { return nil }
+    guard components.user == nil, components.password == nil else { return nil }
+    guard let host = components.host?.lowercased(), allowedHosts.contains(host) else { return nil }
+    return url
+}

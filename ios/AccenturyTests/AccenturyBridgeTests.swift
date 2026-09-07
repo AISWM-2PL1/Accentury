@@ -23,6 +23,7 @@ final class AccenturyBridgeTests: XCTestCase {
         var starts: [VoiceItemStart] = []
         var shares: [SharePayload] = []
         var events: [(name: String, params: [String: EventParam])] = []
+        var externalUrls: [String] = []
     }
 
     private func makeDispatcher(
@@ -35,7 +36,8 @@ final class AccenturyBridgeTests: XCTestCase {
             onStartVoiceItem: { sink.starts.append($0) },
             onStartRetest: { sink.retestCalls += 1 },
             onShareResult: { sink.shares.append($0) },
-            onLogEvent: { sink.events.append((name: $0, params: $1)) }
+            onLogEvent: { sink.events.append((name: $0, params: $1)) },
+            onOpenExternalUrl: { sink.externalUrls.append($0) }
         )
     }
 
@@ -355,4 +357,48 @@ final class AccenturyBridgeTests: XCTestCase {
         XCTAssertEqual(1, sink.shares.count)
         XCTAssertEqual(1, sink.events.count)
     }
+
+    // MARK: openExternalUrl (KAN-177)
+
+    func testThePolicyUrlReachesTheOutletUnchanged() {
+        let sink = Sink()
+        let dispatcher = makeDispatcher(sink: sink, isCurrentUrlAllowed: { true })
+
+        dispatcher.handle(method: "openExternalUrl", payload: "https://accentury.app/privacy.html")
+
+        XCTAssertEqual(["https://accentury.app/privacy.html"], sink.externalUrls)
+    }
+
+    func testPagesOutsideTheAllowlistCannotOpenLinks() {
+        let sink = Sink()
+        let dispatcher = makeDispatcher(sink: sink, isCurrentUrlAllowed: { false })
+
+        dispatcher.handle(method: "openExternalUrl", payload: "https://accentury.app/privacy.html")
+
+        XCTAssertTrue(sink.externalUrls.isEmpty)
+    }
+
+    /// WebView에 실린 스크립트가 앱더러 아무 주소나 열게 시키는 경로다 — 여는 주소를 정하는
+    /// 쪽이 웹이므로 네이티브가 다시 본다.
+    func testHostsOutsideOurDomainAreNotOpened() {
+        let sink = Sink()
+        let dispatcher = makeDispatcher(sink: sink, isCurrentUrlAllowed: { true })
+
+        dispatcher.handle(method: "openExternalUrl", payload: "https://evil.example.com/phish.html")
+        dispatcher.handle(method: "openExternalUrl", payload: "http://accentury.app/privacy.html")
+        dispatcher.handle(method: "openExternalUrl", payload: "javascript:alert(1)")
+
+        XCTAssertTrue(sink.externalUrls.isEmpty)
+    }
+
+    /// 봉투가 문자열이 아니면 무시한다 — 주입 스크립트를 우회한 직접 호출이다.
+    func testANonStringPayloadIsIgnored() {
+        let sink = Sink()
+        let dispatcher = makeDispatcher(sink: sink, isCurrentUrlAllowed: { true })
+
+        dispatcher.handle(method: "openExternalUrl", payload: ["url": "https://accentury.app/privacy.html"])
+
+        XCTAssertTrue(sink.externalUrls.isEmpty)
+    }
+
 }

@@ -28,6 +28,7 @@ enum CrashReports {
     /// 하나로 두면 브리지 스큐와 마이크 실패가 한 이슈에 뭉쳐, 어느 쪽이 늘었는지 목록에서 보이지 않는다.
     private static let bridgeParseDomain = "accentury.bridge_parse_failed"
     private static let captureDomain = "accentury.audio_capture_failed"
+    private static let externalLinkDomain = "accentury.external_link_failed"
 
     /// 브리지 계약 버전을 실어 두는 커스텀 키.
     private static let bridgeVersionKey = "bridge_contract_version"
@@ -63,6 +64,17 @@ enum CrashReports {
     ///   `CaptureError`가 만드는 고정 어휘이고, 오디오 바이트나 파일 경로는 거기 애초에 실리지 않는다
     static func recordCaptureFailure(_ reason: String) {
         record(domain: captureDomain, detail: reason)
+    }
+
+    /// 외부 링크를 열지 못했다 (``ExternalBrowser``).
+    ///
+    /// 개인정보처리방침으로 가는 길이 앱 안에 이것뿐이라(설정 화면이 없다, KAN-177) 조용히
+    /// 실패하면 링크가 죽었다는 사실을 아무도 모른다. 사용자에게는 아무 일도 일어나지 않은
+    /// 것으로 보이는 실패라 특히 그렇다.
+    ///
+    /// - Parameter reason: 고정 어휘. URL은 싣지 않는다 — ``recordBridgeParseFailure(_:)``와 같은 규칙이다
+    static func recordExternalLinkFailure(_ reason: String) {
+        record(domain: externalLinkDomain, detail: reason)
     }
 
     /// - Parameter detail: 이슈 목록의 부제로 보이는 한 줄. 도메인이 묶음을 정하고 이 값이 그 안을 가른다.

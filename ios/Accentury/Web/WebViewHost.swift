@@ -165,6 +165,9 @@ struct WebViewHost: View {
     /// 웹이 센 계측 이벤트 (KAN-33). 검증은 ``BridgeDispatcher``가 이미 끝냈다.
     let onLogEvent: (String, [String: EventParam]) -> Void
 
+    /// 인트로의 개인정보처리방침 링크 (KAN-177). 검증을 통과한 URL만 오고, 여는 것은 Safari 시트다.
+    let onOpenExternalUrl: (String) -> Void
+
     /// 결과를 웹으로 주입하려면(`evaluateJavaScript`) 상위가 인스턴스를 알아야 한다.
     var onWebViewCreated: (WKWebView) -> Void = { _ in }
     /// 해제된 인스턴스. 상위가 들고 있는 참조를 놓을 자리다.
@@ -191,6 +194,7 @@ struct WebViewHost: View {
                     onStartRetest: onStartRetest,
                     onShareResult: onShareResult,
                     onLogEvent: onLogEvent,
+                    onOpenExternalUrl: onOpenExternalUrl,
                     onWebViewCreated: onWebViewCreated,
                     onWebViewReleased: onWebViewReleased
                 )
@@ -238,6 +242,7 @@ private struct WebViewRepresentable: UIViewRepresentable {
     let onStartRetest: () -> Void
     let onShareResult: (SharePayload) -> Void
     let onLogEvent: (String, [String: EventParam]) -> Void
+    let onOpenExternalUrl: (String) -> Void
     let onWebViewCreated: (WKWebView) -> Void
     let onWebViewReleased: (WKWebView) -> Void
 
@@ -249,7 +254,8 @@ private struct WebViewRepresentable: UIViewRepresentable {
             onStartVoiceItem: onStartVoiceItem,
             onStartRetest: onStartRetest,
             onShareResult: onShareResult,
-            onLogEvent: onLogEvent
+            onLogEvent: onLogEvent,
+            onOpenExternalUrl: onOpenExternalUrl
         )
         // 해제 콜백은 `dismantleUIView`가 static이라 Coordinator를 거쳐야 한다.
         coordinator.onReleased = onWebViewReleased
@@ -424,6 +430,7 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate {
     private let onStartRetest: () -> Void
     private let onShareResult: (SharePayload) -> Void
     private let onLogEvent: (String, [String: EventParam]) -> Void
+    private let onOpenExternalUrl: (String) -> Void
 
     /// 브리지 메시지 수신기. `lazy`인 이유는 dispatcher의 origin 판정 클로저가 `self`(현재 URL과
     /// 최신 allowlist)를 읽어야 하기 때문이다 — 초기화 중에는 잡을 수 없다.
@@ -438,7 +445,8 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate {
             onStartVoiceItem: { [weak self] in self?.onStartVoiceItem($0) },
             onStartRetest: { [weak self] in self?.onStartRetest() },
             onShareResult: { [weak self] in self?.onShareResult($0) },
-            onLogEvent: { [weak self] name, params in self?.onLogEvent(name, params) }
+            onLogEvent: { [weak self] name, params in self?.onLogEvent(name, params) },
+            onOpenExternalUrl: { [weak self] url in self?.onOpenExternalUrl(url) }
         )
     )
 
@@ -449,7 +457,8 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate {
         onStartVoiceItem: @escaping (VoiceItemStart) -> Void,
         onStartRetest: @escaping () -> Void,
         onShareResult: @escaping (SharePayload) -> Void,
-        onLogEvent: @escaping (String, [String: EventParam]) -> Void
+        onLogEvent: @escaping (String, [String: EventParam]) -> Void,
+        onOpenExternalUrl: @escaping (String) -> Void
     ) {
         self.allowedOrigins = allowedOrigins
         self.model = model
@@ -458,6 +467,7 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate {
         self.onStartRetest = onStartRetest
         self.onShareResult = onShareResult
         self.onLogEvent = onLogEvent
+        self.onOpenExternalUrl = onOpenExternalUrl
         super.init()
     }
 

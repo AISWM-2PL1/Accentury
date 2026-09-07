@@ -23,9 +23,9 @@ final class BridgeUserScriptTests: XCTestCase {
         XCTAssertTrue(bumped.contains("return \(bridgeContractVersion + 1);"))
     }
 
-    /// `bridge.ts`가 `typeof bridge?.foo === 'function'`으로 찾는 여섯 이름. 하나라도 빠지면
+    /// `bridge.ts`가 `typeof bridge?.foo === 'function'`으로 찾는 일곱 이름. 하나라도 빠지면
     /// 웹 래퍼가 false로 내려가 그 경로가 조용히 죽는다.
-    func testAllSixContractMethodsAreDefined() {
+    func testAllContractMethodsAreDefined() {
         for method in [
             "getContractVersion",
             "getSessionToken",
@@ -33,6 +33,7 @@ final class BridgeUserScriptTests: XCTestCase {
             "startVoiceItem",
             "startRetest",
             "shareResult",
+            "openExternalUrl",
         ] {
             XCTAssertTrue(source.contains("\(method):"), "브리지 객체에 \(method)이(가) 없다")
         }
@@ -90,6 +91,8 @@ final class BridgeUserScriptTests: XCTestCase {
         for method in ["startVoiceItem", "shareResult"] {
             XCTAssertTrue(source.contains(#"post("\#(method)", String(json))"#))
         }
+        // 인자 이름만 다르다 (KAN-177) — 웹이 넘기는 것은 URL 문자열 하나다
+        XCTAssertTrue(source.contains(#"post("openExternalUrl", String(url))"#))
     }
 
     // MARK: 토큰 주입 JS
