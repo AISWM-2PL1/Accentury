@@ -160,4 +160,60 @@ class WebConfigTest {
     fun `호스트 대소문자는 origin 비교에 영향을 주지 않는다`() {
         assertTrue(isAllowedWebUrl("https://WEB.Example.com/intro", setOf("https://web.example.com")))
     }
+
+    // --- externalUrlToOpen: 앱 밖으로 내보낼 URL (KAN-177) ---
+
+    @Test
+    fun `우리 도메인의 https 문서는 그대로 돌려준다`() {
+        assertEquals(
+            "https://accentury.app/privacy.html",
+            externalUrlToOpen("https://accentury.app/privacy.html"),
+        )
+        assertEquals(
+            "https://staging.accentury.app/privacy.html",
+            externalUrlToOpen("https://staging.accentury.app/privacy.html"),
+        )
+    }
+
+    @Test
+    fun `경로와 포트가 달라도 호스트만 맞으면 통과한다`() {
+        // isAllowedWebUrl과 갈리는 지점이다 - 저쪽은 origin 일치, 이쪽은 호스트 일치다
+        assertEquals("https://accentury.app/legal/privacy.html", externalUrlToOpen("https://accentury.app/legal/privacy.html"))
+    }
+
+    @Test
+    fun `목록 밖 호스트는 거절한다`() {
+        assertNull(externalUrlToOpen("https://evil.example.com/privacy.html"))
+        // 서브도메인을 흘리지 않는다 - suffix 비교가 아니라 완전 일치다
+        assertNull(externalUrlToOpen("https://accentury.app.evil.example.com/privacy.html"))
+    }
+
+    @Test
+    fun `https가 아니면 거절한다`() {
+        assertNull(externalUrlToOpen("http://accentury.app/privacy.html"))
+        assertNull(externalUrlToOpen("javascript:alert(1)"))
+        assertNull(externalUrlToOpen("intent://accentury.app/privacy.html#Intent;end"))
+        assertNull(externalUrlToOpen("accentury://privacy"))
+    }
+
+    @Test
+    fun `파서를 갈라 놓을 수 있는 문자는 거절한다`() {
+        /*
+         * java.net.URI가 읽는 호스트와 android.net.Uri가 여는 호스트가 갈릴 여지를 막는다.
+         * userinfo 꼴에서 URI는 host를 evil.example.com으로 읽지만, 그 판정에 기대는 것 자체가
+         * 파서 두 개의 일치에 기대는 것이다 - 방침 URL에는 애초에 없는 문자들이다.
+         */
+        assertNull(externalUrlToOpen("https://accentury.app@evil.example.com/privacy.html"))
+        assertNull(externalUrlToOpen("https://accentury.app\\@evil.example.com/privacy.html"))
+        assertNull(externalUrlToOpen("https://accentury.app/priv acy.html"))
+        assertNull(externalUrlToOpen("https://accentury.app/privacy.html\n"))
+    }
+
+    @Test
+    fun `빈 값과 형식이 아닌 값은 거절한다`() {
+        assertNull(externalUrlToOpen(null))
+        assertNull(externalUrlToOpen(""))
+        assertNull(externalUrlToOpen("not a url"))
+    }
+
 }

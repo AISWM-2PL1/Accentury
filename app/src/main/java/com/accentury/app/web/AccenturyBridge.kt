@@ -14,7 +14,8 @@ import com.accentury.app.bridge.parseVoiceItemStart
  * 웹 → 네이티브 브리지 (webview-layer.md §8). `window.AccenturyBridge`로 주입된다.
  *
  * 최소 표면 원칙 — 화면 전환(KAN-100)·답안 제출 인증(KAN-13)·재응시(KAN-34)·결과 공유(KAN-30)·
- * 계측(KAN-33)까지 필요한 일곱 메서드만 둔다. 늘리기 전에 웹에서 해결 가능한지 먼저 볼 것.
+ * 계측(KAN-33)·외부 링크(KAN-177)까지 필요한 여덟 메서드만 둔다. 늘리기 전에 웹에서 해결
+ * 가능한지 먼저 볼 것.
  *
  * 메서드 추가는 하위호환이라 [BRIDGE_CONTRACT_VERSION]을 올리지 않는다 (§5).
  *
@@ -34,6 +35,8 @@ import com.accentury.app.bridge.parseVoiceItemStart
  *   (서버가 정한 값이다) 어느 통로로 나갈지는 네이티브가 정한다 (ResultSharer)
  * @param onLogEvent 웹이 센 계측 이벤트 (KAN-33). 이름·파라미터는 검증을 통과한 값이고, 어디로
  *   보낼지는 창구 너머의 sink가 정한다 (analytics/AppEvents.kt)
+ * @param onOpenExternalUrl 앱 밖으로 열 링크 (KAN-177). [externalUrlToOpen]을 통과한 URL만 온다 —
+ *   어떻게 열지는 창구 너머가 정한다 (ExternalBrowser의 Custom Tabs)
  */
 class AccenturyBridge(
     private val postToMain: (() -> Unit) -> Unit,
@@ -45,6 +48,7 @@ class AccenturyBridge(
     private val onStartRetest: () -> Unit,
     private val onShareResult: (SharePayload) -> Unit,
     private val onLogEvent: (String, Map<String, EventParam>) -> Unit,
+    private val onOpenExternalUrl: (String) -> Unit,
 ) {
     /** §5 스큐 협상 — 웹이 앱의 계약 버전을 런타임에 재확인할 때 쓴다. 상태 변경이 없어 스레드 무관. */
     @JavascriptInterface
@@ -163,6 +167,36 @@ class AccenturyBridge(
                 return@postToMain
             }
             onLogEvent(name, params)
+        }
+    }
+
+    /**
+     * 인트로의 개인정보처리방침 링크 → 앱 밖 브라우저 (KAN-177).
+     *
+     * 여는 주체가 네이티브인 이유는 웹이 열 수 없기 때문이다. WebView는 allowlist 밖 URL의
+     * 로드를 막고(§7) 그 검사가 곧 보안 경계라 방침 문서 하나 때문에 문을 넓힐 수 없으며,
+     * `target="_blank"`도 답이 아니다 — `setSupportMultipleWindows`가 꺼져 있어 앱 안에서는
+     * 아무 일도 하지 않는다 (WebViewHost의 §7 설정표).
+     *
+     * 검증 순서는 [startVoiceItem]과 같다 — origin을 통과한 값만 판정한다. 다만 여기서 거르는
+     * 것의 무게가 다르다: 이 값은 화면에 그려지고 마는 게 아니라 **앱이 여는 주소**가 된다.
+     * 그래서 [externalUrlToOpen]이 https와 호스트를 다시 본다 ([shareResult]가 카드 URL을
+     * 다시 보는 것과 같은 이유다).
+     *
+     * 거절도 실패도 웹에 회신하지 않는다 (§8). 링크를 눌렀는데 아무 일이 없는 것으로 보이는
+     * 실패인데, 웹이 그것을 알아도 인트로에서 대신 할 수 있는 일이 없다 — 대신 흔적은 남긴다.
+     *
+     * 메서드 추가는 하위호환이라 [BRIDGE_CONTRACT_VERSION] 1을 유지한다 (§5).
+     */
+    @JavascriptInterface
+    fun openExternalUrl(url: String) {
+        postToMain {
+            if (!isCurrentUrlAllowed()) return@postToMain
+            val target = externalUrlToOpen(url) ?: run {
+                CrashReports.recordBridgeParseFailure("openExternalUrl")
+                return@postToMain
+            }
+            onOpenExternalUrl(target)
         }
     }
 }

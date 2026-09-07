@@ -58,6 +58,8 @@ sealed interface WebLoadState {
  * @param onShareResult 결과 화면의 [친구에게 공유하기] (KAN-30). 메인 스레드로 온다
  * @param onLogEvent 웹이 센 계측 이벤트 (KAN-33). 이름·파라미터 검증은 브리지가 끝낸 뒤라
  *   여기 오는 값은 GA4에 그대로 실을 수 있다. 메인 스레드로 온다
+ * @param onOpenExternalUrl 인트로의 개인정보처리방침 링크 (KAN-177). 검증을 통과한 URL만 오고
+ *   여는 것은 Custom Tabs다. 메인 스레드로 온다
  * @param onWebViewCreated 결과를 웹으로 주입하려면(evaluateJavascript) 상위가 인스턴스를 알아야 한다
  * @param onWebViewReleased 해제된 인스턴스. 상위가 들고 있는 참조를 놓을 자리다
  */
@@ -72,6 +74,7 @@ fun WebViewHost(
     onStartRetest: () -> Unit,
     onShareResult: (SharePayload) -> Unit,
     onLogEvent: (String, Map<String, EventParam>) -> Unit,
+    onOpenExternalUrl: (String) -> Unit,
     modifier: Modifier = Modifier,
     timeoutMs: Long = LOAD_TIMEOUT_MS,
     onWebViewCreated: (WebView) -> Unit = {},
@@ -172,6 +175,7 @@ fun WebViewHost(
                                 onStartRetest = onStartRetest,
                                 onShareResult = onShareResult,
                                 onLogEvent = onLogEvent,
+                                onOpenExternalUrl = onOpenExternalUrl,
                             ),
                             "AccenturyBridge",
                         )

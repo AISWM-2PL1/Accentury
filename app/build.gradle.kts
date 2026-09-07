@@ -272,6 +272,10 @@ dependencies {
     // 스플래시 화면 (KAN-178). minSdk 29라 플랫폼 SplashScreen(API 31)만으로는 29·30에서
     // 스플래시가 아예 없다 - 이 라이브러리가 그 두 버전에 같은 화면을 만들어 준다.
     implementation(libs.androidx.core.splashscreen)
+    // 개인정보처리방침 링크를 Custom Tabs로 연다 (KAN-177). ACTION_VIEW로 시스템 브라우저를
+    // 띄우지 않는 이유는 앱을 떠나기 때문이다 - Custom Tabs는 인트로 위에 시트를 덮으므로
+    // 닫으면 응시하던 화면이 그대로 남는다.
+    implementation(libs.androidx.browser)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)

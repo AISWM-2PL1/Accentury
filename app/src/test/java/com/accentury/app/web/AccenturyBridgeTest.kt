@@ -47,6 +47,7 @@ class AccenturyBridgeTest {
             onStartRetest = {},
             onShareResult = {},
             onLogEvent = { _, _ -> },
+            onOpenExternalUrl = {},
         )
         bridge.startVoiceItem(payloadJson)
         queue.drain()
@@ -67,6 +68,7 @@ class AccenturyBridgeTest {
             onStartRetest = {},
             onShareResult = {},
             onLogEvent = { _, _ -> },
+            onOpenExternalUrl = {},
         )
         bridge.requestMicPermission()
         queue.drain()
@@ -87,6 +89,7 @@ class AccenturyBridgeTest {
             onStartRetest = {},
             onShareResult = {},
             onLogEvent = { _, _ -> },
+            onOpenExternalUrl = {},
         )
         bridge.requestMicPermission()
         queue.drain()
@@ -110,6 +113,7 @@ class AccenturyBridgeTest {
             onStartRetest = {},
             onShareResult = {},
             onLogEvent = { _, _ -> },
+            onOpenExternalUrl = {},
         )
         bridge.requestMicPermission() // 호출 시점엔 허용 상태
         allowedNow = false // 실행 전에 allowlist 밖으로 이동
@@ -131,6 +135,7 @@ class AccenturyBridgeTest {
             onStartRetest = { fired++ },
             onShareResult = {},
             onLogEvent = { _, _ -> },
+            onOpenExternalUrl = {},
         )
         bridge.startRetest()
         queue.drain()
@@ -164,6 +169,7 @@ class AccenturyBridgeTest {
             onStartRetest = { fired++ },
             onShareResult = {},
             onLogEvent = { _, _ -> },
+            onOpenExternalUrl = {},
         )
         bridge.startRetest() // 호출 시점엔 허용 상태
         allowedNow = false // 실행 전에 allowlist 밖으로 이동
@@ -191,6 +197,7 @@ class AccenturyBridgeTest {
             onStartRetest = { fired++ },
             onShareResult = {},
             onLogEvent = { _, _ -> },
+            onOpenExternalUrl = {},
         )
         bridge.startRetest()
         bridge.startRetest()
@@ -211,6 +218,7 @@ class AccenturyBridgeTest {
             onStartRetest = {},
             onShareResult = {},
             onLogEvent = { _, _ -> },
+            onOpenExternalUrl = {},
         )
         assertEquals(BRIDGE_CONTRACT_VERSION, bridge.getContractVersion())
     }
@@ -226,6 +234,7 @@ class AccenturyBridgeTest {
         onStartRetest = {},
         onShareResult = {},
         onLogEvent = { _, _ -> },
+            onOpenExternalUrl = {},
     )
 
     @Test
@@ -353,6 +362,7 @@ class AccenturyBridgeTest {
             onStartRetest = {},
             onShareResult = {},
             onLogEvent = { _, _ -> },
+            onOpenExternalUrl = {},
         )
         bridge.startVoiceItem(payload()) // 호출 시점엔 허용 상태
         allowedNow = false // 실행 전에 allowlist 밖으로 이동
@@ -375,6 +385,7 @@ class AccenturyBridgeTest {
             onStartRetest = {},
             onShareResult = { received = it },
             onLogEvent = { _, _ -> },
+            onOpenExternalUrl = {},
         )
         bridge.shareResult(payloadJson)
         queue.drain()
@@ -434,6 +445,7 @@ class AccenturyBridgeTest {
             onStartRetest = {},
             onShareResult = {},
             onLogEvent = { eventName, params -> received = eventName to params },
+            onOpenExternalUrl = {},
         )
         bridge.logEvent(name, paramsJson)
         queue.drain()
@@ -485,5 +497,52 @@ class AccenturyBridgeTest {
         )
 
         assertEquals("\"밥은\" 뭇나?\n마!", start?.prompt)
+    }
+
+    /** openExternalUrl을 한 번 호출하고 창구가 받은 URL을 돌려준다. 거절됐으면 null. */
+    private fun openExternalUrl(url: String, allowed: Boolean = true): String? {
+        val queue = FakeMainQueue()
+        var received: String? = null
+        val bridge = AccenturyBridge(
+            postToMain = queue::post,
+            isCurrentUrlAllowed = { allowed },
+            isOriginAllowedNow = { false },
+            sessionToken = { "" },
+            onRequestMicPermission = {},
+            onStartVoiceItem = {},
+            onStartRetest = {},
+            onShareResult = {},
+            onLogEvent = { _, _ -> },
+            onOpenExternalUrl = { received = it },
+        )
+        bridge.openExternalUrl(url)
+        queue.drain()
+        return received
+    }
+
+    @Test
+    fun `방침 URL은 창구로 그대로 넘어간다`() {
+        assertEquals(
+            "https://accentury.app/privacy.html",
+            openExternalUrl("https://accentury.app/privacy.html"),
+        )
+    }
+
+    @Test
+    fun `allowlist 밖 페이지가 부르면 열지 않는다`() {
+        assertNull(openExternalUrl("https://accentury.app/privacy.html", allowed = false))
+    }
+
+    @Test
+    fun `우리 도메인 밖은 열지 않는다`() {
+        // WebView에 실린 스크립트가 앱더러 아무 주소나 열게 시키는 경로다
+        assertNull(openExternalUrl("https://evil.example.com/phish.html"))
+    }
+
+    @Test
+    fun `http와 앱 스킴은 열지 않는다`() {
+        assertNull(openExternalUrl("http://accentury.app/privacy.html"))
+        assertNull(openExternalUrl("javascript:alert(1)"))
+        assertNull(openExternalUrl("intent://accentury.app/privacy.html#Intent;end"))
     }
 }
