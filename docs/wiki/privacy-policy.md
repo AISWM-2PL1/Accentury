@@ -11,10 +11,11 @@
 
 - 티켓: **KAN-176** (방침 본문 작성)
 - 본문 정본: [`infra/privacy/privacy.html`](../../infra/privacy/privacy.html) — 14개 절
-- 계약 테스트: [`infra/privacy/privacy.test.mjs`](../../infra/privacy/privacy.test.mjs) 13건, CI `edge-test` 잡에 결선 (`.github/workflows/test.yml`)
+- 계약 테스트: [`infra/privacy/privacy.test.mjs`](../../infra/privacy/privacy.test.mjs) 13건 (1항 표 검사는 행 목록으로 확장한다 — KAN-164 행 포함), CI `edge-test` 잡에 결선 (`.github/workflows/test.yml`)
 - 호스팅과 게시 경로: **KAN-133** — `infra/privacy/README.md`, `scripts/publish-privacy.sh`
 - 앱 안 링크: **KAN-177** · 스토어 등록: **KAN-174**(Play) **KAN-175**(App Store)
 - 광고 도입: **KAN-196**(앱 SDK·동의 UI·ATT·스토어 신고) **KAN-197**(웹 광고)
+- 카카오 공유 웹훅 수신: **KAN-164** — 이 브랜치 분기 뒤 Dev에 병합됐고 1·5·9항에 반영했다
 
 ## 1. 절별 근거 매핑
 
@@ -38,6 +39,9 @@
 | 테스트 결과·어휘 답안 | 완료 시점부터 24시간 | `backend/src/main/java/app/accentury/backend/result/TestResultRetention.java:22,33-40` (`deleteByExpiresAtBefore` 60분 주기), `backend/src/main/java/app/accentury/backend/result/CompletionService.java:170-175` (`expiresAt`을 저장 시점에 확정), KAN-25·KAN-15 | 위와 같음 |
 | 테스트 결과·어휘 답안 | 미완주 세션의 것은 세션과 함께 삭제 | `backend/src/main/resources/db/migration/V1__baseline.sql:61,78,98` (CASCADE), `backend/src/main/java/app/accentury/backend/session/SessionService.java:355-372` (`purgeExpired` 주석이 "하위 3테이블도 함께 지운다"를 명시) | 위와 같음 |
 | 익명 통계 | 합계값만, 세션·IP·개인 점수 없음 | `backend/src/main/java/app/accentury/backend/analytics/DailyCounter.java:49-111` (엔티티의 컬럼 전부 — 일자·버전·트래픽 구분과 건수·점수 **합계**뿐이고 세션 id·IP·개별 점수 컬럼이 없다), KAN-106 | — |
+| 익명 통계 | 카카오톡 공유 **전송 완료 수**를 일자·캠페인별 합계로만 쌓고 세션과 잇지 않음 | `backend/src/main/resources/db/migration/V7__share_webhook.sql:16-23` (`share_daily_counter`의 컬럼은 `stat_date`·`campaign`·`sent`뿐이고 5-9행 주석이 「세션과 연결하지 않는 것이 이 집계의 요구」를 적었다), `backend/src/main/java/app/accentury/backend/share/KakaoShareWebhookController.java:107` (본문에서 읽는 값은 `campaign` 하나 — 46-49행 주석 「채팅방 정보(CHAT_TYPE, HASH_CHAT_ID)는 읽지도 저장하지도 않는다」), `backend/src/main/java/app/accentury/backend/share/ShareCounters.java:48-55` (`recordSent`가 올리는 것은 일자·캠페인 카운터 1뿐), KAN-164 | `1항 표의 보유 기간이 행마다 코드와 맞는다` (「익명 통계」 행) |
+| 공유 전송 알림 기록 | 카카오가 붙인 불투명 식별값만, **7일** 뒤 삭제 | `backend/src/main/resources/db/migration/V7__share_webhook.sql:25-32` (`share_webhook_receipt`는 `resource_id`·`received_at` 두 컬럼, 11-14행 주석이 「채팅방 해시·종류·세션 id·토큰·점수는 어디에도 저장하지 않는다」), `backend/src/main/java/app/accentury/backend/common/AccenturyProperties.java:249` (`@DefaultValue("7d") Duration receiptRetention`), `backend/src/main/resources/application.yml:191-195` (같은 값의 주석과 예시), `backend/src/main/java/app/accentury/backend/share/ShareWebhookReceiptRetention.java:36-40` (60분 주기 `purgeExpired`가 `now - retention` 이전을 지운다) | `1항 표의 보유 기간이 행마다 코드와 맞는다` (「공유 전송 알림 기록」 행) |
+| 공유 전송 알림 기록 | 식별값이 **서버 운영 로그(14일)에도 남을 수 있음** | `backend/src/main/java/app/accentury/backend/share/KakaoShareWebhookController.java:109-110` (수신마다 `resourceId=`를 INFO로 남긴다 — 109행 주석이 「중복 콜백을 추적하는 유일한 단서」라 적었다), `backend/src/main/java/app/accentury/backend/share/ShareCounters.java:50` (중복 콜백도 같은 값을 남긴다), 보존은 「서버 운영 로그」 행과 같은 14일 | — |
 | 익명 통계 | 재응시·만료로 되돌리지 않음 | `backend/src/main/java/app/accentury/backend/analytics/DailyCounter.java:33`, `backend/src/main/java/app/accentury/backend/analytics/AnalyticsCounters.java:45` (둘 다 "되돌리지 않는다"를 명시) | — |
 | 접속 IP | 메모리에서만 세고 저장 안 함 | `backend/src/main/java/app/accentury/backend/common/FixedWindowRateLimiter.java:9,12,20` (`ConcurrentHashMap` 인메모리 윈도우), `backend/src/main/java/app/accentury/backend/common/ClientIps.java:52-58` (판정만 하고 반환) | — |
 | 서버 운영 로그 | 14일 | `infra/modules/fargate/variables.tf:173-176` (`log_retention_days` 기본값 14) | `1항 표의 보유 기간이 행마다 코드와 맞는다` |
@@ -58,18 +62,18 @@
 | 절 | 핵심 주장 | 근거 | 계약 테스트 |
 |---|---|---|---|
 | 2. 제3자 제공 | 광고 사업자 제공은 제3자 제공에 해당 | 광고 SDK가 자기 목적으로 처리하는 구조 — 2026-09-07 팀 결정, KAN-196 | — |
-| 2. 제3자 제공 | 제공받는 자는 **확정 후 기재** (286행) | 사업자 미정. prod 게이트 (4항 참조) | — |
+| 2. 제3자 제공 | 제공받는 자는 **확정 후 기재** (294행) | 사업자 미정. prod 게이트 (4항 참조) | — |
 | 2. 제3자 제공 | 위탁·공유는 제3자 제공이 아님 | 3항(위탁)과 9항(이용자 선택 공유)의 구분 | — |
 | 3. 위탁 | AWS 서울 리전(ap-northeast-2) | `infra/envs/prod/terraform.tfvars:3`, `infra/envs/staging/terraform.tfvars:3` | `데이터 소재지가 서울 리전이라고 적혀 있다` |
 | 3. 위탁 | Google LLC(Firebase Analytics·Crashlytics) | KAN-33, `docs/wiki/analytics.md` | — |
 | 4. 국외 이전 | 이전 대상은 이용 통계와 오류 로그뿐 | 음성·세션·결과는 서울 리전 (`infra/envs/prod/terraform.tfvars:3`, `infra/envs/staging/terraform.tfvars:3`), Firebase만 국외 | `데이터 소재지가 서울 리전이라고 적혀 있다` |
-| 4. 국외 이전 | 광고 사업자 국외 이전은 **확정 후 기재** (353~355행) | 사업자 미정. prod 게이트 | — |
+| 4. 국외 이전 | 광고 사업자 국외 이전은 **확정 후 기재** (361~363행) | 사업자 미정. prod 게이트 | — |
 | 4. 이용 통계 이벤트 | 수집 항목 목록 | `web/src/analytics/events.ts:71` (`AnalyticsEvent` 유니온이 이름·파라미터의 정본), `docs/wiki/analytics.md` §1 | — |
 | 4. 이용 통계 이벤트 | 응시 구분 무작위 키는 탭을 닫으면 사라짐 | `web/src/analytics/testId.ts:21-23,93` (`sessionStorage`) | — |
 | 4. 이용 통계 이벤트 | 세션 id·토큰·문항·점수 원값을 싣지 않음 | `docs/wiki/analytics.md` §3 「익명 규칙」, `web/src/analytics/events.ts` | — |
 | 4. 이용 통계 이벤트 | 광고 식별자를 쓰지 않음 (Android·iOS·웹 각각) | `app/src/main/AndroidManifest.xml:43-49` (`google_analytics_adid_collection_enabled=false`, 개인화 신호 false), `ios/Accentury/Analytics/FirebaseEventSink.swift:23-32` (`GoogleAppMeasurementCore`로 AdSupport·ATT를 바이너리에서 배제), `web/src/analytics/ga4.ts:75-81` (`allow_google_signals:false`, `allow_ad_personalization_signals:false`) | — |
 | 4. 비정상 종료 로그 | 스택·기기·OS·앱 버전, 사용자 ID 없음 | KAN-33, `docs/wiki/analytics.md` §3 「크래시 리포트에도 같은 규칙이 선다」 | — |
-| 5. 파기 | 파기 시점 다섯 가지 | 1항의 근거를 그대로 반복한다 (음성 즉시·30분, 미완주 세션 30분, 완주 세션 완료 후 24시간, 재응시 즉시, 로그 14일/7일) | `음성은 분석 직후…`·`임시 파일 청소 기준 30분…`·`세션·결과 보유 기간 24시간…` |
+| 5. 파기 | 파기 시점 여섯 가지 | 1항의 근거를 그대로 반복한다 (음성 즉시·30분, 미완주 세션 30분, 완주 세션 완료 후 24시간, 재응시 즉시, 공유 전송 알림 식별값 7일, 로그 14일/7일) | `음성은 분석 직후…`·`임시 파일 청소 기준 30분…`·`세션·결과 보유 기간 24시간…` |
 | 6. 정보주체 권리 | 특정 이용자의 정보를 지목할 수단이 없음 | 계정 없음, 세션은 익명 (`backend/src/main/java/app/accentury/backend/session/TestSession.java` — 사람을 가리키는 컬럼 없음) | — |
 | 6. 정보주체 권리 | 탭을 닫으면 세션 토큰·응시 키는 사라지지만 **진행 기록은 남는다** | `web/src/session/webSession.ts`·`web/src/analytics/testId.ts:21-23` (`sessionStorage`) 대 `web/src/progress/progressSnapshot.ts:34,51` (`localStorage`, 키 `accentury:progress:<sessionId>`). 앱 코드에 `clearSnapshot` 호출점이 없어(`web/src/progress/useTestProgress.ts:14` 주석이 "삭제 시점은 결과 화면"이라 적었지만 아직 배선 없음) 진행 기록은 사이트 데이터 삭제·앱 삭제로만 지워진다 | — |
 | 7. 만 14세 미만 | 아동 대상 아님, 마켓에도 그렇게 등록 | `docs/wiki/play-store-listing.md` §6 (타겟 연령 13세 이상) — **KAN-174 브랜치에만 있는 파일** | — |
@@ -81,13 +85,15 @@
 | 8. 자동 수집 장치 | 광고 SDK가 광고 식별자를 사용 | 2026-09-07 팀 결정, KAN-196. **아직 배선 없음** | — |
 | 9. 공유 기능 | payload에 점수·세션·음성이 없음 | `app/src/main/java/com/accentury/app/bridge/SharePayload.kt:28-31` (필드는 `imageUrl`·`text`·`webTestUrl` 셋), `web/src/share/shareResult.ts:57-59` (payload 필드가 `imageUrl`·`text`·`webTestUrl` 셋뿐, KAN-30 요구) | — |
 | 9. 공유 기능 | 링크를 받은 사람은 자기 테스트를 시작 | `docs/wiki/app-links.md` §1 — 링크가 읽는 쿼리는 `c` 하나뿐 | — |
+| 9. 공유 기능 | 전송 완료 알림(웹훅)에서 남기는 것은 전송 건수와 식별값뿐 | `backend/src/main/java/app/accentury/backend/share/KakaoShareWebhookController.java:100-112`(핸들러가 하는 일은 인증·중복 판별·카운터 1 증가 셋), `backend/src/main/resources/db/migration/V7__share_webhook.sql:14` (「채팅방 해시(HASH_CHAT_ID), 채팅방 종류, 세션 id, 토큰, 점수는 어디에도 저장하지 않는다 (티켓 AC)」), KAN-164 | — |
+| 9. 공유 기능 | 웹훅 검증은 Admin 키 일치 확인 (서명 없음) | `backend/src/main/java/app/accentury/backend/share/KakaoWebhookAuth.java:96-112` (상수 시간 비교), 키 값은 로그에서 가려진다 (`backend/src/main/java/app/accentury/backend/common/LogMasking.java`의 `KAKAO_AK`·`NAMED_SECRET`) | — |
 | 10. 광고 | 광고 절이 존재하고 동의·거부 경로가 있음 | 2026-09-07 팀 결정, KAN-196·KAN-197 | `맞춤형 광고 절이 있고 동의·거부 방법이 적혀 있다` |
 | 10. 광고 | 「광고와 추적이 없습니다」는 이제 거짓 | 같은 결정으로 삭제한 문장. 되살아나는 것을 테스트가 막는다 | `"광고와 추적이 없습니다"가 남아 있지 않다` |
-| 10. 광고 | 사업자·동의 UI 위치·국외 이전은 **확정 후 기재** (483·514·523~525행) | 사업자 미정. prod 게이트 | — |
+| 10. 광고 | 사업자·동의 UI 위치·국외 이전은 **확정 후 기재** (499·530·539~541행) | 사업자 미정. prod 게이트 | — |
 | 11. 안전성 확보 | HTTPS, 토큰 해시, 임시 파일 최소 권한, 로그 비식별, WAF, 관리자 토큰 | `backend/src/main/java/app/accentury/backend/session/TestSession.java:45-46`, `ai/app/tempstore.py:6-16`, `infra/modules/waf/main.tf:313,319`, `backend/src/main/java/app/accentury/backend/common/AccenturyProperties.java:29` (admin 시크릿) | — |
 | 12. 동의 방식 | 동의 화면을 따로 두지 않되 광고는 별도 동의 | KAN-2 「동의 화면 범위 제외」 결정 + 2026-09-07 광고 결정의 부분 번복 (6항 참조) | — |
 | 13. 보호책임자 | 이성주, team2pl1@gmail.com | 2026-09-07 팀 결정 | `연락처가 있다 (Play·App Store 심사가 요구하는 항목)` |
-| 14. 시행일 | 정식 게시일에 기재 | prod 게이트 (102·571행) | — |
+| 14. 시행일 | 정식 게시일에 기재 | prod 게이트 (102·587행) | — |
 | 전 절 | 법정 필수 절이 빠지지 않음 | 「개인정보 보호법」 제30조 + 실제 처리(국외 이전, 자동 수집 장치, 광고) | `법정 필수 절이 모두 있다` |
 | 페이지 전체 | 외부 CSS·글꼴·스크립트 0 | KAN-133 AC "본문 교체는 S3 업로드 하나" | `외부 자원을 하나도 쓰지 않는다` |
 | 페이지 전체 | noindex 없음, 자리표시자 문구 없음 | KAN-133 → KAN-176 인계 | `자리표시자를 막던 noindex가 없다`·`자리표시자 문구가 남아 있지 않다` |
@@ -127,12 +133,12 @@ prod 게시(`scripts/publish-privacy.sh prod`) 전에는 아래를 전부 닫는
 
 | # | 자리 | 본문 행 | 닫는 조건 |
 |---|---|---|---|
-| 1 | 2항 제3자 제공 표 「광고 사업자 (확정 후 기재)」 | 286 | 광고 사업자 확정 (KAN-196) |
-| 2 | 4항 광고 국외 이전 「(확정 후 기재)」 | 353~355 | 사업자 확정 + 소재 국가·항목·기간 확인 |
-| 3 | 10항 「광고 사업자(확정 후 기재)」 | 483 | 사업자 확정 |
-| 4 | 10항 동의 설정 위치 「(도입 시 위치 확정)」 | 514 | 앱 광고 동의 UI 구현 (KAN-196) |
-| 5 | 10항 「4항과 이 항, 2항의 제3자 제공 표를 함께 채웁니다 (확정 후 기재)」 | 523~525 | 위 1~4가 닫히면 이 문장도 확정 문장으로 교체 |
-| 6 | 시행일 「정식 게시일에 기재합니다」 | 102, 571 | 게시 당일 날짜로 교체 (두 자리 모두) |
+| 1 | 2항 제3자 제공 표 「광고 사업자 (확정 후 기재)」 | 294 | 광고 사업자 확정 (KAN-196) |
+| 2 | 4항 광고 국외 이전 「(확정 후 기재)」 | 361~363 | 사업자 확정 + 소재 국가·항목·기간 확인 |
+| 3 | 10항 「광고 사업자(확정 후 기재)」 | 499 | 사업자 확정 |
+| 4 | 10항 동의 설정 위치 「(도입 시 위치 확정)」 | 530 | 앱 광고 동의 UI 구현 (KAN-196) |
+| 5 | 10항 「4항과 이 항, 2항의 제3자 제공 표를 함께 채웁니다 (확정 후 기재)」 | 539~541 | 위 1~4가 닫히면 이 문장도 확정 문장으로 교체 |
+| 6 | 시행일 「정식 게시일에 기재합니다」 | 102, 587 | 게시 당일 날짜로 교체 (두 자리 모두) |
 | 7 | 스토어 답안 일치 | — | KAN-174 §5·§6과 KAN-175 라벨이 2절 「광고 도입 후 바뀔 답」대로 갱신됐는지 확인 |
 
 자리표시자 자체는 계약 테스트로 막지 않는다. 막으면 확정 전 단계의 본문을 커밋할 수 없어
@@ -165,6 +171,7 @@ prod 게시(`scripts/publish-privacy.sh prod`) 전에는 아래를 전부 닫는
 | 2026-09-07 | 개인정보 보호책임자 이성주, 문의처 team2pl1@gmail.com | 13항 |
 | 2026-09-07 | 시행일은 초안 날짜가 아니라 정식 게시일에 기재한다 | 102·571행 (prod 게이트) |
 | 2026-09-07 | **1차 배포에 맞춤형 광고를 넣는다 (앱과 웹 모두).** 사업자 미정 | 1항 광고 행, 2항 제3자 제공 표, 4항, 8항, 10항 전체, 12항 |
+| 2026-09-07 | PR #89 리뷰: 분기 뒤 Dev에 들어온 **KAN-164(카카오 공유 웹훅 수신)**를 본문에 반영한다 — 저장하는 것은 전송 완료 수와 중복 판별용 식별값(7일)뿐 | 1항 표 「익명 통계」·「공유 전송 알림 기록」 행과 산문, 5항 파기 목록, 9항 |
 | 2026-09-07 | 위 결정으로 KAN-2의 「동의 화면 범위 제외」가 부분 번복됐다 — 개인정보 수집·이용 동의 화면은 여전히 두지 않지만, **맞춤형 광고 동의 UI는 별도로 둔다** | 12항 「다만 맞춤형 광고는 별도로 동의를 받습니다」 |
 
 ## 6. 팀 확인이 필요한 것
