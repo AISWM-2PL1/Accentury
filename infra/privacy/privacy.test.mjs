@@ -36,19 +36,29 @@ test('자리표시자를 막던 noindex가 없다 (KAN-133 -> KAN-176)', () => {
 });
 
 test('외부 자원을 하나도 쓰지 않는다 (KAN-133 "S3 업로드만으로 교체")', () => {
-  // 스크립트, 외부 스타일시트·글꼴(<link>), CSS import, CSS가 끌어오는 원격 자산 넷을 막는다.
-  // <a href>는 링크일 뿐 페이지가 무언가를 받아오지 않으므로 대상이 아니다.
+  // 검사 목록 - 페이지가 바깥에서 무언가를 받아오는 경로 전부다.
+  //   1. <script>
+  //   2. 외부 스타일시트·글꼴(<link>)
+  //   3. CSS @import
+  //   4. CSS가 끌어오는 원격 자산 - `url(https://…)`와 프로토콜 상대 `url(//…)` 둘 다
+  //   5. 자산을 끌어오는 태그 - <img> <iframe> <source> <object> <embed> <video> <audio>
+  //   6. src·srcset·poster 속성 - 5번 목록이 놓친 경로를 덮는다
+  // <a href>는 링크일 뿐 페이지가 무언가를 받아오지 않으므로 대상이 아니다. 본문에 외부
+  // https 링크와 mailto:가 있어서, href를 6번에 넣으면 전부 오탐이 된다.
   assert.ok(!/<script/i.test(html), '<script>가 있다');
   assert.ok(!/<link/i.test(html), '<link>가 있다');
   assert.ok(!/@import/i.test(html), 'CSS @import가 있다');
-  assert.ok(!/url\(\s*['"]?http/i.test(html), 'CSS가 원격 자산을 참조한다');
+  // 프로토콜 상대 경로(`url(//cdn.example/x.woff2)`)도 원격이다 - 페이지가 https로 열리면
+  // 브라우저가 https로 받아온다. `url(http`만 보던 앞 판은 이 형태를 통째로 놓쳤다.
+  assert.ok(!/url\(\s*['"]?\s*(?:https?:)?\/\//i.test(html), 'CSS가 원격 자산을 참조한다');
   // 자산을 끌어오는 태그 자체를 막는다. 위 넷은 스타일과 스크립트만 보므로, 본문에 이미지 한 장이
   // 끼어들면 전부 통과한다 - 그러면 S3에 html 하나를 올리는 것으로 교체가 끝나지 않는다.
   for (const tag of ['<img', '<iframe', '<source', '<object', '<embed', '<video', '<audio']) {
     assert.ok(!html.toLowerCase().includes(tag), `${tag}>가 있다`);
   }
-  // src 속성은 위 태그 목록이 놓친 경로(<input src>, 미래의 새 태그)까지 한 번에 덮는다.
-  assert.ok(!/\ssrc=/i.test(html), 'src 속성이 있다');
+  // 위 태그 목록이 놓친 경로(<input src>, 미래의 새 태그)까지 한 번에 덮는다. `\ssrc=`만 보던
+  // 앞 판은 등호 앞 공백(`src = "…"`)과 srcset·poster를 놓쳤다 - 셋 다 유효한 HTML이다.
+  assert.ok(!/\b(?:src|srcset|poster)\s*=/i.test(html), 'src·srcset·poster 속성이 있다');
 });
 
 test('자리표시자 문구가 남아 있지 않다', () => {
@@ -133,7 +143,7 @@ test('1항 표의 보유 기간이 행마다 코드와 맞는다', () => {
   // [구분, 그 행의 보유 기간 칸에 반드시 있어야 하는 문자열들, 근거]
   const expected = [
     ['음성 녹음', ['즉시 삭제'], 'KAN-27, ai/app/tempstore.py'],
-    // 미완주 세션은 생성 30분 뒤 만료 정리(SessionService.java:132), 완주 세션은 완료 시점부터
+    // 미완주 세션은 생성 30분 뒤 만료 정리(SessionService.java:133), 완주 세션은 완료 시점부터
     // 24시간(TestSession.java:140-157, CompletionService.java:169-175). 기준점이 둘이라 셋을 함께 본다.
     ['익명 테스트 세션', ['30분', '완료', '24시간'], 'session/SessionService.java, TestSession.java'],
     ['테스트 결과와 어휘 답안', ['24시간'], 'application.yml analysis.retention: 24h'],
