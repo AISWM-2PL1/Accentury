@@ -43,6 +43,7 @@ jobs:
             infra:
               - 'infra/modules/edge/**'
               - 'infra/well-known/**'
+              - 'infra/privacy/**'
               - 'app/src/main/AndroidManifest.xml'
               - '.github/workflows/test.yml'
 
@@ -119,6 +120,9 @@ jobs:
       # 디렉터리 경로가 아니라 glob이다 - node 22.6부터 --test의 위치 인자는 glob으로 해석돼
       # 디렉터리를 주면 그 이름의 모듈을 찾다가 MODULE_NOT_FOUND로 죽는다.
       - run: node --test 'infra/modules/edge/*.test.mjs'
+      # 개인정보처리방침 본문의 계약 테스트 (KAN-176). 같은 job에 둔 이유는 둘 다 배포해야만
+      # 드러나는 정적 자산이고, 의존성 없이 몇 초면 끝나기 때문이다.
+      - run: node --test 'infra/privacy/*.test.mjs'
 
   ai-test:
     needs: changes
