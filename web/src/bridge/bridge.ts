@@ -43,6 +43,24 @@ export interface AccenturyBridge {
    * 앱 사용자가 웹 트래픽으로 세어진다. [getSessionToken]과 같은 이유로 optional이다
    */
   logEvent?(name: string, paramsJson: string): void
+  /**
+   * 외부 링크 하나를 앱 **밖** 브라우저로 연다 (KAN-177). 인자는 열어야 할 절대 URL이다.
+   *
+   * 웹이 직접 열 수 없어서 네이티브를 거친다. WebView는 allowlist 밖 URL의 로드를 통째로
+   * 막고(§7), 그 검사가 곧 보안 경계라 정책 문서 하나 때문에 문을 넓힐 수는 없다. 새 창도
+   * 답이 아니다 — 안드로이드는 `setSupportMultipleWindows`가 꺼져 있고 iOS에는 `uiDelegate`가
+   * 없어서 `target="_blank"`가 앱 안에서는 아무 일도 하지 않는다.
+   *
+   * 그래서 **여는 주체를 네이티브로 옮긴다**: 안드로이드는 Custom Tabs, iOS는
+   * `SFSafariViewController`로 인트로 위에 시트를 덮는다. 앱 화면이 사라지지 않으므로 닫으면
+   * 인트로가 그대로 남아 있다 — WebView 안에서 이동시키면 돌아올 길이 없다 (양쪽 다 뒤로가기
+   * 처리가 없다).
+   *
+   * **URL은 네이티브가 다시 검증한다.** 웹이 넘긴 값을 그대로 여는 구조면 WebView에 실린
+   * 임의의 스크립트가 앱더러 아무 주소나 열게 시킬 수 있다. [getSessionToken]과 같은 이유로
+   * optional이다.
+   */
+  openExternalUrl?(url: string): void
 }
 
 /**
@@ -133,6 +151,9 @@ declare global {
  * 계약 버전 1 앱이 스큐 게이트를 그대로 통과하고, 래퍼가 false로 걸러 폴백으로 내려간다.
  * KAN-33의 `logEvent`도 같다. 계측이 붙지 않은 구버전 앱에서 이벤트가 조용히 사라지는 것이
  * 여기서는 맞는 동작이다 — 계측 하나 때문에 응시할 수 있는 앱을 업데이트 안내로 막을 이유가 없다.
+ * KAN-177의 `openExternalUrl`도 추가라 1을 유지한다. 이 메서드가 없는 앱에서는 정책 링크가
+ * 브라우저 기본 동작으로 내려가는데(래퍼가 false를 준다), 그런 앱은 아직 스토어에 없다 —
+ * 스토어 제출(KAN-174·KAN-175) 전에 머지돼 있는 것이 이 티켓의 AC다.
  */
 export const REQUIRED_BRIDGE_VERSION = 1
 
@@ -284,6 +305,23 @@ export function logAnalyticsEvent(name: string, params: Record<string, unknown>)
  * 불량 payload는 조용히 버린다 — 여기서 throw하면 예외가 네이티브의 evaluateJavascript
  * 콜백까지 거슬러 올라가는데, 그 자리엔 사용자에게 보여줄 화면이 없다.
  */
+/**
+ * 외부 링크를 네이티브 브라우저로 넘긴다 (KAN-177). 넘겼으면 true, 여기서는 갈 수 없으면 false다.
+ *
+ * false는 브라우저 단독 실행이거나 `openExternalUrl`을 모르는 앱이라는 뜻인데, 호출자에게 그
+ * 구분은 관심사가 아니다 — 어느 쪽이든 "네이티브로는 못 연다"는 같은 사실이고 대응(링크의
+ * 기본 동작에 맡김)도 같다. [shareResult]와 같은 규칙이다.
+ *
+ * true도 "정책 페이지가 떴다"는 뜻은 아니다. 네이티브가 URL을 다시 검증해 거부할 수 있고 그
+ * 판정은 웹으로 회신되지 않는다 — 여기서 true는 호출이 네이티브에 닿았다는 사실까지다.
+ */
+export function openExternalUrl(url: string): boolean {
+  const bridge = window.AccenturyBridge
+  if (typeof bridge?.openExternalUrl !== 'function') return false
+  bridge.openExternalUrl(url)
+  return true
+}
+
 export function installItemResultReceiver(handler: (result: ItemResult) => void): () => void {
   return installReceiver('onItemResult', (payloadJson) => {
     const result = parseItemResult(payloadJson)
