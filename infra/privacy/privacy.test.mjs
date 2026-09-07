@@ -147,6 +147,9 @@ test('1항 표의 보유 기간이 행마다 코드와 맞는다', () => {
     // 24시간(TestSession.java:140-157, CompletionService.java:169-175). 기준점이 둘이라 셋을 함께 본다.
     ['익명 테스트 세션', ['30분', '완료', '24시간'], 'session/SessionService.java, TestSession.java'],
     ['테스트 결과와 어휘 답안', ['24시간'], 'application.yml analysis.retention: 24h'],
+    // 카카오 공유 웹훅의 중복 판별용 수신 기록 (KAN-164). 기본값 7일은
+    // AccenturyProperties.Share.receiptRetention의 @DefaultValue이고, 정리 잡이 그 값으로 지운다.
+    ['공유 전송 알림 기록', ['7일'], 'AccenturyProperties.java:249, ShareWebhookReceiptRetention.java:36-40'],
     ['서버 운영 로그', ['14일'], 'infra/modules/fargate/variables.tf log_retention_days'],
     ['보안 로그', ['7일'], 'infra/modules/waf/variables.tf'],
     ['비정상 종료 로그', ['90일'], 'Crashlytics 콘솔 기본값'],
