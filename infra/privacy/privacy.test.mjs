@@ -42,6 +42,13 @@ test('외부 자원을 하나도 쓰지 않는다 (KAN-133 "S3 업로드만으�
   assert.ok(!/<link/i.test(html), '<link>가 있다');
   assert.ok(!/@import/i.test(html), 'CSS @import가 있다');
   assert.ok(!/url\(\s*['"]?http/i.test(html), 'CSS가 원격 자산을 참조한다');
+  // 자산을 끌어오는 태그 자체를 막는다. 위 넷은 스타일과 스크립트만 보므로, 본문에 이미지 한 장이
+  // 끼어들면 전부 통과한다 - 그러면 S3에 html 하나를 올리는 것으로 교체가 끝나지 않는다.
+  for (const tag of ['<img', '<iframe', '<source', '<object', '<embed', '<video', '<audio']) {
+    assert.ok(!html.toLowerCase().includes(tag), `${tag}>가 있다`);
+  }
+  // src 속성은 위 태그 목록이 놓친 경로(<input src>, 미래의 새 태그)까지 한 번에 덮는다.
+  assert.ok(!/\ssrc=/i.test(html), 'src 속성이 있다');
 });
 
 test('자리표시자 문구가 남아 있지 않다', () => {
@@ -91,6 +98,66 @@ test('임시 파일 청소 기준 30분이 적혀 있다 (KAN-27, ai temp-retent
 
 test('세션·결과 보유 기간 24시간이 적혀 있다 (KAN-25, backend retention: 24h)', () => {
   assert.ok(html.includes('24시간'), '24시간 보유 기간이 없다');
+});
+
+// ---------------------------------------------------------------------------
+// 1항 표의 행 단위 검사.
+//
+// 위 세 테스트는 「30분」·「24시간」·「즉시 삭제」가 문서 어딘가에 한 번이라도 있으면 통과한다.
+// 그래서 표의 보유 기간 칸이 통째로 틀려도, 다른 절에 같은 낱말이 남아 있는 한 아무 경보가
+// 울리지 않는다 (2026-09-07 Codex 검증 지적). 심사관과 이용자가 실제로 읽는 것은 이 표이므로,
+// 「어느 구분의 보유 기간이 무엇인가」를 행에 묶어서 본다.
+// ---------------------------------------------------------------------------
+
+/** 1항 표의 각 행을 `{ 구분, 보유기간 }`으로 뽑는다. 의존성 없이 문자열만 자른다. */
+function retentionRows() {
+  const section = html.slice(
+    html.indexOf('<h2>1. 개인정보의 처리 목적'),
+    html.indexOf('<h2>2. 개인정보의 제3자 제공'),
+  );
+  assert.ok(section.length > 0, '1항을 찾지 못했다 - 절 제목이 바뀌었나');
+  const rows = new Map();
+  for (const row of section.split('<tr>').slice(1)) {
+    const cells = [...row.matchAll(/<td>([\s\S]*?)<\/td>/g)].map((m) =>
+      m[1].replace(/\s+/g, ' ').trim(),
+    );
+    // thead의 <th> 행은 <td>가 없어 자연히 걸러진다.
+    if (cells.length < 2) continue;
+    rows.set(cells[0], cells[cells.length - 1]);
+  }
+  return rows;
+}
+
+test('1항 표의 보유 기간이 행마다 코드와 맞는다', () => {
+  const rows = retentionRows();
+  // [구분, 그 행의 보유 기간 칸에 반드시 있어야 하는 문자열들, 근거]
+  const expected = [
+    ['음성 녹음', ['즉시 삭제'], 'KAN-27, ai/app/tempstore.py'],
+    // 미완주 세션은 생성 30분 뒤 만료 정리(SessionService.java:132), 완주 세션은 완료 시점부터
+    // 24시간(TestSession.java:140-157, CompletionService.java:169-175). 기준점이 둘이라 셋을 함께 본다.
+    ['익명 테스트 세션', ['30분', '완료', '24시간'], 'session/SessionService.java, TestSession.java'],
+    ['테스트 결과와 어휘 답안', ['24시간'], 'application.yml analysis.retention: 24h'],
+    ['서버 운영 로그', ['14일'], 'infra/modules/fargate/variables.tf log_retention_days'],
+    ['보안 로그', ['7일'], 'infra/modules/waf/variables.tf'],
+    ['비정상 종료 로그', ['90일'], 'Crashlytics 콘솔 기본값'],
+  ];
+  for (const [label, needles, source] of expected) {
+    const cell = rows.get(label);
+    assert.ok(cell !== undefined, `1항 표에 「${label}」 행이 없다`);
+    for (const needle of needles) {
+      assert.ok(
+        cell.includes(needle),
+        `「${label}」 행의 보유 기간에 「${needle}」이 없다 (근거: ${source}) - 실제: ${cell}`,
+      );
+    }
+  }
+});
+
+test('세션 보유 기간의 기준점이 「생성 시점」으로 되돌아가지 않았다', () => {
+  // 완주 세션의 24시간은 세션 생성이 아니라 완료 시점부터 센다 (CompletionService.java:169-175가
+  // markCompleted로 만료를 다시 잡는다). 1단계 초안에 있던 「세션 생성 24시간 후」가 되살아나면
+  // 실제보다 긴 보유 기간을 고지하게 된다.
+  assert.ok(!html.includes('세션 생성 24시간'), '「세션 생성 24시간」이 남아 있다');
 });
 
 test('맞춤형 광고 절이 있고 동의·거부 방법이 적혀 있다 (2026-09-07 팀 결정: 1차 배포에 광고 포함)', () => {
