@@ -113,6 +113,12 @@ locals {
     for repo in ["accentury/backend", "accentury/ai"] :
     "arn:aws:ecr:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:repository/${repo}"
   ]
+  # ai 이미지의 베이스인 모델 전달본 (KAN-22, ai/Dockerfile의 FROM). 파이프라인이 ai 이미지를 빌드하려면
+  # 이 리포지토리에서 pull할 수 있어야 한다 - 없으면 docker build가 manifest HEAD에서 403으로 죽는다
+  # (2026-09-07 Dev 빌드 실패의 원인). 읽기만이다 - 모델은 모델 담당이 CLI 자격으로 올린다 (KAN-173).
+  ecr_base_image_arns = [
+    "arn:aws:ecr:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:repository/accentury/ai-model"
+  ]
   parameter_arn_prefix = "arn:aws:ssm:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:parameter${var.ssm_prefix}"
 }
 
@@ -228,7 +234,7 @@ data "aws_iam_policy_document" "image_deploy" {
       "ecr:GetDownloadUrlForLayer",
       "ecr:BatchCheckLayerAvailability",
     ]
-    resources = local.ecr_repository_arns
+    resources = concat(local.ecr_repository_arns, local.ecr_base_image_arns)
   }
 
   # push는 staging만 (ci_image_push). 삭제 권한은 어디에도 없다 - IMMUTABLE 태그를 지워 다시 올리는
