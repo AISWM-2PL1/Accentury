@@ -85,15 +85,17 @@ class KakaoShareWebhookApiTest extends IntegrationTest {
 
     @Test
     void 관리자_집계_조회에_전송_수가_실린다() throws Exception {
-        mockMvc.perform(webhook(newResourceId()).header(HttpHeaders.AUTHORIZATION, "KakaoAK " + KEY))
-                .andExpect(status().isOk());
-        String today = LocalDate.now(properties.analytics().zone()).toString();
+        withinOneDay(() -> {
+            mockMvc.perform(webhook(newResourceId()).header(HttpHeaders.AUTHORIZATION, "KakaoAK " + KEY))
+                    .andExpect(status().isOk());
+            String today = LocalDate.now(properties.analytics().zone()).toString();
 
-        mockMvc.perform(get("/admin/v0/analytics").header(AdminAuth.TOKEN_HEADER, ADMIN_TOKEN)
-                        .param("from", today).param("to", today))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.shares.rows[*].campaign").value(hasItem(CAMPAIGN)))
-                .andExpect(jsonPath("$.shares.totalSent").value(org.hamcrest.Matchers.greaterThanOrEqualTo(1)));
+            mockMvc.perform(get("/admin/v0/analytics").header(AdminAuth.TOKEN_HEADER, ADMIN_TOKEN)
+                            .param("from", today).param("to", today))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.shares.rows[*].campaign").value(hasItem(CAMPAIGN)))
+                    .andExpect(jsonPath("$.shares.totalSent").value(org.hamcrest.Matchers.greaterThanOrEqualTo(1)));
+        });
     }
 
     // === AC 2 - 서명이 틀린 요청은 거부되고 카운터가 증가하지 않는다 ===
@@ -214,32 +216,52 @@ class KakaoShareWebhookApiTest extends IntegrationTest {
     }
 
     @Test
-    void JSON_본문의_문자열_값_안에_든_폼_조각은_캠페인이_아니다() throws Exception {
-        // 폼 폴백은 JSON 파싱 실패에만 건다 (Claude 리뷰). campaign이 문자열이 아닌 유효한 JSON의 다른 값에
-        // 폼 조각이 들어 있어도 존재하지 않는 캠페인 행이 생기면 안 된다.
-        mockMvc.perform(webhook(newResourceId()).header(HttpHeaders.AUTHORIZATION, "KakaoAK " + KEY)
-                        .content("""
-                                {"campaign": 1, "HASH_CHAT_ID": "a&campaign=zzz&b"}"""))
-                .andExpect(status().isOk());
+    void 폼_본문의_앞_조각이_깨져도_뒤의_캠페인을_읽는다() throws Exception {
+        // 첫 조각의 디코딩 실패가 스캔 전체를 접으면 멀쩡한 campaign이 unknown으로 샌다 (PR #88 리뷰).
+        withinOneDay(() -> {
+            long before = sent(CAMPAIGN);
 
-        assertTrue(counters.findById(ShareDailyCounter.idOf(today(), "zzz")).isEmpty(),
-                "JSON 문자열 값 안의 폼 조각이 캠페인으로 잡히면 안 된다");
+            mockMvc.perform(post(URL).header(HttpHeaders.AUTHORIZATION, "KakaoAK " + KEY)
+                            .header(RESOURCE_ID_HEADER, newResourceId())
+                            .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                            .content("%zz=1&campaign=kko_share"))
+                    .andExpect(status().isOk());
+
+            assertEquals(before + 1, sent(CAMPAIGN));
+        });
+    }
+
+    @Test
+    void JSON_본문의_문자열_값_안에_든_폼_조각은_캠페인이_아니다() throws Exception {
+        withinOneDay(() -> {
+            // 폼 폴백은 JSON 파싱 실패에만 건다 (Claude 리뷰). campaign이 문자열이 아닌 유효한 JSON의 다른 값에
+            // 폼 조각이 들어 있어도 존재하지 않는 캠페인 행이 생기면 안 된다.
+            mockMvc.perform(webhook(newResourceId()).header(HttpHeaders.AUTHORIZATION, "KakaoAK " + KEY)
+                            .content("""
+                                    {"campaign": 1, "HASH_CHAT_ID": "a&campaign=zzz&b"}"""))
+                    .andExpect(status().isOk());
+
+            assertTrue(counters.findById(ShareDailyCounter.idOf(today(), "zzz")).isEmpty(),
+                    "JSON 문자열 값 안의 폼 조각이 캠페인으로 잡히면 안 된다");
+        });
     }
 
     @Test
     void 본문_상한을_넘기면_400이고_세지_않는다() throws Exception {
-        // 카카오의 콜백은 수백 바이트다 - 그보다 훨씬 큰 본문은 인증을 통과했어도 다 읽어 주지 않는다 (리뷰 P1).
-        long before = sent("unknown");
-        String huge = "{\"pad\": \"" + "x".repeat(KakaoShareWebhookController.MAX_BODY_BYTES) + "\"}";
+        withinOneDay(() -> {
+            // 카카오의 콜백은 수백 바이트다 - 그보다 훨씬 큰 본문은 인증을 통과했어도 다 읽어 주지 않는다 (리뷰 P1).
+            long before = sent("unknown");
+            String huge = "{\"pad\": \"" + "x".repeat(KakaoShareWebhookController.MAX_BODY_BYTES) + "\"}";
 
-        mockMvc.perform(webhook(newResourceId()).header(HttpHeaders.AUTHORIZATION, "KakaoAK " + KEY).content(huge))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
-        // 키가 틀린 큰 본문은 본문을 보기 전에 401이다 - 인증이 첫 관문이라는 뜻이다.
-        mockMvc.perform(webhook(newResourceId()).header(HttpHeaders.AUTHORIZATION, "KakaoAK wrong").content(huge))
-                .andExpect(status().isUnauthorized());
+            mockMvc.perform(webhook(newResourceId()).header(HttpHeaders.AUTHORIZATION, "KakaoAK " + KEY).content(huge))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+            // 키가 틀린 큰 본문은 본문을 보기 전에 401이다 - 인증이 첫 관문이라는 뜻이다.
+            mockMvc.perform(webhook(newResourceId()).header(HttpHeaders.AUTHORIZATION, "KakaoAK wrong").content(huge))
+                    .andExpect(status().isUnauthorized());
 
-        assertEquals(before, sent("unknown"));
+            assertEquals(before, sent("unknown"));
+        });
     }
 
     @Test

@@ -168,8 +168,9 @@ class KakaoShareWebhookController {
     }
 
     /**
-     * {@code a=b&campaign=kko_share} 형태의 {@code campaign} - 없거나 디코딩이 깨지면 null. 값 하나를 찾는
-     * 것이 전부라 파서를 들이지 않는다. 같은 키가 여러 번이면 첫 값이다.
+     * {@code a=b&campaign=kko_share} 형태의 {@code campaign} - 없으면 null. 값 하나를 찾는 것이 전부라 파서를
+     * 들이지 않는다. 같은 키가 여러 번이면 첫 값이다. 디코딩이 깨진 조각은 그 조각만 건너뛴다 - 앞 조각이
+     * 깨졌다고 뒤의 멀쩡한 {@code campaign}까지 버리면 {@code unknown}으로 샌다 (PR #88 리뷰).
      */
     private static @Nullable String formCampaign(String body) {
         for (String pair : body.split("&")) {
@@ -182,7 +183,7 @@ class KakaoShareWebhookController {
                     return URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8);
                 }
             } catch (IllegalArgumentException malformed) {
-                return null;
+                continue;
             }
         }
         return null;
