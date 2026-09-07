@@ -1199,3 +1199,27 @@ a.btn {
   height: 100%;
   background: var(--color-muted-foreground);
 }
+
+/* ── 고지 한 줄 (KAN-177) ── */
+
+/*
+ * 인트로 하단의 개인정보처리방침 고지. 흐린 잉크로 적어 주버튼과 위계를 가른다 (KAN-161) —
+ * 읽어야 하는 줄이지만 누르러 온 것은 위의 버튼이라, 같은 농도로 적으면 화면에 눌러야 할
+ * 것이 둘로 보인다.
+ */
+.privacy-notice {
+  color: var(--color-muted-foreground);
+  text-wrap: balance;
+}
+
+/*
+ * 본문에 섞이는 링크. 잉크 한 색 화면이라 색으로는 링크임을 말할 수 없어 밑줄이 유일한
+ * 단서다 — 색을 바꾸면 팔레트 밖의 색조가 하나 생긴다.
+ *
+ * 밑줄을 글자에서 살짝 띄운다. 한글은 받침이 기준선까지 내려와 기본 위치의 밑줄과 붙는다.
+ */
+.text-link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}

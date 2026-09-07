@@ -7,6 +7,7 @@ import {
   isBridgeCompatible,
   isStandaloneWeb,
   logAnalyticsEvent,
+  openExternalUrl,
   REQUIRED_BRIDGE_VERSION,
   requestMicPermission,
   shareResult,
@@ -367,5 +368,25 @@ describe('logAnalyticsEvent — 계측 이벤트 전달 (KAN-33)', () => {
     window.AccenturyBridge = fakeBridge() // logEvent 없음
 
     expect(logAnalyticsEvent('referral_opened', { campaign: null })).toBe(false)
+  })
+})
+
+describe('openExternalUrl — 외부 링크 넘기기 (KAN-177)', () => {
+  it('URL을 그대로 네이티브에 넘기고 true를 돌려준다', () => {
+    const open = vi.fn()
+    window.AccenturyBridge = fakeBridge({ openExternalUrl: open })
+
+    expect(openExternalUrl('https://accentury.app/privacy.html')).toBe(true)
+    expect(open).toHaveBeenCalledWith('https://accentury.app/privacy.html')
+  })
+
+  it('브리지가 없으면(브라우저 단독) false — 호출자가 링크 기본 동작에 맡긴다', () => {
+    expect(openExternalUrl('https://accentury.app/privacy.html')).toBe(false)
+  })
+
+  it('메서드를 모르는 구버전 앱에서도 false다 (메서드 추가는 계약 버전을 올리지 않는다)', () => {
+    window.AccenturyBridge = fakeBridge() // openExternalUrl 없음
+
+    expect(openExternalUrl('https://accentury.app/privacy.html')).toBe(false)
   })
 })

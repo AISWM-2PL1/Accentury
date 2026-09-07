@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { requestMicrophonePermission, type MicPermission } from '../audio/microphone'
 import { detectStorePlatform } from '../audio/storeLink'
 import { requestMicPermission } from '../bridge/bridge'
+import { PrivacyNotice } from '../legal/PrivacyNotice'
 import { Button } from '../ui'
 import { TextHero } from '../ui/TextHero'
 import {
@@ -167,6 +168,14 @@ export function IntroScreen({
         <Button onClick={handleStart} disabled={requesting} style={{ width: '100%' }}>
           {requesting ? '마이크 확인 중…' : '시작하기'}
         </Button>
+        {/*
+          고지는 버튼 **아래**다 (KAN-177). [시작하기]가 곧 마이크 권한 요청이라, 대화상자가
+          뜨기 직전 마지막으로 읽히는 자리에 둬야 고지 노릇을 한다.
+
+          버튼의 크기도 탭 영역도 그대로다 — 늘어나는 것은 하단 자리의 높이뿐이고, 바닥에
+          붙는 것이 버튼에서 이 한 줄로 바뀐다. 캡션 글자라 주버튼과 무게가 겹치지 않는다.
+        */}
+        <PrivacyNotice />
       </div>
     </main>
   )
