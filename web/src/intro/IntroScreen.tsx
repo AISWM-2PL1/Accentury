@@ -120,12 +120,15 @@ export function IntroScreen({
               <br />
               좀 치나?
             </TextHero>
-            <span className="intro-heading__underline" aria-hidden />
-            <span className="intro-heading__sparks" aria-hidden>
-              <span />
-              <span />
-              <span />
-            </span>
+            {/* 직선 막대는 글자에 밑줄을 긋지만, 얕은 아치는 둘째 줄을 아래에서 받치는 손짓이다. */}
+            <svg
+              className="intro-heading__underline"
+              viewBox="0 0 200 20"
+              preserveAspectRatio="none"
+              aria-hidden
+            >
+              <path d="M 4 4 Q 100 18 196 4" vectorEffect="non-scaling-stroke" />
+            </svg>
           </div>
           <p className="type-body-sm intro-subtitle">내 목소리로 확인하는 사투리 억양</p>
         </div>

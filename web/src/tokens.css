@@ -134,7 +134,6 @@
   --intro-grid-dot-size: 1px;
   --intro-badge-border-width: 1.5px;
   --intro-emphasis-line-width: 7px;
-  --intro-spark-line-width: 3px;
   /* F0 곡선 레인 하나. 앱 Dimens.curveLaneHeight와 같은 값이다 (design-tokens.md) —
      시안(72px)보다 키웠다: 실제 기기에서는 아래가 비어 곡선이 납작했다 */
   --curve-lane-height: 120px;
