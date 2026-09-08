@@ -85,6 +85,7 @@
      본문 글꼴로 적으면 "지금 몇 초"가 문단의 한 낱말처럼 읽힌다. 앱은 M3의 titleSmall 슬롯이
      이 값을 든다 (Type.kt) */
   --text-timer: 16px;
+  --text-intro-hero: 56px;
 
   /* 굵기는 둘뿐이다 (KAN-161 2단계). Jua는 굵기 하나짜리 폰트라 700·900을 주면 브라우저가
      합성 볼드를 만들어 획이 뭉갠다 — 제목·대사·등급은 전부 400이다. 본문에서 무게를 주는
@@ -129,6 +130,11 @@
   /* 진행 도트 하나의 두께. 막대와 값은 같지만 뜻이 다르다 — 저쪽은 그릇, 이쪽은 칸 하나다 */
   --progress-dot-height: 8px;
   --hero-icon-size: 112px;
+  --intro-grid-size: 32px;
+  --intro-grid-dot-size: 1px;
+  --intro-badge-border-width: 1.5px;
+  --intro-emphasis-line-width: 7px;
+  --intro-spark-line-width: 3px;
   /* F0 곡선 레인 하나. 앱 Dimens.curveLaneHeight와 같은 값이다 (design-tokens.md) —
      시안(72px)보다 키웠다: 실제 기기에서는 아래가 비어 곡선이 납작했다 */
   --curve-lane-height: 120px;

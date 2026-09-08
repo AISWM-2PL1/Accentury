@@ -41,8 +41,8 @@ export interface IntroScreenProps {
  * 권한이 없으면 테스트를 시작할 수 없다(API 명세서 §5.6) — 그래서 실패는 안내 화면으로
  * 갈아치운다. 인트로에 오류 문구만 붙이면 [시작하기]가 계속 눌리는 버튼으로 남는다.
  *
- * 배치는 Papercut 아트보드(`Main.dc.html`)를 따른다 — 확성기 일러스트, 제목·부제, 숫자 카드,
- * 바닥의 주버튼. 문항 수·시간은 `introText.ts`의 상수가 정본이라 KAN-10 연동 때 서버 값으로
+ * 배치는 Papercut 아트보드(`Main.dc.html`)를 따른다 — 워드마크·제목·숫자 카드와 바닥의
+ * 주버튼. 문항 수·시간은 `introText.ts`의 상수가 정본이라 KAN-10 연동 때 서버 값으로
  * 바꾸면 화면은 그대로 따라간다.
  */
 export function IntroScreen({
@@ -107,28 +107,27 @@ export function IntroScreen({
   }
 
   return (
-    <main className="screen">
+    <main className="screen intro-screen">
       <div className="screen__body">
-        {/*
-          종이 일러스트(확성기를 든 사람)를 걷어내고 글자를 세웠다 (KAN-178). 그림은 이 앱이
-          무엇을 하는 곳인지 말하지 않았다 — 첫 화면은 사용자에게 말을 걸어야 하고, 그건
-          그리는 것보다 적는 편이 빠르다.
-
-          히어로가 이 화면의 h1이다. 아래에 있던 제목("사투리 억양 테스트")을 걷어냈다 —
-          큰 글자로 말을 건 바로 밑에서 같은 말을 정색하고 되풀이하는 꼴이었고, 사용자가
-          그 두 줄에서 새로 얻는 정보가 없었다. 화면 이름을 말하는 것이 히어로 하나뿐이므로
-          `heading`으로 세운다 (`TextHero` 주석 참고).
-
-          제목이 빠진 만큼 히어로를 192px 슬롯에서 꺼내 부제와 한 덩어리로 묶었다 —
-          근거는 `.intro-hero` 주석에 적었다.
-        */}
+        {/* 배지는 테스트 종류를 보조할 뿐 화면 이름은 큰 문장 하나다. 그래서 `heading`은
+            히어로에만 주고 워드마크와 배지는 평문으로 남겨 h1이 둘로 갈리지 않게 한다. */}
         <div className="intro-hero">
-          <TextHero heading>사투리 좀 치나?</TextHero>
-          <p className="type-body-sm" style={{ color: 'var(--color-muted-foreground)' }}>
-            짧은 테스트로 내 억양이
-            <br />
-            얼마나 사투리인지 알아봐요.
-          </p>
+          <p className="type-title-sm intro-wordmark">Accentury</p>
+          <p className="type-caption intro-badge">사투리 억양 테스트</p>
+          <div className="intro-heading">
+            <TextHero heading>
+              사투리
+              <br />
+              좀 치나?
+            </TextHero>
+            <span className="intro-heading__underline" aria-hidden />
+            <span className="intro-heading__sparks" aria-hidden>
+              <span />
+              <span />
+              <span />
+            </span>
+          </div>
+          <p className="type-body-sm intro-subtitle">내 목소리로 확인하는 사투리 억양</p>
         </div>
 
         {/*
@@ -148,6 +147,7 @@ export function IntroScreen({
             음성 {VOICE_ITEM_COUNT} · 단어 {VOCABULARY_ITEM_COUNT}
           </p>
         </div>
+        <p className="type-body-sm intro-prompt">사투리 좀 치는지, 지금 확인해봐요.</p>
       </div>
 
       <div className="screen__footer">
@@ -165,8 +165,14 @@ export function IntroScreen({
           것은 결과 화면에서 [다시 테스트하기]로 말하면 되고, 시작하기 전에 미리 말하면
           하단이 두 줄이 되어 주 버튼 하나만 남기는 시안의 배치가 흐려진다.
         */}
-        <Button onClick={handleStart} disabled={requesting} style={{ width: '100%' }}>
-          {requesting ? '마이크 확인 중…' : '시작하기'}
+        <Button className="intro-cta" onClick={handleStart} disabled={requesting}>
+          {requesting ? (
+            '마이크 확인 중…'
+          ) : (
+            <>
+              내 억양 테스트하기 <span aria-hidden>→</span>
+            </>
+          )}
         </Button>
         {/*
           고지는 버튼 **아래**다 (KAN-177). [시작하기]가 곧 마이크 권한 요청이라, 대화상자가

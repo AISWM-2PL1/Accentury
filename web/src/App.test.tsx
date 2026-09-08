@@ -166,7 +166,7 @@ describe('App — 스큐 판정 분기', () => {
     expect(screen.getByText('~3분')).toBeInTheDocument()
     // 이모지를 뺀 한 줄로 합쳤다 (KAN-161 3단계, 아트보드 `Main.dc.html`)
     expect(screen.getByText('음성 5 · 단어 5')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '시작하기' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '내 억양 테스트하기' })).toBeInTheDocument()
   })
 
   /*
@@ -179,14 +179,14 @@ describe('App — 스큐 판정 분기', () => {
     stubBridge()
     render(<App />)
     expect(screen.getByText('앱 업데이트가 필요해요')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '시작하기' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '내 억양 테스트하기' })).not.toBeInTheDocument()
   })
 
   it('브리지 객체도 쿼리도 없으면(웹 단독 실행) 인트로가 뜬다 (KAN-31)', () => {
     // 공유 링크를 앱 없이 그대로 연 사람이 이 경로다
     setSearch('?c=kko_share')
     render(<App />)
-    expect(screen.getByRole('button', { name: '시작하기' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '내 억양 테스트하기' })).toBeInTheDocument()
     expect(screen.queryByText('앱 업데이트가 필요해요')).not.toBeInTheDocument()
   })
 })
@@ -240,7 +240,7 @@ describe('App — 문항 진행 화면 진입 쿼리 (KAN-100: 네이티브가 �
   it('screen 파라미터가 없으면 기존대로 인트로다', () => {
     setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0`)
     render(<App />)
-    expect(screen.getByRole('button', { name: '시작하기' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '내 억양 테스트하기' })).toBeInTheDocument()
   })
 })
 
@@ -296,7 +296,7 @@ describe('App — 웹 단독 실행 (KAN-31)', () => {
 
   /** 인트로 [시작하기] — 웹 마이크 게이트가 비동기라 microtask를 비운다 */
   async function tapStart() {
-    fireEvent.click(screen.getByRole('button', { name: '시작하기' }))
+    fireEvent.click(screen.getByRole('button', { name: '내 억양 테스트하기' }))
     await act(async () => {})
     await act(async () => {})
   }
@@ -900,7 +900,7 @@ describe('IntroScreen — [시작하기] 결선', () => {
       getContractVersion: () => 1,
     }
     render(<App />)
-    screen.getByRole('button', { name: '시작하기' }).click()
+    screen.getByRole('button', { name: '내 억양 테스트하기' }).click()
     expect(fn).toHaveBeenCalledTimes(1)
   })
 })
@@ -1195,7 +1195,7 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
     const capture = createFakeCapture()
 
     render(<App navigate={vi.fn()} voiceCheckCapture={capture.factory} />)
-    fireEvent.click(screen.getByRole('button', { name: '시작하기' }))
+    fireEvent.click(screen.getByRole('button', { name: '내 억양 테스트하기' }))
     // 웹 마이크 게이트가 비동기다
     await act(async () => {})
     await act(async () => {})
@@ -1326,7 +1326,7 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
 
     render(<App />)
 
-    expect(screen.getByRole('button', { name: '시작하기' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '내 억양 테스트하기' })).toBeInTheDocument()
     // 세는 사건은 하나이고 경로만 갈린다. 둘 다로 가면 퍼널의 분모가 실제보다 커진다
     expect(native).toEqual([{ event: 'referral_opened', campaign: 'kko_share' }])
     expect(queue).toEqual([])
@@ -1344,7 +1344,7 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
      * 대역을 굳이 심어 두고 확인하는 것은 [track]의 판정이 그 사실에 기대지 않는다는 점이다 —
      * 구버전 앱의 이벤트를 웹 스트림으로 흘려보내면 앱 사용자가 웹 트래픽으로 세어진다.
      */
-    expect(screen.getByRole('button', { name: '시작하기' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '내 억양 테스트하기' })).toBeInTheDocument()
     expect(queue).toEqual([])
   })
 })
