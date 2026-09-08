@@ -81,12 +81,6 @@ export function CurveLane({ label, ariaLabel, segments, variant }: CurveLaneProp
   const hasCurve = segments.some((points) => points.length >= 2)
   const halftone = isUser && hasCurve
   const color = isUser ? 'var(--color-user-curve)' : 'var(--color-guide-curve)'
-  /*
-   * 망점은 곡선 색을 따르지 않고 잉크다. 내 곡선이 포인트 컬러가 되면서 채움까지 물들었는데,
-   * 선은 3px이고 채움은 곡선 아래 전부라 면적이 수십 배다 — 색이 "어느 쪽이 내 것인가"를
-   * 짚는 몫을 넘어 레인의 바탕이 되어 버린다. 선만 색이면 그 몫이 선에 남는다.
-   */
-  const halftoneColor = 'var(--color-primary)'
   const strokeWidth = isUser ? USER_STROKE_WIDTH : GUIDE_STROKE_WIDTH
 
   // 첫 측정은 그리기 직전(useLayoutEffect)에 한다 - useEffect로 미루면 폴백 폭으로 한 번
@@ -140,7 +134,7 @@ export function CurveLane({ label, ariaLabel, segments, variant }: CurveLaneProp
                 cx={HALFTONE_STEP / 2}
                 cy={HALFTONE_STEP / 2}
                 r={HALFTONE_DOT}
-                fill={halftoneColor}
+                fill={color}
               />
             </pattern>
           </defs>
