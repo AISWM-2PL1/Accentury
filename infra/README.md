@@ -798,6 +798,7 @@ precondition이 plan에서 크기를 검사한다.
 iptables -S DOCKER-USER                         # DROP 4줄 (docker0, br+ 각각 VPC 밖 NEW, IMDS)
 systemctl list-timers accentury-ai-health.timer  # 다음 실행 시각
 journalctl -u accentury-ai-health -n 3           # "ai health=200 -> Healthy=1"
+docker logs --tail 20 $(docker compose ps -q ai)  # 이중 로깅으로 그대로 읽힌다 (KAN-203). 교체 뒤 로그는 CloudWatch
 docker compose exec ai python -c "import urllib.request; urllib.request.urlopen('http://169.254.169.254/latest/meta-data/', timeout=2)"  # 실패해야 정상
 ```
 
@@ -1325,6 +1326,7 @@ CloudWatch 표준 경보는 개당 월 0.10달러, 지표 math 경보(`alb-5xx`)
 | --- | --- |
 | 대시보드 1개 | `accentury-{env}-ops` (환경 루트의 `terraform output -raw dashboard_url`이 바로가기) |
 | 경보 3종 | `ai-temp-residue`, `analysis-backlog-high`, `analysis-timeouts-high` |
+| 로그 그룹 1개 | `/accentury/{env}/ai` (KAN-203, 아래 "ai 컨테이너 로그"). backend `/accentury/{env}/backend`는 KAN-165가 만든다 |
 
 경보는 앞 절과 **같은 SNS 토픽**으로 간다. 심각도별 채널을 나누지 않는다 - 3인 팀에 채널이
 여럿이면 어느 쪽도 보지 않게 된다. 모듈 출력 `alarm_names`가 10종 전부를 준다.
@@ -1362,6 +1364,98 @@ sudo /opt/accentury/ai-health-metric.sh
 # ai health=200 -> Healthy=1, tempFiles=0, tempOldestAge=0, tempScanFailures=0 (accentury/ai env=staging)
 ```
 
+### ai 컨테이너 로그 (KAN-203)
+
+지표가 "무엇이 나빠졌는가"라면 이 로그는 **"왜 그렇게 됐는가"**다. 실모델 전환(KAN-22) 뒤 추론 실패의
+원인(내용 게이트 판정 실패, 워커 500, 워커 재적재, 시간 초과 503)은 ai 컨테이너 로그에만 있는데,
+로깅 드라이버가 `json-file`이던 동안 그 로그는 호스트 디스크에만 있었다. ASG가 인스턴스를 교체하면
+(`ai-unhealthy` 경보, 시작 템플릿 갱신에 따른 instance refresh) 원인이 인스턴스와 함께 사라졌다.
+
+| 항목 | 값 |
+| --- | --- |
+| 로그 그룹 | `/accentury/{env}/ai`. Terraform `modules/ai-host`가 만든다 |
+| 보존 | 14일. backend `/accentury/{env}/backend`와 같은 값이고 두 환경이 같다 (`log_retention_days` 기본값, tfvars로 덮지 않는다) |
+| 스트림 | `ai/<인스턴스 ID>`. 교체 전후가 갈리므로 **교체 뒤에도 이전 인스턴스의 로그가 남는다** |
+| 드라이버 | compose `logging`의 `awslogs` + `mode: non-blocking` + `max-buffer-size: 4m` |
+| 호스트 디스크 | `docker logs`용 사본만 남는다. 상한을 `cache-max-size: 10m` x `cache-max-file: 5` = 50MB로 고정했다 (옛 json-file과 같은 값. **기본값은 20MB x 5 = 100MB**라 그냥 두면 디스크를 더 쓴다) |
+| 권한 | 인스턴스 역할에 `logs:CreateLogStream`, `logs:PutLogEvents`뿐이다. 쓰기 전용이고 그룹 생성과 되읽기 권한은 없다 |
+
+**`docker logs`는 그대로 읽힌다.** 도커의 **이중 로깅** 덕이다 - 원격 드라이버를 쓰면 엔진이
+`local` 드라이버로 사본을 하나 더 남기고 `docker logs`가 그것을 읽는다 (2026-09-09 staging 실측,
+docker 25.0.16, 사본은 `/var/lib/docker/containers/<id>/container-cached.log`). 그래서 배포
+파이프라인의 unhealthy 진단(`deploy.yml`의 `docker logs --tail 60`)도 그대로 쓴다.
+
+한계가 하나 있다. **원격 전송이 실패한 줄은 사본에도 안 쌓이고 재시도하지 않는다** - CloudWatch가
+막힌 구간은 `docker logs`로도 안 보인다 (그 줄들은 드라이버 버퍼에 남아 복구 뒤 CloudWatch로 늦게
+간다. 아래 "로그 전송 차단 실증"). 그리고 사본은 링 버퍼라 오래된 줄은 밀려 나간다 - **교체를 넘겨
+보존되는 것은 CloudWatch 쪽뿐이다.**
+
+호스트에서 CloudWatch로 직접 볼 때 (교체된 인스턴스의 로그도 이 경로다):
+
+```bash
+# ai 호스트 (SSM Session Manager) 또는 로컬 - 지금 이 인스턴스의 마지막 60줄
+aws logs get-log-events --region ap-northeast-2 --log-group-name /accentury/staging/ai \
+  --log-stream-name "ai/<인스턴스 ID>" --limit 60 --query 'events[].message' --output text | tr '\t' '\n'
+```
+
+correlationId 하나로 backend와 ai를 잇는 Logs Insights 질의는 `docs/wiki/observability.md`의 "실패한
+세션 하나를 추적하는 절차"가 정본이다. 그룹 선택에서 접두사 `/accentury/{env}/` 한 번으로 두 그룹이
+함께 걸리도록 이름을 맞춘 것이다.
+
+로그 전송이 막혔을 때의 성질:
+
+- `mode: non-blocking`이라 버퍼(4MB)가 찰 때까지 컨테이너 프로세스는 로그 쓰기에 붙들리지 않고, 차면
+  **새 줄을 버린다**. 추론이 밀리는 것보다 로그 몇 줄을 잃는 것이 낫다는 판단이다.
+- 로그 드라이버는 컨테이너가 아니라 **호스트 dockerd**에서 나간다. 컨테이너 egress 가드(iptables
+  `DOCKER-USER`, KAN-36)는 컨테이너 브리지에서 시작되는 연결만 보므로 로그 전송과 무관하다.
+
+### 로그 전송 차단 실증 (2026-09-09, staging)
+
+"로그가 안 나가면 추론도 멈추는 것 아닌가"를 실측으로 닫아 둔 기록이다. 로깅 드라이버를 바꿀 때
+(또는 `mode`를 건드릴 때) 같은 절차로 다시 본다.
+
+차단 방법이 중요하다. **`/etc/hosts`만 무효화해서는 막히지 않는다** - dockerd가 이미 맺어 둔
+연결을 계속 쓰기 때문에 새 DNS 조회가 일어나지 않는다. 실제 도달 불가를 만들려면 호스트
+`iptables OUTPUT`에서 그 IP의 443을 끊어야 한다.
+
+```bash
+# ai 호스트 (SSM Session Manager). 반드시 되돌릴 것 - 아래 안전망을 먼저 건다
+EP=logs.ap-northeast-2.amazonaws.com
+getent ahostsv4 $EP | awk '{print $1}' | sort -u > /tmp/logs-ips
+# 다른 서비스와 IP가 겹치면 SSM 세션까지 끊긴다. 겹침 검사가 먼저다
+for svc in ssm ssmmessages ec2messages monitoring api.ecr; do
+  getent ahostsv4 $svc.ap-northeast-2.amazonaws.com | awk '{print $1}'
+done | sort -u > /tmp/other-ips
+comm -12 /tmp/logs-ips /tmp/other-ips    # 출력이 있으면 하지 않는다
+
+# 안전망: 세션이 끊겨도 300초 뒤 스스로 풀린다
+setsid bash -c 'sleep 300; for ip in $(cat /tmp/logs-ips); do
+  while iptables -C OUTPUT -d $ip -p tcp --dport 443 -j DROP 2>/dev/null; do
+    iptables -D OUTPUT -d $ip -p tcp --dport 443 -j DROP; done; done' >/dev/null 2>&1 </dev/null &
+
+for ip in $(cat /tmp/logs-ips); do iptables -I OUTPUT -d $ip -p tcp --dport 443 -j DROP; done
+```
+
+실측 결과 (인스턴스 `i-0474d5e02dfabab6a`, logs 엔드포인트 IP 6개를 끊은 상태):
+
+| 항목 | 결과 |
+| --- | --- |
+| 컨테이너 재생성 | `docker compose up -d --force-recreate` 종료 코드 0. 기동이 막히지 않는다 |
+| 준비 상태 | health UP까지 12초 (평시와 같다 - 가중치는 페이지 캐시에 있다) |
+| 분석 요청 | 2.69초, 2.52초, 2.60초. 차단 전 2.51초, 복구 뒤 2.70초와 차이가 없다 |
+| 401 경로 | 1.3~1.7ms. 로그 한 줄을 만드는 요청도 밀리지 않는다 |
+| 차단 중 남긴 줄 | **버려지지 않았다.** 복구 뒤 25~75초 늦게 전부 도착했다 (드라이버가 버퍼를 들고 재시도한다) |
+| 차단 중 컨테이너를 다시 만들면 | 그 컨테이너 버퍼에 남아 있던 줄은 사라진다 (직전 한 줄이 유실됐다) |
+| 차단 중 `docker logs` | 그 구간의 줄은 보이지 않는다 - 이중 로깅은 원격 쓰기가 실패하면 사본도 남기지 않는다 |
+
+읽는 법은 둘이다. **짧은 CloudWatch 장애로는 로그를 잃지 않는다** - 버퍼(4MB) 안이면 늦게라도
+온다. 그리고 **로그가 못 나가는 것이 추론을 멈추지 않는다** - 이것이 `mode: non-blocking`의
+목적이고, 위 숫자가 그 증거다.
+
+덤으로 확인된 것 하나. 이 차단은 호스트 `OUTPUT` 체인에서만 걸렸다. 컨테이너 egress 가드
+(`DOCKER-USER`, KAN-36)는 실증 내내 그대로 있었고 로그 전송에 아무 영향이 없었다 - **로그
+드라이버 트래픽이 컨테이너가 아니라 호스트 dockerd에서 나간다**는 전제가 실측으로 확인된 것이다.
+
 ### 배포 뒤 확인 절차
 
 ```bash
@@ -1381,6 +1475,10 @@ aws cloudwatch list-metrics --region "$REGION" --namespace accentury/ai   --quer
 
 # 4. 대시보드가 값을 그리는가 - 스모크 한 바퀴(KAN-138) 뒤에 열어 본다
 terraform output -raw dashboard_url
+
+# 5. ai 컨테이너 로그가 오는가 (KAN-203). 스트림 이름의 인스턴스 ID가 지금 도는 인스턴스와 같아야 한다
+aws logs describe-log-streams --region "$REGION" --log-group-name "$(terraform output -raw ai_log_group)" \
+  --query 'logStreams[].[logStreamName,lastEventTimestamp]' --output table
 ```
 
 2번에 `accentury.http.requests.percentile.value`가 없으면 백분위 게이지 등록이 빠진 것이다 -
@@ -1397,6 +1495,12 @@ NFR-PF-01 판단에 안전한 쪽을 택한 것이고, 표본이 작은 새 태�
 0.40달러(`analysis-timeouts-high`는 지표 2개를 세는 math 경보라 0.20달러)다. 29개의 내역은
 `docs/wiki/observability.md`의 수집 경로 절에 표로 있다. 대시보드는 계정당
 3개까지 무료라 이 하나는 요금이 없다. 두 환경 합산 월 18달러 안팎이 늘어난다.
+
+ai 컨테이너 로그(KAN-203)는 요금이 수집량에 붙는다. 이 컨테이너가 남기는 것은 기동 줄 몇 개와
+요청당 종료 줄 한 줄(uvicorn 접근 로그 포함 두어 줄)이라, 하루 수백 문항 수준에서는 월 1MB대이고
+수집 요금(GB당 약 0.76달러)과 14일 보관 요금 모두 반올림하면 0달러에 가깝다. 늘어날 자리는 로그
+수준을 DEBUG로 내리거나(`ACCENTURY_AI_LOG_LEVEL`) 요청/응답 덤프를 켜는 변경이므로, 그때 이 줄을
+다시 본다.
 
 지표 수가 곧 요금이므로 **태그는 값이 다섯 이하로 닫힌 것만 쓴다** - 세션 ID나 IP를 태그로
 쓰면 요금이 트래픽에 비례한다. 이 규칙은 backend의 `ServiceMetrics` javadoc에도 적혀 있고,
@@ -1485,7 +1589,8 @@ terraform destroy
   --log-group-name-prefix /accentury`로 본다 (SCP가 tag:GetResources를 막는다).
 - 프라이빗 영역의 `ai.accentury.internal` A 레코드는 ai 인스턴스가 만든 것이라 Terraform
   밖이지만, 영역이 `force_destroy = true`라 destroy가 레코드째 지운다 (KAN-36). ASG는
-  인스턴스를 먼저 종료한 뒤 삭제된다.
+  인스턴스를 먼저 종료한 뒤 삭제된다. ai 컨테이너 로그 그룹 `/accentury/{env}/ai`(KAN-203)도
+  Terraform 소유라 로그째 지워진다 - 스트림은 인스턴스마다 쌓이지만 그룹 하나에 딸려 있다.
 - 미확인 SNS 이메일 구독은 AWS가 지워 주지 않아 state에서만 빠지지만, 토픽이
   삭제되면 딸린 구독도 함께 사라져 잔존물이 남지 않는다 (KAN-134). 재구축 때는
   토픽이 새로 생기므로 확인 메일이 다시 오고 다시 눌러야 한다.

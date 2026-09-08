@@ -32,7 +32,25 @@ data "aws_ssm_parameter" "al2023_ami" {
   name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
 }
 
-# ---- IAM: SSM Session Manager 접속 + ECR pull + 자기 하위 경로 파라미터 읽기 + 지표 + A 레코드 ----
+# ---- 컨테이너 로그 그룹 (KAN-203) ----
+
+# ai 컨테이너의 stdout과 stderr가 여기 쌓인다. compose의 로깅 드라이버가 json-file이던 동안 로그는 호스트
+# 디스크에만 있었고, ASG가 인스턴스를 교체하면(ai-unhealthy 경보, 시작 템플릿 갱신에 따른 instance refresh)
+# 추론 실패의 원인이 함께 사라졌다 - 실모델 전환(KAN-22) 뒤 그 원인(내용 게이트 판정 실패, 워커 재적재,
+# 시간 초과)은 이 컨테이너 로그에만 있다.
+#
+# 이름은 backend 로그 그룹 /accentury/{env}/backend(fargate 모듈)와 같은 슬래시 경로 규약이다. Logs Insights에서
+# 접두사 /accentury/{env}/ 하나로 두 계층을 함께 골라 correlationId로 이을 수 있고, teardown의 잔존 확인
+# (aws logs describe-log-groups --log-group-name-prefix /accentury)에도 그대로 걸린다.
+#
+# 그룹을 Terraform이 만들므로 드라이버에 awslogs-create-group을 주지 않는다 - 역할에서 logs:CreateLogGroup이
+# 빠지고, 이름이 어긋나면 조용히 새 그룹이 생기는 대신 컨테이너가 뜨지 않아 배포에서 바로 드러난다.
+resource "aws_cloudwatch_log_group" "ai" {
+  name              = "/accentury/${var.env}/ai"
+  retention_in_days = var.log_retention_days
+}
+
+# ---- IAM: SSM Session Manager 접속 + ECR pull + 자기 하위 경로 파라미터 읽기 + 지표 + 로그 + A 레코드 ----
 
 data "aws_iam_policy_document" "assume" {
   statement {
@@ -98,6 +116,19 @@ data "aws_iam_policy_document" "host" {
       variable = "cloudwatch:namespace"
       values   = [var.metric_namespace]
     }
+  }
+
+  # 컨테이너 로그를 자기 로그 그룹에 쓴다 (KAN-203). 쓰기 전용이다 - 그룹 생성(logs:CreateLogGroup)도
+  # 되읽기(logs:GetLogEvents)도 없다. 그룹은 위에서 Terraform이 만들고, 호스트에서 읽는 일은 도커의
+  # 이중 로깅 덕에 `docker logs`가 그대로 한다. 대상도 이 그룹의 스트림뿐이라(:* 접미사) backend 로그
+  # 그룹에는 쓰지 못한다.
+  statement {
+    sid = "WriteContainerLogs"
+    actions = [
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+    ]
+    resources = ["${aws_cloudwatch_log_group.ai.arn}:*"]
   }
 
   # 부팅 자산(compose 파일과 스크립트 3개)을 내려받는다 (KAN-38). 버킷 전체가 아니라 ai-host/ 접두사만이고
@@ -207,9 +238,11 @@ locals {
     ecr_registry     = local.ecr_registry
     region           = data.aws_region.current.region
     metric_namespace = var.metric_namespace
-    ai_dns_name      = var.dns_name
-    ai_zone_id       = var.private_zone_id
-    vpc_cidr         = var.vpc_cidr
+    # 컨테이너 로깅 드라이버가 쓰는 그룹 (KAN-203). 리소스를 참조하므로 그룹이 인스턴스보다 먼저 생긴다.
+    ai_log_group = aws_cloudwatch_log_group.ai.name
+    ai_dns_name  = var.dns_name
+    ai_zone_id   = var.private_zone_id
+    vpc_cidr     = var.vpc_cidr
     # 부팅 자산은 S3에서 받는다 (KAN-38). 해시는 파일 변경을 instance refresh로 잇는 고리다.
     boot_bucket      = aws_s3_bucket.boot.id
     boot_assets_hash = local.boot_assets_hash
