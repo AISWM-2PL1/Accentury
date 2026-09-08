@@ -191,8 +191,7 @@ Accentury 네이티브(Compose)와 웹(WebView)이 공유하는 색·타이포·
 | `text-intro-hero` | 56dp | 인트로 제목 전용 크기. §3의 `title`(30)보다 크다 — 첫 화면에서 이 두 줄이 화면의 주인공이라 다른 화면 제목과 같은 슬롯을 쓰면 무게가 안 선다. 웹 전용(`--text-intro-hero`) |
 | `intro-grid-size` / `intro-grid-dot-size` | 32dp / 1dp | 인트로 배경 점 격자의 간격과 점 크기. 색은 `primary-dim`이라 크림 위 1.46:1 — 읽히는 정보가 아니라 종이 결이다 |
 | `intro-badge-border-width` | 1.5dp | 인트로 알약 배지 테두리. 카드·선택지와 같은 굵기 |
-| `intro-emphasis-line-width` | 7dp | 제목 아래 포인트 컬러 밑줄의 두께 |
-| `intro-spark-line-width` | 3dp | 제목 옆 포인트 컬러 강조 사선의 두께 |
+| `intro-emphasis-line-width` | 7dp | 제목 아래 포인트 컬러 아치의 두께. SVG `stroke-width`로 들어가고 `non-scaling-stroke`라 폭이 변해도 굵기가 일정하다 |
 
 ## 5. 모션
 

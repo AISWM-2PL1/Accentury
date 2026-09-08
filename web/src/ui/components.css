@@ -397,44 +397,14 @@
 }
 
 .intro-heading__underline {
-  width: 70%;
-  height: var(--intro-emphasis-line-width);
-  border-radius: var(--radius-full);
-  background: var(--color-point);
-  transform: rotate(-2deg);
-}
-
-.intro-heading__sparks {
-  position: absolute;
-  top: var(--space-1);
-  right: calc(var(--space-6) * -1);
-  width: var(--space-8);
-  height: var(--space-8);
-}
-
-.intro-heading__sparks span {
-  position: absolute;
-  left: 0;
-  height: var(--intro-spark-line-width);
-  border-radius: var(--radius-full);
-  background: var(--color-point);
-  /* 만화식 반짝임은 한 점에서 퍼지는 부챗살이 아니라, 같은 방향으로 나란한 세 획이다. */
-  transform: rotate(27deg);
-}
-
-.intro-heading__sparks span:nth-child(1) {
-  top: 0;
-  width: var(--space-4);
-}
-
-.intro-heading__sparks span:nth-child(2) {
-  top: var(--space-2);
-  width: var(--space-6);
-}
-
-.intro-heading__sparks span:nth-child(3) {
-  top: var(--space-4);
-  width: var(--space-4);
+  display: block;
+  width: 100%;
+  height: var(--space-4);
+  overflow: visible;
+  fill: none;
+  stroke: var(--color-point);
+  stroke-width: var(--intro-emphasis-line-width);
+  stroke-linecap: round;
 }
 
 .intro-subtitle,
