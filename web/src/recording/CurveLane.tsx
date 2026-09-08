@@ -63,8 +63,8 @@ const HALFTONE_OPACITY = 0.5
 /** 폭을 아직 재지 못했을 때 쓸 값. 시안 기준 콘텐츠 폭(`--content-max-width`)이다 */
 const FALLBACK_WIDTH = 320
 
-/** 그리기 영역 높이 (px). 레인 높이 120에서 위 라벨 자리(16)와 아래 여백(4)을 뺀 값이다 */
-const DRAW_HEIGHT = 100
+/** 그리기 영역 높이 (px). 레인 높이 120에서 위 라벨 자리(24)와 아래 여백(4)을 뺀 값이다 */
+const DRAW_HEIGHT = 92
 
 export function CurveLane({ label, ariaLabel, segments, variant }: CurveLaneProps) {
   const svgRef = useRef<SVGSVGElement | null>(null)
