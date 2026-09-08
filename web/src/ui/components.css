@@ -448,42 +448,41 @@
   box-shadow: var(--shadow-card);
 }
 
-/* 숫자 두 칸. `1fr 1fr`이라 문항 수와 예상 시간이 정확히 반씩 갖는다 — flex로 두면 글자 수가
-   많은 쪽("10문항")이 더 넓어져 가운데 선이 카드 가운데에서 벗어난다 */
+/*
+ * 숫자 두 칸. `1fr 1fr`이라 문항 수와 예상 시간이 정확히 반씩 갖는다 — flex로 두면 글자 수가
+ * 많은 쪽("10문항")이 더 넓어져 가운데 선이 카드 가운데에서 벗어난다.
+ *
+ * 칸을 가르는 선을 **칸이 아니라 이 컨테이너가** 그린다. 둘째 칸의 왼쪽 테두리로 두면 선이
+ * `gap`의 오른쪽 끝에 붙어 카드 가운데에서 `gap`의 절반(8px)만큼 밀린다 — 두 칸이 반씩
+ * 나눠 가져도 그 사이의 빈 자리는 선의 왼쪽에만 생기기 때문이다. 배경으로 그리면
+ * `background-position: center`가 자리를 정하므로 칸 폭이나 gap이 바뀌어도 가운데다.
+ *
+ * 실선이 아니라 파선인 이유는 뜻이다 — 실선은 두 칸이 다른 상자라는 뜻이고 파선은 한 종이를
+ * 접은 자국이다. 여기 둘은 같은 테스트를 두 가지로 잰 값이라 후자가 맞다. 색이
+ * `muted-foreground`인 것도 같은 이유다: 잉크 실선이면 카드 테두리와 무게가 같아진다.
+ *
+ * **`dashed` 테두리를 쓰지 않는다** (KAN-199 #1). WebKit은 소수점 굵기(`1.5px`)의 `dashed`에서
+ * 대시 길이를 굵기로 계산하다 패턴이 무너져 대시 하나만 남긴다 — 2026-09-08 픽셀 대조에서
+ * 같은 화면의 구분선 색 픽셀이 Android(Blink) 88행, iOS(WebKit) 4행이었다. 사용자에게는
+ * "선이 없다"로 보인다. 실선으로 바꾸는 것은 답이 아니다: 위 문단이 파선을 고른 이유가 뜻이다.
+ * 반복 그라디언트는 대시와 간격 길이를 CSS가 직접 정하므로 두 엔진이 같은 자리를 칠한다.
+ */
 .card__stats {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-4);
-}
-
-.card__stat {
-  text-align: center;
-}
-
-/*
- * 칸을 가르는 선. 실선이 아니라 파선인 이유는 뜻이다 — 실선은 두 칸이 다른 상자라는 뜻이고
- * 파선은 한 종이를 접은 자국이다. 여기 둘은 같은 테스트를 두 가지로 잰 값이라 후자가 맞다.
- * 색이 `muted-foreground`인 것도 같은 이유다: 잉크 실선이면 카드 테두리와 무게가 같아진다.
- *
- * **`dashed`를 쓰지 않는다** (KAN-199 #1). WebKit은 소수점 굵기(`1.5px`)의 `dashed` 테두리에서
- * 대시 길이를 굵기로 계산하다 패턴이 무너져 대시 하나만 남긴다 — 2026-09-08 픽셀 대조에서
- * 같은 화면의 구분선 색 픽셀이 Android(Blink) 88행, iOS(WebKit) 4행이었다. 사용자에게는
- * "선이 없다"로 보인다. 실선으로 바꾸는 것은 답이 아니다: 위 문단이 파선을 고른 이유가 뜻이다.
- *
- * 그래서 대시를 테두리가 아니라 **그림이 그린다.** 반복 그라디언트는 대시와 간격 길이를 CSS가
- * 직접 정하므로 두 엔진이 같은 자리를 칠한다. 레이아웃 폭은 투명 테두리가 지키고,
- * `background-origin: border-box`가 그 테두리 자리에 무늬를 앉힌다.
- */
-.card__stat + .card__stat {
-  border-left: 1.5px solid transparent;
   background-image: repeating-linear-gradient(
     to bottom,
     var(--color-muted-foreground) 0 4px,
     transparent 4px 8px
   );
   background-size: 1.5px 100%;
+  background-position: center;
   background-repeat: no-repeat;
-  background-origin: border-box;
+}
+
+.card__stat {
+  text-align: center;
 }
 
 .card__stat-value {
