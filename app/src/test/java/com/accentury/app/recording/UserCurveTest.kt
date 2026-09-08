@@ -44,6 +44,15 @@ class UserCurveTest {
     }
 
     @Test
+    fun `발행본 실문항의 창은 가이드 길이에서 나오고 폴백과 다르다`() {
+        // 16ms 간격 240점 = 239구간 x 16ms = 3824ms, 창은 그 두 배 (KAN-194).
+        // 폴백(1000ms x 2 = 2000ms)과 확실히 갈리는 값이라, 창이 주저앉으면 이 수가 안 나온다.
+        val guide = GuideF0Fixture.REAL
+        assertEquals(3824L, guideDurationMs(guide.frameIntervalMs, guide.values.size))
+        assertEquals(7648L, userCurveWindowMs(guide.frameIntervalMs, guide.values.size))
+    }
+
+    @Test
     fun `가이드를 쓸 수 없으면 창 길이는 폴백 1초의 두 배다`() {
         assertEquals(2000L, userCurveWindowMs(frameIntervalMs = null, valueCount = null))
         assertEquals(2000L, userCurveWindowMs(frameIntervalMs = 10, valueCount = 1))
