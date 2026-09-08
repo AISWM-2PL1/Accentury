@@ -34,8 +34,8 @@ INK = "#1c1a17"
 CREAM = "#f3ecd9"
 PAPER_SHADOW = "#cfc5aa"
 MUTED_INK = "#6b6459"
-# 포인트 컬러 (정본 §2 VERMILION). 종이에 얹은 두 번째 잉크다
-VERMILION = "#b3341f"
+# 포인트 컬러 (정본 §2 TERRACOTTA). 종이에 얹은 두 번째 잉크다
+TERRACOTTA = "#a8503a"
 
 
 def _luminance(hex_color: str) -> float:
@@ -73,8 +73,8 @@ PAIRS = [
     ("`prompt-card-muted` / `prompt-card-start`", MUTED_INK, CREAM),
     ("`prompt-card-foreground` / `prompt-card-end`", INK, CREAM),
     ("`prompt-card-muted` / `prompt-card-end`", MUTED_INK, CREAM),
-    ("`point-foreground` / `point` (라이트)", CREAM, VERMILION),
-    ("`point` / `background` (라이트)", VERMILION, CREAM),
+    ("`point-foreground` / `point` (라이트)", CREAM, TERRACOTTA),
+    ("`point` / `background` (라이트)", TERRACOTTA, CREAM),
     ("`foreground` / `background` (다크)", INK, CREAM),
     ("`foreground` / `card` (다크)", INK, CREAM),
     ("`muted-foreground` / `background` (다크)", MUTED_INK, CREAM),
@@ -86,8 +86,8 @@ PAIRS = [
     ("`destructive-on-surface` / `destructive-surface` (다크)", INK, CREAM),
     ("`prompt-card-muted` / `prompt-card-start` (다크)", MUTED_INK, CREAM),
     ("`prompt-card-muted` / `prompt-card-end` (다크)", MUTED_INK, CREAM),
-    ("`point-foreground` / `point` (다크)", CREAM, VERMILION),
-    ("`point` / `background` (다크)", VERMILION, CREAM),
+    ("`point-foreground` / `point` (다크)", CREAM, TERRACOTTA),
+    ("`point` / `background` (다크)", TERRACOTTA, CREAM),
 ]
 
 # F0 곡선과 레인 테두리는 텍스트가 아니라 3:1이 기준이다 (WCAG 1.4.11).

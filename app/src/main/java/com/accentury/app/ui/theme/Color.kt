@@ -49,7 +49,7 @@ val LightAccentForeground = Color(0xFFF3ECD9)
  * 짚는 자리에만 쓰고, 정오답·오류에는 쓰지 않는다: 상태를 색으로 알리는 순간 잉크 하나로
  * 접어 둔 KAN-161의 근거(WCAG 1.4.1)가 무너진다.
  */
-val LightPoint = Color(0xFFB3341F)
+val LightPoint = Color(0xFFA8503A)
 val LightPointForeground = Color(0xFFF3ECD9)
 
 /**
@@ -119,7 +119,7 @@ val DarkMuted = Color(0xFFCFC5AA)
 val DarkMutedForeground = Color(0xFF6B6459)
 val DarkAccent = Color(0xFF1C1A17)
 val DarkAccentForeground = Color(0xFFF3ECD9)
-val DarkPoint = Color(0xFFB3341F)
+val DarkPoint = Color(0xFFA8503A)
 val DarkPointForeground = Color(0xFFF3ECD9)
 
 val DarkSuccess = Color(0xFF1C1A17)
