@@ -1,7 +1,7 @@
 import XCTest
 @testable import AccenturyCore
 
-/// 안드로이드 `recording/UserCurveTest.kt`의 1:1 이식본 (37개).
+/// 안드로이드 `recording/UserCurveTest.kt`의 1:1 이식본 (38개).
 final class UserCurveTests: XCTestCase {
 
     private static let frameMs: Int64 = 32
@@ -67,6 +67,15 @@ final class UserCurveTests: XCTestCase {
     func testWindowIsTwiceTheGuideLength() {
         XCTAssertEqual(2000, userCurveWindowMs(frameIntervalMs: 10, valueCount: 101))
         XCTAssertEqual(640, userCurveWindowMs(frameIntervalMs: 32, valueCount: 11))
+    }
+
+    /// `발행본 실문항의 창은 가이드 길이에서 나오고 폴백과 다르다`
+    func testRealItemWindowComesFromTheGuideAndDiffersFromTheFallback() {
+        // 16ms 간격 240점 = 239구간 x 16ms = 3824ms, 창은 그 두 배 (KAN-194).
+        // 폴백(1000ms x 2 = 2000ms)과 확실히 갈리는 값이라, 창이 주저앉으면 이 수가 안 나온다.
+        let guide = GuideF0Fixture.real
+        XCTAssertEqual(3824, guideDurationMs(frameIntervalMs: guide.frameIntervalMs, valueCount: guide.values.count))
+        XCTAssertEqual(7648, userCurveWindowMs(frameIntervalMs: guide.frameIntervalMs, valueCount: guide.values.count))
     }
 
     /// `가이드를 쓸 수 없으면 창 길이는 폴백 1초의 두 배다`
