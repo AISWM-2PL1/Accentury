@@ -181,16 +181,18 @@ final class WebConfigTests: XCTestCase {
 
     // MARK: - externalUrlToOpen: 앱 밖으로 내보낼 URL (KAN-177)
 
-    /// 우리 도메인의 https 문서는 그대로 돌려준다.
-    func testOurOwnHttpsDocumentsPassThroughUnchanged() {
+    /// prod 도메인의 https 문서는 그대로 돌려준다.
+    func testTheProdDocumentPassesThroughUnchanged() {
         XCTAssertEqual(
             "https://accentury.app/privacy.html",
             externalUrlToOpen("https://accentury.app/privacy.html")
         )
-        XCTAssertEqual(
-            "https://staging.accentury.app/privacy.html",
-            externalUrlToOpen("https://staging.accentury.app/privacy.html")
-        )
+    }
+
+    /// staging 호스트도 거절한다 - 방침은 정본이 하나이고 웹이 이 호스트를 보내지 않는다.
+    /// ``appLinkOrigins``와 갈리는 지점이다: 저쪽은 앱으로 들어오는 경로라 staging이 필요하다.
+    func testTheStagingHostIsRejectedToo() {
+        XCTAssertNil(externalUrlToOpen("https://staging.accentury.app/privacy.html"))
     }
 
     /// 경로와 포트가 달라도 호스트만 맞으면 통과한다 — `isAllowedWebUrl`과 갈리는 지점이다.

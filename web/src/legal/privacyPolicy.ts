@@ -16,8 +16,18 @@
  */
 
 /**
- * 기본값은 prod 문서다. 스테이징 웹은 `VITE_PRIVACY_POLICY_URL`로
- * `https://staging.accentury.app/privacy.html`을 덮어쓴다 (`audio/storeLink.ts`와 같은 규칙).
+ * **환경과 무관하게 언제나 prod 문서다.** staging 빌드도 이 주소를 연다.
+ *
+ * 방침은 법적 고지이고 정본이 하나여야 한다 - staging 웹을 쓰는 사람에게도 실제로 적용되는
+ * 것은 prod에 게시된 그 문서다. 환경별로 갈라 두면 "화면이 가리키는 문서"와 "실제로 고지된
+ * 문서"가 어긋난다. 빌드 산출물이 환경을 몰라야 한다는 원칙(KAN-127)과도 같은 방향이고,
+ * 그래서 배포 워크플로는 이 값을 넘기지 않는다 (`.github/workflows/web-deploy.yml`에서
+ * 환경을 아는 값은 GA4 측정 ID 하나뿐이다).
+ *
+ * `VITE_PRIVACY_POLICY_URL`은 그 원칙의 예외가 아니라 **로컬 확인용 손잡이**다. 게시 전
+ * 본문을 앱 화면에서 보고 싶을 때 staging 문서를 잠깐 가리키는 식으로 쓴다. 네이티브
+ * allowlist가 prod 호스트만 허용하므로(`EXTERNAL_LINK_HOSTS` / `externalLinkHosts`)
+ * **앱 안에서는 다른 호스트를 넣어도 열리지 않는다** - 브라우저 단독 실행에서만 듣는다.
  */
 export const DEFAULT_PRIVACY_POLICY_URL = 'https://accentury.app/privacy.html'
 

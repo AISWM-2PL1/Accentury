@@ -164,15 +164,24 @@ class WebConfigTest {
     // --- externalUrlToOpen: 앱 밖으로 내보낼 URL (KAN-177) ---
 
     @Test
-    fun `우리 도메인의 https 문서는 그대로 돌려준다`() {
+    fun `prod 도메인의 https 문서는 그대로 돌려준다`() {
         assertEquals(
             "https://accentury.app/privacy.html",
             externalUrlToOpen("https://accentury.app/privacy.html"),
         )
-        assertEquals(
-            "https://staging.accentury.app/privacy.html",
-            externalUrlToOpen("https://staging.accentury.app/privacy.html"),
-        )
+    }
+
+    @Test
+    fun `staging 호스트도 거절한다`() {
+        /*
+         * 방침은 법적 고지라 정본이 하나이고, 웹 상수가 환경과 무관하게 prod를 가리킨다
+         * (privacyPolicy.ts). staging 빌드도 같은 문서를 열므로 웹은 이 호스트를 보내지
+         * 않는다 — 목록에 두면 쓰지도 않는 문을 하나 더 여는 셈이다.
+         *
+         * APP_LINK_ORIGINS와 갈리는 지점이다. 저쪽은 링크로 앱에 들어오는 경로라
+         * staging이 필요하고, 이쪽은 앱 밖으로 나가는 경로라 필요 없다.
+         */
+        assertNull(externalUrlToOpen("https://staging.accentury.app/privacy.html"))
     }
 
     @Test
