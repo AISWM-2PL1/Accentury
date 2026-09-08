@@ -25,9 +25,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { storeLabelFor, storeUrlFor, type StorePlatform } from '../audio/storeLink'
 import type { FetchLike } from '../progress/fetchTestDefinition'
-import { Button, StatusBlock, type ButtonVariant } from '../ui'
+import { Button, StatusBlock } from '../ui'
 import { ShareIcon } from '../ui/icons'
 import { fetchResult, ResultFetchError } from './fetchResult'
+import { RetestAction } from './RetestAction'
 import { TIER_IMAGE_HEIGHT, TIER_IMAGE_WIDTH, tierImageFor } from './tierAssets'
 import type { RetestControl } from './useRetest'
 import type { TestResultView } from './testResult'
@@ -379,49 +380,6 @@ function AppDownloadAction({
       <p className="type-caption" style={{ color: 'var(--color-muted-foreground)' }}>
         {storeLabelFor(platform)}로 이동해요
       </p>
-    </>
-  )
-}
-
-/**
- * [다시 테스트하기] 한 벌 — 버튼과 그 아래 안내 한두 줄 (KAN-34).
- *
- * 만료 화면(410)과 하단, 두 자리가 이걸 그대로 쓴다. 두 곳이 각자 그리면 한쪽만 잠긴 화면이
- * 생기는데, 더블탭 방지가 클라이언트 몫이라(KAN-107) 한 자리라도 새면 방어가 아니게 된다.
- */
-function RetestAction({ retest, variant }: { retest: RetestControl; variant?: ButtonVariant }) {
-  const { onRetest, disabled, pending, message, retryAfterSec } = retest
-
-  return (
-    <>
-      <Button variant={variant} onClick={onRetest} disabled={disabled}>
-        {/*
-          성공하면 회신이 아니라 페이지 교체가 온다. 그 사이 create 왕복 동안 화면은 아무것도
-          모르므로, 할 수 있는 말은 "받았고 진행 중"까지다 — 몇 초 걸리는지도 알 수 없다.
-        */}
-        {pending ? '준비 중…' : '다시 테스트하기'}
-      </Button>
-
-      {message !== null && (
-        /*
-          네이티브가 준 문구를 그대로 그린다 — 갈래별 카피를 웹이 따로 들면 같은 판정에 두
-          벌이 생겨 앱과 웹이 다른 말을 하게 된다 (RetestFailure 계약).
-
-          role="alert"인 이유는 StatusBlock의 오류 문구와 같다: 이미 떠 있는 화면에서 나중에
-          나타나는 실패라, 스스로 읽어 주지 않으면 버튼이 왜 죽었는지 알 길이 없다.
-        */
-        <p className="type-caption result-retest__message" role="alert">
-          {message}
-        </p>
-      )}
-
-      {retryAfterSec > 0 && (
-        /*
-          429 대기 안내 (§2.5). live 영역에 두지 않는다 — 1초마다 바뀌는 값이라 읽어 주면
-          같은 문장을 매초 반복해 위 실패 문구를 덮는다.
-        */
-        <p className="type-caption result-retest__wait">{retryAfterSec}초 후 다시 시도할 수 있어요</p>
-      )}
     </>
   )
 }
