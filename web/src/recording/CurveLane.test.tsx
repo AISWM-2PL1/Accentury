@@ -37,9 +37,9 @@ describe('CurveLane', () => {
     expect(container.querySelector('path')).toBeNull()
     const circle = container.querySelector('circle')
     expect(circle).not.toBeNull()
-    // 폴백 폭 320, 그리기 높이 100 기준 한가운데
+    // 폴백 폭 320, 그리기 높이 92(DRAW_HEIGHT) 기준 한가운데
     expect(circle!.getAttribute('cx')).toBe('160')
-    expect(circle!.getAttribute('cy')).toBe('50')
+    expect(circle!.getAttribute('cy')).toBe('46')
   })
 
   it('선분이 갈리면 곡선도 따로 그린다 - 쉼 구간을 가로지르는 가짜 사선이 없다', () => {
@@ -65,7 +65,7 @@ describe('CurveLane', () => {
     )
     expect(fill).not.toBeUndefined()
     // 곡선 끝에서 바닥으로 내려가 시작점 아래까지 닫은 도형이다
-    expect(fill!.getAttribute('d')).toMatch(/L \d+(\.\d+)? 100 L \d+(\.\d+)? 100 Z$/)
+    expect(fill!.getAttribute('d')).toMatch(/L \d+(\.\d+)? 92 L \d+(\.\d+)? 92 Z$/)
     expect(user.querySelector('pattern')).not.toBeNull()
 
     const guide = renderLane([points(4)], 'guide')

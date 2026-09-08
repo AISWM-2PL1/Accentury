@@ -1217,28 +1217,33 @@ a.btn {
   border-top: 1px solid var(--color-muted-foreground);
 }
 
-/* 라벨은 레인 좌상단에 얹는다(시안). 곡선 그리기 영역 위쪽 여백 안이라 겹치지 않는다 */
+/*
+ * 라벨은 레인 좌상단에 얹는다(시안). 곡선 그리기 영역 **위쪽 여백 안**에 통째로 들어가야
+ * 겹치지 않는다 — 여백이 16이던 때는 캡션 한 줄(13px × 1.5 = 19.5)이 그보다 커서 아래가
+ * 캔버스를 4px 남짓 침범했고, 곡선이 레인 꼭대기까지 오르는 프레임에서 실제로 겹쳤다.
+ * 여백을 24로 넓히고 라벨을 0에 붙여 라벨 아래(19.5)와 캔버스 위(24) 사이를 띄웠다.
+ */
 .curve-lane__label {
   position: absolute;
-  top: var(--space-1);
+  top: 0;
   left: var(--space-3);
   color: var(--color-muted-foreground);
 }
 
 /*
- * 그리기 영역. 레인 높이에서 라벨 자리(위 16px)와 아래 여백(4px)을 뺀 만큼이다 — 앱의
- * `padding(top = Spacing.x4, bottom = Spacing.x1)`과 같은 배분이고, 아래 여백은 곡선이
+ * 그리기 영역. 레인 높이에서 라벨 자리(위 24px)와 아래 여백(4px)을 뺀 만큼이다 — 앱의
+ * `padding(top = Spacing.x6, bottom = Spacing.x1)`과 같은 배분이고, 아래 여백은 곡선이
  * 테두리에 닿지 않게 한다.
  *
- * **CurveLane.tsx의 DRAW_HEIGHT(100)가 이 값의 짝이다.** 좌표를 픽셀로 계산하는 쪽은
+ * **CurveLane.tsx의 DRAW_HEIGHT(92)가 이 값의 짝이다.** 좌표를 픽셀로 계산하는 쪽은
  * 스크립트라 CSS 변수를 못 읽고, 렌더마다 실측하면 곡선 높이가 레이아웃에 되먹임된다.
  * 토큰을 바꾸면 저쪽 상수도 같이 바꿔야 한다.
  */
 .curve-lane__canvas {
   display: block;
   width: 100%;
-  height: calc(var(--curve-lane-height) - var(--space-4) - var(--space-1));
-  margin-top: var(--space-4);
+  height: calc(var(--curve-lane-height) - var(--space-6) - var(--space-1));
+  margin-top: var(--space-6);
 }
 
 /* ── 목소리 점검 (KAN-31 4단계) ── */
