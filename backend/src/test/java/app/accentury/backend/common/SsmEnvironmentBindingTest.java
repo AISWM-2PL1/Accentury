@@ -85,17 +85,18 @@ class SsmEnvironmentBindingTest {
                 assertEquals(ssm.get(name.ssmName()), binder.bind(name.property(), String.class).get(), name.label());
             }
         }
-        // 가드 밖의 조정값(KAN-22)도 이름 그대로의 환경 변수로 닿아야 한다 - 여기가 아니면
-        // 이름이 한 글자 틀려도 아무 데서도 드러나지 않고, 배포는 스텁 시절 기본값(10초)으로 뜬다.
+        // 가드 밖의 조정값(KAN-22, KAN-172)도 이름 그대로의 환경 변수로 닿아야 한다 - 여기가 아니면
+        // 이름이 한 글자 틀려도 아무 데서도 드러나지 않고, 배포는 코드 기본값(85초 / 300초 / 1)으로 뜬다.
+        // 값은 기본값과 다른 것으로 둔다 - 기본값과 같으면 바인딩이 안 돼도 통과한다.
         StandardEnvironment tuned = new StandardEnvironment();
         tuned.getPropertySources().addFirst(new SystemEnvironmentPropertySource("tuned-systemEnvironment",
-                Map.of("ACCENTURY_ANALYSIS_AITIMEOUT", "85s",
-                        "ACCENTURY_ANALYSIS_PROCESSINGTIMEOUT", "300s",
-                        "ACCENTURY_ANALYSIS_DISPATCHCONCURRENCY", "1")));
+                Map.of("ACCENTURY_ANALYSIS_AITIMEOUT", "100s",
+                        "ACCENTURY_ANALYSIS_PROCESSINGTIMEOUT", "400s",
+                        "ACCENTURY_ANALYSIS_DISPATCHCONCURRENCY", "2")));
         Binder tunedBinder = Binder.get(tuned);
-        assertEquals("85s", tunedBinder.bind("accentury.analysis.ai-timeout", String.class).get());
-        assertEquals("300s", tunedBinder.bind("accentury.analysis.processing-timeout", String.class).get());
-        assertEquals(1, tunedBinder.bind("accentury.analysis.dispatch-concurrency", Integer.class).get());
+        assertEquals("100s", tunedBinder.bind("accentury.analysis.ai-timeout", String.class).get());
+        assertEquals("400s", tunedBinder.bind("accentury.analysis.processing-timeout", String.class).get());
+        assertEquals(2, tunedBinder.bind("accentury.analysis.dispatch-concurrency", Integer.class).get());
 
         // 목록 프로퍼티는 쉼표 한 줄이 원소로 갈라져야 한다 (ClientIps가 List<String>으로 받는다).
         assertEquals(List.of("10.1.0.0/16"),

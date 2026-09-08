@@ -179,8 +179,8 @@ site-packages에는 못 씁니다). 마운트한 체크아웃의 `app/`이 임�
 - `--contract-audio`에 **실제 발화 WAV**를 줍니다. 기본 픽스처는 합성 사인파라 내용 게이트가
   판정 실패로 끊고, 그러면 성공 경로 항목이 통째로 오탐합니다. 녹음은 스위트가 쓰는
   `scriptKey`("1|5")의 대본을 읽은 것이어야 합니다.
-- `ACCENTURY_AI_ANALYSIS_TIMEOUT_SECONDS`가 정상 추론(14~30초)과 워커 재적재보다 넉넉해야
-  합니다. 기본값 90초면 되지만 느린 기계에서는 올립니다. 스위트는 나머지 설정도
+- `ACCENTURY_AI_ANALYSIS_TIMEOUT_SECONDS`가 정상 추론과 워커 재적재보다 넉넉해야
+  합니다. 기본값 75초는 c7i.xlarge 기준(KAN-172, 배포 중 backend 태스크 6개분과 워커 재적재를 덮는 값)이라 느린 기계(에뮬레이션 등)에서는 올립니다. 스위트는 나머지 설정도
   `Settings.from_env()`로 읽습니다 (내부 토큰만 끕니다 - 인증은 KAN-36의 전용 테스트가 봅니다).
 
 503 항목은 서버를 하나 더 띄우지 않고 그 항목 동안만 `app.state.settings`의 상한을 바꿉니다
@@ -226,7 +226,7 @@ ACCENTURY_AI_ANALYSIS_ENGINE=fake .venv/bin/uvicorn app.main:app --port 8000
 | `ACCENTURY_AI_TEMP_DIR` | `<시스템 임시 디렉터리>/accentury-ai-tmp` | 임시파일 전용 디렉터리 |
 | `ACCENTURY_AI_TEMP_RETENTION_SECONDS` | `1800` | 잔존 파일 삭제 기준 (30분) |
 | `ACCENTURY_AI_SWEEP_INTERVAL_SECONDS` | `300` | 청소 잡 주기 |
-| `ACCENTURY_AI_ANALYSIS_TIMEOUT_SECONDS` | `90` | 분석 1건의 상한 - 넘기면 503이고 워커가 죽습니다 (재적재가 뒤따릅니다) |
+| `ACCENTURY_AI_ANALYSIS_TIMEOUT_SECONDS` | `75` | 분석 1건의 상한 (lock 대기와 재적재 대기 포함) - 넘기면 503이고 워커가 죽습니다 (재적재가 뒤따릅니다). backend의 읽기 타임아웃 85초보다 짧아야 합니다 (KAN-172) |
 | `ACCENTURY_AI_MAX_AUDIO_BYTES` | `1048576` | 오디오 파트 상한 (§3.3과 동일) |
 | `ACCENTURY_AI_MAX_REQUEST_BYTES` | `2097152` | 요청 본문 전체 상한 - multipart 파싱 전에 끊습니다 |
 | `ACCENTURY_AI_ANALYSIS_ENGINE` | `track1` | 붙일 분석 엔진 - `track1`(실모델) 또는 `fake`(개발 기계용, 해시 점수). 모르는 이름이면 기동이 실패합니다 |

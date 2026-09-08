@@ -25,11 +25,26 @@ import java.time.Duration;
 class AnalysisDispatchConfig {
 
     /**
-     * 워커 수를 넘는 전달 요청의 대기 한도. 넘치면 제출이 거절되고 업로드가 503으로 끝난다.
+     * 워커 수를 넘는 전달 요청의 대기 한도. 넘치면 제출이 거절되고 업로드가 503으로 끝난다
+     * (GPU 미소모라 시도 예산에서 빠지고, 클라이언트는 새 키로 다시 올린다 - §3.3).
      * 무한 큐로 받았다가 타임아웃으로 전부 버리는 것보다 일찍 미는 쪽을 택한다.
-     * 동시 응시 1,000명의 GPU 대기(약 50슬롯, §5.3)를 여유 있게 덮는 크기다.
+     * <p>
+     * 30은 큐 유실 한도({@code queued-timeout} 5분)를 실모델 1건 소요(10초, KAN-57 c7i.xlarge)로
+     * 나눈 값이다 (KAN-172). 워커가 1개라 큐는 순서대로 비므로, 그 뒤에 선 작업은 차례가 오기
+     * 전에 스위퍼가 정리한다 - 5분을 기다리게 한 뒤 버리느니 접수 시점에 민다. 스텁 시절의
+     * 200은 GPU 동시 슬롯 약 50개(§5.3)를 전제한 값이었다.
      */
-    private static final int QUEUE_CAPACITY = 200;
+    static final int QUEUE_CAPACITY = 30;
+
+    /**
+     * AI 호출의 연결 타임아웃 - 읽기 타임아웃({@code ai-timeout} 85초)과 따로 둔다 (KAN-172, Codex astra 리뷰 P2).
+     * <p>
+     * 둘을 같은 값으로 두면 연결 시도가 조용히 버려지는 구간(교체 중인 AI 호스트 등)에서 JDK HttpClient의
+     * 요청 마감과 연결 마감이 동시에 만료돼, 미도달인데도 평범한 {@code HttpTimeoutException}으로 올라와
+     * 읽기 타임아웃(재전송 없음, 시도 예산 소모)으로 잘못 접힐 수 있다. 연결은 사설망 한 홉이라 5초면
+     * 넉넉하고, 그 안에 못 붙으면 {@code HttpConnectTimeoutException} = 미도달(UNREACHED)로 재전송한다.
+     */
+    static final Duration AI_CONNECT_TIMEOUT = Duration.ofSeconds(5);
 
     @Bean
     ThreadPoolTaskExecutor analysisExecutor(AccenturyProperties properties) {
@@ -39,7 +54,8 @@ class AnalysisDispatchConfig {
         // 저장소가 필요해 "저장하지 않는다"는 결정이 깨진다. 오디오를 받은 인스턴스가 자기 워커로
         // AI를 부르고 결과를 DB에 쓰므로, 폴링은 어느 인스턴스가 받아도 DB만 보면 된다. 그래서
         // 큐 용량과 워커 수는 인스턴스 하나의 몫이고, 태스크 수만큼 AI 동시 호출이 늘어난다 -
-        // 오토스케일링 상한(KAN-168, 최대 3)이 GPU 동시 슬롯을 넘지 않게 잡는 이유다.
+        // 실모델은 한 번에 하나만 추론하므로(KAN-57) 태스크가 여럿이면 뒤의 호출은 AI 안에서
+        // 차례를 기다린다 - AI 자신의 상한(75초, lock 대기 포함)은 롤링 배포 중 태스크 6개분(6 x P95 11초)을 덮는다 (KAN-172).
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         executor.setThreadNamePrefix("analysis-");
         executor.setCorePoolSize(properties.analysis().dispatchConcurrency());
@@ -73,6 +89,8 @@ class AnalysisDispatchConfig {
         // 실행 잔류 한도(processing-timeout)는 AI 재전송 최악 소요보다 길어야 한다 - 짧으면
         // 살아 있는 워커의 작업을 스위퍼가 먼저 종결해, 이미 버려진 작업에 GPU를 쓰고 성공
         // 결과까지 폐기한다. 문서(AccenturyProperties)로만 있던 관계를 기동 시점에 강제한다.
+        // 읽기 타임아웃은 재전송하지 않지만(KAN-172) 상한은 그대로다 - AI가 자체 상한에서 접은
+        // 503(SERVER_ERROR)은 재전송하고, 그 한 번이 ai-timeout에 가깝게 걸릴 수 있다.
         long worstCaseMs = properties.analysis().aiTimeout().toMillis() * (retries + 1)
                 + HttpAnalysisDispatcher.RETRY_BACKOFF_MS * retries * (retries + 1) / 2;
         if (properties.analysis().processingTimeout().toMillis() <= worstCaseMs) {
@@ -89,10 +107,15 @@ class AnalysisDispatchConfig {
                     + properties.analysis().aiTimeout() + ") 이하다 - 종료 때마다 실행 중 분석이 실패한다");
         }
         // Boot의 RestClient.Builder 자동 구성은 webmvc 스타터에 없다 - 내부 호출 하나라 정적 빌더로 충분하다.
-        RestClient restClient = restClient(aiBaseUrl, properties.analysis().aiTimeout());
+        // 연결은 읽기보다 짧게 끊는다 (AI_CONNECT_TIMEOUT) - 읽기 타임아웃이 연결 타임아웃보다 짧은 설정이면
+        // 연결 쪽을 그에 맞춘다 (테스트나 로컬의 짧은 값).
+        Duration aiTimeout = properties.analysis().aiTimeout();
+        RestClient restClient = restClient(aiBaseUrl,
+                AI_CONNECT_TIMEOUT.compareTo(aiTimeout) < 0 ? AI_CONNECT_TIMEOUT : aiTimeout, aiTimeout);
         // 회로 복구 프로브는 추론을 태우지 않으므로 훨씬 짧게 기다린다 (KAN-28) -
         // 스케줄러 스레드를 오래 붙들면 같은 풀의 다른 잡이 밀린다.
-        RestClient healthRestClient = restClient(aiBaseUrl, properties.analysis().aiHealthTimeout());
+        RestClient healthRestClient = restClient(aiBaseUrl,
+                properties.analysis().aiHealthTimeout(), properties.analysis().aiHealthTimeout());
         AiCircuitBreaker circuitBreaker = new AiCircuitBreaker(
                 properties.analysis().circuitFailureThreshold(),
                 properties.analysis().circuitProbeInterval(),
@@ -124,10 +147,11 @@ class AnalysisDispatchConfig {
                 properties.analysis().shutdownBudget());
     }
 
-    private static RestClient restClient(String baseUrl, Duration timeout) {
+    /** 패키지 공개 - 연결과 읽기 마감이 따로 걸리는지 실제 요청 팩토리로 검증한다 (AnalysisDispatchConfigTest). */
+    static RestClient restClient(String baseUrl, Duration connectTimeout, Duration readTimeout) {
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(
-                HttpClient.newBuilder().connectTimeout(timeout).build());
-        requestFactory.setReadTimeout(timeout);
+                HttpClient.newBuilder().connectTimeout(connectTimeout).build());
+        requestFactory.setReadTimeout(readTimeout);
         return RestClient.builder().baseUrl(baseUrl).requestFactory(requestFactory).build();
     }
 }

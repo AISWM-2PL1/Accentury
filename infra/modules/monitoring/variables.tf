@@ -137,7 +137,7 @@ variable "ai_unhealthy_evaluation_periods" {
 
 variable "ai_temp_residue_threshold" {
   type        = number
-  description = "AI 임시 디렉터리의 잔존 파일 수 상한 (KAN-38). 이 지표는 처리 중인 파일도 세는데 동시 추론이 구조적으로 12건을 넘지 못하므로(워커 4 x 태스크 3), 정상 부하가 닿지 않는 20을 기본값으로 한다."
+  description = "AI 임시 디렉터리의 잔존 파일 수 상한 (KAN-38). 이 지표는 처리 중인 파일도 세는데 동시 추론이 구조적으로 3건을 넘지 못하므로(워커 1 x 태스크 3, KAN-172), 정상 부하가 닿지 않는 20을 유지한다."
   default     = 20
 
   validation {
@@ -148,8 +148,8 @@ variable "ai_temp_residue_threshold" {
 
 variable "analysis_backlog_threshold" {
   type        = number
-  description = "전 인스턴스의 진행 중 분석 건수 상한 (KAN-38). 폴링 혼잡 임계치(application.yml의 congestion-threshold, 기본 30)의 두 배 - 서버가 폴링 간격을 올려 압력을 뺀 뒤에도 그만큼 쌓였다면 사람이 볼 일이다."
-  default     = 60
+  description = "전 인스턴스의 진행 중 분석 건수 상한 (KAN-38). 폴링 혼잡 임계치(application.yml의 congestion-threshold, 기본 6 - KAN-172)의 두 배 - 서버가 폴링 간격을 올려 압력을 뺀 뒤에도 그만큼 쌓였다면 사람이 볼 일이다. 12건은 AI 처리량(분당 6건) 기준 대기열 2분이다."
+  default     = 12
 
   validation {
     condition     = var.analysis_backlog_threshold >= 1

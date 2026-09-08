@@ -20,6 +20,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.io.InputStream;
 import java.net.SocketTimeoutException;
+import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpTimeoutException;
 
 /**
@@ -229,9 +230,20 @@ class RestAiAnalysisClient implements AiAnalysisClient {
         }
     }
 
+    /**
+     * 읽기 타임아웃인가 - 요청이 AI에 닿아 추론이 시작됐을 수 있는 경우만 true다.
+     * <p>
+     * 연결 타임아웃({@link HttpConnectTimeoutException})은 {@link HttpTimeoutException}의 하위지만
+     * 요청이 AI에 닿지 않은 것이라 미도달(UNREACHED)이다 (Codex astra 리뷰 P2, KAN-172). 읽기
+     * 타임아웃은 재전송하지 않고 시도 예산에 넣는 사유로 접으므로, 연결 타임아웃까지 같이 접으면
+     * AI 교체 구간의 실패가 재전송 없이 사용자 시도 상한(§2.5)을 깎는다.
+     */
     private static boolean isTimeout(ResourceAccessException e) {
         // JDK HttpClient는 HttpTimeoutException, 고전 커넥터는 SocketTimeoutException을 던진다.
         for (Throwable cause = e.getCause(); cause != null; cause = cause.getCause()) {
+            if (cause instanceof HttpConnectTimeoutException) {
+                return false;
+            }
             if (cause instanceof SocketTimeoutException || cause instanceof HttpTimeoutException) {
                 return true;
             }

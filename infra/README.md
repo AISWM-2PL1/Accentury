@@ -707,8 +707,8 @@ CloudFront 5xxErrorRate 0 (13:45부터 15:15). 클라이언트 쪽은 세 phase 
 **진행 중 분석은 SIGTERM에 잡히지 않는다.** stop-task든 스케일인이든 롤링 배포든 ECS는 먼저 ALB
 대상을 등록 해제하고 드레인(기본 30초)을 끝낸 뒤에야 SIGTERM을 보낸다. 실측으로 호출부터 SIGTERM까지
 52초와 48초였고, 등록 해제 지연을 5초로 낮춰도 26초였다. 그 사이 새 요청은 오지 않고 이미 받은
-분석은 `ai-timeout`(10초) 안에 끝나므로, 4단계 종료가 시작될 때 실행 중이거나 대기 중인 작업은
-언제나 0건이다. 즉 KAN-166의 워커 배수(예산 90초)는 AI 응답이 ECS 드레인 창보다 길어질 때만
+분석은 `ai-timeout`(실측 당시 10초, 실모델은 85초 - KAN-172. 정상 추론 P95 11초) 안에 끝나므로,
+4단계 종료가 시작될 때 실행 중이거나 대기 중인 작업은 언제나 0건이다. 즉 KAN-166의 워커 배수(예산 90초)는 AI 응답이 ECS 드레인 창보다 길어질 때만
 쓰이는 두 번째 방어선이고, 티켓이 요구한 "종료 시점에 PROCESSING인 AnalysisJob"은 이 구조에서
 만들 수 없다. 대신 실패 격리와 재녹음은 롤링 배포의 ai 컨테이너 reload 창(약 25초)에서 확인됐다 -
 그 창에 접수된 문항 11건이 `RETRYABLE_FAILED(ANALYSIS_UNAVAILABLE)`로 격리됐고 재업로드 11건이
@@ -948,20 +948,27 @@ required reviewers가 걸려 있어 실행할 때마다 승인을 한 번 받는
 (`scripts/e2e_smoke.py` 머리말). 억양 점수를 예측하던 `expect-stub-scores`는 스텁과 함께
 없앴다 (2026-09-05, KAN-22).
 
-### 분석 시간 예산 (실모델, KAN-22 임시값)
+### 분석 시간 예산 (실모델, KAN-172 확정)
 
-`modules/config`가 환경마다 넣는 값이다. 스텁 시절의 기본값(`ai-timeout` 10초)은 실모델에서
-성립하지 않는다 - 추론 1건이 14~30초라 모든 분석이 읽기 타임아웃으로 끊기고 회로가 열린다.
+`modules/config`가 환경마다 넣는 값이다. KAN-22가 임시로 올렸던 값(85s / 300s / 1 / 75)을
+KAN-57의 c7i.xlarge 실측(bf16 + MFA `align_one`, 1건 P50 10.1초, P95 11.1초, 콜드 스타트 31초,
+동시 처리 상한 1건)으로 2026-09-08에 다시 봤고, 같은 값을 근거를 붙여 정식값으로 확정했다. 코드
+기본값(`application.yml`, `ai/app/config.py`)과 같은 값이고, SSM은 실측이 바뀌었을 때 재빌드 없이
+조정하는 자리다.
 
 | 파라미터 | 값 | 뜻 |
 | --- | --- | --- |
-| `ACCENTURY_ANALYSIS_AITIMEOUT` | `85s` | backend가 AI 호출에 거는 연결과 읽기 타임아웃 |
-| `ACCENTURY_ANALYSIS_PROCESSINGTIMEOUT` | `300s` | 실행 잔류 한도. `ai-timeout x 3 + 백오프`보다 길어야 backend가 뜬다 |
-| `ACCENTURY_ANALYSIS_DISPATCHCONCURRENCY` | `1` | 전달 워커 수. AI가 추론을 한 번에 하나만 돌리므로 늘리면 뒤의 요청이 AI 안에서 기다리다 타임아웃이다 |
-| `ai/ACCENTURY_AI_ANALYSIS_TIMEOUT_SECONDS` | `75` | AI 자신의 상한. backend보다 짧아야 AI가 먼저 끊고 503을 돌려준다 |
+| `ACCENTURY_ANALYSIS_AITIMEOUT` | `85s` | backend가 AI 호출에 거는 연결과 읽기 타임아웃. AI 상한 75초보다 10초 길다 |
+| `ACCENTURY_ANALYSIS_PROCESSINGTIMEOUT` | `300s` | 실행 잔류 한도. `ai-timeout x 3 + 백오프`(255.9초)보다 길어야 backend가 뜬다 |
+| `ACCENTURY_ANALYSIS_DISPATCHCONCURRENCY` | `1` | 전달 워커 수. AI가 추론을 한 번에 하나만 돌리고 8GB에서 2건이면 OOM이다 |
+| `ai/ACCENTURY_AI_ANALYSIS_TIMEOUT_SECONDS` | `75` | AI 자신의 상한 (lock 대기와 워커 재적재 대기 포함). backend보다 짧아야 AI가 먼저 끊고 503을 돌려준다. 정상 추론 1건이 아니라 롤링 배포 중 태스크 최대 6개(상한 3 x 200%)가 겹친 6 x P95 11초 = 67초와 워커 재적재 31초 + 추론 11초 = 42초를 덮는 값이다 - 짧으면(25초, 40초) 추론 중인 요청을 끊어 멀쩡한 워커를 죽이고 재전송이 새 워커를 또 죽이는 연쇄가 된다 (Codex 리뷰 P1, 실제 어댑터로 재현) |
 
-정식 재확정은 KAN-172이고 지연 판정은 KAN-57이다. 값을 바꿀 때는 위 관계를 함께 본다 -
-backend는 기동 시점에 이 관계를 검사하고 어긋나면 뜨지 않는다 (`AnalysisDispatchConfig`).
+같은 티켓에서 backend의 읽기 타임아웃은 재전송하지 않게 바꿨다 (`ANALYSIS_TIMEOUT` 즉시 종결 -
+연결 실패와 5xx만 2회 재전송). 폴링 혼잡 임계치는 30에서 6(AI 1분 처리량)으로, 디스패처 큐 용량은
+200에서 30(`queued-timeout` 5분 / 10초)으로, AI compose `start_period`는 300초에서 90초로 내렸고
+`analysis-backlog-high` 경보 임계치는 혼잡 임계치의 두 배 규칙대로 60에서 12가 됐다. 값을 바꿀 때는
+위 관계를 함께 본다 - backend는 기동 시점에 이 관계를 검사하고 어긋나면 뜨지 않는다
+(`AnalysisDispatchConfig`).
 
 **`dispatch-concurrency`는 전역 상한이 아니다** (Codex sol 리뷰 P1). 태스크 하나가 보내는
 동시 호출만 묶으므로, 오토스케일링(최대 3, KAN-168)이나 롤링 배포로 태스크가 둘 이상 뜨면

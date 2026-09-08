@@ -19,7 +19,7 @@
 # 형제 워커가 지금 처리 중인 오디오를 지운다. 워커를 늘려야 하면 반드시 워커마다 다른
 # ACCENTURY_AI_TEMP_DIR를 준다. 어차피 모델이 RSS 7GB대라 프로세스 1개가 전제다(KAN-36).
 ARG MODEL_REGISTRY=325771561913.dkr.ecr.ap-northeast-2.amazonaws.com
-ARG MODEL_TAG=6b0f406
+ARG MODEL_TAG=26ac67a
 FROM ${MODEL_REGISTRY}/accentury/ai-model:${MODEL_TAG} AS runtime
 
 # PYTHONDONTWRITEBYTECODE - 비루트 사용자가 소스 디렉터리에 .pyc를 못 써서 나는 잡음을 없앤다.

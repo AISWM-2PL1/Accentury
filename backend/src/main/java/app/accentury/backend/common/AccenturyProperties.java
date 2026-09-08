@@ -62,6 +62,9 @@ public record AccenturyProperties(Session session,
      *                             증폭하므로(§5.3 - 대기 체류 20배) 서버가 스스로 간격을 올린다 (KAN-24).
      * @param congestionThreshold  혼잡 판정 기준 - 전 인스턴스의 진행 중(PROCESSING) 분석 작업 수가
      *                             이 값 이상이면 {@code congestedPollAfterMs}를 반환한다 (KAN-167).
+     *                             기본 6은 AI의 1분 처리량이다 (실모델 1건 10초, KAN-57 c7i.xlarge) -
+     *                             그만큼 쌓이면 대기열이 1분을 넘기 시작한다 (KAN-172). 이전 30은
+     *                             워커 4개 전제라 대기열 5분이 쌓여야 켜졌다.
      * @param congestionCacheTtl   혼잡 판정이 DB의 PROCESSING 건수를 다시 세지 않고 쓰는 시간
      *                             (KAN-167). 판정은 모든 상태 응답 경로에 놓이므로 폴링마다 세면
      *                             판정 자체가 폴링 증폭에 얹힌다. 기준 폴링 간격(800ms)과 같은
@@ -72,17 +75,29 @@ public record AccenturyProperties(Session session,
      * @param processingTimeout    실행 잔류 한도 - 워커가 실행을 시작하고도(startedAt) 종결을
      *                             못 남긴 작업을 이 시간 뒤 RETRYABLE_FAILED로 정리한다 (KAN-24).
      *                             AI 호출 재시도 전체 소요(aiTimeout x 시도 횟수 + 대기)보다 길어야 한다.
-     *                             큐 대기 시간은 세지 않는다 (Codex sol 리뷰 P1).
+     *                             큐 대기 시간은 세지 않는다 (Codex sol 리뷰 P1). 기본 300초는
+     *                             85초 x 3회 + 백오프 0.9초 = 255.9초 위의 반올림이다 (KAN-172).
      * @param queuedTimeout        큐 유실 한도 - 실행을 시작하지 못한 채 이 시간이 지난 작업의
      *                             정리. 접수와 실행 사이 프로세스 사망 대비다. 정상 큐 소진
      *                             시간보다 길게, 복구가 사용자에게 보이도록 세션 TTL보다는
      *                             짧게 잡는다 (Codex sol 리뷰 P2).
      * @param aiBaseUrl            AI 분석 서버(FastAPI) 주소 (§4.1). 미설정이면 분석을 전달하지
      *                             않는 개발 모드다 - 작업은 PROCESSING으로 남다가 타임아웃 처리된다.
-     * @param aiTimeout            AI 호출의 연결과 읽기 타임아웃 - 추론 P95 3초의 여유 배수
+     * @param aiTimeout            AI 호출의 읽기 타임아웃 - 기본 85초 (KAN-172). 연결 타임아웃은 이 값과
+     *                             따로 5초 고정이다 ({@code AnalysisDispatchConfig.AI_CONNECT_TIMEOUT}) -
+     *                             같이 두면 미도달 연결 실패가 읽기 타임아웃으로 잘못 접힌다. 실모델 1건 P95는
+     *                             11.1초(KAN-57 c7i.xlarge, bf16 + MFA align_one)지만 AI는 한 번에 하나만
+     *                             추론하고 그 상한(75초)은 lock 대기와 워커 재적재까지 포함하므로, 롤링 배포
+     *                             중 태스크 최대 6개가 겹친 6 x 11초 = 67초와 재적재 31초 + 추론 11초 = 42초를
+     *                             AI 상한이 덮고 이 값은 그보다 길어야 한다 - AI가 먼저 끊고 503을 돌려준다
+     *                             (KAN-22). 반대면 BE는 포기했는데 AI는 계속 추론해 워커와 임시파일을 붙든다.
      * @param aiRetries            AI 일시 장애(연결 실패, 5xx)의 재전송 횟수 - 오디오가 메모리에
      *                             살아 있는 전달 시점에만 가능하다 (FR-DP-01, KAN-24 재큐잉).
-     * @param dispatchConcurrency  분석 전달 워커 수 - GPU 동시 슬롯(§5.3)을 넘지 않게 잡는다.
+     *                             읽기 타임아웃은 재전송하지 않는다 (KAN-172) - 실모델은 타임아웃 시점에
+     *                             아직 추론 중일 가능성이 높아 재전송이 중복 분석을 얹는다.
+     * @param dispatchConcurrency  분석 전달 워커 수 - AI의 동시 처리 능력을 넘지 않게 잡는다. 실모델은
+     *                             추론을 한 번에 하나만 돌리므로(단일 lock, 8GB에서 2건이면 OOM. KAN-57)
+     *                             기본 1이다 (KAN-172). 태스크당 값이라 태스크가 여럿이면 그만큼 겹친다.
      * @param aiHealthTimeout      회로 복구 프로브({@code GET /internal/v0/health}, §4.2)의 연결과
      *                             읽기 타임아웃 (KAN-28). 추론 없이 즉답하는 엔드포인트라 분석
      *                             호출보다 짧게 잡는다 - 프로브가 스케줄러 스레드를 오래 붙들면
@@ -112,15 +127,15 @@ public record AccenturyProperties(Session session,
      */
     public record Analysis(@DefaultValue("800") long pollAfterMs,
                            @DefaultValue("3000") long congestedPollAfterMs,
-                           @DefaultValue("30") int congestionThreshold,
+                           @DefaultValue("6") int congestionThreshold,
                            @DefaultValue("1s") Duration congestionCacheTtl,
                            @DefaultValue("24h") Duration retention,
-                           @DefaultValue("60s") Duration processingTimeout,
+                           @DefaultValue("300s") Duration processingTimeout,
                            @DefaultValue("5m") Duration queuedTimeout,
                            @Nullable String aiBaseUrl,
-                           @DefaultValue("10s") Duration aiTimeout,
+                           @DefaultValue("85s") Duration aiTimeout,
                            @DefaultValue("2") int aiRetries,
-                           @DefaultValue("4") int dispatchConcurrency,
+                           @DefaultValue("1") int dispatchConcurrency,
                            @DefaultValue("2s") Duration aiHealthTimeout,
                            @DefaultValue("5") int circuitFailureThreshold,
                            @DefaultValue("5s") Duration circuitProbeInterval,

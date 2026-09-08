@@ -127,20 +127,26 @@ resource "aws_ssm_parameter" "ai_token_ai" {
   value = random_password.ai_internal_token.result
 }
 
-# 실모델 전환에 맞춘 분석 시간 예산 (KAN-22, 임시값 - 정식 재확정은 KAN-172).
+# 실모델 기준 분석 시간 예산 (KAN-172 확정, 2026-09-08. KAN-22가 임시로 올렸던 값을 KAN-57의
+# c7i.xlarge 실측으로 다시 정했다 - bf16 + MFA align_one에서 1건 P50 10.1초, P95 11.1초).
 #
-# 스텁 시절의 기본값(ai-timeout 10초)은 실모델에서 성립하지 않는다. 추론 1건이 08-30 실측으로
-# 14~30초이고(KAN-159, 도커 amd64에서는 MFA만 23초) x86 CPU에서는 더 걸린다 - 기본값을 그대로
-# 두면 모든 분석이 읽기 타임아웃으로 끊겨 재전송 예산만 태우고 회로가 열린다.
+# 값은 코드 기본값(application.yml, ai/app/config.py)과 같다. SSM에 두는 이유는 실측이 바뀌었을 때
+# 이미지 재빌드 없이 환경별로 조정하기 위해서다.
 #
 # 값 사이의 관계는 backend가 기동 시점에 강제한다 (AnalysisDispatchConfig).
 #
 #   processing-timeout > ai-timeout x (재시도 2 + 1) + 백오프 0.9초   -> 300 > 255.9
 #   shutdown-budget(90초, 코드 기본값) > ai-timeout                    -> 90 > 85
+#   ai_analysis_timeout_seconds < ai-timeout                           -> 75 < 85
+#   ai_analysis_timeout_seconds > 배포 중 태스크 6 x 1건 P95 11.1초     -> 75 > 66.6
+#   ai_analysis_timeout_seconds > 워커 재적재 31초 + 1건 P95 11.1초     -> 75 > 42.1
 #
-# dispatch-concurrency를 1로 내리는 것이 이 조합의 핵심이다. AI는 추론을 한 번에 하나만 돌리므로
-# (워커 프로세스 1개, GPU 슬롯 1) 4개를 동시에 보내면 뒤의 셋은 앞의 추론이 끝나기를 AI 안에서
-# 기다리다 읽기 타임아웃에 걸린다 - 늘린 상한이 그대로 무의미해지는 자리다.
+# dispatch-concurrency 1이 이 조합의 핵심이다. AI는 추론을 한 번에 하나만 돌리므로(단일 lock,
+# 8GB에서 2건이면 OOM - KAN-57) 여럿을 동시에 보내면 뒤의 것은 앞의 추론이 끝나기를 AI 안에서
+# 기다린다. AI 상한은 그 대기와 워커 재적재 대기까지 포함하므로 롤링 배포 중 태스크가 2배(3 x 200%
+# = 6, KAN-168)로 겹친 경우와 워커가 죽은 뒤의 재적재를 덮어야 한다 - 짧으면 이미 추론 중인 요청을
+# 끊어 멀쩡한 워커를 죽이고, 재전송이 재적재를 기다리다 또 끊겨 새 워커를 또 죽인다 (Codex 리뷰 P1).
+# 값은 KAN-22가 staging 검증용으로 올렸던 임시값과 같다 - 근거가 붙어 정식값이 됐다.
 resource "aws_ssm_parameter" "analysis_ai_timeout" {
   name  = "${var.ssm_prefix}/ACCENTURY_ANALYSIS_AITIMEOUT"
   type  = "String"

@@ -9,6 +9,8 @@ import org.springframework.web.client.RestClient;
 import tools.jackson.databind.ObjectMapper;
 
 import java.net.SocketTimeoutException;
+import java.net.http.HttpConnectTimeoutException;
+import java.net.http.HttpTimeoutException;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
@@ -166,6 +168,35 @@ class RestAiAnalysisClientTest {
         server.expect(requestTo("http://ai.test/internal/v0/analyze"))
                 .andRespond(mockRequest -> {
                     throw new SocketTimeoutException("read timed out");
+                });
+
+        AiAnalysisClient.AiUnavailableException e =
+                assertThrows(AiAnalysisClient.AiUnavailableException.class,
+                        () -> client.analyze(request(), "c_test"));
+        assertEquals(AiAnalysisClient.AiUnavailableException.Kind.TIMED_OUT, e.kind());
+    }
+
+    @Test
+    void 연결_타임아웃은_미도달이라_timedOut이_아니다() {
+        // HttpConnectTimeoutException은 HttpTimeoutException의 하위지만 요청이 AI에 닿지 않은 것이다.
+        // 읽기 타임아웃은 재전송 없이 시도 예산에 드는 사유로 접으므로(KAN-172) 여기서 갈라야
+        // AI 교체 구간의 연결 실패가 재전송 없이 사용자 시도 상한을 깎지 않는다 (Codex astra 리뷰 P2).
+        server.expect(requestTo("http://ai.test/internal/v0/analyze"))
+                .andRespond(mockRequest -> {
+                    throw new HttpConnectTimeoutException("connect timed out");
+                });
+
+        AiAnalysisClient.AiUnavailableException e =
+                assertThrows(AiAnalysisClient.AiUnavailableException.class,
+                        () -> client.analyze(request(), "c_test"));
+        assertEquals(AiAnalysisClient.AiUnavailableException.Kind.UNREACHED, e.kind());
+    }
+
+    @Test
+    void 읽기_타임아웃은_JDK_HttpTimeoutException으로도_timedOut이다() {
+        server.expect(requestTo("http://ai.test/internal/v0/analyze"))
+                .andRespond(mockRequest -> {
+                    throw new HttpTimeoutException("request timed out");
                 });
 
         AiAnalysisClient.AiUnavailableException e =

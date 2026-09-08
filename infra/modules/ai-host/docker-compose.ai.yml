@@ -60,4 +60,6 @@ services:
       # 실모델은 Whisper 가중치 2.8GB를 디스크에서 올린 뒤에야 UP이다 (KAN-22의 워밍업). 그동안
       # health는 503 STARTING이고 이 검사는 실패하므로, 여유가 없으면 정상 기동이 unhealthy로
       # 찍혀 배포가 롤백한다. start_period 안의 실패는 재시도 횟수에 세지 않는다.
-      start_period: 300s
+      # 90초는 c7i.xlarge 콜드 스타트 실측 31초(bf16, KAN-57)의 약 3배다 (KAN-172). 그 뒤로도
+      # retries 6 x interval 10초가 더 있어 unhealthy 판정은 빨라야 150초 뒤다.
+      start_period: 90s
