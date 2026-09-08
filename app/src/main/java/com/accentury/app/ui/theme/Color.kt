@@ -84,10 +84,11 @@ val LightPromptCardBadge = Color(0xFFF3ECD9)
 val LightGuideCurve = Color(0xFF1C1A17)
 
 /**
- * 곡선 둘은 같은 잉크다. 색조로 가르던 것을 선 모양으로 넘겼다 — 가이드는 점선,
- * 사용자는 실선. 색맹 사용자에게는 원래도 선 모양이 유일한 단서였다 (WCAG 1.4.1).
+ * 내 억양 곡선만 포인트 컬러다 (정본 §7). 색을 되살렸지만 **색만으로 가르지는 않는다** —
+ * 가이드는 잉크 점선, 사용자는 테라코타 실선이라 선 모양이 여전히 단서다 (WCAG 1.4.1).
+ * 색이 빠져도 둘은 갈리고, 색이 있으면 자기 곡선이 어느 쪽인지 한눈에 들어온다.
  */
-val LightUserCurve = Color(0xFF1C1A17)
+val LightUserCurve = Color(0xFFA8503A)
 val LightCurveLaneSurface = Color(0xFFF3ECD9)
 
 /**
@@ -143,7 +144,7 @@ val DarkPromptCardMuted = Color(0xFF6B6459)
 val DarkPromptCardBadge = Color(0xFFF3ECD9)
 
 val DarkGuideCurve = Color(0xFF1C1A17)
-val DarkUserCurve = Color(0xFF1C1A17)
+val DarkUserCurve = Color(0xFFA8503A)
 val DarkCurveLaneSurface = Color(0xFFF3ECD9)
 val DarkHeroStart = Color(0xFFF3ECD9)
 val DarkHeroEnd = Color(0xFFF3ECD9)

@@ -95,9 +95,11 @@ PAIRS = [
 GRAPHIC_PAIRS = [
     # 곡선은 레인 안쪽 면(curve-lane-surface) 위에 그려진다 - 카드가 아니다
     ("`guide-curve` / `curve-lane-surface` (라이트)", INK, CREAM),
-    ("`user-curve` / `curve-lane-surface` (라이트)", INK, CREAM),
+    ("`user-curve` / `curve-lane-surface` (라이트)", TERRACOTTA, CREAM),
     ("`guide-curve` / `curve-lane-surface` (다크)", INK, CREAM),
-    ("`user-curve` / `curve-lane-surface` (다크)", INK, CREAM),
+    ("`user-curve` / `curve-lane-surface` (다크)", TERRACOTTA, CREAM),
+    # 결과 도넛의 내 점수 호. 트랙(잉크 파선)과 배경 둘 다 위에 서므로 낮은 쪽을 본다
+    ("`point`(점수 호) / `background`", TERRACOTTA, CREAM),
     ("`control-border` / `background` (라이트)", INK, CREAM),
     ("`control-border` / `card` (라이트)", INK, CREAM),
     ("`control-border` / `background` (다크)", INK, CREAM),

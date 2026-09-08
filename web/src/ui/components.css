@@ -727,8 +727,13 @@
   stroke-dasharray: 3 5;
 }
 
+/*
+ * 내 점수 호는 포인트 컬러다 (정본 §7). 결과 화면에서 색이 서는 한 자리이고, 잉크 파선
+ * 트랙 위에 실선으로 겹쳐 그려지므로 **색 없이도 채운 몫과 남은 몫이 갈린다** — 색은
+ * 어디까지 찼는지를 한눈에 잡아 주는 몫만 한다 (WCAG 1.4.1).
+ */
 .score-donut__value {
-  stroke: var(--color-primary);
+  stroke: var(--color-point);
   transition: stroke-dashoffset var(--duration-reveal) var(--ease-out);
 }
 
