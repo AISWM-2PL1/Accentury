@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { PitchFrame } from '../audio/pitchTracker'
+import { REAL_GUIDE_F0 } from './guideF0Fixture'
 import {
   CENTER_MIN_VOICED_FRAMES,
   HOLD_MAX_GAP_MS,
@@ -76,6 +77,13 @@ describe('창 길이', () => {
   it('창 길이는 가이드 길이의 두 배다', () => {
     expect(userCurveWindowMs(10, 101)).toBe(2000)
     expect(userCurveWindowMs(32, 11)).toBe(640)
+  })
+
+  it('발행본 실문항의 창은 그 문항 길이의 두 배다', () => {
+    // 16ms 간격 240점이라 가이드가 3.824초, 창은 그 두 배인 7.648초다 (KAN-194)
+    const { frameIntervalMs, values } = REAL_GUIDE_F0
+    expect(guideDurationMs(frameIntervalMs, values.length)).toBe(3824)
+    expect(userCurveWindowMs(frameIntervalMs, values.length)).toBe(7648)
   })
 
   it('가이드를 쓸 수 없으면 창 길이는 폴백 1초의 두 배다', () => {

@@ -4,14 +4,17 @@ import { createFakeCapture, sineChunk, type FakeCapture } from '../audio/testing
 import type { Recording } from '../audio'
 import { UploadError, type UploadAccepted } from '../audio/uploadRecording'
 import type { ItemResult } from '../bridge/itemResult'
+import { REAL_GUIDE_F0 } from '../recording/guideF0Fixture'
 import { WebVoiceRecorder } from './WebVoiceRecorder'
 import type { VoiceItem } from './testDefinition'
 
 const MAX_MS = 10_000
 
 /**
- * 1초짜리 가이드 곡선(10ms × 101점). 실제 시드 문항과 같은 규격이라 사용자 창이 그 두 배인
- * 2초가 된다 — 곡선 테스트가 실제와 같은 창에서 돌아야 "창이 미끄러진다"를 검사할 수 있다.
+ * 1초짜리 가이드 곡선(10ms × 101점). 사용자 창이 그 두 배인 2초라 이 파일의 곡선 케이스가
+ * 1~3초짜리 발화로 "창이 미끄러진다"를 검사할 수 있다 — 창 길이가 여기에 물려 있어서
+ * 발행본 실데이터(7.6초 창)로 갈아끼우면 그 케이스들이 검사하던 것이 사라진다.
+ * 실데이터는 아래 곡선 describe에 별도 케이스로 태운다 (KAN-194).
  */
 const GUIDE_VALUES: (number | null)[] = Array.from({ length: 101 }, (_, i) =>
   Math.sin((2 * Math.PI * i) / 100) * 3,
@@ -372,6 +375,14 @@ describe('억양 곡선 (KAN-56 Stage 5)', () => {
     expect(d.startsWith('M ')).toBe(true)
     // 101점짜리 가이드라 곡선 조각(Q)이 그만큼 들어간다
     expect(d).toContain('Q ')
+  })
+
+  it('발행본 실문항 곡선도 한 점도 빠짐없이 그려진다 (KAN-194)', () => {
+    // 무성 null 14개가 섞인 240점짜리 실데이터다. 명령은 점 개수보다 하나 많다 -
+    // 첫 반 구간의 L과 마지막 점의 L이 양 끝에 붙는다 (`curvePath.ts`)
+    renderRecorder(okUpload(), voiceItem({ guideF0: REAL_GUIDE_F0 }))
+
+    expect(commandCount('가이드 억양 곡선')).toBe(REAL_GUIDE_F0.values.length + 1)
   })
 
   it('단위가 semitone이 아니면 가이드 레인을 비워 둔다', () => {
