@@ -127,6 +127,8 @@ interface RenderOptions {
   strict?: boolean
   /** 분석 대기 화면이 결과 확정을 알릴 자리 (KAN-14) */
   onAnalysisReady?: () => void
+  /** 막다른 분석 상태의 재응시가 브리지 없이 탈 길 (KAN-191). 주지 않으면 버튼이 그려지지 않는다 */
+  retestFallback?: () => void
   /**
    * 웹 단독 실행의 세션 토큰. 주지 않으면 App과 같은 규칙으로 정한다 — 브리지가 있으면
    * 주입하지 않고(앱은 브리지에서 읽는다), 없으면 [WEB_TOKEN]을 준다. 빈 값을 명시하면
@@ -144,6 +146,7 @@ function renderScreen(
     sessionId = 'sess-1',
     strict,
     onAnalysisReady,
+    retestFallback,
     webSessionToken,
     userCurveCenterHz,
   }: RenderOptions = {},
@@ -157,6 +160,7 @@ function renderScreen(
       sessionId={sessionId}
       storage={storage ?? memoryStorage()}
       onAnalysisReady={onAnalysisReady}
+      retestFallback={retestFallback}
       webSessionToken={
         webSessionToken ?? (window.AccenturyBridge === undefined ? () => WEB_TOKEN : undefined)
       }
@@ -296,6 +300,47 @@ function waitingFetch(handlers: {
     if (url.endsWith('/answer')) return ok({ accepted: true })
     if (url.endsWith('/recording')) return ok({ analysisJobId: 'job-web' })
     return ok(tenItemDefinition())
+  })
+}
+
+/**
+ * 분석이 **막다른 상태**로 끝나는 대역 (KAN-191). 음성 5문항은 전부 끝났는데 서버가 어휘
+ * 문항 미제출로 422를 준다 — 대기 화면 목록에는 음성만 있으므로 손댈 줄이 하나도 없다.
+ */
+function deadEndFetch(): ReturnType<typeof vi.fn<FetchLike>> {
+  const res = (status: number, body: unknown) =>
+    ({
+      ok: status >= 200 && status < 300,
+      status,
+      headers: { get: (name: string) => (name === '' ? '' : null) },
+      json: async () => body,
+    }) as Response
+
+  return vi.fn<FetchLike>(async (input) => {
+    const url = String(input)
+    if (url.endsWith('/analyses')) {
+      return res(200, {
+        pollAfterMs: 800,
+        items: [1, 3, 5, 7, 9].map((seq) => ({
+          itemId: `item-${seq}`,
+          status: 'COMPLETED',
+          quality: 'OK',
+        })),
+      })
+    }
+    if (url.endsWith('/complete')) {
+      return res(422, {
+        code: 'RESULT_INCOMPLETE',
+        message: '아직 완료하지 않은 문항이 있습니다.',
+        retryable: false,
+        retryAfterMs: null,
+        correlationId: 'c_test',
+        missingItems: ['item-10'],
+      })
+    }
+    if (url.endsWith('/answer')) return res(200, { accepted: true })
+    if (url.endsWith('/recording')) return res(202, { analysisJobId: 'job-web' })
+    return res(200, tenItemDefinition())
   })
 }
 
@@ -874,6 +919,35 @@ describe('분석 대기 결선 (KAN-14)', () => {
       itemNumber: 3,
       totalItems: 10,
     })
+  })
+
+  it('막다른 상태에서는 [다시 테스트하기]가 서고, 브리지가 없으면 폴백이 돈다 (KAN-191)', async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const retestFallback = vi.fn()
+    // 브리지 없음 = 브라우저 단독 실행. 재녹음 버튼이 없어 되살릴 방법이 하나도 없는 자리다
+    const { capture } = renderScreen(deadEndFetch(), { sessionId: 'sess-1', retestFallback })
+    await findRecordButton()
+
+    await finishAllItems(capture)
+
+    expect(screen.getByText('여기서는 더 진행할 수 없어요')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '다시 테스트하기' }))
+
+    // 브리지가 없으면 `startRetest`가 false를 돌려주고 훅이 곧바로 폴백을 부른다
+    expect(retestFallback).toHaveBeenCalledTimes(1)
+    errorLog.mockRestore()
+  })
+
+  it('폴백을 주지 않은 호출자에게는 그 버튼이 없다 — 눌러도 아무 일 없는 버튼은 두지 않는다', async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { capture } = renderScreen(deadEndFetch(), { sessionId: 'sess-1' })
+    await findRecordButton()
+
+    await finishAllItems(capture)
+
+    expect(screen.getByText('여기서는 더 진행할 수 없어요')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '다시 테스트하기' })).not.toBeInTheDocument()
+    errorLog.mockRestore()
   })
 
   it('재녹음 결과가 돌아오면 폴링을 다시 세운다', async () => {

@@ -56,7 +56,7 @@ describe('브리지 분기', () => {
   it('브리지가 있으면 네이티브 재응시를 부르고 폴백은 타지 않는다', () => {
     const startRetest = stubBridge()
     const fallback = vi.fn()
-    const { result } = renderHook(() => useRetest(fallback))
+    const { result } = renderHook(() => useRetest(fallback, 'result'))
 
     act(() => result.current.onRetest())
 
@@ -66,7 +66,7 @@ describe('브리지 분기', () => {
 
   it('브리지가 없으면(브라우저 단독) 폴백으로 내려가고 버튼을 잠그지 않는다', () => {
     const fallback = vi.fn()
-    const { result } = renderHook(() => useRetest(fallback))
+    const { result } = renderHook(() => useRetest(fallback, 'result'))
 
     act(() => result.current.onRetest())
 
@@ -83,7 +83,7 @@ describe('브리지 분기', () => {
       getContractVersion: () => 1,
     }
     const fallback = vi.fn()
-    const { result } = renderHook(() => useRetest(fallback))
+    const { result } = renderHook(() => useRetest(fallback, 'result'))
 
     act(() => result.current.onRetest())
 
@@ -94,7 +94,7 @@ describe('브리지 분기', () => {
 describe('잠금 — 더블탭 방지 (KAN-107이 서버 멱등 장치를 두지 않는다)', () => {
   it('호출이 성사된 순간부터 잠기고 준비 중이 된다', () => {
     stubBridge()
-    const { result } = renderHook(() => useRetest(vi.fn()))
+    const { result } = renderHook(() => useRetest(vi.fn(), 'result'))
 
     act(() => result.current.onRetest())
 
@@ -105,7 +105,7 @@ describe('잠금 — 더블탭 방지 (KAN-107이 서버 멱등 장치를 두지
 
   it('잠긴 동안 다시 불러도 두 번째 요청이 나가지 않는다', () => {
     const startRetest = stubBridge()
-    const { result } = renderHook(() => useRetest(vi.fn()))
+    const { result } = renderHook(() => useRetest(vi.fn(), 'result'))
 
     act(() => result.current.onRetest())
     act(() => result.current.onRetest())
@@ -117,7 +117,7 @@ describe('잠금 — 더블탭 방지 (KAN-107이 서버 멱등 장치를 두지
   it('성공은 회신이 없으므로 잠금이 저절로 풀리지 않는다', () => {
     stubBridge()
     vi.useFakeTimers()
-    const { result } = renderHook(() => useRetest(vi.fn()))
+    const { result } = renderHook(() => useRetest(vi.fn(), 'result'))
 
     act(() => result.current.onRetest())
     act(() => vi.advanceTimersByTime(60_000))
@@ -131,7 +131,7 @@ describe('잠금 — 더블탭 방지 (KAN-107이 서버 멱등 장치를 두지
 describe('실패 회신', () => {
   it('retryable이면 문구를 내리고 버튼을 다시 연다', () => {
     stubBridge()
-    const { result } = renderHook(() => useRetest(vi.fn()))
+    const { result } = renderHook(() => useRetest(vi.fn(), 'result'))
     act(() => result.current.onRetest())
 
     deliverFailure({ message: '잠시 후 다시 시도해 주세요.' })
@@ -143,7 +143,7 @@ describe('실패 회신', () => {
 
   it('다시 열린 뒤 누르면 요청이 실제로 다시 나간다', () => {
     const startRetest = stubBridge()
-    const { result } = renderHook(() => useRetest(vi.fn()))
+    const { result } = renderHook(() => useRetest(vi.fn(), 'result'))
     act(() => result.current.onRetest())
     deliverFailure()
 
@@ -155,7 +155,7 @@ describe('실패 회신', () => {
 
   it('retryable이 아니면 문구만 남기고 잠금을 유지한다', () => {
     const startRetest = stubBridge()
-    const { result } = renderHook(() => useRetest(vi.fn()))
+    const { result } = renderHook(() => useRetest(vi.fn(), 'result'))
     act(() => result.current.onRetest())
 
     deliverFailure({ retryable: false, message: '지금은 테스트를 시작할 수 없어요.' })
@@ -169,7 +169,7 @@ describe('실패 회신', () => {
 
   it('불량 payload는 화면을 바꾸지 않는다 — 잠긴 채로 남는다', () => {
     stubBridge()
-    const { result } = renderHook(() => useRetest(vi.fn()))
+    const { result } = renderHook(() => useRetest(vi.fn(), 'result'))
     act(() => result.current.onRetest())
 
     act(() => {
@@ -185,7 +185,7 @@ describe('429 대기 카운트다운 (§2.5)', () => {
   it('남은 초를 올림해서 세고, 0이 되면 버튼이 열린다', () => {
     vi.useFakeTimers()
     stubBridge()
-    const { result } = renderHook(() => useRetest(vi.fn()))
+    const { result } = renderHook(() => useRetest(vi.fn(), 'result'))
     act(() => result.current.onRetest())
 
     deliverFailure({ retryAfterMs: 2_500 })
@@ -206,7 +206,7 @@ describe('429 대기 카운트다운 (§2.5)', () => {
   it('대기가 끝나기 전에는 눌러도 요청이 나가지 않는다', () => {
     vi.useFakeTimers()
     const startRetest = stubBridge()
-    const { result } = renderHook(() => useRetest(vi.fn()))
+    const { result } = renderHook(() => useRetest(vi.fn(), 'result'))
     act(() => result.current.onRetest())
     deliverFailure({ retryAfterMs: 5_000 })
 
@@ -220,7 +220,7 @@ describe('429 대기 카운트다운 (§2.5)', () => {
 
   it('retryAfterMs가 없는 실패는 카운트다운을 띄우지 않는다', () => {
     stubBridge()
-    const { result } = renderHook(() => useRetest(vi.fn()))
+    const { result } = renderHook(() => useRetest(vi.fn(), 'result'))
     act(() => result.current.onRetest())
 
     deliverFailure({ retryAfterMs: null })
@@ -230,7 +230,7 @@ describe('429 대기 카운트다운 (§2.5)', () => {
 
   it('다시 눌러도 소용없는 실패에는 남은 시간을 띄우지 않는다', () => {
     stubBridge()
-    const { result } = renderHook(() => useRetest(vi.fn()))
+    const { result } = renderHook(() => useRetest(vi.fn(), 'result'))
     act(() => result.current.onRetest())
 
     // 기다리면 된다는 뜻으로 읽히면 안 된다 — 잠금은 유지되고 초는 나오지 않는다
@@ -243,7 +243,7 @@ describe('429 대기 카운트다운 (§2.5)', () => {
   it('다 센 뒤에는 타이머가 남지 않는다', () => {
     vi.useFakeTimers()
     stubBridge()
-    const { result } = renderHook(() => useRetest(vi.fn()))
+    const { result } = renderHook(() => useRetest(vi.fn(), 'result'))
     act(() => result.current.onRetest())
     deliverFailure({ retryAfterMs: 1_000 })
 
@@ -256,7 +256,7 @@ describe('429 대기 카운트다운 (§2.5)', () => {
 
 describe('수신자 설치·해제 (§8)', () => {
   it('마운트하면 수신 지점이 걸리고, 언마운트하면 설치 전으로 정확히 되돌아간다', () => {
-    const { unmount } = renderHook(() => useRetest(vi.fn()))
+    const { unmount } = renderHook(() => useRetest(vi.fn(), 'result'))
 
     expect(typeof window.AccenturyWeb?.onRetestFailed).toBe('function')
 
@@ -268,7 +268,7 @@ describe('수신자 설치·해제 (§8)', () => {
     const onItemResult = vi.fn()
     window.AccenturyWeb = { onItemResult }
 
-    const { unmount } = renderHook(() => useRetest(vi.fn()))
+    const { unmount } = renderHook(() => useRetest(vi.fn(), 'result'))
     expect(window.AccenturyWeb?.onItemResult).toBe(onItemResult)
 
     unmount()
@@ -283,28 +283,41 @@ describe('재응시 계측 (KAN-33)', () => {
     const logEvent = vi.fn()
     stubBridge()
     window.AccenturyBridge!.logEvent = logEvent
-    const { result } = renderHook(() => useRetest(vi.fn()))
+    const { result } = renderHook(() => useRetest(vi.fn(), 'result'))
 
     act(() => result.current.onRetest())
 
-    expect(logEvent).toHaveBeenCalledWith('retest_started', '{}')
+    expect(logEvent).toHaveBeenCalledWith('retest_started', JSON.stringify({ from: 'result' }))
     expect(events).toEqual([])
   })
 
   it('폴백(브라우저 단독·구버전 앱)도 같은 사건이라 함께 센다', () => {
     const events = stubGtag()
     const fallback = vi.fn()
-    const { result } = renderHook(() => useRetest(fallback))
+    const { result } = renderHook(() => useRetest(fallback, 'result'))
 
     act(() => result.current.onRetest())
 
     expect(fallback).toHaveBeenCalledTimes(1)
-    expect(events).toEqual([{ event: 'retest_started' }])
+    expect(events).toEqual([{ event: 'retest_started', from: 'result' }])
+  })
+
+  it('어느 화면에서 눌렀는지를 함께 싣는다 (KAN-191)', () => {
+    /*
+     * 대기 화면의 막다른 상태에서 나온 재응시는 결과를 다 보고 한 번 더 하는 것과 뜻이
+     * 정반대다. 뭉치면 재응시가 늘어난 것이 좋은 신호인지 나쁜 신호인지 갈리지 않는다.
+     */
+    const events = stubGtag()
+    const { result } = renderHook(() => useRetest(vi.fn(), 'waiting'))
+
+    act(() => result.current.onRetest())
+
+    expect(events).toEqual([{ event: 'retest_started', from: 'waiting' }])
   })
 
   it('잠긴 버튼을 두드린 것은 새 응시가 아니다 — 세지 않는다', () => {
     stubBridge()
-    const { result } = renderHook(() => useRetest(vi.fn()))
+    const { result } = renderHook(() => useRetest(vi.fn(), 'result'))
     act(() => result.current.onRetest())
     const events = stubGtag()
 

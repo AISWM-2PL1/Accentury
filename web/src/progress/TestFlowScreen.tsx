@@ -19,6 +19,7 @@ import type { CaptureFactory, Recording } from '../audio'
 import { uploadRecording } from '../audio/uploadRecording'
 import { getSessionToken, installItemResultReceiver, startVoiceItem } from '../bridge/bridge'
 import type { ItemResult } from '../bridge/itemResult'
+import { useRetest } from '../result/useRetest'
 import { fetchTestDefinition, type FetchLike } from './fetchTestDefinition'
 import type { SnapshotStorage } from './progressSnapshot'
 import { submitVocabAnswer } from './submitVocabAnswer'
@@ -42,6 +43,18 @@ export interface TestFlowScreenProps {
    * 진입 쿼리 계약은 App이 들고 있고, 이 화면이 URL을 알 필요가 없다.
    */
   onAnalysisReady?: () => void
+  /**
+   * 재응시가 브리지로 갈 수 없을 때 대신 탈 길 (KAN-191). 결과 화면이 쓰는 것과 **같은
+   * 폴백**이다 — App의 `backToIntro`가 그것이고, 여기서도 인트로로 되돌아간다.
+   *
+   * 전환을 이 화면이 직접 하지 않는 이유는 `onAnalysisReady`와 같다: 진입 쿼리 계약은 App이
+   * 들고 있고, 이 화면은 URL을 알 필요가 없다.
+   *
+   * **없으면 분석 대기 화면에 [다시 테스트하기]를 그리지 않는다.** 브라우저 단독 실행에서
+   * 폴백까지 없으면 눌러도 아무 일이 없는 버튼이 되는데, 그런 버튼은 두지 않는다는 것이
+   * `onRetake`에서 이미 내린 판단이다.
+   */
+  retestFallback?: () => void
   /**
    * 브리지가 없는 환경(웹 단독 실행)의 세션 토큰 출처 (KAN-56 Stage 3 → KAN-31).
    *
@@ -76,6 +89,7 @@ export function TestFlowScreen({
   sessionId = '',
   storage,
   onAnalysisReady,
+  retestFallback,
   webSessionToken,
   capture,
   userCurveCenterHz = null,
@@ -135,6 +149,7 @@ export function TestFlowScreen({
       sessionId={sessionId}
       storage={storage}
       onAnalysisReady={onAnalysisReady}
+      retestFallback={retestFallback}
       webSessionToken={webSessionToken}
       capture={capture}
       userCurveCenterHz={userCurveCenterHz}
@@ -149,6 +164,7 @@ function TestRunner({
   sessionId,
   storage,
   onAnalysisReady,
+  retestFallback,
   webSessionToken,
   capture,
   userCurveCenterHz,
@@ -159,6 +175,7 @@ function TestRunner({
   sessionId: string
   storage?: SnapshotStorage
   onAnalysisReady?: () => void
+  retestFallback?: () => void
   webSessionToken?: () => string
   capture?: CaptureFactory
   userCurveCenterHz: number | null
@@ -302,6 +319,24 @@ function TestRunner({
    * 몇 번째인지(1~5)로 부르면, 그 줄의 [다시 녹음]을 눌렀을 때 네이티브 녹음 화면이 그리는
    * 번호("7 / 10")와 어긋난다. 사용자에게는 다른 문항으로 간 것처럼 보인다.
    */
+  /*
+   * 막다른 분석 상태의 [다시 테스트하기] (KAN-191).
+   *
+   * **수신자 설치가 이 자리인 이유가 §8이다.** 재응시 실패 회신(`onRetestFailed`)은 부모가
+   * 받아 자식에게 값으로 내려보낸다 — 대기 화면이 스스로 걸면, 자식 effect가 먼저 도는 React
+   * 마운트 순서상 나중에 설치되는 부모 수신자가 그것을 덮는다. 문항 결과 수신자
+   * (`installItemResultReceiver`)를 여기 둔 것과 같은 판단이라 두 수신자가 한 자리에 모인다.
+   *
+   * 결과 화면(App의 `ResultRoute`)도 같은 슬롯에 수신자를 설치하지만 **두 화면은 동시에 서지
+   * 않는다** — App의 진입 쿼리 분기가 `screen=test`와 `screen=result`로 갈라 둘 중 하나만
+   * 마운트한다. 겹치더라도 슬롯 단위 교체라 다른 수신자를 지우지는 않지만
+   * (`installReceiver`), 같은 회신을 두 곳이 듣는 상태가 되므로 그 우연에 기대지 않는다.
+   *
+   * 훅은 폴백이 없어도 항상 부른다 — 조건부 호출은 훅 규칙 위반이다. 값을 화면에 넘길지
+   * 말지만 아래에서 가른다.
+   */
+  const retest = useRetest(retestFallback ?? noop, 'waiting')
+
   const voiceItems = useMemo(
     () =>
       state.items
@@ -331,6 +366,12 @@ function TestRunner({
          * 통로와 같은 판정).
          */
         onRetake={window.AccenturyBridge === undefined ? undefined : retake}
+        /*
+         * 폴백을 주지 않은 호출자에게는 재응시 버튼도 주지 않는다 (KAN-191). 앱 안에서는
+         * 브리지가 받아 가므로 폴백이 쓰일 일이 없지만, 폴백이 없다는 것은 곧 "이 호출자는
+         * 화면 전환 계약을 들고 있지 않다"는 뜻이라 브라우저 단독 실행에서 죽은 버튼이 된다.
+         */
+        retest={retestFallback === undefined ? undefined : retest}
         refreshNonce={resultNonce}
         fetchImpl={fetchImpl}
       />

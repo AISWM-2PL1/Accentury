@@ -14,13 +14,22 @@
  * 이미 서버에 저장돼 있으므로(그렇지 않으면 `/complete`가 422를 준다) 완료로 세고,
  * 분모는 문항 진행 화면과 같은 10을 쓴다 — 시도를 몇 번 했든 분모는 움직이지 않는다.
  *
- * ## [테스트 종료]를 주지 않는다 — AC와 다른 선택
+ * ## 출구는 막다른 상태에만 있다 (KAN-191)
  *
- * KAN-14 AC는 "타임아웃 시 재시도와 **테스트 종료** 선택을 제공한다"고 적혀 있다. 그러나
- * 그 뒤 KAN-147(2026-08-19)에서 **테스트 중 이탈 버튼을 전부 걷어내기로 결정**했고,
- * 정식 이탈·복구 UX는 KAN-39(업로드 상태 화면 디자인)에서 한 번에 설계하기로 했다.
- * 여기서만 이탈 버튼을 되살리면 방금 지운 것을 다시 심는 셈이라, 늦은 결정을 따라
- * [다시 시도]만 준다. 이 화면의 이탈 경로는 KAN-39에서 다른 화면들과 함께 붙는다.
+ * KAN-14 AC는 "타임아웃 시 재시도와 **테스트 종료** 선택을 제공한다"고 적혀 있었다. 그러나
+ * 그 뒤 KAN-147(2026-08-19)이 **테스트 중 이탈 버튼을 전부 걷어냈다** — 진행 중에 보이는
+ * 문은 곧 이탈률이 된다 (ux-ui.md §3 Goal-Gradient).
+ *
+ * KAN-191은 그 결정을 뒤집지 않고 **되돌아갈 길이 없는 상태에만** 예외를 둔다. 셋으로 갈린다.
+ *
+ * - `FAILED`(재시도 불가 실패 — 봉투 없는 403, 세션 만료 등)와 손댈 문항이 없는
+ *   `ACTION_REQUIRED`([deadEnd]): 이 화면 안에 되살릴 방법이 하나도 없다. 여기서만
+ *   [다시 테스트하기]를 준다. 결과 화면과 **같은 벌**([RetestAction])이라 앱에서는 네이티브가
+ *   세션을 갈아 끼우고 브라우저에서는 인트로로 되돌아간다 — 화면마다 다른 출구를 만들지 않는다
+ * - `EXHAUSTED`는 [다시 시도]만 그대로 준다. 폴링을 접었을 뿐 분석은 서버에서 아직 돌고 있을
+ *   수 있어 막다른 길이 아니다 — 여기에 재응시를 놓으면 곧 끝날 분석을 버리게 만든다
+ * - 정상 진행(`POLLING`·`READY`)과 누를 것이 남아 있는 `ACTION_REQUIRED`에는 출구가 없다.
+ *   KAN-147 그대로다
  */
 
 import { Fragment, useEffect, useRef } from 'react'
@@ -32,6 +41,8 @@ import { TextHero } from '../ui/TextHero'
 import { ANALYSIS_STAGES, analysisStage } from './analysisStage'
 import type { VoiceItem } from '../progress/testDefinition'
 import type { FetchLike } from '../progress/fetchTestDefinition'
+import { RetestAction } from '../result/RetestAction'
+import type { RetestControl } from '../result/useRetest'
 import type { AnalysisItem, AnalysisItemStatus } from './fetchAnalysisStatuses'
 import { useAnalysisPolling } from './useAnalysisPolling'
 
@@ -51,6 +62,16 @@ export interface AnalysisWaitingScreenProps {
    * 네이티브 결선이 없는 브라우저 단독 실행에서 눌러도 아무 일 없는 버튼을 두지 않기 위해서다.
    */
   onRetake?: (itemId: string) => void
+  /**
+   * 막다른 상태의 [다시 테스트하기] (KAN-191, 파일 헤더 참고). **없으면 그 버튼을 그리지
+   * 않는다** — `onRetake`와 같은 규칙이다: 재응시를 실제로 태울 길이 없는 실행에서 눌러도
+   * 아무 일 없는 버튼을 두지 않는다.
+   *
+   * 핸들러 하나가 아니라 상태를 통째로 받는 이유는 결과 화면과 같다. 재응시는 네이티브
+   * 왕복이라 성공이 이 화면으로 돌아오지 않고(페이지가 통째로 교체된다), 실패 회신 수신자는
+   * 부모가 설치한다 (§8). 화면은 받은 값을 그리기만 한다 — [useRetest]가 그 값을 만든다.
+   */
+  retest?: RetestControl
   /**
    * 값이 바뀌면 폴링을 처음부터 다시 시작한다. 재녹음 결과가 네이티브에서 돌아왔다는 신호다.
    *
@@ -112,6 +133,7 @@ export function AnalysisWaitingScreen({
   totalItems,
   onReady,
   onRetake,
+  retest,
   refreshNonce = 0,
   fetchImpl,
 }: AnalysisWaitingScreenProps) {
@@ -314,7 +336,13 @@ export function AnalysisWaitingScreen({
             <StatusBlock
               tone="error"
               message="여기서는 더 진행할 수 없어요"
-              detail="앱을 다시 시작해 테스트를 처음부터 진행해 주세요"
+              /*
+               * "앱을 다시 시작해"라고 말하던 자리다 (KAN-191). 이제 이 화면이 재응시 버튼을
+               * 들고 있어 앱을 끄라고 할 이유가 없고, 애초에 브라우저 단독 실행에는 끌 앱도
+               * 없었다 — 그 실행이 [deadEnd]로 떨어지는 두 경로 중 하나다.
+               */
+              detail="테스트를 처음부터 다시 진행해 주세요"
+              action={retest === undefined ? undefined : <RetestAction retest={retest} />}
             />
           ) : (
             <StatusBlock
@@ -328,7 +356,20 @@ export function AnalysisWaitingScreen({
             />
           ))}
 
-        {status.kind === 'FAILED' && <StatusBlock tone="error" message={status.message} />}
+        {status.kind === 'FAILED' && (
+          <StatusBlock
+            tone="error"
+            /*
+             * 서버 문구가 제목에서 부연으로 내려왔다 (KAN-191). 봉투 문구는 "세션이
+             * 만료되었습니다" 같은 **원인 진술**이라, 그 한 줄만 있으면 지금 무엇을 할 수
+             * 있는지가 화면에 없다. 상태는 제목이, 원인은 부연이 말하는 것이 StatusBlock이
+             * 원래 정한 역할 분담이다 — 문구 자체는 서버 것 그대로다.
+             */
+            message="분석을 진행할 수 없어요"
+            detail={status.message}
+            action={retest === undefined ? undefined : <RetestAction retest={retest} />}
+          />
+        )}
 
         <ul className="analysis-list">
           {rows.map(({ item, itemNumber, status: analysis }) => (

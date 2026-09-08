@@ -27,6 +27,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
+import type { RetestOrigin } from '../analytics/events'
 import { track } from '../analytics/track'
 import { installRetestFailedReceiver, startRetest } from '../bridge/bridge'
 
@@ -67,8 +68,11 @@ type Phase =
  * @param fallback 브리지로 갈 수 없을 때 대신 탈 길. 브라우저 단독 실행과, 메서드가 없는
  *   계약 버전 1 구버전 앱이 여기로 떨어진다 (§5 graceful degrade — 두 경우 모두 크래시가
  *   아니라 예전 동작인 인트로 복귀로 내려간다)
+ * @param from 이 훅을 세운 화면 ([RetestOrigin], KAN-191). 기본값을 두지 않는다 — 두면
+ *   자리가 하나 늘 때 그 자리만 조용히 `result`로 세어져, 그 화면의 출구가 얼마나 밟히는지
+ *   묻는 순간 답이 없다
  */
-export function useRetest(fallback: () => void): RetestControl {
+export function useRetest(fallback: () => void, from: RetestOrigin): RetestControl {
   const [phase, setPhase] = useState<Phase>({ status: 'idle' })
   const [retryAfterSec, setRetryAfterSec] = useState(0)
 
@@ -131,14 +135,14 @@ export function useRetest(fallback: () => void): RetestControl {
      * (`startRetest` 주석) 호출 뒤에 셀 자리가 남아 있지 않다. 폴백(브라우저 단독·구버전 앱)도
      * 같은 사건이라 함께 센다 — 사용자가 다시 응시하기 시작한 것은 어느 경로에서나 같다.
      */
-    track({ name: 'retest_started' })
+    track({ name: 'retest_started', from })
 
     if (!startRetest()) {
       fallback()
       return
     }
     setPhase({ status: 'pending' })
-  }, [disabled, fallback])
+  }, [disabled, fallback, from])
 
   return {
     onRetest,

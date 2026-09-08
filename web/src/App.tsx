@@ -110,6 +110,16 @@ export default function App({ navigate = assignHref, voiceCheckCapture }: AppPro
          * 만들어질 때 함께 확정돼 세션이 바뀌기 전에는 변하지 않는다.
          */
         userCurveCenterHz={standalone ? (loadWebSession()?.userCurveCenterHz ?? null) : null}
+        /*
+         * 분석이 막다른 상태에 걸렸을 때의 [다시 테스트하기] 폴백 (KAN-191). 결과 화면의
+         * `backToIntro`와 **같은 함수**다 — 브리지로 갈 수 없는 실행에서 재응시는 어느
+         * 화면에서 눌렀든 인트로 복귀로 내려간다 ([goToIntro]).
+         *
+         * `useCallback`으로 감싸지 않는다. [App]은 스큐 판정에서 조기 반환하므로 그 뒤에 훅을
+         * 놓을 수 없고, 이 컴포넌트는 상태가 없어 스스로 다시 그려지지 않는다 — 매 렌더마다
+         * 새 함수가 생겨 아래 훅이 다시 도는 상황 자체가 없다.
+         */
+        retestFallback={() => goToIntro(navigate)}
         onAnalysisReady={() => {
           // 완주 계측 (퍼널). 결과가 실제로 나온 자리라 "끝까지 갔다"를 여기서만 확실히
           // 말할 수 있다 — 마지막 문항 제출은 아직 분석 실패로 갈 수 있다.
@@ -406,7 +416,7 @@ function ResultRoute({
    * 새 세션을 주므로 클라이언트가 만료를 판정할 일이 없다.
    */
   const backToIntro = useCallback(() => goToIntro(navigate), [navigate])
-  const retest = useRetest(backToIntro)
+  const retest = useRetest(backToIntro, 'result')
 
   /*
    * [앱 다운로드]는 웹 단독 실행에만 있다 (KAN-31). UA 판별을 여기서 하는 이유는 화면이

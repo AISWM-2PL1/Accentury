@@ -51,6 +51,16 @@ import type { ShareChannel } from '../share/shareResult'
 export type RetakeReason = 'QUALITY' | 'FAILED' | 'USER'
 
 /**
+ * [다시 테스트하기]를 누른 자리 (KAN-191).
+ *
+ * `result`는 결과를 다 보고 한 번 더 하기로 한 것이고, `waiting`은 분석이 막다른 길에 걸려
+ * 되돌아 나온 것이다 — 같은 버튼이지만 뜻이 정반대라, 뭉치면 재응시가 늘어난 것이 좋은
+ * 신호인지 나쁜 신호인지 구분되지 않는다. 대기 화면의 출구는 KAN-147이 걷어낸 이탈 버튼을
+ * 막다른 상태에만 되살린 것이라(KAN-191), 그 자리가 얼마나 밟히는지가 곧 그 결정의 검증값이다.
+ */
+export type RetestOrigin = 'result' | 'waiting'
+
+/**
  * 문항 분석의 최종 상태 (`AnalysisItemStatus`의 종결 상태 셋).
  *
  * `NOT_SUBMITTED`·`PROCESSING`은 여기 없다 — 지나가는 상태라 "최종 분포"에 세면 폴링 회차가
@@ -93,8 +103,8 @@ export type AnalyticsEvent =
   | { name: 'share_clicked'; campaign: string | null; channel: ShareChannel }
   /** 결과 화면의 [앱 다운로드]를 눌렀다 (웹 단독 실행에만 있는 지점) */
   | { name: 'app_download_clicked'; campaign: string | null; platform: StorePlatform }
-  /** 결과 화면의 [다시 테스트하기]를 눌렀다 */
-  | { name: 'retest_started' }
+  /** [다시 테스트하기]를 눌렀다. 어느 화면에서 눌렀는지는 [RetestOrigin]이 가른다 */
+  | { name: 'retest_started'; from: RetestOrigin }
   // ── 운영 지표 (재검토 트리거의 계기판) ──────────────────────────────────
   /**
    * 대기 화면 진입 → 결과 화면 전환까지 걸린 시간.

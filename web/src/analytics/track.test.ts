@@ -55,7 +55,7 @@ describe('track — 앱 안 (브리지 → 네이티브 Firebase)', () => {
     const gtag = vi.fn()
     window.gtag = gtag
 
-    track({ name: 'retest_started' })
+    track({ name: 'retest_started', from: 'result' })
 
     // 계측 하나를 잃는 편이 앱 사용자를 웹 트래픽으로 세는 것보다 낫다
     expect(gtag).not.toHaveBeenCalled()
@@ -155,8 +155,11 @@ describe('track — 응시 상관 키 (KAN-33 AC 1)', () => {
     bridgeWithLogEvent(logEvent)
     const testId = ensureTestId('s_1')?.testId
 
-    track({ name: 'retest_started' })
+    track({ name: 'retest_started', from: 'result' })
 
-    expect(logEvent).toHaveBeenCalledWith('retest_started', JSON.stringify({ test_id: testId }))
+    expect(logEvent).toHaveBeenCalledWith(
+      'retest_started',
+      JSON.stringify({ from: 'result', test_id: testId }),
+    )
   })
 })

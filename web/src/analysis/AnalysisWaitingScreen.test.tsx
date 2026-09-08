@@ -7,6 +7,23 @@ import {
   retakeReason,
   type AnalysisWaitingScreenProps,
 } from './AnalysisWaitingScreen'
+import type { RetestControl } from '../result/useRetest'
+
+/**
+ * 재응시 상태 대역 (KAN-191). 기본값은 "누를 수 있고 아직 아무 일도 없었다" — 실제 브리지
+ * 왕복은 [useRetest]가 소유하므로 이 화면 테스트는 받은 값을 어디에 그리는지만 본다
+ * (결과 화면 테스트의 같은 이름 대역과 같은 판단이다).
+ */
+function retestControl(overrides: Partial<RetestControl> = {}): RetestControl {
+  return {
+    onRetest: vi.fn(),
+    disabled: false,
+    pending: false,
+    message: null,
+    retryAfterSec: 0,
+    ...overrides,
+  }
+}
 
 function voiceItem(seq: number): VoiceItem {
   return {
@@ -415,10 +432,12 @@ describe('멈춘 상태의 출구', () => {
     expect(screen.getByRole('button', { name: '다시 녹음' })).toBeInTheDocument()
   })
 
-  it('손댈 문항이 목록에 없으면 앱 재시작으로 안내한다 — 어휘 미제출이 그 경로다', async () => {
+  it('손댈 문항이 목록에 없으면 [다시 테스트하기]로 내보낸다 — 어휘 미제출이 그 경로다 (KAN-191)', async () => {
     const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const retest = retestControl()
     await renderScreen({
       onRetake: vi.fn(),
+      retest,
       // 음성은 전부 끝났는데 서버는 어휘(w5) 미제출로 422를 준다. 이 목록에 w5는 없다
       fetchImpl: fetchFor({
         analyses: () => jsonResponse(200, statusesBody(Array(5).fill('COMPLETED'))),
@@ -433,7 +452,17 @@ describe('멈춘 상태의 출구', () => {
     })
 
     expect(screen.getByText('여기서는 더 진행할 수 없어요')).toBeInTheDocument()
-    expect(screen.getByText('앱을 다시 시작해 테스트를 처음부터 진행해 주세요')).toBeInTheDocument()
+    /*
+     * 앱을 끄라고 하던 자리다 (KAN-191). 이 화면이 재응시 버튼을 들고 있으므로 사용자가
+     * 여기서 바로 처음부터 갈 수 있고, 브라우저 단독 실행에는 끌 앱도 없었다.
+     */
+    expect(screen.getByText('테스트를 처음부터 다시 진행해 주세요')).toBeInTheDocument()
+    expect(screen.queryByText('앱을 다시 시작해 테스트를 처음부터 진행해 주세요')).not.toBeInTheDocument()
+
+    // 안내만 있고 누를 것이 없던 막다른 길에 출구가 생겼다 — 결과 화면과 같은 벌이다
+    fireEvent.click(screen.getByRole('button', { name: '다시 테스트하기' }))
+    expect(retest.onRetest).toHaveBeenCalledTimes(1)
+
     // "다시 녹음해 주세요"라고 말해 놓고 대상이 없는 상태를 만들지 않는다
     expect(screen.queryByText('아래 목록에서 해당 문항을 다시 녹음해 주세요')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '다시 녹음' })).not.toBeInTheDocument()
@@ -445,9 +474,11 @@ describe('멈춘 상태의 출구', () => {
     errorLog.mockRestore()
   })
 
-  it('브리지가 없어 버튼을 못 그리는 경우도 같은 안내로 간다', async () => {
+  it('브리지가 없어 버튼을 못 그리는 경우도 같은 출구로 간다', async () => {
     const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const retest = retestControl()
     await renderScreen({
+      retest,
       // onRetake 없음 = 브라우저 단독 실행
       fetchImpl: fetchFor({
         analyses: () => jsonResponse(200, statusesBody(Array(5).fill('RETRYABLE_FAILED'))),
@@ -462,10 +493,51 @@ describe('멈춘 상태의 출구', () => {
     })
 
     expect(screen.getByText('여기서는 더 진행할 수 없어요')).toBeInTheDocument()
+    // 재녹음이 불가능한 실행이라 더더욱 여기가 유일한 출구다 (KAN-191)
+    expect(screen.getByRole('button', { name: '다시 테스트하기' })).toBeInTheDocument()
     errorLog.mockRestore()
   })
 
-  it('세션이 만료되면 봉투 문구를 그대로 보여 준다', async () => {
+  it('폴백조차 없는 호출자에게는 버튼을 그리지 않는다 — 눌러도 아무 일 없는 버튼은 두지 않는다', async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await renderScreen({
+      // retest 없음 = 재응시를 태울 길이 없는 실행 (`onRetake`와 같은 규칙)
+      fetchImpl: fetchFor({
+        analyses: () => jsonResponse(200, statusesBody(Array(5).fill('COMPLETED'))),
+        complete: () =>
+          jsonResponse(
+            422,
+            envelope('RESULT_INCOMPLETE', '아직 완료하지 않은 문항이 있습니다.', false, {
+              missingItems: ['w5'],
+            }),
+          ),
+      }),
+    })
+
+    expect(screen.getByText('여기서는 더 진행할 수 없어요')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '다시 테스트하기' })).not.toBeInTheDocument()
+    errorLog.mockRestore()
+  })
+
+  it('세션이 만료되면 봉투 문구를 그대로 보여 주고 [다시 테스트하기]로 내보낸다 (KAN-191)', async () => {
+    const retest = retestControl()
+    await renderScreen({
+      retest,
+      fetchImpl: fetchFor({
+        analyses: () =>
+          jsonResponse(401, envelope('SESSION_EXPIRED', '세션이 만료되었습니다. 테스트를 다시 시작해 주세요.', false)),
+      }),
+    })
+
+    // 상태는 제목이, 원인은 서버 문구가 말한다 — 봉투 문구를 웹이 고쳐 쓰지 않는다
+    expect(screen.getByText('분석을 진행할 수 없어요')).toBeInTheDocument()
+    expect(screen.getByText('세션이 만료되었습니다. 테스트를 다시 시작해 주세요.')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '다시 테스트하기' }))
+    expect(retest.onRetest).toHaveBeenCalledTimes(1)
+  })
+
+  it('재시도 불가 실패에서도 retest가 없으면 버튼이 없다 — 이전 호출자가 그대로 돈다', async () => {
     await renderScreen({
       fetchImpl: fetchFor({
         analyses: () =>
@@ -474,6 +546,20 @@ describe('멈춘 상태의 출구', () => {
     })
 
     expect(screen.getByText('세션이 만료되었습니다. 테스트를 다시 시작해 주세요.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '다시 테스트하기' })).not.toBeInTheDocument()
+  })
+
+  it('재응시가 잠겨 있으면 버튼도 잠긴다 — 잠금 규칙은 훅이 소유한다', async () => {
+    const retest = retestControl({ disabled: true, pending: true })
+    await renderScreen({
+      retest,
+      fetchImpl: fetchFor({
+        analyses: () =>
+          jsonResponse(401, envelope('SESSION_EXPIRED', '세션이 만료되었습니다. 테스트를 다시 시작해 주세요.', false)),
+      }),
+    })
+
+    expect(screen.getByRole('button', { name: '준비 중…' })).toBeDisabled()
   })
 
   it('폴링 상한을 넘기면 [다시 시도]가 나오고, 누르면 다시 돈다', async () => {
@@ -508,15 +594,49 @@ describe('멈춘 상태의 출구', () => {
     expect(screen.queryByText('분석이 예상보다 오래 걸리고 있어요')).not.toBeInTheDocument()
   })
 
-  it('[테스트 종료]를 주지 않는다 — KAN-147의 이탈 버튼 제거 결정을 따른다', async () => {
+  /*
+   * KAN-147이 걷어낸 이탈 버튼을 KAN-191이 **막다른 상태에만** 되살렸다. 아래 셋은 그 예외에
+   * 들지 않는 자리라, `retest`를 줘도 출구가 그려지면 안 된다 — 진행 중에 보이는 문은 곧
+   * 이탈률이 된다 (ux-ui.md §3 Goal-Gradient).
+   */
+  it('정상 진행 중에는 출구가 없다 — KAN-147 그대로다', async () => {
+    await renderScreen({ retest: retestControl() })
+
+    expect(screen.getByText('결과를 만들고 있어요')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '다시 테스트하기' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /테스트 종료|나가기|그만/ })).not.toBeInTheDocument()
+  })
+
+  it('EXHAUSTED는 [다시 시도]만 준다 — 분석이 아직 끝나는 중일 수 있어 막다른 길이 아니다', async () => {
     vi.useFakeTimers()
-    render(<AnalysisWaitingScreen {...props()} />)
+    render(<AnalysisWaitingScreen {...props({ retest: retestControl() })} />)
     await act(async () => {})
     await act(async () => {
       await vi.advanceTimersByTimeAsync(70_000)
     })
 
+    expect(screen.getByRole('button', { name: '다시 시도' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '다시 테스트하기' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /테스트 종료|나가기|그만/ })).not.toBeInTheDocument()
+  })
+
+  it('누를 문항이 남아 있으면 출구 대신 [다시 녹음]만 준다', async () => {
+    await renderScreen({
+      onRetake: vi.fn(),
+      retest: retestControl(),
+      fetchImpl: fetchFor({
+        analyses: () =>
+          jsonResponse(200, statusesBody(['COMPLETED', 'COMPLETED', 'FAILED', 'COMPLETED', 'COMPLETED'])),
+        complete: () =>
+          jsonResponse(
+            409,
+            envelope('RESULT_RETAKE_REQUIRED', '실패한 문항이 있습니다.', true, { retakeItems: ['v3'] }),
+          ),
+      }),
+    })
+
+    expect(screen.getByRole('button', { name: '다시 녹음' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '다시 테스트하기' })).not.toBeInTheDocument()
   })
 })
 
