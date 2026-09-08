@@ -392,12 +392,14 @@
   color: var(--color-muted-foreground);
 }
 
-/* 포인트 면은 첫 화면의 결정을 한 곳으로 모은다. 다른 primary 버튼의 의미는 바꾸지 않는다. */
-.btn--primary.intro-cta {
+/*
+ * 인트로 CTA는 다른 화면의 주버튼과 같은 잉크다. 한때 포인트 컬러 면이었는데, 그러면 이
+ * 화면에 색이 제목 아치와 버튼 둘이 되어 "화면당 한 자리"(정본 §7)를 첫 화면부터 어긴다.
+ * 둘 중 남길 쪽은 아치다 — 버튼은 잉크만으로도 화면 바닥에서 유일하게 누를 것이라 이미
+ * 분명하고, 아치는 색이 아니면 아무것도 아니다.
+ */
+.intro-cta {
   width: 100%;
-  border-color: var(--color-point);
-  background: var(--color-point);
-  color: var(--color-point-foreground);
 }
 
 /*
