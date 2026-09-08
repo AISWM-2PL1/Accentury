@@ -38,6 +38,11 @@ output "backend_log_group" {
   description = "backend 컨테이너 로그 (KAN-165). aws logs tail <이 값> --follow"
 }
 
+output "ai_log_group" {
+  value       = module.ai_host.log_group_name
+  description = "ai 컨테이너 로그 (KAN-203). aws logs tail <이 값> --follow. backend와 접두사가 같아 Logs Insights에서 함께 고를 수 있다."
+}
+
 output "backend_autoscaling_resource_id" {
   value       = module.fargate.autoscaling_resource_id
   description = "backend 오토스케일링 대상 (KAN-168). 이력: aws application-autoscaling describe-scaling-activities --service-namespace ecs --resource-id <이 값>"

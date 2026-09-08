@@ -5,7 +5,8 @@
 # backend는 ECS Fargate 서비스(modules/fargate, KAN-165)라 compose 파일이 없고, 로컬 풀스택은 레포 루트의 docker-compose.yml이다.
 #
 # 값이 채워지는 경로 (accentury-up.sh가 매 기동마다 만든다):
-#   compose.env  - ECR_REGISTRY, IMAGE_TAG. 아래 image: 보간에만 쓰이고 컨테이너에는 안 들어간다.
+#   compose.env  - ECR_REGISTRY, IMAGE_TAG, AWS_REGION, AI_LOG_GROUP, INSTANCE_ID. 이 파일 안의 ${...} 보간에만
+#                  쓰이고 컨테이너에는 안 들어간다 (아래 image:와 logging:).
 #   ai.env       - SSM ${prefix}/ai/* (ACCENTURY_AI_INTERNAL_TOKEN 등) + ACCENTURY_ENV.
 #
 # [배포 제약 - ai 워커 1개. scale 금지]
@@ -17,12 +18,39 @@
 # DOCKER-USER 체인) 시작 템플릿의 IMDSv2 hop limit 1이 한 겹 더 막는다. 외부 미노출은 ai-sg
 # (backend-sg만 8000, KAN-165)가 성립시킨다.
 
-# 로그 로테이션 - 호스트 디스크가 컨테이너 로그로 차지 않게 50MB로 막는다.
+# 로그는 CloudWatch Logs로 보낸다 (KAN-203). json-file(10m x 5)이던 동안 컨테이너 로그는 호스트 디스크에만
+# 있어, ASG가 인스턴스를 교체하면 추론 실패의 원인이 함께 사라졌다 - 실모델 전환(KAN-22) 뒤 그 원인(내용
+# 게이트 판정 실패, 워커 재적재, 시간 초과)은 이 컨테이너 로그에만 있다. 로그 그룹은 Terraform이 만들고
+# (modules/ai-host, /accentury/{env}/ai, 보존 14일 - backend와 같다) 스트림 이름에 인스턴스 ID가 들어가
+# 교체 전후가 갈린다. 호스트 디스크에는 `docker logs`용 사본만 남는다 (아래 cache-*).
+#
+# 값 3개는 compose.env에서 보간된다 (accentury-up.sh가 부팅마다 쓴다). INSTANCE_ID에 기본값을 둔 것은
+# 보간이 조용히 빈 이름("ai/")을 만드는 경로를 남기지 않기 위해서다 - 그 값은 IMDS에서 오고 못 읽으면
+# 기동 스크립트가 먼저 죽지만, 스트림 이름은 교체 전후를 가르는 유일한 표식이라 한 겹 더 둔다.
+#
+# mode: non-blocking - CloudWatch가 막혔을 때 로그 쓰기가 컨테이너 프로세스를 멈추지 못하게 한다. 버퍼가
+# 차면 새 줄을 버린다(기본 1MB, 여기서는 4MB) - 추론이 밀리는 것보다 로그 몇 줄을 잃는 것이 낫다. 이
+# 컨테이너의 로그는 요청당 몇 줄이라 4MB면 넉넉하다.
+#
+# cache-* 는 호스트 디스크 상한이다. 드라이버를 바꿔도 `docker logs`는 그대로 읽히는데(도커의 이중
+# 로깅 - 원격 드라이버를 쓰면 엔진이 local 드라이버로 사본을 하나 남긴다), 그 사본의 **기본 상한이
+# 컨테이너당 20MB x 5 = 100MB**라 그냥 두면 옛 json-file(10m x 5 = 50MB)보다 디스크를 더 쓴다.
+# 루트 볼륨이 두 환경 다 20GB뿐이므로(tfvars ai_root_volume_size) 옛 값과 같은 50MB로 되돌려 고정한다. 2026-09-09 staging 실측:
+# docker 25.0.16, 사본은 /var/lib/docker/containers/<id>/container-cached.log.
+#
+# 이중 로깅에는 한계가 하나 있다 - 원격 전송이 실패하면 그 줄은 사본에도 안 쌓이고 재시도하지 않는다.
+# CloudWatch가 막힌 구간은 `docker logs`로도 안 보인다는 뜻이다 (그 구간의 줄은 드라이버 버퍼에 남아
+# 있다가 복구 뒤 CloudWatch로 늦게 간다 - infra/README.md "로그 전송 차단 실증").
 x-logging: &log
-  driver: json-file
+  driver: awslogs
   options:
-    max-size: "10m"
-    max-file: "5"
+    awslogs-region: "${AWS_REGION}"
+    awslogs-group: "${AI_LOG_GROUP}"
+    awslogs-stream: "ai/${INSTANCE_ID:-unknown}"
+    mode: "non-blocking"
+    max-buffer-size: "4m"
+    cache-max-size: "10m"
+    cache-max-file: "5"
 
 services:
   ai:

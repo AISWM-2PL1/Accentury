@@ -6,6 +6,8 @@ backend와 다른 호스트로 갈라진 뒤의 두 보장이다 - 토큰 없는
 
 from __future__ import annotations
 
+import logging
+import re
 import time
 
 import pytest
@@ -74,6 +76,32 @@ def test_토큰이_맞으면_분석이_돈다(tmp_path):
         assert response.status_code == 200
         assert response.json()["status"] == "OK"
         assert residue(settings) == []
+
+
+def test_로그에_내부_토큰과_오디오_바이트가_남지_않는다(tmp_path, caplog):
+    """미들웨어의 401 줄과 요청 종료 줄을 대상으로 본다 (KAN-203, 명세서 §2.6).
+
+    ai 컨테이너 로그는 이제 호스트 디스크가 아니라 CloudWatch 로그 그룹에 보존 14일로 남는다
+    (`infra/modules/ai-host`) - 토큰이나 오디오가 한 번 찍히면 그 창 동안 남는다. backend에는 출력
+    직전의 마지막 관문(`LogMasking`, KAN-28)이 있지만 ai에는 그 층이 없고 "코드가 애초에 넣지 않는
+    것"이 유일한 방어라, 그 성질을 이 테스트가 붙잡는다.
+    """
+    settings = _settings(tmp_path)
+
+    with caplog.at_level(logging.INFO):
+        with TestClient(_app(settings)) as client:
+            assert _analyze(client, {INTERNAL_TOKEN_HEADER: TOKEN + "x"}).status_code == 401
+            assert _analyze(client, {INTERNAL_TOKEN_HEADER: TOKEN}).status_code == 200
+
+    # 두 줄이 실제로 찍혔는지 먼저 본다 - 아무것도 안 남았으면 아래 검사가 공짜로 통과한다
+    assert "내부 호출 토큰 불일치" in caplog.text
+    assert "분석 종료" in caplog.text
+
+    assert TOKEN not in caplog.text, "내부 호출 토큰 원문이 로그에 있다"
+    assert TOKEN[:12] not in caplog.text, "토큰 앞부분이 로그에 있다"
+    assert "RIFF" not in caplog.text, "오디오 원문이 로그에 있다"
+    # 십진수 바이트 목록 - docs/wiki/observability.md의 로그 샘플 검사와 같은 규칙이다
+    assert re.search(r"[0-9]{1,3}(?:, ?[0-9]{1,3}){20,}", caplog.text) is None, "오디오 바이트 목록이 로그에 있다"
 
 
 def test_metrics도_토큰을_요구한다(tmp_path):

@@ -1,6 +1,7 @@
 # 관측성 - 로그, 지표, 대시보드, 경보 (KAN-38)
 
-구현 기록 (2026-09-05). **무엇을 어떻게 보는지의 정본**이다. 지표 이름의 코드 쪽 정본은
+구현 기록 (2026-09-05, ai 컨테이너 로그는 2026-09-09 KAN-203). **무엇을 어떻게 보는지의 정본**이다.
+지표 이름의 코드 쪽 정본은
 `backend/src/main/java/app/accentury/backend/observability/ServiceMetrics.java`, 경보와 대시보드의
 정본은 `infra/modules/monitoring/`이고, 여기는 그 둘을 잇는 규약과 "왜 이 값을 보는가"를 적는다.
 
@@ -53,7 +54,10 @@
 사용자가 "결과가 안 나왔다"고 하면 오류 화면의 `correlationId`를 받아서:
 
 ```
-# CloudWatch Logs Insights - backend와 ai 로그 그룹을 함께 선택하고 실행한다
+# CloudWatch Logs Insights - 로그 그룹 두 개를 함께 선택하고 실행한다.
+#   /accentury/{env}/backend   Fargate 태스크 (KAN-165)
+#   /accentury/{env}/ai        ai 컨테이너 (KAN-203)
+# 접두사가 같아 그룹 선택에서 /accentury/{env}/ 한 번으로 둘 다 걸린다.
 fields @timestamp, @logStream, @message
 | filter @message like /c_1e4f.../
 | sort @timestamp asc
@@ -63,6 +67,11 @@ fields @timestamp, @logStream, @message
 BE는 `[<id>] ...` 형태로 모든 줄 앞에 찍고, AI는 요청 로그에 같은 값을 남기므로 한 질의로
 업로드 접수 → 워커 전달 → AI 호출 → 종결까지가 시간순으로 나온다. `jobId=a_...`가 나오면
 그 값으로 다시 훑어 그 시도의 재전송 이력까지 볼 수 있다.
+
+`@logStream`이 어느 계층의 줄인지를 말해 준다. backend는 `backend/backend/<태스크 id>`(ECS가
+붙이는 접두사/컨테이너/태스크), ai는 `ai/<인스턴스 id>`다. ai 쪽 스트림 이름에 인스턴스 ID가 든
+덕에 **ASG가 호스트를 교체해도 교체 전 컨테이너의 로그가 따로 남는다** - 이것이 KAN-203의 목적이다.
+json-file이던 동안에는 교체와 함께 사라졌다.
 
 ## 2. 로그 마스킹
 
@@ -81,20 +90,65 @@ BE는 `[<id>] ...` 형태로 모든 줄 앞에 찍고, AI는 요청 로그에 �
 추가하면 그 패턴에도 반드시 넣어야 하고, 구조화 로깅(`logging.structured.format`)을 켜려면
 마스킹 경로를 먼저 만들어야 한다.
 
+### AI 쪽에는 이 마지막 관문이 없다 (KAN-203)
+
+`LogMasking`은 backend(Logback)에만 있다. ai 서버(FastAPI)의 방어는 하나뿐이다 - **코드가 애초에
+넣지 않는다.** 내부 호출 토큰은 미들웨어가 값을 비교만 하고 로그에는 경로와 사실만 적고
+(`ai/app/auth.py`), 요청 종료 줄은 추적 ID와 문항 ID, 바이트 **수**, 상태, 소요, 두 버전만 싣는다
+(`ai/app/analyze.py`).
+
+층을 하나 더 두지 않은 이유는 ai 로그를 만드는 자리가 여섯 모듈(`auth`, `limits`, `analyze`,
+`main`, `tempstore`, `track1`)의 `log.*` 호출 28곳으로 닫혀 있기 때문이다. backend는 프레임워크가
+예외 메시지에 요청 헤더를 끼워 넣는 경로가 있어 마지막 관문이 필요하지만 ai에는 그런 자리가 없다.
+**그 전제가 깨지는 변경**(구조화 로깅, 요청이나 응답 덤프, 예외 본문을 그대로 싣는 로깅)을 하려면
+마스킹 경로를 먼저 만든다.
+
+우리 코드가 아닌 자리가 하나 더 있다 - **uvicorn의 접근 로그**다. 요청 줄(메서드, 경로, 상태 코드)과
+클라이언트 주소를 찍고, 아래 pytest는 이것을 잡지 못한다(`TestClient`는 uvicorn을 띄우지 않는다).
+지금 그 줄에 드는 것은 고정 경로 세 개와 상태 코드뿐이라 §2.6 대상이 아니다. 값을 경로나 질의
+문자열에 싣는 엔드포인트를 새로 만들면 그 값이 이 줄에 그대로 남는다는 뜻이므로, 그때 다시 본다.
+
+전제가 조용히 무너지지 않게 `ai/tests/test_internal_token.py`의
+`test_로그에_내부_토큰과_오디오_바이트가_남지_않는다`가 401 줄과 요청 종료 줄을 실제로 찍어 놓고
+토큰 원문, 오디오 원문, 십진수 바이트 목록이 없는지 본다. backend 쪽 `LogMaskingTest`에 대응하는
+자리다.
+
 ### 로그 샘플 검사 (AC 4)
 
-배포 뒤 한 번, 그리고 로그 형식을 건드릴 때마다:
+배포 뒤 한 번, 그리고 로그 형식을 건드릴 때마다. **두 로그 그룹을 다 본다** (ai는 KAN-203):
 
 ```
-aws logs filter-log-events --region ap-northeast-2 \
-  --log-group-name <backend 로그 그룹> --start-time $(( ($(date +%s) - 3600) * 1000 )) \
-  --query 'events[].message' --output text \
-  | grep -nE 'st_[A-Za-z0-9_-]{8,}|Bearer [^*]|accentury-voice-tmp/[^*]|[0-9]{1,3}(, ?[0-9]{1,3}){20,}'
+for group in /accentury/staging/backend /accentury/staging/ai; do
+  echo "== $group"
+  aws logs filter-log-events --region ap-northeast-2 \
+    --log-group-name "$group" --start-time $(( ($(date +%s) - 3600) * 1000 )) \
+    --query 'events[].message' --output text \
+    | grep -nE 'st_[A-Za-z0-9_-]{8,}|Bearer [^*]|accentury-voice-tmp/[^*]|[0-9]{1,3}(, ?[0-9]{1,3}){20,}'
+done
 ```
 
-한 줄도 안 나오는 것이 통과다. 규칙 자체의 회귀는 `LogMaskingTest`가 막는다 - 규칙만 맞고
-실제 콘솔 어펜더에 안 걸리는 경우까지 보므로, 이 수동 검사는 "코드가 새 값을 만들어 냈는가"를
-보는 것이다.
+한 줄도 안 나오는 것이 통과다. 내부 호출 토큰은 형태가 영숫자 48자라 위 패턴에 걸리지 않으므로
+ai 그룹만 값으로 직접 훑는다 (값은 화면에 찍지 않는다):
+
+```
+token=$(aws ssm get-parameter --region ap-northeast-2 \
+  --name /accentury/staging/ai/ACCENTURY_AI_INTERNAL_TOKEN \
+  --with-decryption --query Parameter.Value --output text)
+# --region이 빠지면 기본 리전이 다른 노트북에서 값이 비고, 그러면 아래 검사가 공짜로 통과한다.
+# 못 읽은 것과 안 나온 것을 가르려고 먼저 확인한다 (값은 찍지 않는다).
+[ -n "$token" ] && [ "$token" != None ] && echo "토큰 ${#token}자 읽음" || echo "못 읽었다 - 검사 중단"
+
+# 토큰을 --filter-pattern으로 넘기지 않는다 - 명령줄은 ps로 다른 사용자에게도 보인다.
+# 환경 변수로 awk에 넘기고 여기서 센다.
+aws logs filter-log-events --region ap-northeast-2 --log-group-name /accentury/staging/ai \
+  --start-time $(( ($(date +%s) - 3600) * 1000 )) --query 'events[].message' --output text \
+  | TOKEN="$token" awk 'index($0, ENVIRON["TOKEN"]) { hit++ } END { print hit+0 "줄" }'
+unset token
+```
+
+`0줄`이 통과다. 규칙 자체의 회귀는 backend는 `LogMaskingTest`가, ai는 위 pytest가
+막는다 - 규칙만 맞고 실제 어펜더에 안 걸리는 경우까지 보므로, 이 수동 검사는 "코드가 새 값을
+만들어 냈는가"를 보는 것이다.
 
 ## 3. 지표
 

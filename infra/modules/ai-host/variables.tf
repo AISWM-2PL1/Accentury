@@ -50,6 +50,12 @@ variable "config_parameter_names" {
   description = "config 모듈이 만든 ai 하위 경로 파라미터 이름 목록 (ai_parameter_names). 값은 쓰지 않는다 - 인스턴스가 파라미터 생성 뒤에 첫 부팅하도록 순서만 잡는다 (KAN-129)."
 }
 
+variable "log_retention_days" {
+  type        = number
+  description = "ai 컨테이너 로그의 CloudWatch Logs 보존 일수 (KAN-203). backend 로그 그룹(fargate 모듈의 같은 이름 변수)과 기본값이 같고 두 환경 모두 tfvars로 덮지 않는다 - 사후 추적 창이 계층마다 다르면 한쪽 로그만 남은 시점이 생겨 correlationId로 이을 수 없다."
+  default     = 14
+}
+
 variable "metric_namespace" {
   type        = string
   description = "이 호스트의 EC2 역할이 PutMetricData 할 수 있는 유일한 CloudWatch 네임스페이스 (KAN-36). health 타이머(ai-health-metric.sh)가 쓰고 monitoring 모듈의 ai-unhealthy 경보가 같은 이름을 본다."

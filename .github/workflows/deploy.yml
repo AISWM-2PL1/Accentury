@@ -297,6 +297,13 @@ jobs:
           if [ "$current" != "$EXPECTED_TAG" ]; then
             echo "IMAGE_TAG 불일치: 실제 $current, 기대 $EXPECTED_TAG"; exit 1
           fi
+          # 로깅 드라이버가 awslogs가 됐어도 아래 `docker logs`는 대개 그대로 읽힌다 (KAN-203) - 도커의
+          # 이중 로깅이 원격 드라이버와 별개로 local 사본을 남긴다 (2026-09-09 staging 실측, docker 25.0.16).
+          # 실패 직후의 몇 줄을 보는 것이 목적이라 CloudWatch(수집 지연 수 초)보다 이쪽이 낫다.
+          #
+          # 다만 원격 전송이 실패한 구간은 사본에도 안 쌓인다. CloudWatch가 막힌 채로 컨테이너가
+          # unhealthy가 되면(갓 apply한 IAM 전파 전, Logs 스로틀, 리전 장애) `docker logs`가 빈 채로
+          # 나오고 CloudWatch에도 없다 - 그 경우를 위해 기동 스크립트의 journald를 함께 찍는다.
           cd /opt/accentury
           for svc in $(docker compose --env-file /run/accentury/compose.env config --services); do
             cid=$(docker compose --env-file /run/accentury/compose.env ps -q "$svc")
@@ -307,10 +314,10 @@ jobs:
             for i in $(seq 1 120); do
               st=$(docker inspect -f '{{.State.Health.Status}}' "$cid" 2>/dev/null || echo missing)
               if [ "$st" = healthy ]; then break; fi
-              if [ "$st" = unhealthy ]; then echo "$svc unhealthy"; docker logs --tail 60 "$cid"; exit 1; fi
+              if [ "$st" = unhealthy ]; then echo "$svc unhealthy"; docker logs --tail 60 "$cid"; journalctl -u accentury -n 20 --no-pager; exit 1; fi
               sleep 5
             done
-            if [ "$st" != healthy ]; then echo "$svc healthy 대기 시간 초과 (마지막 상태 $st)"; docker logs --tail 60 "$cid"; exit 1; fi
+            if [ "$st" != healthy ]; then echo "$svc healthy 대기 시간 초과 (마지막 상태 $st)"; docker logs --tail 60 "$cid"; journalctl -u accentury -n 20 --no-pager; exit 1; fi
             echo "$svc healthy"
           done
           echo "IMAGE_TAG=$current"
