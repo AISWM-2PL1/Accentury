@@ -102,6 +102,10 @@ internal fun CurveLane(
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val isUser = variant == CurveLaneVariant.User
     val lineColor = if (isUser) colors.userCurve else colors.guideCurve
+    // 망점은 곡선 색을 따르지 않고 잉크다. 내 곡선이 포인트 컬러가 되면서 채움까지 물들었는데,
+    // 선은 3dp이고 채움은 곡선 아래 전부라 면적이 수십 배다 - 색이 "어느 쪽이 내 것인가"를
+    // 짚는 몫을 넘어 레인의 바탕이 되어 버린다. 웹 `CurveLane.tsx`가 같은 값을 든다.
+    val halftoneColor = colors.guideCurve
     // 망점 격자는 레인 크기가 그대로면 그대로다 - 녹음 중에는 매 프레임 다시 그리는데
     // 격자는 곡선이 아니라 레인 좌표에 붙어 있어(아래 [HalftoneGrid]) 프레임마다 다시
     // 만들 이유가 없다.
@@ -158,7 +162,7 @@ internal fun CurveLane(
             // 채움을 먼저 그리고 선을 나중에 그린다 - 순서가 바뀌면 망점이 곡선 위를 덮어
             // 선이 점무늬에 잠긴다.
             if (fillArea != null && !fillArea.isEmpty) {
-                drawHalftone(fillArea, lineColor, halftoneGrid.pointsFor(size, HALFTONE_STEP.toPx()))
+                drawHalftone(fillArea, halftoneColor, halftoneGrid.pointsFor(size, HALFTONE_STEP.toPx()))
             }
             outlines.forEach { outline ->
                 drawPath(
