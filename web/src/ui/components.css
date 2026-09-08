@@ -1215,6 +1215,7 @@ a.btn {
    * (2026-09-08 에뮬레이터 확인: "…끝나면 바 / 로 지워요"로 갈렸다).
    */
   word-break: keep-all;
+  text-align: center;
 }
 
 /*
