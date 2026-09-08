@@ -147,7 +147,7 @@ export function IntroScreen({
           </div>
           {/* 문항 구성. 이모지(🎤📝)를 뺀 이유는 위 일러스트와 같다 */}
           <p className="type-label card__footnote">
-            음성 {VOICE_ITEM_COUNT} · 단어 {VOCABULARY_ITEM_COUNT}
+            음성 {VOICE_ITEM_COUNT} + 단어 {VOCABULARY_ITEM_COUNT}
           </p>
         </div>
         <p className="type-body-sm intro-prompt">사투리 좀 치는지, 지금 확인해봐요.</p>

@@ -165,7 +165,7 @@ describe('App — 스큐 판정 분기', () => {
     expect(screen.getByText('10문항')).toBeInTheDocument()
     expect(screen.getByText('~3분')).toBeInTheDocument()
     // 이모지를 뺀 한 줄로 합쳤다 (KAN-161 3단계, 아트보드 `Main.dc.html`)
-    expect(screen.getByText('음성 5 · 단어 5')).toBeInTheDocument()
+    expect(screen.getByText('음성 5 + 단어 5')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '내 억양 테스트하기' })).toBeInTheDocument()
   })
 
