@@ -17,6 +17,7 @@ import {
   type SharePayload,
   type VoiceItemStart,
 } from './bridge'
+import { REAL_GUIDE_F0, REAL_GUIDE_F0_ITEM } from '../recording/guideF0Fixture'
 import type { ItemResult } from './itemResult'
 import type { RetestFailure } from './retestFailure'
 
@@ -36,13 +37,14 @@ function fakeBridge(overrides: Partial<AccenturyBridge> = {}): AccenturyBridge {
 }
 
 const voiceStart: VoiceItemStart = {
-  itemId: 'item_1',
-  prompt: '마! 니 어데 가노?',
+  itemId: REAL_GUIDE_F0_ITEM.itemId,
+  prompt: REAL_GUIDE_F0_ITEM.prompt,
   itemNumber: 1,
   totalItems: 10,
   maxDurationMs: 15_000,
-  // 무성 구간 null 포함 — JSON.stringify가 null을 그대로 실어 보내는지도 이 픽스처가 덮는다 (KAN-102)
-  guideF0: { unit: 'semitone', frameIntervalMs: 10, values: [0.5, null, -1.2] },
+  // 발행본 실문항의 곡선이다 (KAN-194). 240점에 무성 null 14개가 섞여 있어,
+  // JSON.stringify가 null을 그대로 실어 보내는지와 실데이터 크기가 함께 덮인다 (KAN-102)
+  guideF0: REAL_GUIDE_F0,
 }
 
 const sharePayload: SharePayload = {
@@ -141,7 +143,20 @@ describe('startVoiceItem — 문항 컨텍스트를 JSON으로 넘긴다', () =>
 
     expect(startVoiceItem(voiceStart)).toBe(true)
     expect(fn).toHaveBeenCalledTimes(1)
-    expect(JSON.parse(fn.mock.calls[0][0])).toEqual(voiceStart)
+    const sent = JSON.parse(fn.mock.calls[0][0]) as VoiceItemStart
+
+    // 곡선을 뺀 나머지는 원본 그대로다
+    expect({ ...sent, guideF0: null }).toEqual({ ...voiceStart, guideF0: null })
+    expect(sent.guideF0.unit).toBe(REAL_GUIDE_F0.unit)
+    expect(sent.guideF0.frameIntervalMs).toBe(REAL_GUIDE_F0.frameIntervalMs)
+    // 곡선은 무성 null 14개를 포함해 240점이 가공 없이 건너간다 (KAN-194)
+    expect(sent.guideF0.values.length).toBe(240)
+    expect(sent.guideF0.values.filter((value) => value === null).length).toBe(14)
+    sent.guideF0.values.forEach((value, i) => {
+      // Object.is가 아니라 ===로 보는 이유: JSON이 -0을 0으로 적는다(실데이터 index 190).
+      // 두 값은 산술적으로 같아 곡선 좌표는 한 픽셀도 달라지지 않는다
+      expect(value === REAL_GUIDE_F0.values[i]).toBe(true)
+    })
   })
 
   it('브리지가 없으면 크래시 없이 false를 돌려준다', () => {
