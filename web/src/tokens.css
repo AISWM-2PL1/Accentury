@@ -57,7 +57,8 @@
   --color-prompt-card-muted: #6b6459;
   --color-prompt-card-badge: #f3ecd9;
   --color-guide-curve: #1c1a17;
-  --color-user-curve: #1c1a17;
+  /* 내 억양 곡선만 포인트 컬러다. 가이드는 잉크 점선 그대로라 선 모양도 함께 가른다 (정본 §7) */
+  --color-user-curve: #a8503a;
   --color-curve-lane-surface: #f3ecd9;
   --color-hero-start: #f3ecd9;
   --color-hero-end: #f3ecd9;
