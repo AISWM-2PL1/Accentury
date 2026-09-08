@@ -118,10 +118,15 @@ public func isAllowedWebUrl(_ url: String?, allowedOrigins: Set<String>) -> Bool
 /// 그런데도 목록을 두는 이유는 **여는 주소를 정하는 쪽이 웹**이기 때문이다 — WebView에 실린
 /// 스크립트가 부르는 메서드라, 넘어온 값을 그대로 열면 앱이 아무 주소나 여는 창구가 된다.
 ///
-/// `staging`이 함께 있는 이유는 스테이징 웹이 자기 도메인의 방침을 가리키기 때문이다
-/// (`VITE_PRIVACY_POLICY_URL`). 시뮬레이터의 `webUrl`(로컬 Vite)에서 파생하지 않는 것도 같은
-/// 사정이다 — 방침 문서는 로컬에 없고 늘 우리 도메인에 있다.
-public let externalLinkHosts: Set<String> = ["accentury.app", "staging.accentury.app"]
+/// **prod 호스트 하나뿐이다.** 방침은 법적 고지라 정본이 하나여야 하고, 그래서 웹 상수도
+/// 환경과 무관하게 prod를 가리킨다 (`web/src/legal/privacyPolicy.ts`) — staging 빌드도 같은
+/// 문서를 연다. 여기에 `staging.accentury.app`을 함께 두면 **웹이 절대 보내지 않는 호스트로
+/// 문을 하나 더 여는 것**이라 뺐다. ``appLinkOrigins``에 staging이 있는 것과 혼동하지 말 것 —
+/// 저쪽은 링크로 앱에 **들어오는** 경로라 릴리스 전 확인에 staging 버킷이 필요하다.
+///
+/// 시뮬레이터의 `webUrl`(로컬 Vite)에서 파생하지 않는 이유도 같다 — 방침 문서는 로컬에 없고
+/// 늘 우리 도메인에 있다.
+public let externalLinkHosts: Set<String> = ["accentury.app"]
 
 /// 브리지가 받은 외부 URL을 열어도 되는지 판정한다 (KAN-177). 열어도 되면 그 URL, 아니면 nil.
 ///

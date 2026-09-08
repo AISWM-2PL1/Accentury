@@ -17,10 +17,16 @@ describe('privacyPolicyUrl — 정책 문서 주소 (KAN-177)', () => {
     expect(privacyPolicyUrl()).toBe(DEFAULT_PRIVACY_POLICY_URL)
   })
 
-  it('스테이징은 환경 변수로 덮어쓴다', () => {
-    vi.stubEnv('VITE_PRIVACY_POLICY_URL', 'https://staging.accentury.app/privacy.html')
+  /*
+   * 환경 변수는 배포 경로에 없다 - `web-deploy.yml`이 넘기는 VITE 값은 GA4 측정 ID 하나뿐이고
+   * staging 빌드도 위 prod 문서를 연다(방침은 법적 고지라 정본이 하나다). 이 손잡이는 게시 전
+   * 본문을 브라우저에서 확인할 때 쓰는 로컬 전용이다 - 앱 안에서는 네이티브 allowlist가 prod
+   * 호스트만 허용하므로 다른 주소를 넣어도 열리지 않는다.
+   */
+  it('로컬 확인용으로 환경 변수가 덮어쓴다', () => {
+    vi.stubEnv('VITE_PRIVACY_POLICY_URL', 'http://localhost:8788/privacy.html')
 
-    expect(privacyPolicyUrl()).toBe('https://staging.accentury.app/privacy.html')
+    expect(privacyPolicyUrl()).toBe('http://localhost:8788/privacy.html')
   })
 
   it('빈 값은 미설정과 같이 본다 — 링크를 빈 곳으로 보내지 않는다', () => {

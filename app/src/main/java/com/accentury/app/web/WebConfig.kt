@@ -105,11 +105,16 @@ fun isAllowedWebUrl(url: String?, allowedOrigins: Set<String>): Boolean {
  * Custom Tabs가 주소를 보여 주므로 위장이 쉽지는 않지만, 우리 앱이 여는 페이지라는 사실 자체가
  * 신뢰의 근거가 되는 자리다.
  *
- * `staging`이 함께 있는 이유는 스테이징 웹이 자기 도메인의 방침을 가리키기 때문이다
- * (`VITE_PRIVACY_POLICY_URL`). 디버그 빌드의 `WEB_URL`(에뮬레이터 로컬 Vite)에서 파생하지
- * 않는 것도 같은 사정이다 — 방침 문서는 로컬에 없고 늘 우리 도메인에 있다.
+ * **prod 호스트 하나뿐이다.** 방침은 법적 고지라 정본이 하나여야 하고, 그래서 웹 상수도
+ * 환경과 무관하게 prod를 가리킨다 (`web/src/legal/privacyPolicy.ts`) — staging 빌드도 같은
+ * 문서를 연다. 여기에 `staging.accentury.app`을 함께 두면 **웹이 절대 보내지 않는 호스트로
+ * 문을 하나 더 여는 것**이라 뺐다. [APP_LINK_ORIGINS]에 staging이 있는 것과 혼동하지 말 것 —
+ * 저쪽은 링크로 앱에 **들어오는** 경로라 릴리스 전 확인에 staging 버킷이 필요하다.
+ *
+ * 디버그 빌드의 `WEB_URL`(에뮬레이터 로컬 Vite)에서 파생하지 않는 이유도 같다 — 방침 문서는
+ * 로컬에 없고 늘 우리 도메인에 있다.
  */
-val EXTERNAL_LINK_HOSTS = setOf("accentury.app", "staging.accentury.app")
+val EXTERNAL_LINK_HOSTS = setOf("accentury.app")
 
 /**
  * 브리지가 받은 외부 URL을 열어도 되는지 판정한다 (KAN-177). 열어도 되면 그 URL, 아니면 null.

@@ -99,8 +99,14 @@
 | `externalUrlToOpen` (KAN-177) | 호스트 | 앱 밖으로 **내보낼** URL |
 
 호스트 단위인 이유: 포트·경로는 문서마다 다를 수 있어서 origin 일치를 요구하면 방침 문서를
-옮기는 날 링크가 조용히 죽는다. 허용 호스트는 `accentury.app`·`staging.accentury.app`이고,
-접미사 비교가 아니라 완전 일치다(`accentury.app.evil.example.com`은 거절).
+옮기는 날 링크가 조용히 죽는다. 허용 호스트는 **`accentury.app` 하나뿐**이고, 접미사 비교가
+아니라 완전 일치다(`accentury.app.evil.example.com`은 거절).
+
+`staging.accentury.app`은 **일부러 뺐다.** 방침은 정본이 하나여야 해서 웹 상수가 환경과 무관하게
+prod를 가리키고(아래 참조), staging 빌드도 같은 문서를 연다 — 그러니 웹이 이 호스트를 보낼 일이
+없고, 목록에 두면 쓰지도 않는 문을 하나 더 여는 셈이다. App Links의 `APP_LINK_ORIGINS` /
+`appLinkOrigins`에 staging이 있는 것과 혼동하지 말 것: **저쪽은 링크로 앱에 들어오는 경로**라
+릴리스 전 확인에 staging 버킷이 필요하고, 이쪽은 앱 밖으로 나가는 경로라 필요 없다.
 
 거절 규칙:
 
@@ -117,13 +123,22 @@
 
 ### 정책 URL은 한 곳에만 있다
 
-`web/src/legal/privacyPolicy.ts`의 `DEFAULT_PRIVACY_POLICY_URL`이 정본이고, 스테이징은
-`VITE_PRIVACY_POLICY_URL`로 덮어쓴다.
+`web/src/legal/privacyPolicy.ts`의 `DEFAULT_PRIVACY_POLICY_URL`이 정본이다. **환경과 무관하게
+언제나 이 주소** — staging 빌드도 여기를 연다.
 
 ```
-prod     https://accentury.app/privacy.html
-staging  https://staging.accentury.app/privacy.html
+https://accentury.app/privacy.html
 ```
+
+환경별로 가르지 않는 이유는 방침이 **법적 고지**이기 때문이다. staging 웹을 쓰는 사람에게도
+실제로 적용되는 것은 prod에 게시된 그 문서이고, 환경마다 다른 사본을 가리키면 "화면이 가리키는
+문서"와 "실제로 고지된 문서"가 어긋난다. 빌드 산출물이 환경을 몰라야 한다는 원칙(KAN-127)과도
+같은 방향이라, 배포 워크플로는 이 값을 넘기지 않는다 — `.github/workflows/web-deploy.yml`이
+환경을 아는 값으로 두는 것은 GA4 측정 ID 하나뿐이다.
+
+`VITE_PRIVACY_POLICY_URL`은 그 원칙의 예외가 아니라 **로컬 확인용 손잡이**다. 게시 전 본문을
+브라우저에서 보고 싶을 때 staging 문서를 잠깐 가리키는 식으로 쓴다. 위 allowlist가 prod 호스트만
+허용하므로 **앱 안에서는 다른 주소를 넣어도 열리지 않는다.**
 
 **`.html`은 취향이 아니라 계약이다.** CloudFront SPA 재작성 함수가 마지막 경로 조각에 점이 없으면
 `/index.html`로 돌리므로, `/privacy`는 **200을 주면서** 정책 문서가 아니라 앱 화면을 띄운다
