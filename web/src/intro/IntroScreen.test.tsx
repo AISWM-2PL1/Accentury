@@ -126,12 +126,11 @@ describe('IntroScreen — 마이크 게이트 (KAN-56)', () => {
 })
 
 describe('IntroScreen — 인트로 히어로', () => {
-  it('큰 제목만 이 화면의 h1이고 배지는 별도 문구로 남는다', () => {
+  it('큰 제목만 이 화면의 h1이고 설명은 부제와 프롬프트로 남는다', () => {
     render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
 
     // 화면 이름을 말하는 것이 히어로뿐이라 장식으로 두면 인트로가 접근 가능한 이름을 잃는다
     expect(screen.getByRole('heading', { level: 1, name: '사투리 좀 치나?' })).toBeInTheDocument()
-    expect(screen.getByText('사투리 억양 테스트')).toBeInTheDocument()
     expect(screen.getByText('내 목소리로 확인하는 사투리 억양')).toBeInTheDocument()
     expect(screen.getByText('사투리 좀 치는지, 지금 확인해봐요.')).toBeInTheDocument()
     // 제목 자리를 넘겨받은 것이지 하나 더 생긴 것이 아니다 — h1은 여전히 하나다

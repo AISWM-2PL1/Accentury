@@ -329,8 +329,8 @@
 }
 
 /*
- * 인트로의 히어로 + 부제 (KAN-178). 중복이던 제목("사투리 억양 테스트")을 걷어내면서
- * 히어로가 이 화면의 h1이 됐고, 그러면 부제는 제목에 딸린 줄이라 **한 덩어리로 읽혀야 한다**.
+ * 인트로의 워드마크 + 히어로 + 부제 (KAN-178). 설명 배지를 걷어낸 뒤에도
+ * 히어로와 부제는 제목에 딸린 줄이라 **한 덩어리로 읽혀야 한다**.
  *
  * 그래서 인트로에서는 히어로를 192px 슬롯 밖으로 꺼냈다(대기 화면은 `.illustration--waiting`에
  * 그대로 둔다). 슬롯은 그림이 뜨기 전후로 아래가 오르내리지 않게 높이를 미리 잡아 두는
@@ -338,7 +338,8 @@
  * 위아래 ~73px의 빈 자리뿐이고, 제목이 있던 때는 그 여백이 "히어로 밴드 / 제목 블록"의
  * 경계로 읽혔지만 지금은 제목과 부제 사이를 벌려 놓아 부제가 카드 쪽에 붙어 보인다.
  *
- * 간격은 걷어낸 제목이 부제와 두던 8px 그대로다. 히어로가 30px 제목보다 크니 사이도
+ * 바깥 간격은 배지가 빠진 워드마크와 제목 사이도 허전하지 않은 8px이다.
+ * 히어로가 30px 제목보다 크니 사이도
  * 넓혀야 할 것 같지만, 12px로 벌려 보니 부제가 카드 쪽으로 붙어 세 덩어리처럼 읽혔다 —
  * 아래 카드와의 간격(`.screen__body`의 24px)이 위와 비슷해지는 순간 짝이 흐려진다.
  * 8px이면 그 차이가 세 배라 "붙은 두 줄 + 떨어진 카드"로 한 번에 갈린다.
@@ -375,20 +376,13 @@
   font-weight: var(--weight-normal);
 }
 
-.intro-badge {
-  padding: var(--space-1) var(--space-3);
-  border: var(--intro-badge-border-width) solid var(--color-border);
-  border-radius: var(--radius-full);
-  background: var(--color-card);
-  color: var(--color-foreground);
-}
-
 .intro-heading {
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--space-2);
+  /* 8px에서는 SVG 자체의 위쪽 여백과 더해져 아치가 분리돼 보였다. 4px은 글자를 받치되 닿지는 않는다. */
+  gap: var(--space-1);
 }
 
 .intro-heading .text-hero {
@@ -399,7 +393,8 @@
 .intro-heading__underline {
   display: block;
   width: 100%;
-  height: var(--space-4);
+  /* 12-unit viewBox를 12px로 표시해 좌표와 stroke 여백이 일치하고 하단 빈 공간도 남지 않는다. */
+  height: var(--space-3);
   overflow: visible;
   fill: none;
   stroke: var(--color-point);
