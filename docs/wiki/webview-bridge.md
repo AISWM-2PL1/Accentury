@@ -112,10 +112,26 @@ prod를 가리키고(아래 참조), staging 빌드도 같은 문서를 연다 �
 
 - **https만.** 방침 문서는 어느 환경에서도 HTTPS로 선다. `javascript:`·`intent:`·앱 스킴은
   host가 없어 자동으로 걸린다
-- **`user@host`·역슬래시·공백·제어문자 거절.** 이유는 **파서가 둘**이기 때문이다 — 검사에 쓰는
-  파서(`java.net.URI` / `URLComponents`)와 실제로 여는 파서(`android.net.Uri` / `URL`)가 그
-  문자들에서 host를 다르게 읽을 수 있어, 검사한 호스트와 열리는 호스트가 갈릴 여지가 남는다.
-  방침 URL에는 애초에 없는 문자다
+- **`user@host`·역슬래시·공백·제어문자 거절.** 근거가 두 플랫폼에서 다르다 (KAN-199 #2에서
+  정정). 안드로이드는 검사하는 `java.net.URI`와 여는 `android.net.Uri`가 **진짜 다른 구현**이라
+  그 문자들에서 host가 갈릴 여지가 있다. iOS는 검사하는 `URLComponents`와 여는 `URL`이 둘 다
+  Foundation이라 같은 호스트를 준다 — 검사한 곳과 여는 곳이 어긋나지 않는다. 그래도 양쪽 다
+  막는 이유는 방침 URL에 애초에 없는 문자이고, 두 앱이 같은 입력에 같은 답을 내야 계약이
+  하나로 남기 때문이다
+- **호스트의 `%` 거절.** 같은 입력에 두 앱이 다르게 답하던 자리다 (KAN-199 #2, 2026-09-08 실행 확인).
+
+  | 입력 | 안드로이드 `java.net.URI` | iOS Foundation |
+  |---|---|---|
+  | `https://%61ccentury.app/privacy.html` | `getHost()` = null → 거절 | `accentury.app` → 통과였다 |
+  | `https://accentury%2eapp/privacy.html` | `getHost()` = null → 거절 | `accentury.app` → 통과였다 |
+
+  `java.net.URI`는 authority를 디코딩하지 않고 Foundation은 한다. **어느 쪽도 우회는 아니다** —
+  양쪽 다 자기가 검사한 호스트를 그대로 열기 때문에 검사와 실행이 어긋나지 않는다. 보안 결함이
+  아니라 동작 불일치라, 이제 양쪽이 명시적으로 거절한다: 안드로이드는 `rawAuthority`에 `%`가
+  있으면, iOS는 `percentEncodedHost`에 `%`가 있으면. iOS에서 `host`가 아니라
+  `percentEncodedHost`를 보는 이유는 `host`가 이미 디코딩된 값이라 `%`가 남지 않아서다.
+  경로의 percent-encoding은 그대로 통과한다 — 막는 것은 호스트뿐이다. 두 레포의 테스트에
+  같은 케이스가 들어 있다 (`WebConfigTest.kt` · `WebConfigTests.swift`)
 
 검증에 실패하거나 origin이 allowlist 밖이면 **조용히 아무 일도 하지 않고** Crashlytics에 흔적만
 남긴다(`bridge_parse_failed: openExternalUrl`). 웹은 오류를 되돌려 줄 상대가 아니고, 인트로에서

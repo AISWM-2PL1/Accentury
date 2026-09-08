@@ -129,6 +129,13 @@ val EXTERNAL_LINK_HOSTS = setOf("accentury.app")
  * `user@host` 꼴과 역슬래시·공백을 따로 막는 이유는 **파서가 둘**이기 때문이다. 여기서 쓰는
  * `java.net.URI`와 실제로 여는 `android.net.Uri`가 그 문자들에서 host를 다르게 읽을 수 있어,
  * 검사에 쓴 호스트와 열리는 호스트가 갈릴 여지가 남는다. 애초에 방침 URL에는 없는 문자다.
+ *
+ * 호스트의 `%`도 같이 막는다 (KAN-199 #2). `java.net.URI`는 authority를 디코딩하지 않아
+ * `https://%61ccentury.app/...`에서 host가 null이 되고, 지금도 결과적으로는 거절된다. 그런데
+ * **iOS Foundation은 디코딩해서 `accentury.app`으로 읽어 통과시킨다** — 같은 입력에 두 앱이
+ * 다르게 답하는 자리다. 보안 결함은 아니지만(양쪽 다 자기가 검사한 호스트를 그대로 연다)
+ * 계약이 갈리므로 양쪽에서 명시적으로 거절해 판정을 하나로 맞춘다. 방침 URL에는 없는 문자라
+ * 잃는 것이 없고, 명시해 두면 파서를 바꾸는 날 조용히 통과하는 일도 없다.
  */
 fun externalUrlToOpen(url: String?, allowedHosts: Set<String> = EXTERNAL_LINK_HOSTS): String? {
     if (url == null) return null
@@ -140,6 +147,9 @@ fun externalUrlToOpen(url: String?, allowedHosts: Set<String> = EXTERNAL_LINK_HO
     }
     if (uri.scheme?.lowercase() != "https") return null
     if (uri.userInfo != null) return null
+    // authority를 디코딩하지 않는 파서라 host가 이미 null이지만, 판정을 iOS와 맞추려면
+    // "왜 거절했는가"가 코드에 남아야 한다 (위 문단)
+    if (uri.rawAuthority?.contains('%') == true) return null
     val host = uri.host?.lowercase() ?: return null
     return if (host in allowedHosts) url else null
 }
