@@ -352,23 +352,8 @@
   width: 100%;
 }
 
-/* 점은 인트로의 종이 바탕에만 깔린다. 다른 화면까지 이어지면 문항 카드의 선과 경쟁한다. */
-.intro-screen {
-  background-color: var(--color-background);
-  background-image: radial-gradient(
-    circle,
-    var(--color-primary-dim) var(--intro-grid-dot-size),
-    var(--color-background) var(--intro-grid-dot-size)
-  );
-  background-size: var(--intro-grid-size) var(--intro-grid-size);
-}
-
 .intro-screen .screen__body {
   gap: var(--space-4);
-}
-
-.intro-screen .screen__footer {
-  background: transparent;
 }
 
 .intro-wordmark {
