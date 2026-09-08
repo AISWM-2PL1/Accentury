@@ -1209,6 +1209,12 @@ a.btn {
  */
 .privacy-notice {
   color: var(--color-muted-foreground);
+  /*
+   * `keep-all`은 `.text-hero`와 같은 이유로 필수다 — 기본값이면 낱말 가운데서 잘린다.
+   * 캡션 글자라 폭이 좁고 문장이 두 줄로 넘어가는 자리라 여기서 실제로 드러난다
+   * (2026-09-08 에뮬레이터 확인: "…끝나면 바 / 로 지워요"로 갈렸다).
+   */
+  word-break: keep-all;
   text-wrap: balance;
 }
 
