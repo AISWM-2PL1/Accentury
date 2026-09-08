@@ -2,6 +2,7 @@ package com.accentury.app.web
 
 import com.accentury.app.analytics.EventParam
 import com.accentury.app.bridge.GuideF0
+import com.accentury.app.recording.GuideF0Fixture
 import com.accentury.app.bridge.SharePayload
 import com.accentury.app.bridge.VoiceItemStart
 import org.junit.Assert.assertEquals
@@ -289,14 +290,14 @@ class AccenturyBridgeTest {
 
     @Test
     fun `guideF0가 실려 있으면 무성 null까지 값 그대로 파싱된다`() {
-        val start = startVoiceItem(
-            payload(extra = ""","guideF0":{"unit":"semitone","frameIntervalMs":10,"values":[0.5,null,-1.2]}"""),
-        )
+        // 발행본 실문항(v102)의 원문 조각을 그대로 끼운다 (KAN-194). 장난감 3점 배열로는
+        // 240점·무성 14개짜리 실제 곡선이 통째로 살아 오는지를 말해 줄 수 없다 - 실데이터에서
+        // 곡선이 버려지지 않는다는 것이 이 티켓이 보는 것이다.
+        val start = startVoiceItem(payload(extra = "," + GuideF0Fixture.JSON))
 
-        assertEquals(
-            GuideF0(unit = "semitone", frameIntervalMs = 10, values = listOf(0.5, null, -1.2)),
-            start?.guideF0,
-        )
+        assertEquals(GuideF0Fixture.REAL, start?.guideF0)
+        assertEquals(240, start?.guideF0?.values?.size)
+        assertEquals(14, start?.guideF0?.values?.count { it == null })
     }
 
     @Test
