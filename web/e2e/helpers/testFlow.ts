@@ -47,7 +47,7 @@ export async function startTest(page: Page): Promise<void> {
    * [시작하기]가 곧 마이크 권한 요청이다. `--use-fake-ui-for-media-stream`이 대화상자를
    * 자동 승인하므로 여기서 멈추지 않고, 승인되면 App이 목소리 점검 화면으로 갈아 끼운다.
    */
-  await page.getByRole('button', { name: '시작하기', exact: true }).click()
+  await page.getByRole('button', { name: '내 억양 테스트하기', exact: true }).click()
   await expect(page.getByRole('heading', { name: '목소리를 확인할게요' })).toBeVisible()
 
   /*

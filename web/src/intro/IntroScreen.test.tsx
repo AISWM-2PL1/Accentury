@@ -29,7 +29,7 @@ function permissionStub(...results: MicPermission[]) {
  * 테스트가 있는데, DOM의 `.click()`은 act 밖이라 리액트가 그 갱신을 미룬다.
  */
 function clickStart() {
-  fireEvent.click(screen.getByRole('button', { name: '시작하기' }))
+  fireEvent.click(screen.getByRole('button', { name: '내 억양 테스트하기' }))
 }
 
 afterEach(() => {
@@ -65,7 +65,7 @@ describe('IntroScreen — 마이크 게이트 (KAN-56)', () => {
     expect(screen.getByRole('button', { name: '마이크 확인 중…' })).toBeDisabled()
 
     await waitFor(() => expect(onWebStart).toHaveBeenCalledTimes(1))
-    expect(screen.getByRole('button', { name: '시작하기' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '내 억양 테스트하기' })).toBeEnabled()
   })
 
   it('권한이 거부되면 안내 화면으로 갈아치우고 스토어 링크를 준다', async () => {
@@ -77,7 +77,7 @@ describe('IntroScreen — 마이크 게이트 (KAN-56)', () => {
 
     expect(await screen.findByText('마이크 권한이 필요해요')).toBeInTheDocument()
     // 권한 없이는 테스트를 시작할 수 없다 (§5.6) — 인트로가 남아 있으면 안 된다
-    expect(screen.queryByRole('button', { name: '시작하기' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '내 억양 테스트하기' })).not.toBeInTheDocument()
     expect(onWebStart).not.toHaveBeenCalled()
 
     const storeLink = screen.getByRole('link', { name: '앱으로 테스트하기' })
@@ -121,18 +121,19 @@ describe('IntroScreen — 마이크 게이트 (KAN-56)', () => {
     await waitFor(() => expect(onWebStart).toHaveBeenCalledTimes(1))
     expect(requestWebPermission).toHaveBeenCalledTimes(2)
     // 통과했으므로 안내 화면이 걷힌다
-    expect(screen.getByRole('button', { name: '시작하기' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '내 억양 테스트하기' })).toBeInTheDocument()
   })
 })
 
-describe('IntroScreen — 텍스트 히어로 (KAN-178)', () => {
-  it('히어로 문구가 이 화면의 h1이고, 중복이던 제목은 걷혔다', () => {
+describe('IntroScreen — 인트로 히어로', () => {
+  it('큰 제목만 이 화면의 h1이고 배지는 별도 문구로 남는다', () => {
     render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
 
     // 화면 이름을 말하는 것이 히어로뿐이라 장식으로 두면 인트로가 접근 가능한 이름을 잃는다
     expect(screen.getByRole('heading', { level: 1, name: '사투리 좀 치나?' })).toBeInTheDocument()
-    // 히어로 바로 밑에서 같은 말을 되풀이하던 제목이다
-    expect(screen.queryByText('사투리 억양 테스트')).not.toBeInTheDocument()
+    expect(screen.getByText('사투리 억양 테스트')).toBeInTheDocument()
+    expect(screen.getByText('내 목소리로 확인하는 사투리 억양')).toBeInTheDocument()
+    expect(screen.getByText('사투리 좀 치는지, 지금 확인해봐요.')).toBeInTheDocument()
     // 제목 자리를 넘겨받은 것이지 하나 더 생긴 것이 아니다 — h1은 여전히 하나다
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
   })

@@ -188,6 +188,11 @@ Accentury 네이티브(Compose)와 웹(WebView)이 공유하는 색·타이포·
 | `hero-icon-size` | 112dp | 인트로·권한 화면의 원형 아이콘 (w-28) |
 | `record-button-size` | 80dp | 원형 녹음 버튼 지름 (시안: w-20) |
 | `curve-lane-height` | 120dp | F0 곡선 레인 하나. 시안(72px)보다 키웠다 — 실제 기기에서는 아래가 비어 곡선이 납작했다 |
+| `text-intro-hero` | 56dp | 인트로 제목 전용 크기. §3의 `title`(30)보다 크다 — 첫 화면에서 이 두 줄이 화면의 주인공이라 다른 화면 제목과 같은 슬롯을 쓰면 무게가 안 선다. 웹 전용(`--text-intro-hero`) |
+| `intro-grid-size` / `intro-grid-dot-size` | 32dp / 1dp | 인트로 배경 점 격자의 간격과 점 크기. 색은 `primary-dim`이라 크림 위 1.46:1 — 읽히는 정보가 아니라 종이 결이다 |
+| `intro-badge-border-width` | 1.5dp | 인트로 알약 배지 테두리. 카드·선택지와 같은 굵기 |
+| `intro-emphasis-line-width` | 7dp | 제목 아래 포인트 컬러 밑줄의 두께 |
+| `intro-spark-line-width` | 3dp | 제목 옆 포인트 컬러 강조 사선의 두께 |
 
 ## 5. 모션
 
