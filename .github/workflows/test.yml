@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       app: ${{ steps.filter.outputs.app }}
+      ios: ${{ steps.filter.outputs.ios }}
       backend: ${{ steps.filter.outputs.backend }}
       web: ${{ steps.filter.outputs.web }}
       ai: ${{ steps.filter.outputs.ai }}
@@ -27,6 +28,12 @@ jobs:
               - 'build.gradle.kts'
               - 'settings.gradle.kts'
               - 'gradle.properties'
+              - '.github/workflows/test.yml'
+            # 안드로이드와 달리 한 줄이면 끝난다 - iOS는 ios/ 밖을 읽지 않는다. gradle/**처럼
+            # 공유되는 빌드 파일이 없고, 가짜 마이크 WAV도 ios/Accentury/DebugResources/에
+            # 따로 산다 (안드로이드 쪽 자산과 바이트는 같지만 파일은 별개다).
+            ios:
+              - 'ios/**'
               - '.github/workflows/test.yml'
             backend:
               - 'backend/**'
@@ -59,6 +66,83 @@ jobs:
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
       - run: ./gradlew :app:testDebugUnitTest
+
+  # app-test의 iOS 대응물 (KAN-37). macos-26을 박는 이유는 Xcode 26.x가 거기에만 있어서다 -
+  # macos-15는 Xcode 16.x라 이 프로젝트를 열지 못한다 (ios/README.md 「필요한 것」).
+  #
+  # macOS 러너는 리눅스의 10배로 과금된다. 그래서 위 필터로 ios/**가 바뀐 PR에서만 돌리고,
+  # job도 하나만 둔다 - 스킴 Accentury의 test 액션이 앱 계층(AccenturyTests)과 순수 Swift
+  # 계층(AccenturyCoreTests)을 함께 돌리므로, `swift test` job을 따로 붙이면 같은 테스트를
+  # 두 번 세면서 러너 시간만 더 쓴다 (ios/project.yml의 schemes.Accentury.test).
+  #
+  # xcodegen은 돌리지 않는다. 커밋된 Accentury.xcodeproj를 그대로 쓰면 brew 설치가 한 단계
+  # 없어지고, 러너가 여는 프로젝트가 리뷰에 올라온 그 파일이 된다.
+  #
+  # 아직 required check로 올리지 않는다 (edge-test와 같은 취급 - 안정화 후 별도 결정).
+  ios-test:
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
+    runs-on: macos-26
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: ios
+    steps:
+      - uses: actions/checkout@v4
+
+      # 러너 이미지는 예고 없이 갈린다. 실패가 우리 코드인지 도구 버전인지 가르는 첫 줄이라
+      # 로그 맨 앞에 남겨 둔다.
+      - name: 도구 버전
+        run: |
+          xcodebuild -version
+          xcrun simctl list runtimes
+
+      # 시뮬레이터 기기 이름은 이미지마다 다르다 - 로컬처럼 'iPhone 17 Pro'를 박아 두면
+      # 이미지가 올라가는 날 destination을 못 찾아 죽는다. 가용 목록에서 골라 UDID로 준다.
+      - name: 시뮬레이터 고르기
+        id: sim
+        run: |
+          udid=$(xcrun simctl list devices available --json \
+            | jq -r '[.devices[][] | select(.name | startswith("iPhone"))] | sort_by(.name) | last | .udid')
+          if [ -z "$udid" ]; then
+            echo "가용 iPhone 시뮬레이터가 없다 - 러너 이미지를 확인할 것"
+            xcrun simctl list devices available
+            exit 1
+          fi
+          xcrun simctl list devices available | grep "$udid"
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+
+      # CODE_SIGNING_ALLOWED=NO - 팀 ID가 든 Local.xcconfig는 gitignore라 CI에 없고, 그게
+      # 정상 상태다. 시뮬레이터 빌드는 서명이 필요 없으므로 이 한 줄로 넘어간다.
+      #
+      # xcbeautify는 러너 이미지에 들어 있지만 없어도 돌게 두고, pipefail로 xcodebuild의
+      # 실패가 파이프에 먹히지 않게 한다.
+      - name: 단위 테스트
+        env:
+          SIM_UDID: ${{ steps.sim.outputs.udid }}
+        run: |
+          set -o pipefail
+          run_tests() {
+            xcodebuild -project Accentury.xcodeproj -scheme Accentury -configuration Debug \
+              -destination "id=$SIM_UDID" CODE_SIGNING_ALLOWED=NO \
+              -resultBundlePath TestResults.xcresult test
+          }
+          if command -v xcbeautify >/dev/null; then
+            run_tests | xcbeautify --renderer github-actions
+          else
+            run_tests
+          fi
+
+      # xcresult에는 테스트별 로그와 실패 지점이 들어 있다. 콘솔 출력만으로는 재구성이 안 되므로
+      # 러너가 사라지기 전에 건져 둔다.
+      - name: 실패 증거 업로드
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-test-results
+          path: ios/TestResults.xcresult
+          retention-days: 7
+          if-no-files-found: ignore
 
   backend-test:
     needs: changes

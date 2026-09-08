@@ -272,10 +272,10 @@ nil로 들고, 그러면 문항 결과 주입(`deliverResults`)이 매번 "받�
 
 - **외부 링크** — 여는 길이 아직 없다. 안드로이드가 "생기면 Custom Tabs로"라고 적어 둔 자리이고
   iOS의 대응물은 `SFSafariViewController`다.
-- **CI에 ios 잡** — `.github/workflows/test.yml`은 워크플로 레벨 `paths`가 아니라 job 레벨 `if` +
-  `dorny/paths-filter`로 경로를 가른다(KAN-37). 그래서 필터에 `ios: ['ios/**']` 한 칸을 더하고
-  `runs-on: macos-*` 잡을 붙이면 required check를 잠그지 않고 들어간다 — 스킵된 job이 통과로
-  취급되는 구조라서다.
+- **CI에 ios 잡** — 2026-09-08 완료. `.github/workflows/test.yml`의 `ios-test`(macos-26 러너)가
+  `ios/**` 변경 PR에서 `xcodebuild ... test`를 돌린다. 들어갈 수 있었던 이유는 이 워크플로가
+  워크플로 레벨 `paths`가 아니라 job 레벨 `if` + `dorny/paths-filter`로 경로를 가르기 때문이다
+  (KAN-37) — 스킵된 job이 통과로 취급돼 required check를 잠그지 않는다. 아직 required는 아니다.
 - **실기기·TestFlight** — §7 참고.
 
 ## 참고

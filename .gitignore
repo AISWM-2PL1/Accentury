@@ -50,6 +50,9 @@ ios/**/*.xcuserstate
 ios/**/.build/
 ios/**/.swiftpm/
 ios/DerivedData/
+# xcodebuild -resultBundlePath 산출물. CI(test.yml의 ios-test)는 실패했을 때만 아티팩트로
+# 올리고, 로컬에서 같은 명령을 돌리면 여기 남는다.
+ios/TestResults.xcresult/
 # Package.resolved는 일부러 빼지 않는다 - 외부 의존성이 생기면 버전을 고정하는 파일이다.
 
 # === Android 릴리스 서명 (KAN-163) ===
