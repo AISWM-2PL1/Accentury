@@ -109,25 +109,25 @@ export function IntroScreen({
   return (
     <main className="screen intro-screen">
       <div className="screen__body">
-        {/* 배지는 테스트 종류를 보조할 뿐 화면 이름은 큰 문장 하나다. 그래서 `heading`은
-            히어로에만 주고 워드마크와 배지는 평문으로 남겨 h1이 둘로 갈리지 않게 한다. */}
+        {/* 화면 이름은 큰 문장 하나이므로 `heading`은 히어로에만 주고,
+            브랜드 표기인 워드마크는 평문으로 남겨 h1이 둘로 갈리지 않게 한다. */}
         <div className="intro-hero">
           <p className="type-title-sm intro-wordmark">Accentury</p>
-          <p className="type-caption intro-badge">사투리 억양 테스트</p>
           <div className="intro-heading">
             <TextHero heading>
               사투리
               <br />
               좀 치나?
             </TextHero>
-            {/* 직선 막대는 글자에 밑줄을 긋지만, 얕은 아치는 둘째 줄을 아래에서 받치는 손짓이다. */}
+            {/* 7px stroke의 절반인 y=3.5를 위에 남기고 viewBox 하단도 곡선 끝에 맞췄다.
+                직선 밑줄보다 둘째 줄을 바로 받치는 얕은 손짓으로 읽히게 하기 위해서다. */}
             <svg
               className="intro-heading__underline"
-              viewBox="0 0 200 20"
+              viewBox="0 0 200 12"
               preserveAspectRatio="none"
               aria-hidden
             >
-              <path d="M 4 4 Q 100 18 196 4" vectorEffect="non-scaling-stroke" />
+              <path d="M 4 3.5 Q 100 13.5 196 3.5" vectorEffect="non-scaling-stroke" />
             </svg>
           </div>
           <p className="type-body-sm intro-subtitle">내 목소리로 확인하는 사투리 억양</p>
