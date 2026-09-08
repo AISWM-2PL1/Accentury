@@ -62,6 +62,10 @@
   --color-hero-start: #f3ecd9;
   --color-hero-end: #f3ecd9;
   --color-curve-lane-border: #1c1a17;
+  /* 포인트 컬러 — 종이에 얹은 두 번째 잉크다 (정본 §7). 지금 눌러야 할 것과 지금 여기를
+     짚는 자리에만 쓴다. 정오답·오류에는 쓰지 않는다 */
+  --color-point: #b3341f;
+  --color-point-foreground: #f3ecd9;
 
   /* ── 타이포 (정본 §3) ──
      본문은 시스템 산세리프다. Android 시스템 폰트가 Noto Sans CJK KR이라 네이티브의
