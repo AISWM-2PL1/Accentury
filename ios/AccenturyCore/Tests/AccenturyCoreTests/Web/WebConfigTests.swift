@@ -225,6 +225,21 @@ final class WebConfigTests: XCTestCase {
         XCTAssertNil(externalUrlToOpen("https://accentury.app/privacy.html\n"))
     }
 
+    /// 호스트에 percent-encoding이 있으면 거절한다 (KAN-199 #2).
+    ///
+    /// Foundation은 `%61`을 `a`로 풀어 `accentury.app`으로 읽고 통과시켰고, 안드로이드
+    /// `java.net.URI`는 authority를 디코딩하지 않아 host가 nil이라 거절했다 — 같은 입력에
+    /// 두 앱이 다르게 답하던 자리다. 안드로이드 `WebConfigTest.kt`에 같은 케이스가 있다.
+    func testPercentEncodedHostsAreRejected() {
+        XCTAssertNil(externalUrlToOpen("https://%61ccentury.app/privacy.html"))
+        XCTAssertNil(externalUrlToOpen("https://accentury%2eapp/privacy.html"))
+        // 경로의 percent-encoding은 정상이다 - 막는 것은 호스트뿐이다
+        XCTAssertEqual(
+            "https://accentury.app/privacy%20policy.html",
+            externalUrlToOpen("https://accentury.app/privacy%20policy.html")
+        )
+    }
+
     /// 빈 값과 형식이 아닌 값은 거절한다.
     func testEmptyAndMalformedValuesAreRejected() {
         XCTAssertNil(externalUrlToOpen(nil))

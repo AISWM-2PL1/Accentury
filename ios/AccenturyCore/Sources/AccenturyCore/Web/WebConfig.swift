@@ -137,10 +137,18 @@ public let externalLinkHosts: Set<String> = ["accentury.app"]
 /// https만 통과시킨다. 방침 문서는 어느 환경에서도 HTTPS로 서므로 http를 받아 줄 이유가 없고,
 /// `javascript:`·앱 스킴은 host가 없어 자동으로 걸린다.
 ///
-/// `user@host` 꼴과 역슬래시·공백을 따로 막는 이유는 **파서가 둘**이기 때문이다. 여기서 쓰는
-/// `URLComponents`와 실제로 여는 `URL`(``SFSafariViewController``에 넘긴다)이 그 문자들에서
-/// host를 다르게 읽을 수 있어, 검사에 쓴 호스트와 열리는 호스트가 갈릴 여지가 남는다.
-/// 애초에 방침 URL에는 없는 문자다 — 안드로이드 `externalUrlToOpen`도 같은 자리를 막는다.
+/// `user@host` 꼴과 역슬래시·공백을 따로 막는다. **여기서 근거는 안드로이드와 다르다**
+/// (KAN-199 #2에서 정정). 저쪽은 검사하는 `java.net.URI`와 여는 `android.net.Uri`가 진짜 다른
+/// 구현이라 host가 갈릴 여지가 있지만, 이쪽은 검사하는 `URLComponents`와 여는 `URL`이 둘 다
+/// Foundation이라 같은 호스트를 준다 — 검사한 곳과 여는 곳이 어긋나지 않는다. 그래도 막는
+/// 이유는 두 가지다: 방침 URL에 애초에 없는 문자이고, 두 플랫폼이 같은 입력에 같은 답을
+/// 내야 계약이 하나로 남는다.
+///
+/// 호스트의 `%`도 같은 이유로 막는다. Foundation은 `%61ccentury.app`을 `accentury.app`으로
+/// 디코딩해 통과시키는데, `java.net.URI`는 디코딩하지 않아 host가 null이 되어 거절한다 —
+/// 같은 입력에 두 앱이 다르게 답하던 자리다. 어느 쪽도 우회는 아니지만(양쪽 다 자기가 검사한
+/// 호스트를 그대로 연다) 동작이 갈리므로 양쪽에서 명시적으로 거절한다. 검사 대상은 디코딩
+/// 이전 값이라 `percentEncodedHost`를 본다 — `host`를 보면 이미 풀린 뒤라 `%`가 남지 않는다.
 public func externalUrlToOpen(_ url: String?, allowedHosts: Set<String> = externalLinkHosts) -> String? {
     guard let url else { return nil }
     let hasRiskyCharacter = url.unicodeScalars.contains { scalar in
@@ -150,6 +158,7 @@ public func externalUrlToOpen(_ url: String?, allowedHosts: Set<String> = extern
     guard let components = URLComponents(string: url) else { return nil }
     guard components.scheme?.lowercased() == "https" else { return nil }
     guard components.user == nil, components.password == nil else { return nil }
+    guard components.percentEncodedHost?.contains("%") != true else { return nil }
     guard let host = components.host?.lowercased(), allowedHosts.contains(host) else { return nil }
     return url
 }

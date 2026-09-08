@@ -219,6 +219,24 @@ class WebConfigTest {
     }
 
     @Test
+    fun `호스트에 percent-encoding이 있으면 거절한다`() {
+        /*
+         * KAN-199 #2. iOS Foundation은 %61을 a로 풀어 accentury.app으로 읽고 통과시켰고
+         * java.net.URI는 authority를 디코딩하지 않아 host가 null이라 거절했다 — 같은 입력에
+         * 두 앱이 다르게 답하던 자리다. 이제 양쪽 다 명시적으로 거절한다.
+         *
+         * iOS `WebConfigTests.swift`에 같은 케이스가 있다. 한쪽만 고치면 계약이 다시 갈린다.
+         */
+        assertNull(externalUrlToOpen("https://%61ccentury.app/privacy.html"))
+        assertNull(externalUrlToOpen("https://accentury%2eapp/privacy.html"))
+        // 경로의 percent-encoding은 정상이다 - 막는 것은 호스트뿐이다
+        assertEquals(
+            "https://accentury.app/privacy%20policy.html",
+            externalUrlToOpen("https://accentury.app/privacy%20policy.html"),
+        )
+    }
+
+    @Test
     fun `빈 값과 형식이 아닌 값은 거절한다`() {
         assertNull(externalUrlToOpen(null))
         assertNull(externalUrlToOpen(""))
