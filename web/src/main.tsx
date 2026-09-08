@@ -3,8 +3,16 @@ import { createRoot } from 'react-dom/client'
 import App from './App'
 import { installGa4Tag } from './analytics/ga4'
 import { isStandaloneWeb } from './bridge/bridge'
+import { markRuntime } from './ui/runtime'
 import './tokens.css'
 import './ui/components.css'
+
+/*
+ * 런타임 표식을 렌더보다 먼저 심는다 (KAN-199 #3). 브라우저에서는 화면 위쪽 여백이 앱보다
+ * 좁아야 하는데(`tokens.css`의 `:root[data-runtime='browser']`), 표식이 첫 페인트 뒤에
+ * 붙으면 앱 기준 여백으로 그려진 화면이 한 프레임 보였다가 튄다.
+ */
+markRuntime(window.location.search)
 
 /*
  * GA4 태그는 **웹 단독 실행에만** 설치한다 (KAN-33). 앱 안(WebView)에서는 브리지를 건너
