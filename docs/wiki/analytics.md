@@ -39,7 +39,7 @@
 | `share_clicked` | `campaign`, `channel` | 웹 (앱 안에서도) | [친구에게 공유하기]를 눌렀다 |
 | `share_launched` | `channel` | 앱 | 카톡·공유 시트를 실제로 띄웠다 |
 | `app_download_clicked` | `campaign`, `platform` | 웹 | [앱 다운로드] — 웹 단독 실행에만 있는 지점 |
-| `retest_started` | — | 웹 | [다시 테스트하기] |
+| `retest_started` | `from` | 웹 | [다시 테스트하기]. `from`은 누른 자리 — `result`(결과를 다 보고 한 번 더) / `waiting`(분석이 막다른 상태라 되돌아 나옴, KAN-191) |
 | `analysis_wait_duration` | `duration_ms`, `pending_item_count` | 웹 | **KAN-24 트리거의 측정값** |
 | `analysis_poll_count` | `count`, `total_elapsed_ms` | 웹 | 폴링 규칙(KAN-14)이 지켜지는가 |
 | `poll_abandoned` | `elapsed_ms`, `pending_item_count` | 웹 | 60초 상한에 걸렸다 (GPU 밀림의 조기 신호) |
