@@ -815,6 +815,10 @@
  * 점수 막대. 진행 도트(.progress-indicator)와 달리 막대인 이유는 뜻이 다르기 때문이다 -
  * 저쪽은 "몇 개 남았나"라 셀 수 있는 칸이 맞고, 이쪽은 "몇 점인가"라 연속한 양이다.
  * 브라우저마다 <progress> 의사 요소가 갈려 셋을 다 적는다.
+ *
+ * 채운 몫은 포인트 컬러다 — 총점 도넛의 호와 같은 색이다. 이 세 값(총점·억양·단어)은 한
+ * 덩어리로 읽히는 한 가지 결과라, 총점만 색이고 내역이 잉크면 도넛과 막대가 다른 것을
+ * 재는 것처럼 보인다 (정본 §7). 그릇을 그리는 1px 윤곽은 잉크 그대로다.
  */
 .score-row__bar {
   width: 100%;
@@ -839,13 +843,13 @@
 }
 
 .score-row__bar::-webkit-progress-value {
-  background: var(--color-primary);
+  background: var(--color-point);
   border-radius: var(--radius-full);
   transition: width var(--duration-reveal) var(--ease-out);
 }
 
 .score-row__bar::-moz-progress-bar {
-  background: var(--color-primary);
+  background: var(--color-point);
   border-radius: var(--radius-full);
 }
 
