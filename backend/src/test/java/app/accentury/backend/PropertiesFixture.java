@@ -46,7 +46,7 @@ public final class PropertiesFixture {
 
     /** application.yml 기본값 그대로의 분석 정책 */
     public static AccenturyProperties.Analysis analysis() {
-        return analysis(30, null, Duration.ofSeconds(60));
+        return analysis(6, null, Duration.ofSeconds(300));
     }
 
     /**
@@ -65,9 +65,10 @@ public final class PropertiesFixture {
                                                         @Nullable String aiBaseUrl,
                                                         Duration processingTimeout,
                                                         Duration shutdownBudget) {
+        // ai-timeout 85초, 재전송 2회, 워커 1개 - 실모델 기준 코드 기본값과 같다 (KAN-172).
         return new AccenturyProperties.Analysis(800, 3000, congestionThreshold, Duration.ofSeconds(1),
                 Duration.ofHours(24), processingTimeout, Duration.ofMinutes(5), aiBaseUrl,
-                Duration.ofSeconds(10), 2, 4,
+                Duration.ofSeconds(85), 2, 1,
                 Duration.ofSeconds(2), 5, Duration.ofSeconds(5), shutdownBudget, null);
     }
 

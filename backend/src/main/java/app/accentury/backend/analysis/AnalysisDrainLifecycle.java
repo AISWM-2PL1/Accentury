@@ -41,9 +41,9 @@ import java.util.concurrent.TimeUnit;
  * 기다리면 컨테이너 유예를 넘긴다 (Codex sol 리뷰 P1). 대기는 이 클래스의 마감시각 하나뿐이다.
  * <p>
  * 예산 산정: 대기 작업을 기다리지 않으므로 상한은 "실행 중인 워커 수만큼의 AI 호출 1회"다 -
- * 워커가 몇이든 병렬이라 AI 타임아웃 1회분이면 되고, 재전송은 종료 중 시작하지 않는다.
- * 웹 유예 15초 + 예산 90초 = 105초로 컨테이너 강제 종료 상한(compose stop_grace_period 110초,
- * ECS stopTimeout 120초) 안에 든다.
+ * 워커가 몇이든 병렬이라 AI 타임아웃 1회분(ai-timeout 85초, KAN-172)이면 되고, 재전송은 종료 중
+ * 시작하지 않는다. 웹 유예 15초 + 예산 90초 = 105초로 컨테이너 강제 종료 상한(compose
+ * stop_grace_period 110초, ECS stopTimeout 120초) 안에 든다 - 실모델 값으로 다시 확인했다 (KAN-172).
  */
 class AnalysisDrainLifecycle implements SmartLifecycle {
 

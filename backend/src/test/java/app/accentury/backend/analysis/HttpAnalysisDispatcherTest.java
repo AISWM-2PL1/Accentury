@@ -134,15 +134,53 @@ class HttpAnalysisDispatcherTest extends IntegrationTest {
     }
 
     @Test
-    void 타임아웃_소진은_ANALYSIS_TIMEOUT으로_구분된다() {
+    void 읽기_타임아웃은_재전송_없이_ANALYSIS_TIMEOUT으로_즉시_종결된다() {
+        // 실모델은 타임아웃 시점에 아직 그 오디오를 추론 중일 가능성이 높다 - 재전송은 같은 분석을
+        // 하나 더 얹어 뒤 요청까지 밀리게 한다 (KAN-172). 재전송 예산이 남아 있어도 쓰지 않는다.
         AnalysisJob job = saveProcessingJob();
         ScriptedClient client = new ScriptedClient()
                 .then(new AiAnalysisClient.AiUnavailableException("읽기 타임아웃",
+                        AiAnalysisClient.AiUnavailableException.Kind.TIMED_OUT, null))
+                .then(new AiAnalysisClient.Completed(70, "OK", "track1-v3.4", "sv-0.3"));
+
+        dispatcher(client, 2).dispatch(request(job));
+
+        AnalysisJob saved = repository.findById(job.id()).orElseThrow();
+        assertEquals(AnalysisJobStatus.RETRYABLE_FAILED, saved.status());
+        // AI에 닿았으므로 시도 예산(§2.5)에 드는 사유다 - 미도달(ANALYSIS_UNAVAILABLE)과 다르다.
+        assertEquals("ANALYSIS_TIMEOUT", saved.errorCode());
+        assertEquals(1, client.calls);
+    }
+
+    @Test
+    void 읽기_타임아웃도_회로에는_실패로_센다() {
+        // 재전송을 안 할 뿐 장애다 (§4.2 열림 조건) - 연속되면 회로가 열려 업로드를 막아야 한다.
+        AiCircuitBreaker breaker = new AiCircuitBreaker(1, Duration.ofSeconds(5),
+                Duration.ofSeconds(120), Clock.systemUTC());
+        ScriptedClient client = new ScriptedClient()
+                .then(new AiAnalysisClient.AiUnavailableException("읽기 타임아웃",
                         AiAnalysisClient.AiUnavailableException.Kind.TIMED_OUT, null));
+        HttpAnalysisDispatcher dispatcher = dispatcher(client, 2, breaker);
+        assertTrue(dispatcher.accepts("a_probe"));
 
-        dispatcher(client, 0).dispatch(request(job));
+        dispatcher.dispatch(request(saveProcessingJob()));
 
-        assertEquals("ANALYSIS_TIMEOUT", repository.findById(job.id()).orElseThrow().errorCode());
+        assertFalse(dispatcher.accepts("a_probe"));
+    }
+
+    @Test
+    void AI_5xx는_타임아웃과_달리_재전송한다() {
+        // AI가 자체 상한(75초)에서 스스로 접은 503이다 - 이미 워커를 놓았으므로 다시 보내도 중복이 아니다 (KAN-172).
+        AnalysisJob job = saveProcessingJob();
+        ScriptedClient client = new ScriptedClient()
+                .then(new AiAnalysisClient.AiUnavailableException("AI 503",
+                        AiAnalysisClient.AiUnavailableException.Kind.SERVER_ERROR, null))
+                .then(new AiAnalysisClient.Completed(70, "OK", "track1-v3.4", "sv-0.3"));
+
+        dispatcher(client, 2).dispatch(request(job));
+
+        assertEquals(AnalysisJobStatus.COMPLETED, repository.findById(job.id()).orElseThrow().status());
+        assertEquals(2, client.calls);
     }
 
     @Test

@@ -104,13 +104,19 @@ accentury:
                                 # 유일한 쓰기 경로라 IP가 유일한 키다. 공유 IP(학교, 카페 NAT)
                                 # 뒤의 동시 시작을 덮는 값. 부하 테스트 후 확정 (§7, KAN-40)
   analysis:
-    poll-after-ms: 800               # 상태 폴링 간격 - 서버가 통제, 부하 상승 시 상향 (명세서 §5.3)
+    poll-after-ms: 800               # 상태 폴링 간격 - 서버가 통제, 부하 상승 시 상향 (명세서 §5.3). 실모델(1건 P50 10초, KAN-57)에서도
+                                     # 유지한다 (KAN-172) - 웹은 규칙 3의 백오프 사다리(800에서 5000ms)와 이 값 중 큰 쪽을 쓰므로
+                                     # 이 값은 첫 회차의 하한일 뿐이고, 폴링 낭비는 아래 혼잡 임계치가 줄인다.
     congested-poll-after-ms: 3000    # 혼잡 시 폴링 간격 - 분석이 밀릴 때 폴링 증폭을 막는다 (명세서 §5.3, KAN-24).
-    congestion-threshold: 30         # 혼잡 판정 - 전 인스턴스의 진행 중(PROCESSING) 분석 작업이 이 건수 이상이면 간격 상향 (KAN-167)
+    congestion-threshold: 6          # 혼잡 판정 - 전 인스턴스의 진행 중(PROCESSING) 분석 작업이 이 건수 이상이면 간격 상향 (KAN-167).
+                                     # AI가 1건씩 10초(KAN-57 c7i.xlarge 실측)라 처리량이 분당 6건이고, 6건이 쌓이면 대기열이
+                                     # 1분이다 (KAN-172). 이전 30은 워커 4개 전제라 대기열 5분이 쌓여야 켜졌다.
     congestion-cache-ttl: 1s         # 혼잡 판정이 DB의 PROCESSING 건수를 다시 세지 않고 쓰는 시간 (KAN-167). 기준 폴링 간격(800ms)과
                                      # 같은 자릿수라 인스턴스당 초당 count 1회로 묶이고, 판정 지연은 폴링 한 번 분량이다. 0이면 매번 센다.
     retention: 24h                   # 분석 작업 보존 기간 - 세션, 결과와 동일 (명세서 §5.5)
-    processing-timeout: 60s          # 실행 잔류 한도 - 실행 시작 후 이 시간을 넘기면 RETRYABLE_FAILED(ANALYSIS_TIMEOUT) (KAN-24)
+    processing-timeout: 300s         # 실행 잔류 한도 - 실행 시작 후 이 시간을 넘기면 RETRYABLE_FAILED(ANALYSIS_TIMEOUT) (KAN-24).
+                                     # AI 재전송 최악 소요(ai-timeout 85초 x 3회 + 백오프 0.9초 = 255.9초)보다 길어야 기동한다 -
+                                     # 그 위의 반올림이다 (KAN-172). 웹 폴링 상한 60초(§5.3 규칙 5)보다 길지만 정상 P95 11초에서는 닿지 않는다.
     queued-timeout: 5m               # 큐 유실 한도 - 실행을 시작 못 한 채 이 시간이 지나면 정리 (프로세스 사망 대비).
                                      # 정상 큐 소진(수 분)보다 길고, 세션 TTL(30분) 안에 복구가 보이도록 그보다 짧다.
     # ai-base-url: http://localhost:8000    # AI 서버(FastAPI, 명세서 §4.1) - 미설정이면 전달하지 않는 개발 모드 (KAN-22).
@@ -120,17 +126,25 @@ accentury:
     # ai-token: <공유 시크릿>        # AI 내부 호출 시크릿 (KAN-36) - 요청마다 X-Accentury-Internal-Token 헤더로 싣는다.
                                      # 미설정이면 헤더를 붙이지 않는다 (로컬 개발). 배포에서는 SSM ACCENTURY_ANALYSIS_AITOKEN이
                                      # 넣고 deploy 프로파일은 이 값이 없으면 기동을 세운다 (DeploymentConfigGuard).
-    ai-timeout: 10s                  # AI 호출 연결과 읽기 타임아웃 - 추론 P95 3초의 여유 배수
-    ai-retries: 2                    # AI 일시 장애(연결 실패, 5xx) 재전송 횟수 - 전달 시점에만 가능 (FR-DP-01)
-    dispatch-concurrency: 4          # 분석 전달 워커 수 - GPU 동시 슬롯을 넘지 않게 (명세서 §5.3)
+    ai-timeout: 85s                  # AI 호출 읽기 타임아웃 (KAN-172. 연결은 5초 고정 - AnalysisDispatchConfig.AI_CONNECT_TIMEOUT).
+                                     # 실모델 1건 P95는 11.1초(KAN-57 c7i.xlarge, bf16 + MFA
+                                     # align_one)지만 AI는 한 번에 하나만 추론하고 그 상한(ACCENTURY_AI_ANALYSIS_TIMEOUT_SECONDS 75초)은
+                                     # lock 대기와 워커 재적재까지 포함한다 - 롤링 배포 중 backend 태스크 최대 6개(3 x 200%)가 겹친
+                                     # 6 x 11초 = 67초와, 워커 재적재 31초 + 추론 11초 = 42초를 그 상한이 덮고 이 값은 그보다 10초 길다.
+                                     # AI가 먼저 끊고 503을 돌려줘야 한다 - 반대면 BE는 포기했는데 AI는 계속 추론한다 (KAN-22).
+    ai-retries: 2                    # AI 일시 장애(연결 실패, 5xx) 재전송 횟수 - 전달 시점에만 가능 (FR-DP-01).
+                                     # 읽기 타임아웃은 재전송하지 않는다 (KAN-172) - 실모델은 타임아웃 시점에 아직 추론 중일 가능성이
+                                     # 높아 재전송이 그 위에 중복 분석을 얹는다 (HttpAnalysisDispatcher.analyzeWithRetry).
+    dispatch-concurrency: 1          # 분석 전달 워커 수 - AI가 추론을 한 번에 하나만 돌린다 (단일 lock, 8GB에서 2건이면 OOM. KAN-57).
+                                     # 태스크당 값이라 태스크가 여럿이면(KAN-168 최대 3) 그만큼은 AI 앞에서 겹친다 (KAN-172).
     ai-health-timeout: 2s            # 회로 복구 프로브(GET /internal/v0/health, 명세서 §4.2)의 타임아웃 (KAN-28) -
-                                     # 추론 없이 즉답하는 엔드포인트라 분석 호출(10초)보다 짧게 잡는다.
+                                     # 추론 없이 즉답하는 엔드포인트라 분석 호출(85초)보다 짧게 잡는다.
     circuit-failure-threshold: 5     # AI 연속 실패 이 횟수에서 회로를 연다 (KAN-28) - 열린 동안 업로드는
                                      # GPU 미소모 503으로 즉시 끊기고 시도 예산(명세서 §2.5)도 깎이지 않는다.
     circuit-probe-interval: 5s       # 회로가 열린 뒤 health 프로브 간격 - 첫 프로브까지의 쿨다운도 같은 값 (KAN-28)
     shutdown-budget: 90s             # 종료 시 실행 중 분석의 완료 대기 상한 (KAN-166). 대기 작업은 기다리지 않고
-                                     # 즉시 실패로 정리하므로 AI 호출 1회(ai-timeout)보다 길면 된다 - 기동 시 검증.
-                                     # 실모델로 ai-timeout이 오르면(KAN-172) 웹 유예 15초와 합쳐 110초 안인지 다시 본다.
+                                     # 즉시 실패로 정리하므로 AI 호출 1회(ai-timeout 85초)보다 길면 된다 - 기동 시 검증.
+                                     # 실모델 값으로 다시 봤다 (KAN-172): 웹 유예 15초와 합쳐 105초로 ECS stopTimeout 120초 안이다.
   upload:
     rate-limit-per-minute: 30            # IP당 분당 업로드 상한 - 부하 테스트 후 확정 (명세서 §7, KAN-40)
     session-rate-limit-per-minute: 60    # 세션당 분당 업로드 상한 (명세서 §2.5 이중 제한, KAN-28) - 정상 5건,
