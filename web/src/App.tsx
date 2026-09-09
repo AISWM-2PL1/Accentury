@@ -8,6 +8,7 @@ import { IntroScreen } from './intro/IntroScreen'
 import { START_FAILED_MESSAGE, STORAGE_UNAVAILABLE_MESSAGE } from './intro/introText'
 import { getSessionToken, isBridgeCompatible, isStandaloneWeb } from './bridge/bridge'
 import { buildIntroUrl, buildResultUrl, buildTestUrl } from './navigation/entryUrl'
+import { clearSnapshot, defaultSnapshotStorage, sweepSnapshots } from './progress/progressSnapshot'
 import { TestFlowScreen } from './progress/TestFlowScreen'
 import { ResultScreen } from './result/ResultScreen'
 import { useRetest } from './result/useRetest'
@@ -197,6 +198,20 @@ function IntroRoute({
      * 달고 나가 순서 분석에서 A의 목록 끝에 B의 시작이 붙는다 (`analytics/testId.ts`).
      */
     clearTestId()
+
+    /*
+     * 남은 진행 기록을 걷는다 (KAN-198). 버리는 이유는 바로 위 [clearTestId]와 같다 — 인트로는
+     * 어느 응시에도 속하지 않는 화면이고, 여기 왔다는 것은 앞의 응시가 끝났거나 버려졌다는 뜻이다.
+     *
+     * 이 자리가 필요한 것은 결과 화면의 삭제([ResultRoute])가 sessionId를 아는 응시만 덮기
+     * 때문이다. 마지막 문항까지 가지 못하고 끊긴 응시(앱 종료, 탭 닫기, 분석 실패)의 키는 그
+     * sessionId를 다시 들고 오는 사람이 없어 영영 지워지지 않는다 — 응시할 때마다 키가 하나씩
+     * 쌓이던 원인이 그것이다 (`progress/progressSnapshot.ts`의 [sweepSnapshots]).
+     *
+     * 남길 키를 고르지 않는다: 인트로에는 진행 중인 세션이 없고, [시작하기]는 어느 실행에서든
+     * 새 세션을 만든다.
+     */
+    sweepSnapshots(defaultSnapshotStorage())
 
     /*
      * 실행을 가리지 않는다 (KAN-33). 인트로를 그리는 것이 앱에서도 이 WebView라 사건이 같고,
@@ -430,6 +445,23 @@ function ResultRoute({
    */
   const backToIntro = useCallback(() => goToIntro(navigate), [navigate])
   const retest = useRetest(backToIntro, 'result')
+
+  /*
+   * 이 응시의 진행 기록을 지운다 (KAN-198 — KAN-99가 "삭제 시점은 결과 화면"이라 예고한 자리다).
+   *
+   * 결과 화면인 이유: 스냅샷은 분석 대기 중 백그라운드 복귀까지 살아 있어야 하므로 마지막 문항
+   * 제출로는 지울 수 없고(`progress/useTestProgress.ts` 헤더), 결과가 나왔다는 것은 이 진행을
+   * 다시 이어 갈 일이 없다는 뜻이다. 결과 URL을 직접 여는 경로에서도 판정은 같다.
+   *
+   * 재응시가 이전 세션의 키를 남기지 않는 것도 여기서 정해진다 — [다시 테스트하기]는 결과
+   * 화면에만 있으므로 그 화면에 들어온 시점에 이미 지워져 있다 (인트로의 훑기가 이중 방어다).
+   *
+   * 이펙트로 미루는 이유는 렌더 중 부작용을 피하기 위해서다. 지연은 문제되지 않는다 — 이 문서에는
+   * 스냅샷을 다시 읽을 코드가 없다. 두 번 불려도(StrictMode) 삭제는 멱등이다.
+   */
+  useEffect(() => {
+    clearSnapshot(defaultSnapshotStorage(), sessionId)
+  }, [sessionId])
 
   /*
    * [앱 다운로드]는 웹 단독 실행에만 있다 (KAN-31). UA 판별을 여기서 하는 이유는 화면이
