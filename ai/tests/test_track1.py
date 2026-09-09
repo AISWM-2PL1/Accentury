@@ -80,6 +80,9 @@ class Track1Scorer:
             "segments": [{{"kind": "order", "word": "여기는", "st": 넘파이흉내(1.5)}}],
             "modelVersion": self.model_version,
             "processingMs": 1234,
+            # 전달본이 돌려줄 단계 시간 (KAN-204에서 정한 인터페이스). 진짜 전달본은 아직
+            # 싣지 않지만, 실으면 어댑터가 무엇을 하는지는 지금 정해져 있어야 한다
+            "stageMs": {{"transcribe": 40.0, "align": 10.0, "알수없음": 1.0}},
         }}
 '''
 
@@ -290,3 +293,97 @@ def _alive(pid: int) -> bool:
     except (ProcessLookupError, PermissionError):
         return False
     return True
+
+
+def test_요청마다_단계_시간과_콜드_웜이_적힌다(tmp_path, transfer):
+    """어댑터가 잴 수 있는 바깥 구간과 전달본이 준 안쪽 구간 (KAN-204).
+
+    워밍업이 워커를 이미 올려 뒀으므로 적재 대기는 없다. 첫 채점만 콜드다 - 가중치가 올라와
+    있어도 전달본 안쪽의 지연 초기화가 거기서 한 번 일어나기 때문이고, 그것이 staging 첫 호출
+    22.9초의 자리다.
+    """
+    settings = _settings(tmp_path, transfer)
+    engine = Track1Engine(settings)
+
+    async def scenario():
+        await engine.warm_up()
+        첫째, 둘째 = _request(settings), _request(settings)
+        try:
+            await engine.analyze(첫째)
+            await engine.analyze(둘째)
+        finally:
+            await engine.close()
+        return 첫째.stages, 둘째.stages
+
+    첫째, 둘째 = asyncio.run(scenario())
+
+    단계 = dict(첫째.items())
+    assert set(단계) == {"lockWait", "model", "transcribe", "align"}
+    # 전달본이 준 값은 그대로 오고, 목록에 없는 이름은 버려진다 (차원 값이 곧 요금이다)
+    assert 단계["transcribe"] == 40.0
+    assert 단계["align"] == 10.0
+    assert 단계["model"] > 0
+    assert 첫째.warm == "cold"
+    assert 둘째.warm == "warm"
+
+
+def test_재적재를_기다린_요청만_적재_대기를_적는다(tmp_path, transfer):
+    """0을 적지 않는다 - 그 0들이 재적재 표본을 희석해 "재적재가 얼마나 비싼가"를 가린다."""
+    settings = _settings(tmp_path, transfer)
+    engine = Track1Engine(settings)
+
+    async def scenario():
+        await engine.warm_up()
+        평시 = _request(settings)
+        await engine.analyze(평시)
+        느린 = _request(settings, script_key="slow")
+        analysis = asyncio.create_task(engine.analyze(느린))
+        for _ in range(200):
+            await asyncio.sleep(0.05)
+            if any(entry.name.startswith("track1-") for entry in settings.temp_dir.iterdir()):
+                break
+        analysis.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await analysis
+        재적재_뒤 = _request(settings)
+        try:
+            await engine.analyze(재적재_뒤)
+        finally:
+            await engine.close()
+        return 평시.stages, 느린.stages, 재적재_뒤.stages
+
+    평시, 느린, 재적재_뒤 = asyncio.run(scenario())
+
+    assert "workerLoad" not in dict(평시.items())
+    # 끊긴 요청은 model을 적지 않는다 - 그 값은 곧 상한이라 분포만 오염시킨다. 그래도 그
+    # 앞에서 끝난 단계는 남아 "어디까지 갔다가 끊겼는가"를 말해 준다
+    assert "model" not in dict(느린.items())
+    assert "lockWait" in dict(느린.items())
+    assert dict(재적재_뒤.items())["workerLoad"] > 0
+    assert 재적재_뒤.warm == "cold"
+
+
+def test_서비스_문장이_아닌_요청은_첫_채점_자리를_쓰지_않는다(tmp_path, transfer):
+    """자식이 ``score()``를 부르기 **전에** 가른 요청이다 (Codex astra 리뷰 P2).
+
+    채점이 아니므로 그 요청의 model 표본(0에 가깝다)도, 첫 채점 표시도 남기지 않는다. 남기면
+    뒤이은 진짜 첫 채점의 22.9초짜리 오버헤드가 웜으로 찍혀 지표가 그것을 영영 못 본다.
+    """
+    settings = _settings(tmp_path, transfer)
+    engine = Track1Engine(settings)
+
+    async def scenario():
+        await engine.warm_up()
+        거절, 첫_채점 = _request(settings, script_key="9|9"), _request(settings)
+        try:
+            await engine.analyze(거절)
+            await engine.analyze(첫_채점)
+        finally:
+            await engine.close()
+        return 거절.stages, 첫_채점.stages
+
+    거절, 첫_채점 = asyncio.run(scenario())
+
+    assert "model" not in dict(거절.items())
+    assert 첫_채점.warm == "cold"
+    assert dict(첫_채점.items())["model"] > 0

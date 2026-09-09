@@ -26,7 +26,8 @@
 
 부모 -> 자식 (stdin, 한 줄 JSON): ``{"audioPath": ..., "scriptKey": ...}``
 자식 -> 부모 (stdout, 한 줄 JSON): 기동 직후 ``{"type": "ready", "modelVersion": ...}``,
-그 뒤 요청마다 ``{"type": "result", ...}``.
+그 뒤 요청마다 ``{"type": "result", ...}``. 성공 결과에는 전달본이 실은 단계 시간이
+``stageMs``로 함께 온다 (KAN-204, 아래 :func:`_stage_ms`).
 
 자식은 fd 1을 stderr로 덮은 뒤 원래 stdout의 복제본으로만 프로토콜을 쓴다. 라이브러리가
 표준출력에 한 줄이라도 찍으면(transformers의 진행 표시, MFA의 로그) 그것이 응답으로
@@ -44,6 +45,7 @@ import shutil
 import signal
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +57,7 @@ from app.engine import (
     AnalysisOutcome,
     AnalysisRequest,
 )
+from app.stages import StageRecord
 
 log = logging.getLogger(__name__)
 
@@ -205,6 +208,12 @@ class Track1Engine:
         self._inference_lock = asyncio.Lock()
         # 죽인 워커를 거두는 작업들 - 거두지 않으면 좀비가 남는다
         self._reaping: set[asyncio.Task[None]] = set()
+        # 워커 세대. 요청이 "내가 기다리는 동안 적재가 실제로 있었는가"를 가르는 수단이다
+        # (KAN-204) - 경과 시간으로 어림하면 lock을 막 놓은 요청과 구분되지 않는다
+        self._generation = 0
+        # 지금 워커가 채점을 한 번이라도 했는가. 첫 채점에는 전달본 안쪽의 지연 초기화가
+        # 붙어 뒤이은 요청과 시간이 다르다 (staging 첫 호출 22.9초 대 10초대)
+        self._worker_scored = False
 
     @property
     def model_version(self) -> str:
@@ -243,10 +252,16 @@ class Track1Engine:
             "audioPath": str(request.audio_path),
             "scriptKey": script_key if isinstance(script_key, str) else None,
         }
+        stages = request.stages
+        waiting = time.monotonic()
         async with self._inference_lock:
-            await self._ensure_worker()
+            # 앞 요청의 추론이 끝나기를 기다린 시간 (KAN-204). 정상 부하에서는 0에 가깝고,
+            # 롤링 배포로 backend 태스크가 겹치면 여기가 자란다 - 추론 상한(KAN-172)이
+            # 정상 추론 하나가 아니라 이 대기까지 덮어야 하는 근거가 이 값이다
+            stages.put("lockWait", (time.monotonic() - waiting) * 1000)
+            await self._load_worker(stages)
             try:
-                reply = await self._exchange(payload)
+                reply = await self._score(payload, stages)
             except asyncio.CancelledError:
                 # 계약 2 - 취소가 실제로 닿는 유일한 수단이다. 여기서 죽이지 않으면 라우트가
                 # 503을 내고 임시파일을 지운 뒤에도 워커는 사라진 파일을 계속 정렬한다
@@ -262,9 +277,48 @@ class Track1Engine:
                 # 두 번째도 같으면 그대로 올려 500으로 끊는다 - 요청마다 죽는 워커에
                 # 매번 재적재를 태우면 그것이 더 나쁘다
                 log.warning("워커가 사라져 다시 띄운다 reason=%s", error)
-                await self._ensure_worker()
-                reply = await self._exchange(payload)
+                await self._load_worker(stages)
+                reply = await self._score(payload, stages)
         return self._outcome_of(reply)
+
+    async def _load_worker(self, stages: StageRecord) -> None:
+        """워커를 준비시키고, 적재가 실제로 일어났으면 그 대기를 적는다 (KAN-204).
+
+        세대가 그대로면 이미 떠 있던 워커를 그냥 쓴 것이므로 아무것도 적지 않는다. 0을 적지
+        않는 이유는 그 0들이 재적재 표본을 희석해 "재적재가 얼마나 비싼가"를 못 읽게 만들기
+        때문이다 - 표본 수 자체가 "얼마나 자주 재적재하는가"의 답이 된다.
+        """
+        generation = self._generation
+        started = time.monotonic()
+        await self._ensure_worker()
+        if self._generation != generation:
+            stages.put("workerLoad", (time.monotonic() - started) * 1000)
+
+    async def _score(self, payload: dict[str, Any], stages: StageRecord) -> dict[str, Any]:
+        """워커에 한 번 물어보고 단계 시간을 적는다 (KAN-204).
+
+        ``model``은 전달본 ``score()`` 호출 전체다 - 어댑터가 잴 수 있는 가장 안쪽이고, 그
+        안쪽 다섯 단계는 전달본이 ``stageMs``로 돌려줄 때까지 비어 있다.
+
+        콜드 표시는 **물어보기 전에** 한다. 그래야 상한에 걸려 끊긴 첫 채점도 콜드로 남는다 -
+        첫 호출 오버헤드가 시간 초과의 원인인지가 바로 그때 필요한 값이다.
+        """
+        if not self._worker_scored:
+            stages.mark_cold()
+        started = time.monotonic()
+        reply = await self._exchange(payload)
+        if reply.get("kind") == _UNKNOWN_SCRIPT_KEY:
+            # ``score()``를 부르기 **전에** 갈린 요청이다 (자식의 서비스 문장 검사). 채점이
+            # 아니므로 두 가지를 남기지 않는다 - 0에 가까운 값이 model 분포에 섞이는 것과,
+            # 이 요청이 첫 채점 자리를 먹어 뒤이은 진짜 첫 채점(콜드 22.9초)이 웜으로 찍히는
+            # 것이다 (Codex astra 리뷰 P2)
+            return reply
+        # 예외로 빠져나간 경로에서는 둘 다 하지 않는다 - 워커가 사라진 경우(_WorkerGone)에는
+        # 다음 워커가 다시 콜드이고, 끊긴 추론의 경과는 곧 상한값이라 분포만 오염시킨다
+        stages.put("model", (time.monotonic() - started) * 1000)
+        self._worker_scored = True
+        stages.merge(reply.get("stageMs"))
+        return reply
 
     # ── 워커 수명 ────────────────────────────────────────────────────────────
 
@@ -340,6 +394,10 @@ class Track1Engine:
         # 코루틴과 요청 코루틴이 같은 stdout을 동시에 읽는다 (위 :meth:`_ensure_worker` 주석)
         self._process = process
         self._model_version = str(message["modelVersion"])
+        # 새 워커다 - 세대를 올려 이 적재를 기다린 요청이 workerLoad를 적을 수 있게 하고,
+        # 첫 채점 표시를 되돌린다 (KAN-204)
+        self._generation += 1
+        self._worker_scored = False
         log.info("트랙 1 워커 준비 완료 modelVersion=%s", self._model_version)
 
     def _terminate_worker(self, reason: str) -> None:
@@ -538,7 +596,16 @@ def _worker_main(argv: list[str]) -> int:
             # finally의 같은 호출은 실패 경로를 위한 그물로 남는다
             _clear_mfa_workspace()
             try:
-                _send(channel, {"type": _RESULT, "ok": True, "envelope": envelope})
+                _send(
+                    channel,
+                    {
+                        "type": _RESULT,
+                        "ok": True,
+                        # 단계 시간은 봉투에서 덜어 내어 따로 싣는다 (KAN-204, 아래 _stage_ms)
+                        "stageMs": _stage_ms(envelope),
+                        "envelope": envelope,
+                    },
+                )
             except (TypeError, ValueError) as error:
                 # 봉투에 JSON으로 나갈 수 없는 값이 있다 (NaN, 알 수 없는 객체). 여기서 잡지
                 # 않으면 이 예외가 워커를 죽여, 부모에게는 "워커가 응답 없이 사라졌다"로만
@@ -556,6 +623,22 @@ def _worker_main(argv: list[str]) -> int:
         finally:
             _clear_mfa_workspace()
     return 0
+
+
+def _stage_ms(envelope: Any) -> Any:
+    """전달본이 실은 단계 시간 dict를 봉투에서 **덜어 낸다** (KAN-204).
+
+    합의한 인터페이스는 봉투 안의 ``stageMs``이고, 값은 단계 이름 -> ms다 (이름은
+    :data:`app.stages.MODEL_STAGES`). 덜어 내는 이유는 그 값이 §4.1 봉투에 없는 값이라서다 -
+    그대로 두면 어댑터가 봉투를 옮기는 자리(:meth:`Track1Engine._outcome_of`)와 계약 스위트가
+    보는 것이 조금씩 갈린다.
+
+    전달본이 아직 이 값을 돌려주지 않으므로 지금은 언제나 ``None``이다. 인터페이스만 먼저
+    열어 두고, 전달본이 채우기 시작하면 어댑터도 지표도 고칠 것이 없다.
+    """
+    if isinstance(envelope, dict):
+        return envelope.pop("stageMs", None)
+    return None
 
 
 def _is_service_sentence(scorer: Any, script_key: Any) -> bool:

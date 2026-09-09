@@ -1,5 +1,5 @@
 #!/bin/bash
-# ai 상태 지표 -> CloudWatch 커스텀 지표 (KAN-36 health, KAN-38 임시파일 잔존).
+# ai 상태 지표 -> CloudWatch 커스텀 지표 (KAN-36 health, KAN-38 임시파일 잔존, KAN-204 단계별 지연).
 # systemd 타이머가 1분마다 부른다.
 #
 # AI 호스트는 ALB 뒤가 아니라 대상 그룹 health가 없다. 그래서 호스트가 스스로 /internal/v0/health를
@@ -37,18 +37,28 @@ json_int() {
   sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p"
 }
 
-temp_metrics=""
+token=""
 if [ "$value" = 1 ] && [ -r "$AI_ENV_FILE" ]; then
   # 값을 읽기만 한다 - source 하지 않는다. 이 파일은 docker의 env-file이지 셸 스크립트가 아니라
   # (accentury-up.sh가 KEY=VALUE로 쓴다) 따옴표 규칙이 없다. 지금 토큰은 영숫자 48자라
   # (config 모듈 random_password, special=false) source 해도 무사하지만, 나중에 이 파일에 공백이나
   # $가 든 값이 하나만 들어와도 셸이 그것을 해석한다.
   token=$(grep -m1 '^ACCENTURY_AI_INTERNAL_TOKEN=' "$AI_ENV_FILE" | cut -d= -f2-)
-  if [ -n "$token" ]; then
-    temp_metrics=$(curl -s --max-time 3 \
-      -H "X-Accentury-Internal-Token: $token" \
-      http://127.0.0.1:8000/internal/v0/metrics || true)
-  fi
+fi
+
+# 토큰이 필요한 내부 조회 (health와 달리 인증 예외가 아니다).
+ask() {
+  curl -s --max-time 3 -H "X-Accentury-Internal-Token: $token" "http://127.0.0.1:8000$1" || true
+}
+
+temp_metrics=""
+stage_samples=""
+if [ -n "$token" ]; then
+  temp_metrics=$(ask /internal/v0/metrics)
+  # 추론 단계별 소요 시간 표본 (KAN-204). **읽으면 비워진다** - 아래 put-metric-data가 실패하면
+  # 그 회차의 표본은 사라진다. 지표는 최선 노력이고, 재시도 큐를 두면 CloudWatch가 오래 막힌
+  # 동안 추론 프로세스가 그 대가를 메모리로 치른다 (ai/app/stages.py).
+  stage_samples=$(ask /internal/v0/metrics/stages)
 fi
 
 temp_files=""
@@ -75,6 +85,25 @@ if [ -n "$temp_scan_failures" ]; then
   metric_data="$metric_data MetricName=TempScanFailures,Dimensions=[{Name=env,Value=$ACCENTURY_ENV}],Value=$temp_scan_failures,Unit=Count"
 fi
 
+# 단계별 소요 시간 (KAN-204). 한 줄이 계열 하나이고 모양은 `<단계> <콜드|웜> <ms,ms,...>`다.
+# 관측값을 낱개로 올린다(Value가 아니라 Values) - 평균이나 합만 올리면 CloudWatch가 p50과 p95를
+# 계산할 수 없고, 그 백분위가 이 티켓이 필요로 하는 값이다. 앱이 표본을 150개에서 끊으므로
+# (Values 하나의 API 상한) 여기서 다시 세지 않는다.
+stage_series=0
+while read -r stage warm values; do
+  [ -n "$values" ] || continue
+  # 앱이 만든 값이지만 그대로 명령줄에 들어가므로 모양을 확인한다 - 지표 하나 때문에 이
+  # 스크립트가 임의의 문자열을 실행하는 경로가 생기지 않게 한다. 단계 이름에 숫자를 허용하는
+  # 것이 중요하다 - f0이 그 이름이라, 글자만 받으면 F0 추출 표본이 통째로 버려진다.
+  case "$stage" in "" | *[!A-Za-z0-9]*) continue ;; esac
+  case "$warm" in warm | cold) ;; *) continue ;; esac
+  case "$values" in *[!0-9,]*) continue ;; esac
+  metric_data="$metric_data MetricName=StageDuration,Dimensions=[{Name=env,Value=$ACCENTURY_ENV},{Name=stage,Value=$stage},{Name=warm,Value=$warm}],Values=[$values],Unit=Milliseconds"
+  stage_series=$((stage_series + 1))
+done <<EOF
+$stage_samples
+EOF
+
 # 지표를 못 올려도(자격 증명 전파 전, API 일시 장애) 타이머의 다음 회차가 다시 시도한다.
 # shellcheck disable=SC2086 -- metric_data는 우리가 만든 공백 구분 목록이라 분리되어야 한다.
 aws cloudwatch put-metric-data \
@@ -83,4 +112,4 @@ aws cloudwatch put-metric-data \
   --metric-data $metric_data \
   || echo "CloudWatch put-metric-data 실패 (health=$code) - 다음 회차에 재시도" >&2
 
-echo "ai health=$code -> Healthy=$value, tempFiles=${temp_files:-미확인}, tempOldestAge=${temp_oldest_age:-미확인}, tempScanFailures=${temp_scan_failures:-미확인} ($METRIC_NAMESPACE env=$ACCENTURY_ENV)"
+echo "ai health=$code -> Healthy=$value, tempFiles=${temp_files:-미확인}, tempOldestAge=${temp_oldest_age:-미확인}, tempScanFailures=${temp_scan_failures:-미확인}, stageSeries=$stage_series ($METRIC_NAMESPACE env=$ACCENTURY_ENV)"

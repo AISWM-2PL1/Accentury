@@ -16,13 +16,14 @@ import tempfile
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app import analyze
 from app.auth import HEALTH_PATH, InternalTokenMiddleware
 from app.config import Settings
 from app.engine import AnalysisEngine, create_engine, require_reportable_version
 from app.limits import MaxBodySizeMiddleware
+from app.stages import StageMetrics
 from app.tempstore import VoiceTempStore
 
 log = logging.getLogger(__name__)
@@ -111,6 +112,8 @@ def create_app(settings: Settings | None = None, engine: AnalysisEngine | None =
     app.state.settings = resolved
     app.state.temp_store = store
     app.state.engine = resolved_engine
+    # 단계별 소요 시간 표본 (KAN-204). 앱 1개에 하나이고 호스트 타이머가 훑어 간다
+    app.state.stage_metrics = StageMetrics()
     # lifespan이 워밍업을 마치기 전까지 False - health가 503을 낸다 (KAN-36 준비 상태 게이트)
     app.state.ready = False
     app.include_router(analyze.router)
@@ -131,6 +134,19 @@ def create_app(settings: Settings | None = None, engine: AnalysisEngine | None =
     async def metrics(request: Request) -> dict[str, float | int]:
         """잔존 임시파일 수와 최장 잔존 시간 (KAN-27 AC, KAN-38이 소비)."""
         return request.app.state.temp_store.metrics()
+
+    @app.get("/internal/v0/metrics/stages", response_class=PlainTextResponse)
+    async def stage_metrics(request: Request) -> str:
+        """추론 단계별 소요 시간 표본 (KAN-204, 호스트 타이머가 소비).
+
+        **읽으면 비워진다.** 소비자는 ``ai-health-metric.sh`` 하나이고 그것이 CloudWatch에
+        올린다 - 두 곳에서 읽으면 표본이 갈려 어느 쪽도 온전하지 않다. 못 올린 회차의 표본은
+        사라진다 (:class:`app.stages.StageMetrics`).
+
+        JSON이 아니라 줄 단위 텍스트다. 소비자가 jq 없이 ``read``로 뽑아 그대로
+        ``Values=[...]``에 넣기 때문이다 - 옮겨 적는 코드가 없으면 어긋날 자리도 없다.
+        """
+        return request.app.state.stage_metrics.drain()
 
     return app
 
