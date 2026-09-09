@@ -6,6 +6,8 @@ import {
   restoreProgress,
   saveSnapshot,
   snapshotKey,
+  sweepSnapshots,
+  type EnumerableSnapshotStorage,
   type SnapshotStorage,
 } from './progressSnapshot'
 import type { TestDefinition, TestItem } from './testDefinition'
@@ -55,14 +57,23 @@ function submitCount(state: ProgressState, count: number): ProgressState {
   return next
 }
 
-/** localStorage 대역. 실제 브라우저 저장소 없이 왕복을 검증한다 */
-function fakeStorage(initial?: string): SnapshotStorage {
+/**
+ * localStorage 대역. 실제 브라우저 저장소 없이 왕복을 검증한다.
+ *
+ * 열거(`key`·`length`)까지 갖춘 이유: 접두사 훑기([sweepSnapshots])가 그 둘을 쓰고, 삽입 순서를
+ * 기억하는 Map이 인덱스 접근의 의미(브라우저 저장소의 임의 순서)를 충분히 흉내낸다.
+ */
+function fakeStorage(initial?: string): EnumerableSnapshotStorage {
   const map = new Map<string, string>()
   if (initial !== undefined) map.set(PROGRESS_SNAPSHOT_KEY, initial)
   return {
     getItem: (key) => map.get(key) ?? null,
     setItem: (key, value) => void map.set(key, value),
     removeItem: (key) => void map.delete(key),
+    key: (index) => [...map.keys()][index] ?? null,
+    get length() {
+      return map.size
+    },
   }
 }
 
@@ -281,5 +292,94 @@ describe('손상된 정의 — 스냅샷 문제가 아니므로 감추지 않는
     const valid = JSON.stringify({ testVersion: TEST_VERSION, submittedItemIds: ['item-1'] })
     const broken: TestDefinition = { ...tenItemDefinition(), items: [] }
     expect(() => restoreProgress(fakeStorage(valid), broken)).toThrow('문항이 없습니다')
+  })
+})
+
+describe('삭제 배선 (KAN-198) — 되살릴 수 없는 스냅샷은 그 자리에서 버린다', () => {
+  it('testVersion이 달라 폐기하면 그 키도 함께 사라진다', () => {
+    const storage = fakeStorage()
+    saveSnapshot(storage, submitCount(createProgressState(tenItemDefinition()), 2), 'gn-2026.07.9', 'sess-1')
+
+    expect(restoreProgress(storage, tenItemDefinition(), 'sess-1')).toBeNull()
+    expect(storage.getItem(snapshotKey('sess-1'))).toBeNull()
+  })
+
+  it('JSON이 깨진 값은 읽는 김에 지운다', () => {
+    const storage = fakeStorage()
+    storage.setItem(snapshotKey('sess-1'), '{깨진')
+
+    expect(restoreProgress(storage, tenItemDefinition(), 'sess-1')).toBeNull()
+    expect(storage.getItem(snapshotKey('sess-1'))).toBeNull()
+  })
+
+  it('필드 타입이 오염된 값도 지운다', () => {
+    const storage = fakeStorage()
+    storage.setItem(snapshotKey('sess-1'), JSON.stringify({ testVersion: 7, submittedItemIds: [] }))
+
+    expect(restoreProgress(storage, tenItemDefinition(), 'sess-1')).toBeNull()
+    expect(storage.getItem(snapshotKey('sess-1'))).toBeNull()
+  })
+
+  it('재생이 거부되면(순서 위반) 그 키를 지운다', () => {
+    const storage = fakeStorage()
+    storage.setItem(
+      snapshotKey('sess-1'),
+      JSON.stringify({ testVersion: TEST_VERSION, submittedItemIds: ['item-1', 'item-3'] }),
+    )
+
+    expect(restoreProgress(storage, tenItemDefinition(), 'sess-1')).toBeNull()
+    expect(storage.getItem(snapshotKey('sess-1'))).toBeNull()
+  })
+
+  it('폐기는 자기 세션 키만 건드린다 (다른 세션의 진행은 그대로)', () => {
+    const storage = fakeStorage()
+    storage.setItem(snapshotKey('sess-1'), '{깨진')
+    saveSnapshot(storage, submitCount(createProgressState(tenItemDefinition()), 5), TEST_VERSION, 'sess-2')
+
+    expect(restoreProgress(storage, tenItemDefinition(), 'sess-1')).toBeNull()
+    expect(currentItem(restoreProgress(storage, tenItemDefinition(), 'sess-2')!)?.itemId).toBe('item-6')
+  })
+})
+
+describe('접두사 훑기 (KAN-198) — 끊긴 응시가 남긴 키를 인트로가 걷는다', () => {
+  it('세션별 키와 과도기 키를 모두 지운다', () => {
+    const storage = fakeStorage()
+    saveSnapshot(storage, submitCount(createProgressState(tenItemDefinition()), 1), TEST_VERSION)
+    saveSnapshot(storage, submitCount(createProgressState(tenItemDefinition()), 2), TEST_VERSION, 'sess-1')
+    saveSnapshot(storage, submitCount(createProgressState(tenItemDefinition()), 3), TEST_VERSION, 'sess-2')
+
+    sweepSnapshots(storage)
+
+    expect(storage.length).toBe(0)
+  })
+
+  it('접두사 밖의 키는 건드리지 않는다', () => {
+    const storage = fakeStorage()
+    saveSnapshot(storage, submitCount(createProgressState(tenItemDefinition()), 1), TEST_VERSION, 'sess-1')
+    // 같은 오리진의 남의 키. 접두사가 겹쳐 보이지만 진행 기록이 아니다
+    storage.setItem('accentury:session', 'token')
+    storage.setItem(`${PROGRESS_SNAPSHOT_KEY}-backup`, 'x')
+
+    sweepSnapshots(storage)
+
+    expect(storage.getItem(snapshotKey('sess-1'))).toBeNull()
+    expect(storage.getItem('accentury:session')).toBe('token')
+    expect(storage.getItem(`${PROGRESS_SNAPSHOT_KEY}-backup`)).toBe('x')
+  })
+
+  it('지울 것이 없어도 조용히 끝난다', () => {
+    const storage = fakeStorage()
+    expect(() => sweepSnapshots(storage)).not.toThrow()
+  })
+
+  it('저장소 열거가 막혀도 크래시하지 않는다 (시크릿 모드)', () => {
+    const blocked: EnumerableSnapshotStorage = {
+      ...fakeStorage(),
+      key: () => {
+        throw new DOMException('storage is disabled', 'SecurityError')
+      },
+      length: 1,
+    }
+    expect(() => sweepSnapshots(blocked)).not.toThrow()
   })
 })
