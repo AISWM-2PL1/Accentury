@@ -72,6 +72,12 @@ function stubLocalStorage(): Map<string, string> {
     getItem: (key: string) => map.get(key) ?? null,
     setItem: (key: string, value: string) => void map.set(key, value),
     removeItem: (key: string) => void map.delete(key),
+    // 접두사 훑기(KAN-198)가 쓰는 열거. 실물 저장소가 주는 것을 대역도 줘야 인트로의 삭제가
+    // 테스트에서만 아무 키도 못 찾는 일이 없다
+    key: (index: number) => [...map.keys()][index] ?? null,
+    get length() {
+      return map.size
+    },
   })
   return map
 }
@@ -757,6 +763,36 @@ describe('App — 결과 화면 진입 쿼리 (KAN-29)', () => {
     expect(next.get('sessionId')).toBeNull()
   })
 
+  /*
+   * 진행 기록 삭제 (KAN-198). KAN-99가 "삭제 시점은 결과 화면"이라 적어 두고 배선하지 않아
+   * 응시마다 키가 하나씩 쌓이던 자리다.
+   */
+  it('결과 화면에 들어가면 그 세션의 진행 기록이 사라진다', async () => {
+    setSearch(RESULT_SEARCH)
+    stubBridgeWithToken()
+    stubResultFetch()
+    const stored = stubLocalStorage()
+    stored.set(snapshotKey('sess-1'), JSON.stringify({ testVersion: 'gn-2026.08.1', submittedItemIds: [] }))
+
+    render(<App />)
+
+    expect(await screen.findByText('명예주민')).toBeInTheDocument()
+    expect(stored.has(snapshotKey('sess-1'))).toBe(false)
+  })
+
+  it('다른 세션의 진행 기록은 결과 화면이 건드리지 않는다', async () => {
+    setSearch(RESULT_SEARCH)
+    stubBridgeWithToken()
+    stubResultFetch()
+    const stored = stubLocalStorage()
+    stored.set(snapshotKey('sess-2'), JSON.stringify({ testVersion: 'gn-2026.08.1', submittedItemIds: [] }))
+
+    render(<App />)
+
+    expect(await screen.findByText('명예주민')).toBeInTheDocument()
+    expect(stored.has(snapshotKey('sess-2'))).toBe(true)
+  })
+
   /**
    * 재응시 결선 (KAN-34 3단계). 여기서 확인하는 것은 왕복 자체가 아니라 **결선**이다 —
    * 결과 화면의 버튼이 브리지에 닿는가, 회신이 화면까지 내려오는가. 상태 전이의 갈래는
@@ -1346,5 +1382,39 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
      */
     expect(screen.getByRole('button', { name: '내 억양 테스트하기' })).toBeInTheDocument()
     expect(queue).toEqual([])
+  })
+})
+
+/**
+ * 끊긴 응시가 남긴 진행 기록 (KAN-198).
+ *
+ * 결과 화면의 삭제는 sessionId를 아는 응시만 덮는다. 앱을 끄거나 탭을 닫아 결과까지 가지 못한
+ * 응시의 키는 그 id를 다시 들고 오는 사람이 없어 영영 남는데, 인트로가 그 자리를 걷는다 —
+ * 계측 상관 키를 같은 자리에서 같은 이유로 버리는 것과 짝이다.
+ */
+describe('App — 인트로 진입의 진행 기록 훑기 (KAN-198)', () => {
+  it('남아 있던 진행 기록을 세션 구분 없이 전부 지운다', () => {
+    setSearch('?c=kko_share')
+    const stored = stubLocalStorage()
+    stored.set(snapshotKey('sess-1'), '{}')
+    stored.set(snapshotKey('sess-2'), '{}')
+    // sessionId가 오지 않던 과도기의 키도 같은 접두사다
+    stored.set(snapshotKey(), '{}')
+
+    render(<App />)
+
+    expect(screen.getByRole('button', { name: '내 억양 테스트하기' })).toBeInTheDocument()
+    expect([...stored.keys()]).toEqual([])
+  })
+
+  it('진행 기록이 아닌 키는 남긴다', () => {
+    setSearch('?c=kko_share')
+    const stored = stubLocalStorage()
+    stored.set(snapshotKey('sess-1'), '{}')
+    stored.set('accentury:something-else', 'keep')
+
+    render(<App />)
+
+    expect([...stored.keys()]).toEqual(['accentury:something-else'])
   })
 })
