@@ -50,7 +50,8 @@ class SessionApiTest extends IntegrationTest {
                 // KAN-9 AC - 응답에 testVersion과 scoreVersion이 모두 포함된다.
                 .andExpect(jsonPath("$.testVersion").value("gn-2026.08.1"))
                 .andExpect(jsonPath("$.scoreVersion").value("sv-0.3"))
-                // KAN-182 - 세트를 모르는 클라이언트는 세트 1이고, 현행 발행본은 세트가 하나다.
+                // KAN-182, KAN-205 - 세트를 생략하면 서버가 고르는데, 현행 발행본은 음성 5문항이라
+                // 세트가 하나뿐이라 결과가 항상 1이다.
                 .andExpect(jsonPath("$.voiceSet").value(1))
                 .andExpect(jsonPath("$.voiceSetCount").value(1))
                 .andExpect(jsonPath("$.expiresAt").exists())
@@ -58,7 +59,7 @@ class SessionApiTest extends IntegrationTest {
                 .andExpect(jsonPath("$").value(aMapWithSize(7)));
     }
 
-    // === KAN-182 - 세트 선택 ===
+    // === KAN-182, KAN-205 - 세트 선택 ===
 
     @Test
     void voiceSet_1은_명시해도_생략과_같다() throws Exception {

@@ -3,6 +3,7 @@ import { fetchTestDefinition, type FetchLike } from './fetchTestDefinition'
 import type { TestDefinition } from './testDefinition'
 
 const TEST_VERSION = 'gn-2026.08.1'
+const VOICE_SET = '7'
 
 function definition(): TestDefinition {
   return {
@@ -36,30 +37,30 @@ function response(init: { ok?: boolean; status?: number; json?: () => Promise<un
 }
 
 describe('fetchTestDefinition — 정상 응답', () => {
-  it('버전 경로로 요청하고 정의를 그대로 돌려준다', async () => {
+  it('버전 경로와 세트 쿼리로 요청하고 정의를 그대로 돌려준다', async () => {
     const fetchImpl = vi.fn<FetchLike>(async () => response({}))
 
-    const result = await fetchTestDefinition('http://localhost:8080', TEST_VERSION, fetchImpl)
+    const result = await fetchTestDefinition('http://localhost:8080', TEST_VERSION, VOICE_SET, fetchImpl)
 
     expect(result).toEqual(definition())
     expect(fetchImpl).toHaveBeenCalledTimes(1)
-    expect(fetchImpl.mock.calls[0][0]).toBe(`http://localhost:8080/v0/tests/${TEST_VERSION}`)
+    expect(fetchImpl.mock.calls[0][0]).toBe(`http://localhost:8080/v0/tests/${TEST_VERSION}?voiceSet=${VOICE_SET}`)
   })
 
   it('apiBase 끝 슬래시가 있어도 경로가 겹치지 않는다', async () => {
     const fetchImpl = vi.fn<FetchLike>(async () => response({}))
 
-    await fetchTestDefinition('http://localhost:8080/', TEST_VERSION, fetchImpl)
+    await fetchTestDefinition('http://localhost:8080/', TEST_VERSION, VOICE_SET, fetchImpl)
 
-    expect(fetchImpl.mock.calls[0][0]).toBe(`http://localhost:8080/v0/tests/${TEST_VERSION}`)
+    expect(fetchImpl.mock.calls[0][0]).toBe(`http://localhost:8080/v0/tests/${TEST_VERSION}?voiceSet=${VOICE_SET}`)
   })
 
   it('testVersion은 경로에 넣기 전에 인코딩한다', async () => {
     const fetchImpl = vi.fn<FetchLike>(async () => response({}))
 
-    await fetchTestDefinition('http://localhost:8080', 'gn/2026 08', fetchImpl)
+    await fetchTestDefinition('http://localhost:8080', 'gn/2026 08', VOICE_SET, fetchImpl)
 
-    expect(fetchImpl.mock.calls[0][0]).toBe('http://localhost:8080/v0/tests/gn%2F2026%2008')
+    expect(fetchImpl.mock.calls[0][0]).toBe('http://localhost:8080/v0/tests/gn%2F2026%2008?voiceSet=7')
   })
 })
 
@@ -67,7 +68,7 @@ describe('fetchTestDefinition — 비정상 응답은 명확한 Error다', () =>
   it('HTTP 오류는 상태 코드를 담아 던진다', async () => {
     const fetchImpl = vi.fn<FetchLike>(async () => response({ ok: false, status: 404 }))
 
-    await expect(fetchTestDefinition('http://localhost:8080', TEST_VERSION, fetchImpl)).rejects.toThrow(
+    await expect(fetchTestDefinition('http://localhost:8080', TEST_VERSION, VOICE_SET, fetchImpl)).rejects.toThrow(
       'HTTP 404',
     )
   })
@@ -81,7 +82,7 @@ describe('fetchTestDefinition — 비정상 응답은 명확한 Error다', () =>
       }),
     )
 
-    await expect(fetchTestDefinition('http://localhost:8080', TEST_VERSION, fetchImpl)).rejects.toThrow(
+    await expect(fetchTestDefinition('http://localhost:8080', TEST_VERSION, VOICE_SET, fetchImpl)).rejects.toThrow(
       'JSON 아님',
     )
   })
@@ -91,7 +92,7 @@ describe('fetchTestDefinition — 비정상 응답은 명확한 Error다', () =>
       response({ json: async () => ({ code: 'RESOURCE_NOT_FOUND' }) }),
     )
 
-    await expect(fetchTestDefinition('http://localhost:8080', TEST_VERSION, fetchImpl)).rejects.toThrow(
+    await expect(fetchTestDefinition('http://localhost:8080', TEST_VERSION, VOICE_SET, fetchImpl)).rejects.toThrow(
       '계약과 다릅니다',
     )
   })
@@ -99,7 +100,22 @@ describe('fetchTestDefinition — 비정상 응답은 명확한 Error다', () =>
   it('testVersion이 비어 있으면 요청을 보내지도 않는다', async () => {
     const fetchImpl = vi.fn<FetchLike>(async () => response({}))
 
-    await expect(fetchTestDefinition('http://localhost:8080', '  ', fetchImpl)).rejects.toThrow('testVersion')
+    await expect(fetchTestDefinition('http://localhost:8080', '  ', VOICE_SET, fetchImpl)).rejects.toThrow('testVersion')
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  /*
+   * 세트가 없으면 서버는 세트 1을 준다. 그 문항으로 응시하면 세션의 세트와 갈려 제출이 전부
+   * 422라, 진행하다 막히는 것보다 요청 전에 끊는 편이 원인이 분명하다 (KAN-205).
+   */
+  it('voiceSet이 세트 번호 꼴이 아니면 요청을 보내지도 않는다', async () => {
+    const fetchImpl = vi.fn<FetchLike>(async () => response({}))
+
+    for (const bad of ['', '  ', '0', '-1', '1.5', 'first']) {
+      await expect(
+        fetchTestDefinition('http://localhost:8080', TEST_VERSION, bad, fetchImpl),
+      ).rejects.toThrow('voiceSet')
+    }
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
@@ -108,7 +124,7 @@ describe('fetchTestDefinition — 비정상 응답은 명확한 Error다', () =>
       throw new TypeError('Failed to fetch')
     })
 
-    await expect(fetchTestDefinition('http://localhost:8080', TEST_VERSION, fetchImpl)).rejects.toThrow(
+    await expect(fetchTestDefinition('http://localhost:8080', TEST_VERSION, VOICE_SET, fetchImpl)).rejects.toThrow(
       'Failed to fetch',
     )
     expect(fetchImpl).toHaveBeenCalledTimes(1)

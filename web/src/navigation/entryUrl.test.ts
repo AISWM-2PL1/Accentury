@@ -14,16 +14,22 @@ const ENTRY = '?bridge=1&app=1.0&c=kko_share'
 const paramsOf = (query: string) => new URLSearchParams(query)
 
 describe('buildTestUrl — 문항 진행 화면', () => {
-  it('화면·정의 버전·세션을 얹는다', () => {
-    const next = paramsOf(buildTestUrl('?c=kko_share', { testVersion: 'gn-2026.08.1', sessionId: 's_1' }))
+  it('화면·정의 버전·세트·세션을 얹는다', () => {
+    const next = paramsOf(
+      buildTestUrl('?c=kko_share', { testVersion: 'gn-2026.08.1', voiceSet: 7, sessionId: 's_1' }),
+    )
 
     expect(next.get('screen')).toBe('test')
     expect(next.get('testVersion')).toBe('gn-2026.08.1')
+    // 세트가 빠지면 다음 문서의 문항 화면이 세트 1을 받아 제출이 전부 422다 (KAN-205)
+    expect(next.get('voiceSet')).toBe('7')
     expect(next.get('sessionId')).toBe('s_1')
   })
 
   it('기존 진입 파라미터는 그대로 남는다', () => {
-    const next = paramsOf(buildTestUrl(ENTRY, { testVersion: 'gn-2026.08.1', sessionId: 's_1' }))
+    const next = paramsOf(
+      buildTestUrl(ENTRY, { testVersion: 'gn-2026.08.1', voiceSet: 1, sessionId: 's_1' }),
+    )
 
     expect(next.get('bridge')).toBe('1')
     expect(next.get('app')).toBe('1.0')
@@ -32,12 +38,15 @@ describe('buildTestUrl — 문항 진행 화면', () => {
 })
 
 describe('buildResultUrl — 결과 화면', () => {
-  it('화면과 세션을 얹고 정의 버전은 지운다', () => {
-    const next = paramsOf(buildResultUrl(`${ENTRY}&screen=test&testVersion=gn-2026.08.1`, 's_1'))
+  it('화면과 세션을 얹고 정의 버전과 세트는 지운다', () => {
+    const next = paramsOf(
+      buildResultUrl(`${ENTRY}&screen=test&testVersion=gn-2026.08.1&voiceSet=7`, 's_1'),
+    )
 
     expect(next.get('screen')).toBe('result')
     expect(next.get('sessionId')).toBe('s_1')
     expect(next.get('testVersion')).toBeNull()
+    expect(next.get('voiceSet')).toBeNull()
   })
 
   it('기존 진입 파라미터는 그대로 남는다', () => {

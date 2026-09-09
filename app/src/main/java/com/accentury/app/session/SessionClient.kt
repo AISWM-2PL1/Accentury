@@ -143,16 +143,21 @@ class OkHttpSessionClient(
 
     private fun toResult(status: Int, body: String, retryAfterHeader: String?): SessionResult {
         if (status in 200..299) {
-            // 계약상 201이지만 다른 2xx도 5필드가 온전하면 받아들인다.
+            // 계약상 201이지만 다른 2xx도 6필드가 온전하면 받아들인다.
+            // 세트가 1 미만이면 받지 않는다 (KAN-205) - 그런 세션은 웹이 조회할 정의가 없다.
             val created = runCatching { json.decodeFromString(CreatedBody.serializer(), body) }
                 .getOrNull()
-                ?.takeIf { it.sessionId.isNotBlank() && it.sessionToken.isNotBlank() && it.testVersion.isNotBlank() }
+                ?.takeIf {
+                    it.sessionId.isNotBlank() && it.sessionToken.isNotBlank() &&
+                        it.testVersion.isNotBlank() && it.voiceSet >= 1
+                }
             return if (created != null) {
                 SessionResult.Created(
                     Session(
                         sessionId = created.sessionId,
                         sessionToken = created.sessionToken,
                         testVersion = created.testVersion,
+                        voiceSet = created.voiceSet,
                         scoreVersion = created.scoreVersion,
                         expiresAt = created.expiresAt,
                     ),
@@ -192,12 +197,13 @@ private data class CreateSessionBody(val campaignToken: String? = null, val clie
 @Serializable
 private data class ClientBody(val platform: String, val appVersion: String)
 
-/** 201 응답 5필드 (§3.1). 하나라도 빠지면 파싱이 실패해 재시도 가능한 거절이 된다. */
+/** 201 응답 6필드 (§3.1). 하나라도 빠지면 파싱이 실패해 재시도 가능한 거절이 된다. */
 @Serializable
 private data class CreatedBody(
     val sessionId: String,
     val sessionToken: String,
     val testVersion: String,
+    val voiceSet: Int,
     val scoreVersion: String,
     val expiresAt: String,
 )

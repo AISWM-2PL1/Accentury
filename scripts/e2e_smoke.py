@@ -87,13 +87,18 @@ VOCABULARY_WEIGHT = 1
 #: w4b, w5a라 첫 선택지는 3개, 둘째 선택지는 2개, 셋째와 넷째는 0개를 맞힌다.
 #:
 #: 어휘 풀이 세트로 갈린 발행본(KAN-182)에서는 **세트 1의 5문항**이 기준이다. 이 스모크는 세션
-#: 생성에 voiceSet을 싣지 않고, 서버는 그때 ``SessionService.DEFAULT_VOICE_SET`` = 1을 주므로
-#: 언제나 세트 1을 응시한다. 세트 1의 어휘는 풀의 poolIndex 1..5(seq 오름차순)이라
+#: 생성에 ``voiceSet: 1``을 명시해 (``SMOKE_VOICE_SET``) 언제나 세트 1을 응시한다 - 생략하면
+#: 서버가 세트를 고르므로 (KAN-205) 어느 세트가 나올지 모르고, 그러면 이 정답 수 표를 상수로
+#: 둘 수 없다. 세트 1의 어휘는 풀의 poolIndex 1..5(seq 오름차순)이라
 #: (``VoiceSets.poolIndexes``) gn-2026.09.1에서는 w1..w5이고, 정답이 w1b, w2c, w3a, w4a, w5c라
 #: 첫 선택지는 2개, 둘째는 1개, 셋째는 2개, 넷째는 0개를 맞힌다.
 #:
 #: 새 testVersion을 발행하면 여기 한 줄을 더한다. 모르는 버전을 만나면 조용히 넘어가지 않고
 #: 멈춘다 - 급하면 ``--expect-vocabulary``로 넘긴다.
+#: 이 스모크가 응시하는 세트 (KAN-205). 서버 배정에 맡기지 않고 못 박는 이유는 위 정답 수 표가
+#: 세트 1 기준의 상수여서다. 서버가 세트를 고르는 경로는 backend 통합 테스트가 덮는다.
+SMOKE_VOICE_SET = 1
+
 EXPECTED_VOCABULARY: Dict[Tuple[str, int], int] = {
     ("gn-2026.08.1", 0): 60,
     ("gn-2026.08.1", 1): 40,
@@ -473,6 +478,9 @@ class Session:
     token: str
     test_version: str
     score_version: str
+    #: 세션에 고정된 음성 문항 세트 (KAN-182, KAN-205). 정의 조회에 그대로 실어야 한다 -
+    #: 빠뜨리면 세트 1의 문항을 받아 제출이 전부 422 ITEM_NOT_IN_VERSION이 된다.
+    voice_set: int = 1
 
     def auth(self) -> Dict[str, str]:
         return {"Authorization": "Bearer " + self.token}
@@ -521,21 +529,30 @@ def create_session(client: Client, synthetic_key: Optional[str]) -> Session:
         "POST",
         "/v0/sessions",
         headers=headers,
-        body=json.dumps({"client": {"platform": "WEB", "appVersion": "e2e"}}).encode("utf-8"),
+        body=json.dumps({
+            "client": {"platform": "WEB", "appVersion": "e2e"},
+            "voiceSet": SMOKE_VOICE_SET,
+        }).encode("utf-8"),
         content_type="application/json",
     )
     expect(response.status == 201, "세션 생성이 201이 아니다: " + response.describe())
     body = response.json()
-    for key in ("sessionId", "sessionToken", "testVersion", "scoreVersion", "expiresAt"):
+    for key in ("sessionId", "sessionToken", "testVersion", "scoreVersion", "voiceSet", "expiresAt"):
         expect(key in body, "세션 응답에 %s가 없다 (§3.1): %s" % (key, body))
-    session = Session(body["sessionId"], body["sessionToken"], body["testVersion"], body["scoreVersion"])
-    log("세션 생성 sessionId=%s testVersion=%s scoreVersion=%s"
-        % (session.session_id, session.test_version, session.score_version))
+    expect(body["voiceSet"] == SMOKE_VOICE_SET,
+           "명시한 세트가 세션에 고정되지 않았다 (§3.1): %s" % body["voiceSet"])
+    session = Session(body["sessionId"], body["sessionToken"], body["testVersion"],
+                      body["scoreVersion"], body["voiceSet"])
+    log("세션 생성 sessionId=%s testVersion=%s scoreVersion=%s voiceSet=%d"
+        % (session.session_id, session.test_version, session.score_version, session.voice_set))
     return session
 
 
 def fetch_definition(client: Client, session: Session) -> Definition:
-    path = "/v0/tests/" + urllib.parse.quote(session.test_version)
+    # 세트를 반드시 싣는다 (KAN-205) - 생략하면 세트 1의 문항이 와서 세션의 세트와 갈리고,
+    # 그 문항으로 제출하면 전부 422 ITEM_NOT_IN_VERSION이다.
+    path = ("/v0/tests/" + urllib.parse.quote(session.test_version)
+            + "?voiceSet=" + str(session.voice_set))
     response = client.request("GET", path)
     expect(response.status == 200, "테스트 정의 조회가 200이 아니다: " + response.describe())
     etag = response.headers.get("etag")
@@ -545,6 +562,8 @@ def fetch_definition(client: Client, session: Session) -> Definition:
            "정의의 testVersion이 세션과 다르다: %s" % body.get("testVersion"))
     expect(body.get("scoreVersion") == session.score_version,
            "정의의 scoreVersion이 세션과 다르다: %s" % body.get("scoreVersion"))
+    expect(body.get("voiceSet") == session.voice_set,
+           "정의의 voiceSet이 세션과 다르다 (§3.2): %s" % body.get("voiceSet"))
 
     items = body.get("items")
     expect(isinstance(items, list) and items, "정의에 items가 없다 (§3.2)")

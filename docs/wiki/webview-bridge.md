@@ -15,13 +15,18 @@
 | 메서드·필드·수신 슬롯 **추가** | 그대로 (하위호환) |
 | 메서드·필드 **삭제**, 의미·payload 모양 **변경** | +1 |
 
-현재 버전은 **1**이다. 정본 상수는 세 곳에 있고 값이 같아야 한다:
+현재 버전은 **2**이다. 정본 상수는 세 곳에 있고 값이 같아야 한다:
 
 | 플랫폼 | 위치 |
 |---|---|
 | 웹 (요구 버전) | `web/src/bridge/bridge.ts` `REQUIRED_BRIDGE_VERSION` |
 | Android (보유 버전) | `app/src/main/java/com/accentury/app/web/WebConfig.kt` `BRIDGE_CONTRACT_VERSION` |
 | iOS (보유 버전) | `ios/AccenturyCore/Sources/AccenturyCore/Web/WebConfig.swift` `bridgeContractVersion` |
+
+1 → 2는 KAN-205다. 진입 URL에 `voiceSet`이 필수가 됐다 - 서버가 세션마다 음성 문항 세트를
+고르므로(§3.1) 웹이 그 값 없이는 문항을 조회할 수 없다. 파라미터 추가지만 웹이 **요구**하는
+쪽이라 구버전 앱에게는 의미 변경이고, 버전을 올리지 않으면 세트를 싣지 않는 앱이 스큐 게이트를
+통과한 뒤 문항 화면에서 빠져나오지 못한다.
 
 **스큐 판정의 주체는 웹이다.** 앱은 로드 URL에 `?bridge=<보유 버전>`을 실어 보내기만 하고,
 그 값이 요구 버전보다 낮으면 웹이 업데이트 안내 화면을 띄운다. 그래서 구버전 앱을 고치지 않고도

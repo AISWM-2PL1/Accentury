@@ -29,6 +29,7 @@ final class RecordingFileLifecycleTests: XCTestCase {
                 sessionId: "s_1",
                 sessionToken: "st_1",
                 testVersion: "gn-2026.08.1",
+                voiceSet: 1,
                 scoreVersion: "sv-1",
                 expiresAt: "2099-01-01T00:00:00Z"
             )

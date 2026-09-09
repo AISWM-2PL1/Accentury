@@ -5,8 +5,8 @@ import kotlinx.serialization.Serializable
 /**
  * 서버가 발급한 익명 테스트 세션 (KAN-9, API 명세서 §3.1).
  *
- * `POST /v0/sessions`의 201 응답 5필드를 그대로 담는다. 앱이 지금 읽는 것은 앞의 셋이지만
- * (진입 URL·업로드·브리지) 계약이 다섯을 함께 주므로 손실 없이 들고 있는다 — 응답의 일부만
+ * `POST /v0/sessions`의 201 응답 6필드를 그대로 담는다. 앱이 지금 읽는 것은 진입 URL·업로드·
+ * 브리지에 쓰는 값들이지만 계약이 여섯을 함께 주므로 손실 없이 들고 있는다 — 응답의 일부만
  * 담으면 나중에 만료 안내나 점수 버전 표기를 붙일 때 세션을 다시 만들어야 한다.
  *
  * [sessionToken]은 이 응답에서 딱 한 번 노출되고 서버에는 해시만 남는다. 잃어버리면 재발급이
@@ -22,6 +22,15 @@ data class Session(
     val sessionToken: String,
     /** 이 세션에 고정된 문항 정의 버전. 웹이 `GET /v0/tests/{testVersion}`으로 정의를 받는다 (§5.4) */
     val testVersion: String,
+    /**
+     * 이 세션에 고정된 음성 문항 세트 (1부터, KAN-182). **서버가 고른 값이라 앱이 요청에 싣지
+     * 않는다** (KAN-205) — 유효 범위인 세트 수가 이 응답에만 있어 앱은 고를 수 없다.
+     *
+     * 진입 URL의 `voiceSet`으로 웹에 그대로 넘겨야 한다 ([TestEntry]). 빠뜨리면 웹이 세트 1의
+     * 문항을 받아 세션에 고정된 세트와 갈리고, 그 문항으로 낸 업로드와 답안이 전부 422
+     * `ITEM_NOT_IN_VERSION`으로 막힌다.
+     */
+    val voiceSet: Int,
     /** 이 세션에 고정된 점수 산정 버전 */
     val scoreVersion: String,
     /** 토큰 만료 시각 (ISO-8601 UTC, 기본 30분) */

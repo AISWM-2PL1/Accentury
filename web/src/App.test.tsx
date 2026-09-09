@@ -193,7 +193,7 @@ describe('App — 스큐 판정 분기', () => {
 
 describe('App — 문항 진행 화면 진입 쿼리 (KAN-100: 네이티브가 권한 게이트 통과 후 여는 경로)', () => {
   it('?screen=test면 정의를 조회해 문항 진행 화면을 띄운다', async () => {
-    setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0&screen=test&testVersion=gn-2026.08.1`)
+    setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0&screen=test&testVersion=gn-2026.08.1&voiceSet=1`)
     stubDefinitionFetch()
 
     render(<App />)
@@ -204,7 +204,7 @@ describe('App — 문항 진행 화면 진입 쿼리 (KAN-100: 네이티브가 �
 
   it('sessionId 쿼리가 진행 화면까지 전달돼 그 세션 키에 저장된다', async () => {
     setSearch(
-      `?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0&screen=test&testVersion=gn-2026.08.1&sessionId=sess-1`,
+      `?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0&screen=test&testVersion=gn-2026.08.1&voiceSet=1&sessionId=sess-1`,
     )
     stubBridge()
     stubDefinitionFetch(VOCAB_ITEM)
@@ -223,7 +223,7 @@ describe('App — 문항 진행 화면 진입 쿼리 (KAN-100: 네이티브가 �
    * `progressSnapshot.test.ts`가 덮는다.
    */
   it('sessionId가 없으면 답안이 가드에 막혀 진행이 멈춘다', async () => {
-    setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0&screen=test&testVersion=gn-2026.08.1`)
+    setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0&screen=test&testVersion=gn-2026.08.1&voiceSet=1`)
     stubBridge()
     stubDefinitionFetch(VOCAB_ITEM)
     const stored = stubLocalStorage()
@@ -255,6 +255,8 @@ describe('App — 웹 단독 실행 (KAN-31)', () => {
         sessionId: 's_web',
         sessionToken: 'st_web',
         testVersion: 'gn-2026.08.1',
+        // 서버가 고른 세트 (KAN-205). 없으면 웹이 세션을 못 읽는 것이 계약이다.
+        voiceSet: 3,
         scoreVersion: 'sv-0.3',
         expiresAt: '2026-08-26T03:30:00Z',
         ...body,
@@ -448,11 +450,12 @@ describe('App — 웹 단독 실행 (KAN-31)', () => {
   })
 
   it('문항 화면은 저장된 웹 세션 토큰으로 답안을 제출한다 — URL에는 토큰이 없다', async () => {
-    setSearch('?c=kko_share&screen=test&testVersion=gn-2026.08.1&sessionId=s_web')
+    setSearch('?c=kko_share&screen=test&testVersion=gn-2026.08.1&voiceSet=1&sessionId=s_web')
     saveWebSession({
       sessionId: 's_web',
       sessionToken: 'st_web',
       testVersion: 'gn-2026.08.1',
+      voiceSet: 1,
       expiresAt: '2026-08-26T03:30:00Z',
     })
     stubDefinitionFetch(VOCAB_ITEM)
@@ -507,11 +510,12 @@ describe('App — 웹 단독 실행 (KAN-31)', () => {
    * `?screen=test` 문서가 되살아나 대기 화면이 다시 폴링하고, READY를 보고 결과로 또 넘어온다.
    */
   it('분석이 끝나면 결과 화면으로 히스토리를 덮어쓰며 넘어간다', async () => {
-    setSearch('?c=kko_share&screen=test&testVersion=gn-2026.08.1&sessionId=s_web')
+    setSearch('?c=kko_share&screen=test&testVersion=gn-2026.08.1&voiceSet=1&sessionId=s_web')
     saveWebSession({
       sessionId: 's_web',
       sessionToken: 'st_web',
       testVersion: 'gn-2026.08.1',
+      voiceSet: 1,
       expiresAt: '2026-08-26T03:30:00Z',
     })
     stubCompletedAnalysisFetch()
@@ -918,6 +922,7 @@ describe('App — 웹 단독 결과 화면 (KAN-31 2단계)', () => {
     sessionId: 's_web',
     sessionToken: 'st_web',
     testVersion: 'gn-2026.08.1',
+    voiceSet: 1,
     expiresAt: '2026-08-26T03:30:00Z',
   }
 
@@ -1125,6 +1130,7 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
           sessionId: 's_web',
           sessionToken: 'st_web',
           testVersion: 'gn-2026.08.1',
+          voiceSet: 3,
           scoreVersion: 'sv-0.3',
           expiresAt: '2026-08-26T03:30:00Z',
         }),
@@ -1212,11 +1218,12 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
   })
 
   it('문항 화면에 처음 도달하면 시작을 센다 — 앱·웹이 같은 자리에서 세어진다', async () => {
-    setSearch('?c=kko_share&screen=test&testVersion=gn-2026.08.1&sessionId=s_web')
+    setSearch('?c=kko_share&screen=test&testVersion=gn-2026.08.1&voiceSet=1&sessionId=s_web')
     saveWebSession({
       sessionId: 's_web',
       sessionToken: 'st_web',
       testVersion: 'gn-2026.08.1',
+      voiceSet: 1,
       expiresAt: '2026-08-26T03:30:00Z',
     })
     const queue = stubGtag()
@@ -1237,6 +1244,7 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
       sessionId: 's_web',
       sessionToken: 'st_web',
       testVersion: 'gn-2026.08.1',
+      voiceSet: 1,
       expiresAt: '2026-08-26T03:30:00Z',
     })
     stubResultFetch()
@@ -1264,6 +1272,7 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
       sessionId: 's_web',
       sessionToken: 'st_web',
       testVersion: 'gn-2026.08.1',
+      voiceSet: 1,
       expiresAt: '2026-08-26T03:30:00Z',
     })
     stubResultFetch()

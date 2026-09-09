@@ -39,11 +39,11 @@ class WebConfigTest {
     fun `테스트 진입 URL은 스큐 파라미터에 screen test testVersion sessionId를 잇는다`() {
         assertEquals(
             "https://web.example.com?bridge=$BRIDGE_CONTRACT_VERSION&app=1.0" +
-                "&screen=test&testVersion=gn-2026.08.1&sessionId=dev-session",
+                "&screen=test&testVersion=gn-2026.08.1&voiceSet=7&sessionId=dev-session",
             buildWebUrl(
                 base = "https://web.example.com",
                 appVersionName = "1.0",
-                testEntry = TestEntry(testVersion = "gn-2026.08.1", sessionId = "dev-session"),
+                testEntry = TestEntry(testVersion = "gn-2026.08.1", voiceSet = 7, sessionId = "dev-session"),
             ),
         )
     }
@@ -62,9 +62,11 @@ class WebConfigTest {
             base = "https://web.example.com",
             appVersionName = "1.0",
             // 서버가 발급하는 값이라 형식을 앱이 보증하지 않는다 — 파라미터를 덧붙이는 꼴이 되면 안 된다.
-            testEntry = TestEntry(testVersion = "gn 2026&x=1", sessionId = "s/1?2"),
+            testEntry = TestEntry(testVersion = "gn 2026&x=1", voiceSet = 2, sessionId = "s/1?2"),
         )
         assertTrue(url.contains("&testVersion=gn+2026%26x%3D1&"))
+        // 세트는 정수라 인코딩할 것이 없다 - 값이 그대로 실렸는지만 본다 (KAN-205)
+        assertTrue(url.contains("&voiceSet=2&"))
         assertTrue(url.endsWith("&sessionId=s%2F1%3F2"))
     }
 
@@ -72,8 +74,8 @@ class WebConfigTest {
     fun `기존 쿼리가 있는 base에도 테스트 진입 파라미터를 잇는다`() {
         assertEquals(
             "https://web.example.com?env=dev&bridge=$BRIDGE_CONTRACT_VERSION&app=1.0" +
-                "&screen=test&testVersion=v1&sessionId=s1",
-            buildWebUrl("https://web.example.com?env=dev", "1.0", TestEntry("v1", "s1")),
+                "&screen=test&testVersion=v1&voiceSet=1&sessionId=s1",
+            buildWebUrl("https://web.example.com?env=dev", "1.0", TestEntry("v1", 1, "s1")),
         )
     }
 
@@ -91,8 +93,8 @@ class WebConfigTest {
     fun `테스트 진입 URL에도 계측 코드가 맨 뒤에 붙는다`() {
         assertEquals(
             "https://web.example.com?bridge=$BRIDGE_CONTRACT_VERSION&app=1.0" +
-                "&screen=test&testVersion=v1&sessionId=s1&c=kko_share",
-            buildWebUrl("https://web.example.com", "1.0", TestEntry("v1", "s1"), campaignToken = "kko_share"),
+                "&screen=test&testVersion=v1&voiceSet=1&sessionId=s1&c=kko_share",
+            buildWebUrl("https://web.example.com", "1.0", TestEntry("v1", 1, "s1"), campaignToken = "kko_share"),
         )
     }
 

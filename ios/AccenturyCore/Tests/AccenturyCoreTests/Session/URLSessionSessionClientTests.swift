@@ -4,9 +4,9 @@ import XCTest
 /// 안드로이드 `session/OkHttpSessionClientTest.kt`의 1:1 이식본 (12개).
 final class URLSessionSessionClientTests: XCTestCase {
 
-    /// 계약대로 5필드를 모두 담은 201 본문 (§3.1).
+    /// 계약대로 6필드를 모두 담은 201 본문 (§3.1). voiceSet은 서버가 고른 값이다 (KAN-205).
     private let createdBody = """
-    {"sessionId":"s_abc","sessionToken":"st_xyz","testVersion":"gn-2026.08.1",
+    {"sessionId":"s_abc","sessionToken":"st_xyz","testVersion":"gn-2026.08.1","voiceSet":7,
      "scoreVersion":"sv-1","expiresAt":"2026-08-24T10:30:00Z"}
     """
 
@@ -24,7 +24,7 @@ final class URLSessionSessionClientTests: XCTestCase {
         URLSessionSessionClient(baseURL: "https://api.test/", session: MockURLProtocol.makeSession())
     }
 
-    func test201_응답의_5필드를_그대로_Session으로_담는다() async {
+    func test201_응답의_6필드를_그대로_Session으로_담는다() async {
         MockURLProtocol.respond(status: 201, body: createdBody)
 
         let result = await client().create(appVersion: "1.0")
@@ -35,6 +35,7 @@ final class URLSessionSessionClientTests: XCTestCase {
                     sessionId: "s_abc",
                     sessionToken: "st_xyz",
                     testVersion: "gn-2026.08.1",
+                    voiceSet: 7,
                     scoreVersion: "sv-1",
                     expiresAt: "2026-08-24T10:30:00Z"
                 )
@@ -179,7 +180,7 @@ final class URLSessionSessionClientTests: XCTestCase {
         // sessionToken은 이 응답에서 한 번만 오는 값이라 없으면 세션 자체를 쓸 수 없다.
         MockURLProtocol.respond(
             status: 201,
-            body: #"{"sessionId":"s_abc","testVersion":"gn-2026.08.1","scoreVersion":"sv-1","expiresAt":"z"}"#
+            body: #"{"sessionId":"s_abc","testVersion":"gn-2026.08.1","voiceSet":1,"scoreVersion":"sv-1","expiresAt":"z"}"#
         )
 
         let result = await client().create(appVersion: "1.0")
@@ -190,10 +191,29 @@ final class URLSessionSessionClientTests: XCTestCase {
         XCTAssertTrue(retryable)
     }
 
+    /// 세트는 서버가 고르는 값이라 응답에 반드시 있다 (KAN-205). 없거나 세트가 아닌 값이면 웹이
+    /// 조회할 정의가 없어 응시가 성립하지 않으므로, 반쪽짜리 세션을 들고 가지 않고 거절한다.
+    func test2xx인데_voiceSet이_없거나_1_미만이면_받아들이지_않는다() async {
+        let bodies = [
+            #"{"sessionId":"s_abc","sessionToken":"st_xyz","testVersion":"v","scoreVersion":"s","expiresAt":"z"}"#,
+            #"{"sessionId":"s_abc","sessionToken":"st_xyz","testVersion":"v","voiceSet":0,"scoreVersion":"s","expiresAt":"z"}"#,
+        ]
+        for body in bodies {
+            MockURLProtocol.respond(status: 201, body: body)
+
+            let result = await client().create(appVersion: "1.0")
+
+            guard case let .rejected(_, _, retryable, _) = result else {
+                return XCTFail("Rejected가 아님: \(result)")
+            }
+            XCTAssertTrue(retryable)
+        }
+    }
+
     func test2xx인데_sessionId가_빈_문자열이면_받아들이지_않는다() async {
         MockURLProtocol.respond(
             status: 201,
-            body: #"{"sessionId":"","sessionToken":"st_xyz","testVersion":"v","scoreVersion":"s","expiresAt":"z"}"#
+            body: #"{"sessionId":"","sessionToken":"st_xyz","testVersion":"v","voiceSet":1,"scoreVersion":"s","expiresAt":"z"}"#
         )
 
         let result = await client().create(appVersion: "1.0")

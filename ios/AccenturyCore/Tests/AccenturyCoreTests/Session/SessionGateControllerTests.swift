@@ -8,6 +8,7 @@ final class SessionGateControllerTests: XCTestCase {
         sessionId: "s_abc",
         sessionToken: "st_xyz",
         testVersion: "gn-2026.08.1",
+        voiceSet: 7,
         scoreVersion: "sv-1",
         expiresAt: "2026-08-24T10:30:00Z"
     )
@@ -150,6 +151,7 @@ final class SessionGateControllerTests: XCTestCase {
             sessionId: "s_def",
             sessionToken: "st_uvw",
             testVersion: session.testVersion,
+            voiceSet: session.voiceSet,
             scoreVersion: session.scoreVersion,
             expiresAt: session.expiresAt
         )

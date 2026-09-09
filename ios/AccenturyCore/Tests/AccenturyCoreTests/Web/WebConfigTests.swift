@@ -32,15 +32,15 @@ final class WebConfigTests: XCTestCase {
 
     // MARK: - buildWebUrl: 테스트 진입 URL 조립 (KAN-100)
 
-    /// 테스트 진입 URL은 스큐 파라미터에 screen test testVersion sessionId를 잇는다.
-    func testTestEntryUrlAppendsScreenTestVersionAndSessionId() {
+    /// 테스트 진입 URL은 스큐 파라미터에 screen test testVersion voiceSet sessionId를 잇는다.
+    func testTestEntryUrlAppendsScreenTestVersionVoiceSetAndSessionId() {
         XCTAssertEqual(
             "https://web.example.com?bridge=\(bridgeContractVersion)&app=1.0"
-                + "&screen=test&testVersion=gn-2026.08.1&sessionId=dev-session",
+                + "&screen=test&testVersion=gn-2026.08.1&voiceSet=7&sessionId=dev-session",
             buildWebUrl(
                 base: "https://web.example.com",
                 appVersionName: "1.0",
-                testEntry: TestEntry(testVersion: "gn-2026.08.1", sessionId: "dev-session")
+                testEntry: TestEntry(testVersion: "gn-2026.08.1", voiceSet: 7, sessionId: "dev-session")
             )
         )
     }
@@ -59,9 +59,11 @@ final class WebConfigTests: XCTestCase {
             base: "https://web.example.com",
             appVersionName: "1.0",
             // 서버가 발급하는 값이라 형식을 앱이 보증하지 않는다 — 파라미터를 덧붙이는 꼴이 되면 안 된다.
-            testEntry: TestEntry(testVersion: "gn 2026&x=1", sessionId: "s/1?2")
+            testEntry: TestEntry(testVersion: "gn 2026&x=1", voiceSet: 2, sessionId: "s/1?2")
         )
         XCTAssertTrue(url.contains("&testVersion=gn+2026%26x%3D1&"))
+        // 세트는 정수라 인코딩할 것이 없다 - 값이 그대로 실렸는지만 본다 (KAN-205)
+        XCTAssertTrue(url.contains("&voiceSet=2&"))
         XCTAssertTrue(url.hasSuffix("&sessionId=s%2F1%3F2"))
     }
 
@@ -76,11 +78,11 @@ final class WebConfigTests: XCTestCase {
     func testAppendsTestEntryParametersToBaseWithExistingQuery() {
         XCTAssertEqual(
             "https://web.example.com?env=dev&bridge=\(bridgeContractVersion)&app=1.0"
-                + "&screen=test&testVersion=v1&sessionId=s1",
+                + "&screen=test&testVersion=v1&voiceSet=1&sessionId=s1",
             buildWebUrl(
                 base: "https://web.example.com?env=dev",
                 appVersionName: "1.0",
-                testEntry: TestEntry(testVersion: "v1", sessionId: "s1")
+                testEntry: TestEntry(testVersion: "v1", voiceSet: 1, sessionId: "s1")
             )
         )
     }
@@ -99,11 +101,11 @@ final class WebConfigTests: XCTestCase {
     func testCampaignTokenIsAppendedAtTheEndOfTheTestEntryUrl() {
         XCTAssertEqual(
             "https://web.example.com?bridge=\(bridgeContractVersion)&app=1.0"
-                + "&screen=test&testVersion=v1&sessionId=s1&c=kko_share",
+                + "&screen=test&testVersion=v1&voiceSet=1&sessionId=s1&c=kko_share",
             buildWebUrl(
                 base: "https://web.example.com",
                 appVersionName: "1.0",
-                testEntry: TestEntry(testVersion: "v1", sessionId: "s1"),
+                testEntry: TestEntry(testVersion: "v1", voiceSet: 1, sessionId: "s1"),
                 campaignToken: "kko_share"
             )
         )
