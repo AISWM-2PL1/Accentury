@@ -126,6 +126,17 @@ class StageRecord:
         """
         self._cold = True
 
+    def unmark_cold(self) -> None:
+        """콜드 표시를 되돌린다 - 채점이 아예 없었던 요청에 쓴다.
+
+        표시는 워커에 **물어보기 전에** 해야 상한에 걸려 끊긴 첫 채점도 콜드로 남는다. 그
+        대가로, 채점을 하지 않고 갈린 요청(서비스 문장이 아닌 ``scriptKey``)까지 콜드로
+        남는다. 그 요청의 합계는 0에 가까운데 **워커당 콜드 표본은 원래 1건뿐이라** 그 하나가
+        p50과 p95를 통째로 가져간다 - 그 값이 대시보드의 "콜드 합계"이자 GPU 판정(KAN-57)의
+        입력이다 (Codex astra 리뷰 P3).
+        """
+        self._cold = False
+
     @property
     def warm(self) -> str:
         return COLD if self._cold else WARM

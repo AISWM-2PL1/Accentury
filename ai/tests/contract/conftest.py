@@ -30,7 +30,7 @@ site-packages에는 못 쓴다). 자세한 것은 ``ai/README.md``의 같은 절
    (§4-2)에서 판정 실패로 떨어지고, 그러면 성공 경로 항목이 통째로 오탐한다. 파일은
    문장 목록의 ``scriptKey``(아래 :data:`SCRIPT_KEY`)를 읽은 녹음이어야 한다.
 2. ``ACCENTURY_AI_ANALYSIS_TIMEOUT_SECONDS``가 정상 추론(08-30 실측 14~30초)보다 넉넉해야
-   한다. 기본값 90초면 되지만 느린 기계에서는 올린다 - 설정은
+   한다. 기본값 75초면 되지만 느린 기계에서는 올린다 - 설정은
    :meth:`app.config.Settings.from_env`로 읽으므로 환경 변수를 그대로 쓴다.
 """
 

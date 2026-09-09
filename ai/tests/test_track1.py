@@ -385,5 +385,8 @@ def test_서비스_문장이_아닌_요청은_첫_채점_자리를_쓰지_않는
     거절, 첫_채점 = asyncio.run(scenario())
 
     assert "model" not in dict(거절.items())
+    # 콜드로도 찍히지 않는다 - 라우트가 적는 합계가 콜드 표본이 되면 워커당 1건뿐인 그
+    # 계열의 p95를 0ms가 가져간다 (Codex astra 리뷰 P3)
+    assert 거절.warm == "warm"
     assert 첫_채점.warm == "cold"
     assert dict(첫_채점.items())["model"] > 0

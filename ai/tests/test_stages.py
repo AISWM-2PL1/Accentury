@@ -84,6 +84,16 @@ def test_콜드는_그_워커의_첫_채점이라는_뜻이다():
     assert record.warm == COLD
 
 
+def test_콜드_표시는_되돌릴_수_있다():
+    # 채점이 아예 없었던 요청(서비스 문장이 아닌 scriptKey)에 쓴다. 워커당 콜드 표본이
+    # 1건뿐이라 그런 요청의 0ms 하나가 콜드 p95를 통째로 가져간다
+    record = StageRecord()
+    record.mark_cold()
+    record.unmark_cold()
+
+    assert record.warm == WARM
+
+
 def test_표본을_계열별로_모아_한_줄씩_낸다():
     metrics = StageMetrics()
     첫째 = StageRecord()
