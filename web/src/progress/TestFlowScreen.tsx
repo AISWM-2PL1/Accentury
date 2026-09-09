@@ -34,6 +34,12 @@ export interface TestFlowScreenProps {
   apiBase: string
   /** 세션에 고정된 정의 버전. 네이티브가 진입 쿼리로 실어 준다 (App.tsx) */
   testVersion: string
+  /**
+   * 세션에 고정된 음성 문항 세트 (KAN-205). 서버가 세션 생성 때 골라 응답에 실어 주고, 그
+   * 값이 진입 쿼리를 거쳐 여기까지 온다. 정의 조회에 그대로 넘긴다 — 빠지면 세트 1의 문항으로
+   * 응시하게 되어 제출이 전부 422다.
+   */
+  voiceSet: string
   /** 진행 스냅샷을 세션별로 가르는 식별자. KAN-9 결선 전까지는 빈 문자열이 온다 */
   sessionId?: string
   /** 스냅샷 저장소. 기본값(localStorage)은 훅이 정한다 */
@@ -86,6 +92,7 @@ type LoadState =
 export function TestFlowScreen({
   apiBase,
   testVersion,
+  voiceSet,
   sessionId = '',
   storage,
   onAnalysisReady,
@@ -104,7 +111,7 @@ export function TestFlowScreen({
     // 재시도로 요청이 겹칠 때 먼저 뜬 응답이 뒤늦게 화면을 덮지 않도록 버린다.
     let cancelled = false
     setLoad({ status: 'loading' })
-    fetchTestDefinition(apiBase, testVersion, fetchImpl)
+    fetchTestDefinition(apiBase, testVersion, voiceSet, fetchImpl)
       .then((definition) => {
         if (!cancelled) setLoad({ status: 'ready', definition })
       })
@@ -114,7 +121,7 @@ export function TestFlowScreen({
     return () => {
       cancelled = true
     }
-  }, [apiBase, testVersion, fetchImpl, attempt])
+  }, [apiBase, testVersion, voiceSet, fetchImpl, attempt])
 
   const retry = useCallback(() => setAttempt((n) => n + 1), [])
 

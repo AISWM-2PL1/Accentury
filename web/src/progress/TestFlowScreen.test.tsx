@@ -8,6 +8,7 @@ import { snapshotKey, type SnapshotStorage } from './progressSnapshot'
 import type { TestDefinition, TestItem } from './testDefinition'
 
 const TEST_VERSION = 'gn-2026.08.1'
+const VOICE_SET = '1'
 const API_BASE = 'http://localhost:8080'
 /** 웹 단독 실행의 세션 토큰. 실물 출처는 `session/webSession`이고 여기서는 값만 흉내 낸다 */
 const WEB_TOKEN = 'web-token'
@@ -157,6 +158,7 @@ function renderScreen(
     <TestFlowScreen
       apiBase={API_BASE}
       testVersion={TEST_VERSION}
+      voiceSet={VOICE_SET}
       sessionId={sessionId}
       storage={storage ?? memoryStorage()}
       onAnalysisReady={onAnalysisReady}
@@ -358,7 +360,7 @@ describe('정의 로딩', () => {
 
     expect(await screen.findByText('음성 문항 1')).toBeInTheDocument()
     expect(fetchImpl).toHaveBeenCalledTimes(1)
-    expect(fetchImpl.mock.calls[0][0]).toBe(`${API_BASE}/v0/tests/${TEST_VERSION}`)
+    expect(fetchImpl.mock.calls[0][0]).toBe(`${API_BASE}/v0/tests/${TEST_VERSION}?voiceSet=${VOICE_SET}`)
   })
 
   it('로딩에 실패하면 안내와 [다시 시도]를 보이고, 재시도가 성공하면 진행으로 넘어간다', async () => {
@@ -802,7 +804,9 @@ describe('폴링 부재 — 문항 진행 중에는 요청이 없다 (KAN-14 규
       for (let i = 0; i < 9; i += 1) await advance(capture)
 
       const requested = urls(fetchImpl)
-      expect(requested.filter((url) => url.endsWith(`/v0/tests/${TEST_VERSION}`))).toHaveLength(1)
+      expect(
+        requested.filter((url) => url.endsWith(`/v0/tests/${TEST_VERSION}?voiceSet=${VOICE_SET}`)),
+      ).toHaveLength(1)
       // 음성 5문항 × 업로드 1건, 어휘 4문항 × 답안 1건. 둘 다 [다음]이 부른 일회성 요청이다
       expect(requested.filter((url) => url.endsWith('/recording'))).toHaveLength(5)
       expect(requested.filter((url) => url.endsWith('/answer'))).toHaveLength(4)

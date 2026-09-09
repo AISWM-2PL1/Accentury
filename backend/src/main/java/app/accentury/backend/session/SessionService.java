@@ -22,6 +22,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.Objects;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -36,9 +37,6 @@ import java.util.concurrent.TimeUnit;
 public class SessionService {
 
     private static final Logger log = LoggerFactory.getLogger(SessionService.class);
-
-    /** 세트를 모르는 클라이언트의 세트 - 생략이 곧 1이다 (KAN-182 하위 호환). */
-    static final int DEFAULT_VOICE_SET = 1;
 
     private final TestSessionRepository repository;
     private final VocabAnswerRepository vocabAnswerRepository;
@@ -128,7 +126,10 @@ public class SessionService {
         TestDefinitionRegistry.PublishedDefinition active = testDefinitions.active();
         String testVersion = active.definition().testVersion();
         String scoreVersion = active.definition().scoreVersion();
-        int voiceSet = requestedVoiceSet(request, active.voiceSetCount());
+        int voiceSet = resolveVoiceSet(request, active.voiceSetCount());
+        // 세트를 누가 골랐는지는 로그에만 쓴다 - 편중을 나중에 로그로 되짚으려면
+        // 서버가 고른 세션과 클라이언트가 지정한 세션이 구분돼야 한다 (KAN-205).
+        boolean voiceSetRequested = request != null && request.voiceSet() != null;
         Instant now = Instant.now();
         Instant expiresAt = now.plus(properties.session().ttl());
         String sessionId = SessionTokens.newSessionId();
@@ -172,8 +173,9 @@ public class SessionService {
         }
 
         // 토큰은 로그에 남기지 않는다 (§2.6, NFR-SC-07).
-        log.info("세션 생성 sessionId={} platform={} testVersion={} voiceSet={} traffic={}",
-                sessionId, client != null ? client.platform() : null, testVersion, voiceSet, traffic);
+        log.info("세션 생성 sessionId={} platform={} testVersion={} voiceSet={} voiceSetBy={} traffic={}",
+                sessionId, client != null ? client.platform() : null, testVersion, voiceSet,
+                voiceSetRequested ? "client" : "server", traffic);
 
         // 응시 시도 1건 (KAN-106) - 폐기+생성 트랜잭션이 커밋된 뒤다.
         // 실패는 카운터 쪽에서 삼킨다 - 통계가 세션 생성을 막으면 안 된다 (FR-AN-10).
@@ -184,17 +186,35 @@ public class SessionService {
     }
 
     /**
-     * 요청의 세트 번호 - 생략은 1, 범위는 활성 정의의 세트 수 안이어야 한다 (KAN-182, §3.1).
-     * 범위 검사는 저장보다 먼저다 - 존재하지 않는 세트에 고정된 세션은 어느 경로로도 응시할 수 없다.
+     * 세션의 세트 번호 - 생략하면 서버가 고르고, 명시하면 그 값이며 범위는 활성 정의의 세트 수
+     * 안이어야 한다 (KAN-205, KAN-182, §3.1).
+     * <p>
+     * 생략을 세트 1로 굳히지 않는 이유는 클라이언트가 세트를 유효하게 고를 수 없어서다 - 유효
+     * 범위인 세트 수({@code voiceSetCount})가 세션 생성 응답에만 있어 첫 요청 시점에는 알 수
+     * 없다. 정의 조회를 먼저 해 세트 수를 읽으면 시작 버튼 뒤에 왕복이 하나 늘고, 세션을 만든
+     * 뒤 다시 만들면 고아 세션이 응시마다 하나씩 생기며, 세트 수를 앱에 하드코딩하면 다음
+     * 발행본이 세트 수를 줄였을 때 범위 밖 요청으로 응시 자체가 실패한다. 그래서 선택 주체를
+     * 서버로 옮겼다 (2026-09-09 확정 - KAN-182의 "세트 선택은 클라이언트가 한다"를 대체한다).
+     * 서버가 고르면 균등 분산을 서버가 관측하고, 배정 정책을 바꿔도 앱 릴리스를 기다리지 않으며,
+     * 고른 값과 세션에 박히는 값이 갈릴 수 없다.
+     * <p>
+     * 균등 난수를 쓰는 이유는 공유 상태가 없어서다 - backend가 Fargate 태스크 여러 개로 돌아도
+     * (KAN-165, KAN-167) 태스크끼리 맞출 것이 없다. 정확한 균등이 필요해지면 시퀀스
+     * 라운드로빈으로 올린다 (별도 티켓).
+     * <p>
+     * 명시 값의 범위 검사는 저장보다 먼저다 - 존재하지 않는 세트에 고정된 세션은 어느 경로로도
+     * 응시할 수 없다.
      */
-    private static int requestedVoiceSet(@Nullable CreateSessionRequest request, int voiceSetCount) {
+    private static int resolveVoiceSet(@Nullable CreateSessionRequest request, int voiceSetCount) {
         Integer requested = request != null ? request.voiceSet() : null;
-        int voiceSet = requested != null ? requested : DEFAULT_VOICE_SET;
-        if (voiceSet < 1 || voiceSet > voiceSetCount) {
+        if (requested == null) {
+            return ThreadLocalRandom.current().nextInt(1, voiceSetCount + 1);
+        }
+        if (requested < 1 || requested > voiceSetCount) {
             throw new ApiException(ErrorCode.VALIDATION_FAILED,
                     "voiceSet은 1 이상 " + voiceSetCount + " 이하여야 합니다.");
         }
-        return voiceSet;
+        return requested;
     }
 
     /**

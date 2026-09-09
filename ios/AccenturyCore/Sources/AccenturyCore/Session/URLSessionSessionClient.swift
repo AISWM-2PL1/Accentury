@@ -108,12 +108,14 @@ public final class URLSessionSessionClient: SessionClient, Sendable {
 
     static func toResult(status: Int, body: Data, retryAfterHeader: String?) -> SessionResult {
         if (200...299).contains(status) {
-            // 계약상 201이지만 다른 2xx도 5필드가 온전하면 받아들인다.
+            // 계약상 201이지만 다른 2xx도 6필드가 온전하면 받아들인다.
+            // 세트가 1 미만이면 받지 않는다 (KAN-205) - 그런 세션은 웹이 조회할 정의가 없다.
             let created = (try? JSONDecoder().decode(CreatedBody.self, from: body))
                 .flatMap { body -> CreatedBody? in
                     let usable = body.sessionId.nonBlank != nil
                         && body.sessionToken.nonBlank != nil
                         && body.testVersion.nonBlank != nil
+                        && body.voiceSet >= 1
                     return usable ? body : nil
                 }
             if let created {
@@ -122,6 +124,7 @@ public final class URLSessionSessionClient: SessionClient, Sendable {
                         sessionId: created.sessionId,
                         sessionToken: created.sessionToken,
                         testVersion: created.testVersion,
+                        voiceSet: created.voiceSet,
                         scoreVersion: created.scoreVersion,
                         expiresAt: created.expiresAt
                     )
@@ -169,11 +172,12 @@ struct ClientBody: Encodable {
     let appVersion: String
 }
 
-/// 201 응답 5필드 (§3.1). 하나라도 빠지면 디코딩이 실패해 재시도 가능한 거절이 된다.
+/// 201 응답 6필드 (§3.1). 하나라도 빠지면 디코딩이 실패해 재시도 가능한 거절이 된다.
 struct CreatedBody: Decodable {
     let sessionId: String
     let sessionToken: String
     let testVersion: String
+    let voiceSet: Int
     let scoreVersion: String
     let expiresAt: String
 }

@@ -54,6 +54,14 @@ export interface WebSession {
   sessionToken: string
   /** 이 세션에 고정된 정의 버전. 문항 조회(`GET /v0/tests/{testVersion}`)에 그대로 넣는다 */
   testVersion: string
+  /**
+   * 이 세션에 고정된 음성 문항 세트 (KAN-182, KAN-205). **서버가 고른 값이라 요청에 실어 보내지
+   * 않는다** — 클라이언트는 세트 수를 첫 요청 시점에 모르므로 유효한 값을 고를 수 없다.
+   *
+   * 문항 조회(`?voiceSet=`)에 그대로 넣어야 한다. 빠뜨리면 세트 1의 문항을 받아 세션에 고정된
+   * 세트와 갈리고, 그 문항으로 낸 업로드와 답안이 전부 422 `ITEM_NOT_IN_VERSION`으로 막힌다.
+   */
+  voiceSet: number
   /** 토큰 만료 시각 (UTC ISO-8601). 기본 30분 */
   expiresAt: string
   /**
@@ -232,23 +240,44 @@ export function clearWebSession(): void {
  *
  * 함수인 채로 화면에 넘기는 이유: 요청 시점마다 읽어야 한다. 미리 잡아 두면 재응시로 세션이
  * 바뀐 뒤에도 낡은 토큰을 계속 쓴다 (진행 화면이 브리지 토큰에 같은 규칙을 적용한다).
+ *
+ * **[loadWebSession]을 거치지 않고 토큰만 읽는다 (KAN-205).** 세트가 계약에 들어오기 전에
+ * 저장된 세션은 [readSession]의 새 검사를 통과하지 못하는데, 그 세션의 토큰은 여전히 살아
+ * 있다. 여기서 함께 버리면 배포 시점에 응시를 마친 사람이 자기 결과를 못 연다 — 결과 화면으로
+ * 가는 전환이 문서를 다시 로드하므로 새 번들이 옛 저장값을 읽는 조합이 실제로 생긴다.
+ * 응시를 이어갈 수 있는지는 문항 조회에서 갈리고, 그건 토큰과 별개의 문제다.
  */
 export function getWebSessionToken(): string {
-  return loadWebSession()?.sessionToken ?? ''
+  try {
+    const raw = sessionStorage.getItem(WEB_SESSION_KEY)
+    if (raw === null) return ''
+    const { sessionToken } = JSON.parse(raw) as Record<string, unknown>
+    return isFilledString(sessionToken) ? (sessionToken as string) : ''
+  } catch {
+    // 접근 거부(사생활 보호 모드)와 깨진 JSON을 같이 다룬다 — 어느 쪽이든 쓸 토큰이 없다.
+    return ''
+  }
 }
 
-/** 201 본문(또는 저장된 JSON)을 세션으로 읽는다. 네 값이 다 있는 문자열이 아니면 null */
+/**
+ * 201 본문(또는 저장된 JSON)을 세션으로 읽는다. 문자열 넷이 다 차 있고 세트가 1 이상의
+ * 정수가 아니면 null이다.
+ *
+ * 세트를 필수로 두는 이유는 없으면 응시가 불가능해서다 (KAN-205) — 세트 없이 문항을 조회하면
+ * 세트 1이 오는데 세션은 서버가 고른 다른 세트에 고정돼 있어 제출이 전부 422다. 여기서 null을
+ * 돌려주면 호출자가 재시도 가능한 실패로 다루므로, 반쪽짜리 세션으로 진행하지 않는다.
+ */
 function readSession(body: unknown): WebSession | null {
   if (typeof body !== 'object' || body === null) return null
-  const { sessionId, sessionToken, testVersion, expiresAt, userCurveCenterHz } = body as Record<
-    string,
-    unknown
-  >
+  const { sessionId, sessionToken, testVersion, voiceSet, expiresAt, userCurveCenterHz } =
+    body as Record<string, unknown>
   if (![sessionId, sessionToken, testVersion, expiresAt].every(isFilledString)) return null
+  if (!isPositiveInteger(voiceSet)) return null
   return {
     sessionId: sessionId as string,
     sessionToken: sessionToken as string,
     testVersion: testVersion as string,
+    voiceSet: voiceSet as number,
     expiresAt: expiresAt as string,
     /*
      * 중심은 있으면 싣고 없으면 뺀다 — 서버 응답에는 애초에 없는 필드이고(웹이 붙인다),
@@ -261,6 +290,11 @@ function readSession(body: unknown): WebSession | null {
 
 function isPositiveNumber(value: unknown): boolean {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
+}
+
+/** 세트 번호는 1부터의 정수다 (§3.1). 소수나 0 이하는 세트가 아니다 */
+function isPositiveInteger(value: unknown): boolean {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1
 }
 
 function isFilledString(value: unknown): boolean {

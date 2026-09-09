@@ -3,7 +3,10 @@ import Foundation
 /// 앱이 보유한 브리지 계약 버전 (webview-layer.md §5).
 /// 규칙: 메서드·필드 추가는 하위호환이라 버전을 유지하고, 삭제·의미 변경 시에만 올린다.
 /// ItemResult 5필드(KAN-89 계약)를 바꾸는 변경도 반드시 버전 증가 대상이다.
-public let bridgeContractVersion = 1
+///
+/// KAN-205에서 1 → 2로 올렸다. 진입 쿼리의 `voiceSet`이 웹에 필수가 됐고, 그 값을 싣지 않는
+/// 구버전 앱은 문항 화면에서 빠져나올 수 없다 — 웹의 `REQUIRED_BRIDGE_VERSION`과 짝이다.
+public let bridgeContractVersion = 2
 
 /// 로드 실패 판정 자체 타임아웃 (§6). 페이지 로드 완료 콜백이 영영 안 오는 경우를 대비한다.
 /// 8초 = Nielsen 10초 주의력 한계 직전, "진입 → 결과 3분" 목표와 정합하는 제안값.
@@ -17,11 +20,15 @@ public let loadTimeout: TimeInterval = 8
 public struct TestEntry: Equatable, Sendable {
     /// 세션에 고정된 정의 버전. 웹이 `GET /v0/tests/{testVersion}`으로 정의를 받는다.
     public let testVersion: String
+    /// 세션에 고정된 음성 문항 세트 (KAN-205). 웹이 정의 조회의 `?voiceSet=`에 그대로 넣는다 —
+    /// 빠지면 세트 1의 문항이 와서 세션의 세트와 갈리고 제출이 전부 422다.
+    public let voiceSet: Int
     /// 진행 스냅샷을 세션별로 가르는 식별자. 업로드가 붙는 세션과 같은 값이어야 한다.
     public let sessionId: String
 
-    public init(testVersion: String, sessionId: String) {
+    public init(testVersion: String, voiceSet: Int, sessionId: String) {
         self.testVersion = testVersion
+        self.voiceSet = voiceSet
         self.sessionId = sessionId
     }
 }
@@ -54,6 +61,7 @@ public func buildWebUrl(
     if let testEntry {
         query += "&screen=test"
         query += "&testVersion=\(encodeQueryValue(testEntry.testVersion))"
+        query += "&voiceSet=\(testEntry.voiceSet)"
         query += "&sessionId=\(encodeQueryValue(testEntry.sessionId))"
     }
     if let campaignToken {

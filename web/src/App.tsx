@@ -69,7 +69,7 @@ export default function App({ navigate = assignHref, voiceCheckCapture }: AppPro
   }
 
   /*
-   * `?screen=test&testVersion=...&sessionId=...` — 문항 진행 화면의 **정식 진입 쿼리**다.
+   * `?screen=test&testVersion=...&voiceSet=...&sessionId=...` — 문항 진행 화면의 **정식 진입 쿼리**다.
    * 두 실행이 같은 쿼리로 들어온다. 앱에서는 인트로 [시작하기] → 네이티브 마이크 권한
    * 게이트(KAN-98) 뒤 네이티브가 이 쿼리를 붙여(기존 bridge·app 파라미터에 더해) WebView를
    * 다시 로드하고(KAN-100 Stage 4), 웹 단독 실행에서는 [startStandaloneTest]가 세션을 만든 뒤
@@ -91,6 +91,13 @@ export default function App({ navigate = assignHref, voiceCheckCapture }: AppPro
       <TestFlowScreen
         apiBase={API_BASE}
         testVersion={params.get('testVersion') ?? ''}
+        /*
+         * 세션에 고정된 음성 문항 세트 (KAN-205). 서버가 세션 생성 때 골라 응답에 실어 주고,
+         * 앱은 네이티브가, 웹 단독은 [startStandaloneTest]가 이 쿼리에 실어 보낸다. 값이 없거나
+         * 세트 번호 꼴이 아니면 정의 조회가 네트워크를 타기 전에 끊는다 — 세트 없이 받은 세트 1의
+         * 문항으로 응시하면 제출이 전부 422라, 진행하다 막히는 것보다 여기서 멈추는 편이 낫다.
+         */
+        voiceSet={params.get('voiceSet') ?? ''}
         /*
          * 세션 클라이언트(KAN-9) 결선 전까지는 네이티브가 sessionId를 모를 수 있다. 그때는 빈
          * 문자열이 내려가고 진행 스냅샷이 세션별로 나뉘지 않는다 — 과도기의 알려진 한계다.
@@ -333,7 +340,9 @@ async function startStandaloneTest(navigate: Navigate, userCurveCenterHz: number
   try {
     session = await createWebSession(API_BASE, {
       campaignToken: readCampaignToken(search),
-      previousToken: loadWebSession()?.sessionToken,
+      // 세션 전체가 아니라 토큰만 본다 (KAN-205) - 세트가 계약에 들어오기 전에 저장된
+      // 세션도 폐기 대상이다. 읽지 못하면 폐기 없이 새 세션만 만들어진다.
+      previousToken: getWebSessionToken(),
     })
   } catch (error: unknown) {
     throw new Error(startFailureMessage(error))
@@ -366,7 +375,11 @@ async function startStandaloneTest(navigate: Navigate, userCurveCenterHz: number
   // 진입 경로(`/t`)와 나머지 쿼리(`c` 등)는 그대로 두고 화면 지정만 얹는다.
   navigate(
     window.location.pathname +
-      buildTestUrl(search, { testVersion: session.testVersion, sessionId: session.sessionId }),
+      buildTestUrl(search, {
+        testVersion: session.testVersion,
+        voiceSet: session.voiceSet,
+        sessionId: session.sessionId,
+      }),
   )
 }
 

@@ -491,7 +491,7 @@ private fun TestFlow(appLink: StateFlow<AppLinkEntry?>, modifier: Modifier = Mod
                      * "세션이 있다"는 응시할 준비가 됐다는 뜻이고, "시작을 눌렀다"가 들어가겠다는 뜻이다.
                      */
                     testEntry = if (startRequested) {
-                        session?.let { TestEntry(it.testVersion, it.sessionId) }
+                        session?.let { TestEntry(it.testVersion, it.voiceSet, it.sessionId) }
                     } else {
                         null
                     },
