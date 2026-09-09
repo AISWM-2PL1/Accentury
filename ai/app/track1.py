@@ -309,9 +309,11 @@ class Track1Engine:
         reply = await self._exchange(payload)
         if reply.get("kind") == _UNKNOWN_SCRIPT_KEY:
             # ``score()``를 부르기 **전에** 갈린 요청이다 (자식의 서비스 문장 검사). 채점이
-            # 아니므로 두 가지를 남기지 않는다 - 0에 가까운 값이 model 분포에 섞이는 것과,
+            # 아니므로 세 가지를 남기지 않는다 - 0에 가까운 값이 model 분포에 섞이는 것,
             # 이 요청이 첫 채점 자리를 먹어 뒤이은 진짜 첫 채점(콜드 22.9초)이 웜으로 찍히는
-            # 것이다 (Codex astra 리뷰 P2)
+            # 것(Codex astra 리뷰 P2), 그리고 라우트가 적는 합계가 콜드 표본으로 들어가는
+            # 것(같은 리뷰 P3 - 콜드 표본은 워커당 1건뿐이라 0ms 하나가 p95를 가져간다)이다
+            stages.unmark_cold()
             return reply
         # 예외로 빠져나간 경로에서는 둘 다 하지 않는다 - 워커가 사라진 경우(_WorkerGone)에는
         # 다음 워커가 다시 콜드이고, 끊긴 추론의 경과는 곧 상한값이라 분포만 오염시킨다
