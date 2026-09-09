@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -151,3 +153,52 @@ def test_메트릭이_잔존_파일_수를_돌려준다(client):
 
 def test_헬스체크가_뜬다(client):
     assert client.get("/internal/v0/health").json() == {"status": "UP"}
+
+
+def test_종료_로그에_단계_시간과_콜드_웜이_있다(client, caplog):
+    # 요청 하나의 시간이 어디로 갔는지를 추적 ID 하나로 되찾을 수 있어야 한다 (KAN-204).
+    # 가짜 엔진은 수첩을 채우지 않으므로 라우트가 재는 합계만 남는다
+    with caplog.at_level(logging.INFO, logger="app.analyze"):
+        response = post(client)
+
+    assert response.status_code == 200
+    종료 = [record.getMessage() for record in caplog.records if "분석 종료" in record.getMessage()]
+    assert len(종료) == 1
+    assert "warm=warm" in 종료[0]
+    assert "stages=total:" in 종료[0]
+
+
+def test_단계_지표는_읽으면_비워진다(client):
+    # 소비자는 호스트 타이머 하나다 (ai-health-metric.sh) - 두 곳에서 읽으면 표본이 갈린다
+    post(client)
+
+    assert client.get("/internal/v0/metrics/stages").text.startswith("total warm ")
+    assert client.get("/internal/v0/metrics/stages").text == ""
+
+
+def test_시간_초과에도_끝난_단계가_로그와_지표에_남는다(tmp_path, caplog):
+    """끊긴 요청이야말로 "어디에서 예산을 다 썼는가"가 필요한 자리다 (KAN-204 AC).
+
+    합계는 적지 않는다 - 시간 초과의 합계는 언제나 상한값이라 분포만 오염시킨다.
+    """
+    settings = Settings(temp_dir=tmp_path / "ai-tmp", analysis_timeout_seconds=0.05)
+
+    class 단계를_채우는_엔진(FakeEngine):
+        async def analyze(self, request):
+            request.stages.put("lockWait", 12)
+            request.stages.mark_cold()
+            return await super().analyze(request)
+
+    with TestClient(create_app(settings, engine=단계를_채우는_엔진(delay_seconds=0.5))) as client:
+        with caplog.at_level(logging.WARNING, logger="app.analyze"):
+            response = post(client)
+
+        assert response.status_code == 503
+        초과 = [
+            record.getMessage() for record in caplog.records if "분석 시간 초과" in record.getMessage()
+        ]
+        assert len(초과) == 1
+        assert "warm=cold" in 초과[0]
+        assert "stages=lockWait:12" in 초과[0]
+        assert client.get("/internal/v0/metrics/stages").text == "lockWait cold 12\n"
+        assert residue(settings) == []

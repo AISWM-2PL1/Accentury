@@ -35,6 +35,12 @@ locals {
   # 백분위 게이지의 차원. phi는 Micrometer가 붙이는 태그이고 값의 철자는 소수점 표기 그대로다.
   percentile_dimensions = concat(local.backend_dimensions, ["phi", "0.95"])
 
+  # 추론 단계 (KAN-204). 정본은 ai/app/stages.py의 STAGES이고 여기 문자열은 그 사본이다.
+  # model은 전달본 score() 호출 전체이고, 그 아래 다섯은 전달본이 워커 결과 JSON의 stageMs로
+  # 돌려줄 안쪽 단계다 - 그 값을 싣기 전까지 다섯 줄은 <b>비어 있는 것이 정상</b>이다. 그래도
+  # 미리 적어 두는 이유는, 값이 들어오기 시작하는 날 대시보드를 다시 손대지 않기 위해서다.
+  ai_stages = ["model", "transcribe", "gate", "align", "f0", "scoring"]
+
   dashboard_widgets = [
     # ---- 1행: 사용자가 겪는 것 ----
     {
@@ -270,6 +276,86 @@ locals {
         annotations = {
           horizontal = [{ label = "AI 잔존 경보 임계치", value = var.ai_temp_residue_threshold }]
         }
+      }
+    },
+
+    # ---- 4행: 추론 단계 (KAN-204) ----
+    #
+    # 3행까지는 backend가 보는 세계이고 여기서부터는 AI 호스트 안이다. 문항당 처리 시간이 어느
+    # 단계에 쓰였는지가 없으면 GPU 전환(KAN-57), MFA 상주화, 인스턴스 상향(KAN-36)의 기대 효과가
+    # 전부 추정으로 남는다 - 이 두 줄이 그 판단의 입력이다.
+    #
+    # 백분위가 여기서는 <b>진짜 백분위</b>다. backend 쪽은 태스크마다 계산된 값을 Maximum으로
+    # 접은 "가장 나쁜 태스크의 P95"였지만(위 주석), AI는 관측값을 낱개로 올리므로(호스트 타이머가
+    # Values로 put) CloudWatch가 전체 표본에서 직접 계산한다.
+    {
+      type   = "metric"
+      x      = 0
+      y      = 18
+      width  = 8
+      height = 6
+      properties = {
+        title  = "AI 추론 단계별 지연 P50 (ms, 웜)"
+        region = data.aws_region.current.region
+        view   = "timeSeries"
+        period = 60
+        metrics = [
+          for stage in local.ai_stages :
+          concat([var.ai_metric_namespace, "StageDuration"], local.backend_dimensions,
+          ["stage", stage, "warm", "warm"], [{ label = stage, stat = "p50" }])
+        ]
+        yAxis = { left = { min = 0, label = "ms", showUnits = false } }
+      }
+    },
+    {
+      type   = "metric"
+      x      = 8
+      y      = 18
+      width  = 8
+      height = 6
+      properties = {
+        title  = "AI 추론 단계별 지연 P95 (ms, 웜)"
+        region = data.aws_region.current.region
+        view   = "timeSeries"
+        period = 60
+        metrics = [
+          for stage in local.ai_stages :
+          concat([var.ai_metric_namespace, "StageDuration"], local.backend_dimensions,
+          ["stage", stage, "warm", "warm"], [{ label = stage, stat = "p95" }])
+        ]
+        yAxis = { left = { min = 0, label = "ms", showUnits = false } }
+      }
+    },
+    {
+      type   = "metric"
+      x      = 16
+      y      = 18
+      width  = 8
+      height = 6
+      properties = {
+        # 콜드는 그 워커의 첫 채점이다. 가중치가 이미 올라와 있어도 전달본 안쪽의 지연 초기화가
+        # 거기서 한 번 일어나 staging 첫 호출이 22.9초였다 (KAN-172 실측) - 콜드와 웜의 합계 차이가
+        # 그 오버헤드이고, 재적재 대기(workerLoad)는 취소나 OOM 뒤에만 표본이 생긴다.
+        title  = "AI 콜드 스타트와 대기 (ms, P95)"
+        region = data.aws_region.current.region
+        view   = "timeSeries"
+        period = 60
+        metrics = [
+          concat([var.ai_metric_namespace, "StageDuration"], local.backend_dimensions,
+          ["stage", "total", "warm", "cold"], [{ label = "합계 (콜드)", stat = "p95" }]),
+          concat([var.ai_metric_namespace, "StageDuration"], local.backend_dimensions,
+          ["stage", "total", "warm", "warm"], [{ label = "합계 (웜)", stat = "p95" }]),
+          concat([var.ai_metric_namespace, "StageDuration"], local.backend_dimensions,
+          ["stage", "workerLoad", "warm", "cold"], [{ label = "워커 재적재 대기", stat = "p95" }]),
+          concat([var.ai_metric_namespace, "StageDuration"], local.backend_dimensions,
+          ["stage", "lockWait", "warm", "warm"], [{ label = "lock 대기 (웜)", stat = "p95" }]),
+          concat([var.ai_metric_namespace, "StageDuration"], local.backend_dimensions,
+          ["stage", "lockWait", "warm", "cold"], [{ label = "lock 대기 (콜드)", stat = "p95" }]),
+        ]
+        # 추론 상한(75초, config 모듈 ai_analysis_timeout_seconds)에 기준선을 긋지 않는다 -
+        # 그러려면 그 값이 코드 기본값과 SSM 파라미터에 이어 세 번째로 복사되고, 상한을 다시
+        # 조정할 때(KAN-172 같은 일) 조용히 어긋날 자리가 하나 더 생긴다.
+        yAxis = { left = { min = 0, label = "ms", showUnits = false } }
       }
     },
   ]

@@ -14,11 +14,12 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from app.config import Settings
+from app.stages import StageRecord
 
 #: 엔진 이름 - :func:`create_engine`이 고르는 값이다.
 #:
@@ -85,6 +86,18 @@ class AnalysisRequest:
     #:
     #: 비워 두고 만들면 meta에서 떨어뜨린다 - 라우트를 거치지 않는 호출자용 편의다.
     correlation_id: str = ""
+
+    #: 엔진이 채우는 단계별 소요 시간 수첩 (KAN-204).
+    #:
+    #: 추적 ID와 같은 성격이다 - **라우트가 쥐고 엔진에 건넨다.** 결과에 실어 돌려받지 않는
+    #: 이유는 :class:`AnalysisOutcome`이 §4.1 봉투의 재료라서다. 계측값을 거기 실으면 봉투
+    #: 검사가 계측까지 검사하게 되고, 무엇보다 **취소나 시간 초과로 결과가 없는 요청에서
+    #: 값이 통째로 사라진다** - 시간 초과가 어느 단계에서 났는지가 이 티켓의 인수 조건이라
+    #: 결과가 없는 경로에서도 라우트에 남아 있어야 한다.
+    #:
+    #: 채우지 않아도 된다 (가짜 엔진, KAN-135의 테스트용 구현). 그때는 라우트가 재는
+    #: ``total``만 남는다.
+    stages: StageRecord = field(default_factory=StageRecord, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         # meta는 BE가 보낸 값 그대로라 타입이 어긋날 수 있다 - 문자열이 아니면 빈 문자열로

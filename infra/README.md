@@ -1342,12 +1342,13 @@ AI 호스트가 죽는 것은 `ai-unhealthy`가 이미 잡는다 - 같은 사건
 
 ### AI 임시파일 지표가 올라오는 경로
 
-`ai-health-metric.sh`(systemd 타이머, 1분)가 하는 일이 둘로 늘었다.
+`ai-health-metric.sh`(systemd 타이머, 1분)가 하는 일이 셋으로 늘었다.
 
 1. `GET /internal/v0/health` (토큰 불필요) -> `Healthy` 0|1
 2. `GET /internal/v0/metrics` (**토큰 필요**) -> `TempFiles`, `TempOldestAge`, `TempScanFailures`
+3. `GET /internal/v0/metrics/stages` (**토큰 필요**, KAN-204) -> `StageDuration` (아래 절)
 
-둘째의 토큰은 SSM을 매분 다시 읽지 않고 `accentury-up.sh`가 기동 때 만들어 둔
+토큰이 필요한 쪽의 토큰은 SSM을 매분 다시 읽지 않고 `accentury-up.sh`가 기동 때 만들어 둔
 `/run/accentury/ai.env`(root 전용 tmpfs)에서 가져온다 - 컨테이너에 들어가는 것과 같은 값이라
 IAM도 SSM 호출도 늘지 않는다. 그 파일이 없거나(첫 부팅, compose 기동 전) 조회에 실패하면
 **임시파일 지표만 건너뛴다** - health는 그것과 무관하게 계속 나간다.
@@ -1361,8 +1362,37 @@ IAM도 SSM 호출도 늘지 않는다. 그 파일이 없거나(첫 부팅, compo
 ```bash
 # ai 호스트 (SSM Session Manager)
 sudo /opt/accentury/ai-health-metric.sh
-# ai health=200 -> Healthy=1, tempFiles=0, tempOldestAge=0, tempScanFailures=0 (accentury/ai env=staging)
+# ai health=200 -> Healthy=1, tempFiles=0, tempOldestAge=0, tempScanFailures=0, stageSeries=0 (accentury/ai env=staging)
 ```
+
+### AI 추론 단계별 지연 지표 (KAN-204)
+
+문항당 처리 시간(TTS 발화 9.9\~11.1초, 워밍업 뒤 첫 호출 22.9초)이 **어느 단계에 쓰였는지**를
+같은 경로로 올린다. 그 값이 없으면 GPU 전환(KAN-57), MFA 상주화, 인스턴스 상향(KAN-36)의 기대
+효과가 전부 추정으로 남는다.
+
+| 항목 | 값 |
+| --- | --- |
+| 지표 | `accentury/ai` `StageDuration` (단위 Milliseconds) |
+| 차원 | `env`, `stage`, `warm` |
+| `stage` | `lockWait`, `workerLoad`, `model`, `transcribe`, `gate`, `align`, `f0`, `scoring`, `total` |
+| `warm` | `cold`(그 워커의 첫 채점), `warm` |
+| 대시보드 | `accentury-{env}-ops` 4행 (P50, P95, 콜드 스타트와 대기) |
+
+`stage` 이름의 정본은 `ai/app/stages.py`의 `STAGES`다. 뒤쪽 다섯(`transcribe`\~`scoring`)은
+전달본 `Track1Scorer.score` **안쪽** 구간이라 어댑터가 잴 수 없다 - 워커 결과 JSON의 `stageMs`로
+받기로 합의만 해 두었고, 전달본이 그 값을 싣기 전까지는 어댑터가 재는 바깥 구간
+(`lockWait`, `workerLoad`, `model`, `total`)만 올라온다. 대시보드의 나머지 줄이 비어 있는 것은
+그래서이고 고장이 아니다.
+
+**관측값을 낱개로 올린다**(`Value`가 아니라 `Values`). 평균이나 합만 올리면 CloudWatch가 p50과
+p95를 계산할 수 없는데, 이 티켓이 필요로 하는 값이 바로 그 백분위다. backend 쪽 백분위가
+"가장 나쁜 태스크의 P95"인 것과 달리 여기는 전체 표본에서 계산된 진짜 백분위다.
+
+**`/internal/v0/metrics/stages`는 읽으면 비워진다.** 소비자가 이 타이머 하나뿐이라는 전제이고,
+그래서 그 회차의 `put-metric-data`가 실패하면 그 1분의 표본은 사라진다. 재시도 큐를 두지 않는
+이유는 CloudWatch가 오래 막혔을 때 그 대가를 추론 프로세스가 메모리로 치르기 때문이다. 앱은
+계열당 150개(= `Values` 하나의 API 상한)에서 오래된 표본부터 버린다.
 
 ### ai 컨테이너 로그 (KAN-203)
 
@@ -1472,6 +1502,10 @@ aws cloudwatch list-metrics --region "$REGION" --namespace accentury/backend   -
 # 3. AI 지표도 올라오는가
 aws cloudwatch list-metrics --region "$REGION" --namespace accentury/ai   --query 'Metrics[].MetricName' --output text | tr '	' '
 ' | sort
+
+# 3-1. 단계별 지연이 올라오는가 (KAN-204). 분석을 한 건이라도 돌린 뒤에 본다 -
+#      표본이 없는 계열은 지표 자체가 생기지 않는다.
+aws cloudwatch list-metrics --region "$REGION" --namespace accentury/ai   --metric-name StageDuration --query 'Metrics[].Dimensions[?Name==`stage`].Value' --output text
 
 # 4. 대시보드가 값을 그리는가 - 스모크 한 바퀴(KAN-138) 뒤에 열어 본다
 terraform output -raw dashboard_url

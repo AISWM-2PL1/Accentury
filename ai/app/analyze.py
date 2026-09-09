@@ -22,6 +22,7 @@ from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from app.engine import AnalysisOutcome, AnalysisRequest
+from app.stages import StageRecord
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +49,11 @@ async def analyze(
     settings = request.app.state.settings
     store = request.app.state.temp_store
     engine = request.app.state.engine
+    stage_metrics = request.app.state.stage_metrics
+
+    # 엔진이 채우는 단계별 소요 시간 (KAN-204). 라우트가 쥐고 있어야 시간 초과처럼 결과가 없는
+    # 경로에서도 "어디까지 갔다가 끊겼는가"가 남는다
+    stages = StageRecord()
 
     try:
         parsed = json.loads(meta)
@@ -94,7 +100,10 @@ async def analyze(
                 # 헤더만 보내는 호출자에게 로그의 ID와 엔진이 본 ID가 갈린다 (§2.2)
                 outcome = await engine.analyze(
                     AnalysisRequest(
-                        audio_path=path, meta=parsed, correlation_id=correlation_id
+                        audio_path=path,
+                        meta=parsed,
+                        correlation_id=correlation_id,
+                        stages=stages,
                     )
                 )
             # 프로토콜은 구조만 보므로 반환 타입은 런타임에 강제되지 않고, CI에도 타입
@@ -107,15 +116,23 @@ async def analyze(
                     f"엔진이 AnalysisOutcome이 아닌 것을 돌려줬다: {type(outcome).__name__}"
                 )
             engine_ms = round((time.monotonic() - engine_started) * 1000)
+            # 합계는 엔진 호출 전체다 - 어댑터 안쪽 단계들의 합보다 크고, 그 차이가 어댑터가
+            # 아직 재지 못하는 구간이다 (KAN-204)
+            stages.put("total", engine_ms)
         except TimeoutError:
             processing_ms = round((time.monotonic() - started) * 1000)
+            # 끊긴 요청도 단계를 남긴다 - 끝난 단계까지가 곧 "어디에서 예산을 다 썼는가"다.
+            # 합계는 적지 않는다 (그 값은 언제나 상한이라 분포만 오염시킨다)
             log.warning(
-                "분석 시간 초과 correlationId=%s itemId=%s bytes=%d ms=%d",
+                "분석 시간 초과 correlationId=%s itemId=%s bytes=%d ms=%d warm=%s stages=%s",
                 correlation_id,
                 item_id,
                 size,
                 processing_ms,
+                stages.warm,
+                stages.as_log(),
             )
+            stage_metrics.record(stages)
             # 5xx는 BE가 일시 장애로 보고 재전송 예산 안에서 다시 시도한다 (§4.1) -
             # 추론에 GPU를 이미 썼으므로 과부하 셰딩(429)이 아니다
             return JSONResponse(
@@ -141,8 +158,11 @@ async def analyze(
     # 오디오 바이트도, 점수도 로그에 남기지 않는다 (§2.6, NFR-SC-07) - 크기와 추적 ID만이다.
     # 두 버전은 싣는다 (KAN-22 AC6 "버전이 모든 결과와 로그에") - 응답 봉투와 같은 값이라
     # 로그만으로도 어느 모델과 점수 규칙이 그 결과를 냈는지 추적된다
+    # 단계 시간과 콜드/웜도 같은 줄에 싣는다 (KAN-204) - 요청 하나의 시간이 어디로 갔는지를
+    # 추적 ID 하나로 되찾을 수 있어야 한다. 값은 전부 소요 시간이라 발화 내용과 무관하다
     log.info(
-        "분석 종료 correlationId=%s itemId=%s bytes=%d status=%s ms=%d scoreVersion=%s modelVersion=%s",
+        "분석 종료 correlationId=%s itemId=%s bytes=%d status=%s ms=%d scoreVersion=%s "
+        "modelVersion=%s warm=%s stages=%s",
         correlation_id,
         item_id,
         size,
@@ -150,7 +170,10 @@ async def analyze(
         processing_ms,
         score_version,
         engine.model_version,
+        stages.warm,
+        stages.as_log(),
     )
+    stage_metrics.record(stages)
 
     # 봉투 조립은 엔진 밖이다 (KAN-135) - scoreVersion과 processingMs는 엔진이 알 바가
     # 아니고, modelVersion은 설정이 아니라 엔진이 자기 정체로 보고한 값을 그대로 싣는다
