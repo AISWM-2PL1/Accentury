@@ -75,12 +75,12 @@
 | 4. 비정상 종료 로그 | 스택·기기·OS·앱 버전, 사용자 ID 없음 | KAN-33, `docs/wiki/analytics.md` §3 「크래시 리포트에도 같은 규칙이 선다」 | — |
 | 5. 파기 | 파기 시점 여섯 가지 | 1항의 근거를 그대로 반복한다 (음성 즉시·30분, 미완주 세션 30분, 완주 세션 완료 후 24시간, 재응시 즉시, 공유 전송 알림 식별값 7일, 로그 14일/7일) | `음성은 분석 직후…`·`임시 파일 청소 기준 30분…`·`세션·결과 보유 기간 24시간…` |
 | 6. 정보주체 권리 | 특정 이용자의 정보를 지목할 수단이 없음 | 계정 없음, 세션은 익명 (`backend/src/main/java/app/accentury/backend/session/TestSession.java` — 사람을 가리키는 컬럼 없음) | — |
-| 6. 정보주체 권리 | 탭을 닫으면 세션 토큰·응시 키는 사라지지만 **진행 기록은 남는다** | `web/src/session/webSession.ts`·`web/src/analytics/testId.ts:21-23` (`sessionStorage`) 대 `web/src/progress/progressSnapshot.ts:34,51` (`localStorage`, 키 `accentury:progress:<sessionId>`). 앱 코드에 `clearSnapshot` 호출점이 없어(`web/src/progress/useTestProgress.ts:14` 주석이 "삭제 시점은 결과 화면"이라 적었지만 아직 배선 없음) 진행 기록은 사이트 데이터 삭제·앱 삭제로만 지워진다 | — |
+| 6. 정보주체 권리 | 탭을 닫으면 세션 토큰·응시 키는 사라지고, 진행 기록은 결과 화면 진입에서 지워진다 | `web/src/session/webSession.ts`·`web/src/analytics/testId.ts:21-23` (`sessionStorage`) 대 `web/src/progress/progressSnapshot.ts` (`localStorage`, 키 `accentury:progress:<sessionId>`). 삭제 배선은 `web/src/App.tsx`의 `ResultRoute`(`clearSnapshot`)와 `IntroRoute`(`sweepSnapshots` — 결과까지 못 간 응시의 잔여 키) 두 자리다 (KAN-198) | `진행 기록의 삭제 시점이 적혀 있다` |
 | 7. 만 14세 미만 | 아동 대상 아님, 마켓에도 그렇게 등록 | `docs/wiki/play-store-listing.md` §6 (타겟 연령 13세 이상) — **KAN-174 브랜치에만 있는 파일** | — |
 | 7. 만 14세 미만 | 아동에게 맞춤형 광고 미표시 | 2026-09-07 팀 결정, KAN-196에서 SDK 설정으로 구현 예정 | — |
 | 8. 자동 수집 장치 | 웹에는 GA4 태그가 쿠키를 저장 | `web/src/analytics/ga4.ts:75-81` — `config`에 쿠키를 끄는 옵션이 없다(기본 동작이 쿠키 설정) | — |
 | 8. 자동 수집 장치 | 앱 WebView에는 태그를 깔지 않음 | `web/src/main.tsx:20` — `isStandaloneWeb`일 때만 `installGa4Tag()` | — |
-| 8. 자동 수집 장치 | 진행 기록은 브라우저 저장소에 남고 서비스가 지우지 않음 | `web/src/progress/progressSnapshot.ts:34,51` (키 `accentury:progress:<sessionId>`), `web/src/progress/useTestProgress.ts:61-65` (`window.localStorage`), `web/src/progress/useTestProgress.ts:14` (`clearSnapshot`을 부르지 않는다 — 호출점이 아직 없다) | — |
+| 8. 자동 수집 장치 | 진행 기록은 브라우저 저장소에 두되 결과 화면 진입에서 지우고, 끊긴 응시의 기록은 다음 인트로 진입에서 걷는다 | `web/src/progress/progressSnapshot.ts` (키 `accentury:progress:<sessionId>`, `defaultSnapshotStorage`가 `window.localStorage`), `web/src/App.tsx` `ResultRoute`의 `clearSnapshot`·`IntroRoute`의 `sweepSnapshots`. 복원에 실패한 스냅샷(형태 손상·버전 불일치·재생 거부)도 `restoreProgress`가 그 자리에서 버린다 (KAN-198) | `진행 기록의 삭제 시점이 적혀 있다` |
 | 8. 자동 수집 장치 | 세션 토큰·응시 키는 탭 저장소 | `web/src/session/webSession.ts`, `web/src/analytics/testId.ts:21-23` (`sessionStorage`) | — |
 | 8. 자동 수집 장치 | 광고 SDK가 광고 식별자를 사용 | 2026-09-07 팀 결정, KAN-196. **아직 배선 없음** | — |
 | 9. 공유 기능 | payload에 점수·세션·음성이 없음 | `app/src/main/java/com/accentury/app/bridge/SharePayload.kt:28-31` (필드는 `imageUrl`·`text`·`webTestUrl` 셋), `web/src/share/shareResult.ts:57-59` (payload 필드가 `imageUrl`·`text`·`webTestUrl` 셋뿐, KAN-30 요구) | — |
