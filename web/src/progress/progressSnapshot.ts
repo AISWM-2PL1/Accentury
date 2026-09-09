@@ -21,7 +21,9 @@
  *    시크릿 모드·쿼터 초과·저장소 비활성처럼 localStorage 접근 자체가 throw하는 환경이 있다.
  *    저장 실패는 조용히 무시하고(진행은 메모리로 계속된다), 복원 실패는 null이다.
  *
- * 이 모듈은 "언제" 저장할지를 정하지 않는다. visibilitychange 결선은 Stage 3의 훅 몫이다.
+ * 이 모듈은 "언제" 저장할지도 "언제" 지울지도 정하지 않는다. visibilitychange 결선은 Stage 3의
+ * 훅 몫이고, 삭제 시점은 화면이 안다 — 결과 화면 진입에서 [clearSnapshot], 인트로 진입에서
+ * [sweepSnapshots]다 (KAN-198, 결선은 `App.tsx`).
  */
 
 import { createProgressState, submitItem, type ProgressState } from './progressMachine'
@@ -58,6 +60,38 @@ export function snapshotKey(sessionId = ''): string {
  * 나중에 다른 저장소로 갈아끼울 때 구현 부담을 줄이기 위해서다.
  */
 export type SnapshotStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
+
+/**
+ * 키를 훑어야 하는 작업([sweepSnapshots])이 요구하는 저장소. 세 메서드에 열거 두 개를 더한다.
+ *
+ * 타입을 나눠 둔 이유: 저장·복원은 키를 하나만 만지므로 열거를 요구할 이유가 없고, 요구하면
+ * 테스트 대역과 미래의 브리지 저장소가 쓰지도 않는 `key`·`length`를 구현해야 한다.
+ */
+export type EnumerableSnapshotStorage = SnapshotStorage & Pick<Storage, 'key' | 'length'>
+
+/** 저장소가 아예 없는 환경에서 쓰는 빈 저장소. 진행은 메모리로만 이어진다 */
+const NO_STORAGE: EnumerableSnapshotStorage = {
+  getItem: () => null,
+  setItem: () => {},
+  removeItem: () => {},
+  key: () => null,
+  length: 0,
+}
+
+/**
+ * 이 모듈이 브라우저에서 쓰는 기본 저장소.
+ *
+ * 아래 함수들은 메서드 호출 실패를 저마다 방어하지만, 쿠키를 막은 브라우저에서는
+ * `window.localStorage` **프로퍼티 접근 자체**가 던진다. 그 한 겹을 여기서 막는다.
+ * 반환값은 매번 같은 객체라 렌더마다 참조가 바뀌지 않는다 (`useTestProgress`의 기본 인자).
+ */
+export function defaultSnapshotStorage(): EnumerableSnapshotStorage {
+  try {
+    return window.localStorage
+  } catch {
+    return NO_STORAGE
+  }
+}
 
 /**
  * 저장되는 스냅샷의 형태.
@@ -108,6 +142,14 @@ export function saveSnapshot(
  * 직후 백그라운드로 갔다가 복귀한 경우다. 이 모듈은 그 상태를 그대로 재구성해 줄 뿐이고,
  * 분석 대기 화면(KAN-14)으로 보낼지는 페이즈를 보는 호출자의 판단이다.
  *
+ * ## 복원하지 못한 스냅샷은 그 자리에서 버린다 (KAN-198)
+ *
+ * 형태가 깨졌든, 버전이 다르든, 재생이 거부됐든 판정 결과는 같다 — 이 스냅샷으로는 진행을
+ * 되살릴 수 없다. 남겨 두면 다음 저장이 덮어쓸 때까지(즉 사용자가 한 문항이라도 더 풀 때까지)
+ * 쓸모없는 기록이 브라우저에 남고, 그 세션을 이어 가지 않으면 영원히 남는다. 버리는 대상이
+ * **이 세션 자기 키**라는 점이 근거다: 키가 세션별로 갈려 있으므로([snapshotKey]) 남의 진행을
+ * 지우는 일이 아니다.
+ *
  * 정의가 손상돼 `createProgressState`가 throw하면 그 예외는 그대로 올린다. 정의는 스냅샷과
  * 달리 호출자가 방금 받아 온 자기 입력이고, 손상된 정의로는 복원이든 새 시작이든 어차피
  * 진행할 수 없다. 여기서 null로 감추면 호출자가 새로 시작하려다 같은 예외를 다시 만난다.
@@ -122,14 +164,20 @@ export function restoreProgress(
 
   // 세션이 만료돼 새 버전으로 다시 시작한 경우. itemId가 우연히 겹치면 남의 진행을
   // 이어받는 꼴이 되므로, 재생을 시도하기 전에 버전부터 대조한다.
-  if (snapshot.testVersion !== definition.testVersion) return null
+  if (snapshot.testVersion !== definition.testVersion) {
+    clearSnapshot(storage, sessionId)
+    return null
+  }
 
   let state = createProgressState(definition)
   for (const itemId of snapshot.submittedItemIds) {
     const next = submitItem(state, itemId)
     // 동일 참조 = 상태 머신이 거부했다는 뜻 (순서 위반·중복·정의에 없는 itemId).
     // 부분 복원은 하지 않는다 — 어디까지가 진짜 진행인지 알 수 없기 때문이다.
-    if (next === state) return null
+    if (next === state) {
+      clearSnapshot(storage, sessionId)
+      return null
+    }
     state = next
   }
   return state
@@ -148,6 +196,47 @@ export function clearSnapshot(storage: SnapshotStorage, sessionId = ''): void {
 }
 
 /**
+ * 이 저장소에 남은 진행 기록을 접두사째 전부 지운다 (KAN-198).
+ *
+ * ## 왜 "전부"인가
+ *
+ * 부르는 자리가 인트로 하나이기 때문이다. 인트로는 어느 응시에도 속하지 않는 화면이고, 거기
+ * 왔다는 것은 앞의 응시가 끝났거나 버려졌다는 뜻이다 — 계측 상관 키를 같은 자리에서 같은
+ * 이유로 버린다 (`analytics/testId.ts`의 `clearTestId`). 세션 id를 하나 지목해 남기려 해도
+ * 남길 것이 없다: 인트로에는 진행 중인 세션이 없고, [시작하기]는 어느 실행에서든 **새** 세션을
+ * 만든다.
+ *
+ * 이 자리가 필요한 이유는 [clearSnapshot]이 세션 id를 아는 경우만 덮기 때문이다. 결과 화면까지
+ * 가지 못하고 끊긴 응시(앱 종료, 탭 닫기)의 키는 아무도 그 id를 다시 들고 오지 않으므로 지울
+ * 사람이 없다 — 응시할 때마다 키가 하나씩 쌓이던 원인이 그것이다.
+ *
+ * 지우기 전에 키를 모두 모으는 이유: `removeItem`은 뒤 인덱스를 당기므로, 훑으면서 지우면
+ * 한 칸씩 건너뛴다.
+ */
+export function sweepSnapshots(storage: EnumerableSnapshotStorage): void {
+  const targets: string[] = []
+  try {
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index)
+      if (key === null) continue
+      if (key === PROGRESS_SNAPSHOT_KEY || key.startsWith(`${PROGRESS_SNAPSHOT_KEY}:`)) {
+        targets.push(key)
+      }
+    }
+  } catch {
+    // 저장소가 막힌 환경. 훑을 수 없으면 지울 것도 없다.
+    return
+  }
+  for (const key of targets) {
+    try {
+      storage.removeItem(key)
+    } catch {
+      // 한 키가 막혀도 나머지는 계속 지운다.
+    }
+  }
+}
+
+/**
  * 저장소에서 스냅샷을 읽어 형태까지 확인한다. 읽을 수 없거나 형태가 어긋나면 null.
  *
  * 여기서 보는 것은 "재생을 시도할 수 있는 형태인가"까지다. 내용이 말이 되는지(순서·존재 여부)는
@@ -162,6 +251,15 @@ function readSnapshot(storage: SnapshotStorage, sessionId: string): ProgressSnap
   }
   if (raw === null) return null
 
+  const snapshot = parseSnapshot(raw)
+  // 재생을 시도할 수조차 없는 값이다. 저장된 게 없는 경우와 달리 지울 대상이 실재하므로
+  // 여기서 버린다 ([restoreProgress] "복원하지 못한 스냅샷은 그 자리에서 버린다").
+  if (snapshot === null) clearSnapshot(storage, sessionId)
+  return snapshot
+}
+
+/** 저장된 문자열을 스냅샷 형태로 확인하며 되돌린다. 저장소를 모르는 순수 함수다 */
+function parseSnapshot(raw: string): ProgressSnapshot | null {
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)

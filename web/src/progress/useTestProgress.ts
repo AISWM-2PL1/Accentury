@@ -13,7 +13,8 @@
  *
  * **`clearSnapshot`을 여기서 부르지 않는다.** 마지막 문항을 제출해도 스냅샷은 남긴다 —
  * 분석 대기 중 백그라운드로 갔다가 복귀하면 `AWAITING_ANALYSIS` 상태로 되살아나야 하기 때문이다.
- * 삭제 시점은 결과 화면(KAN-25)에 진입해 이 진행이 완전히 끝났을 때다.
+ * 삭제는 이 진행이 완전히 끝난 자리, 즉 결과 화면 진입이 한다 (KAN-198로 `App.tsx`에 결선했다.
+ * 끊긴 응시가 남긴 키는 인트로 진입의 `sweepSnapshots`가 걷는다).
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -25,7 +26,12 @@ import {
   type Progress,
   type ProgressState,
 } from './progressMachine'
-import { restoreProgress, saveSnapshot, type SnapshotStorage } from './progressSnapshot'
+import {
+  defaultSnapshotStorage,
+  restoreProgress,
+  saveSnapshot,
+  type SnapshotStorage,
+} from './progressSnapshot'
 import type { TestDefinition, TestItem } from './testDefinition'
 
 /** 화면이 진행을 그리고 움직이는 데 필요한 것 전부 */
@@ -46,33 +52,13 @@ export interface UseTestProgressResult {
   submit: (itemId: string) => boolean
 }
 
-/** 저장소가 아예 없는 환경에서 쓰는 빈 저장소. 진행은 메모리로만 이어진다 */
-const NO_STORAGE: SnapshotStorage = {
-  getItem: () => null,
-  setItem: () => {},
-  removeItem: () => {},
-}
-
-/**
- * 기본 저장소. `progressSnapshot`은 메서드 호출 실패를 방어하지만, 쿠키를 막은 브라우저에서는
- * `window.localStorage` **프로퍼티 접근 자체**가 던진다. 그 한 겹만 여기서 막는다.
- * 반환값은 매번 같은 객체라 렌더마다 참조가 바뀌지 않는다.
- */
-function defaultStorage(): SnapshotStorage {
-  try {
-    return window.localStorage
-  } catch {
-    return NO_STORAGE
-  }
-}
-
 /**
  * @param sessionId 스냅샷을 세션별로 가르는 식별자 (progressSnapshot의 [snapshotKey]).
  *   기본값이 빈 문자열인 것은 KAN-9 세션 클라이언트 결선 전 과도기라서다.
  */
 export function useTestProgress(
   definition: TestDefinition,
-  storage: SnapshotStorage = defaultStorage(),
+  storage: SnapshotStorage = defaultSnapshotStorage(),
   sessionId = '',
 ): UseTestProgressResult {
   // lazy initializer — 마운트당 한 번만 복원을 시도한다. 매 렌더 복원하면 방금 진행한 상태를
