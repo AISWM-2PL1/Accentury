@@ -5,7 +5,7 @@ import { clearTestId } from './analytics/testId'
 import { createFakeCapture, sineChunk, type FakeCapture } from './audio/testing/fakeCapture'
 import { REQUIRED_BRIDGE_VERSION } from './bridge/bridge'
 import { snapshotKey } from './progress/progressSnapshot'
-import { clearWebSession, loadWebSession, saveWebSession } from './session/webSession'
+import { clearWebSession, getWebSessionToken, loadWebSession, saveWebSession } from './session/webSession'
 
 function setSearch(search: string) {
   window.history.replaceState(null, '', `/${search}`)
@@ -1408,6 +1408,7 @@ describe('App — 인트로 진입의 진행 기록 훑기 (KAN-198)', () => {
       sessionId: 's_web',
       sessionToken: 'st_web',
       testVersion: 'gn-2026.08.1',
+      voiceSet: 1,
       expiresAt: '2026-08-26T03:30:00Z',
     })
     const stored = stubLocalStorage()
@@ -1418,6 +1419,29 @@ describe('App — 인트로 진입의 진행 기록 훑기 (KAN-198)', () => {
 
     // 앞으로가기로 문항 화면에 돌아가면 이 스냅샷이 진행을 되살린다
     expect([...stored.keys()]).toEqual([snapshotKey('s_web')])
+  })
+
+  it('세트 없이 저장된 옛 세션의 진행 기록은 지운다 — 되살아날 문항 화면이 없다', () => {
+    setSearch('?c=kko_share')
+    /*
+     * 세트가 계약에 들어오기 전(KAN-205)에 저장된 세션. 토큰은 살아 있어 결과 조회는 되지만
+     * ([getWebSessionToken]), 앞으로가기로 돌아갈 문항 URL에는 voiceSet이 없어 새 번들이
+     * 정의 조회 전에 끊는다 — 이 진행 기록은 어느 화면도 되살리지 못하는 값이다.
+     */
+    saveWebSession({
+      sessionId: 's_old',
+      sessionToken: 'st_old',
+      testVersion: 'gn-2026.08.1',
+      expiresAt: '2026-08-26T03:30:00Z',
+    } as Parameters<typeof saveWebSession>[0])
+    const stored = stubLocalStorage()
+    stored.set(snapshotKey('s_old'), '{}')
+
+    render(<App />)
+
+    expect([...stored.keys()]).toEqual([])
+    // 진행 기록만 걷는다 — 결과 조회 토큰은 그대로다
+    expect(getWebSessionToken()).toBe('st_old')
   })
 
   it('저장된 웹 세션이 없으면 남은 진행 기록을 전부 지운다', () => {
