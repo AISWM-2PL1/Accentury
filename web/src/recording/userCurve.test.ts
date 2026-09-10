@@ -167,6 +167,25 @@ describe('창 길이', () => {
     expect(points[points.length - 1].x - points[0].x).toBeCloseTo(224 / GUIDE_MS, 5)
   })
 
+  it('유성이 하나뿐이고 뒤에 침묵이 길어도 그 점이 창 안에 남는다 (KAN-195 리뷰 P2)', () => {
+    /*
+     * 기침 한 번처럼 유성이 하나뿐인 녹음이 10초 자동 종료로 끝나면, 자르지 않을 때
+     * 창의 오른쪽 끝이 침묵의 끝(10초)에 붙어 그 점이 x<0으로 밀려 사라졌다.
+     */
+    const oneVoiced = frames(
+      Array.from({ length: 313 }, (_, i) => (i === 6 ? CENTER_HZ : null)),
+    )
+    expect(oneVoiced[oneVoiced.length - 1].timestampMs).toBe(9984) // 전제: 10초 자동 종료
+    const { frames: trimmed, windowMs } = reviewWindow(oneVoiced, GUIDE_INTERVAL, GUIDE_COUNT)
+
+    expect(trimmed.length).toBe(1)
+    expect(trimmed[0].timestampMs).toBe(6 * FRAME_MS)
+    expect(windowMs).toBe(GUIDE_MS)
+    // 유성이 하나면 중심을 못 잡아(CENTER_MIN_VOICED_FRAMES 미달) 점은 안 그려지지만,
+    // 창 자체는 그 점을 담고 있어야 한다 — 창 밖으로 밀리면 프레임이 더 와도 못 살린다.
+    expect(trimmed[0].timestampMs).toBeGreaterThanOrEqual(Math.max(0, 6 * FRAME_MS - windowMs))
+  })
+
   it('유성 프레임이 없으면 창은 가이드 길이고 프레임은 원본 그대로다', () => {
     const silence = frames([null, null, null])
     const { frames: kept, windowMs } = reviewWindow(silence, GUIDE_INTERVAL, GUIDE_COUNT)

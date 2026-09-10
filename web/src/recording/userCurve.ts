@@ -211,24 +211,26 @@ export function reviewWindow(
     lastVoicedMs = frame.timestampMs
   }
 
-  // 유성 프레임이 없거나 하나뿐이면 잘라 낼 구간 자체가 없다. 창만 바닥으로 두고 원본을
-  // 그대로 넘긴다 — 그리기가 알아서 빈 결과를 낸다.
-  if (firstVoicedMs === null || lastVoicedMs === null || lastVoicedMs <= firstVoicedMs) {
-    return { frames, windowMs: floorMs }
-  }
+  /*
+   * 유성 프레임이 하나도 없으면 자를 기준이 없다. 창만 바닥으로 두고 원본을 넘긴다 —
+   * 그릴 점이 애초에 없으므로([userCurveDisplayPoints]가 무성 프레임에서 점을 만들지 않는다)
+   * 창을 어떻게 잡든 결과가 같다.
+   */
+  if (firstVoicedMs === null || lastVoicedMs === null) return { frames, windowMs: floorMs }
 
   /*
-   * 발화가 바닥에 못 미쳐도 **자르기는 한다.** 창만 넓히고 뒤쪽 침묵을 남기면 창의 오른쪽
-   * 끝이 그 침묵에 붙고(`max(0, 최신 - 창)`), 10초 자동 종료로 뒤에 몇 초가 남은 녹음에서는
-   * 유성 구간이 통째로 창 왼쪽 밖으로 밀려나 곡선이 사라진다. 자른 뒤에는 마지막 유성이 창의
-   * 오른쪽 끝이 되므로, 짧은 발화는 레인 오른쪽에 자기 몫만큼만 놓인다.
+   * **유성이 하나라도 있으면 반드시 자른다.** 발화가 바닥에 못 미쳐도, 유성이 딱 하나여서
+   * 구간 길이가 0이어도 마찬가지다. 자르지 않고 창만 넓히면 창의 오른쪽 끝이 뒤쪽 침묵에
+   * 붙어(`max(0, 최신 - 창)`), 10초 자동 종료로 뒤에 몇 초가 남은 녹음에서는 유성 구간이
+   * 통째로 창 왼쪽 밖으로 밀려나 곡선이 사라진다 — 기침 한 번처럼 유성이 하나뿐인 녹음이
+   * 정확히 그 경우다. 자른 뒤에는 마지막 유성이 창의 오른쪽 끝이 되므로, 짧은 발화는 레인
+   * 오른쪽에 자기 몫만큼만 놓이고 어떤 입력에서도 x가 [0,1]을 벗어나지 않는다.
    */
-  const spanMs = lastVoicedMs - firstVoicedMs
   const first = firstVoicedMs
   const last = lastVoicedMs
   return {
     frames: frames.filter((frame) => frame.timestampMs >= first && frame.timestampMs <= last),
-    windowMs: Math.max(spanMs, floorMs),
+    windowMs: Math.max(last - first, floorMs),
   }
 }
 

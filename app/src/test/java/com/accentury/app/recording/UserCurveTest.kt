@@ -114,6 +114,24 @@ class UserCurveTest {
     }
 
     @Test
+    fun `유성이 하나뿐이고 뒤에 침묵이 길어도 그 점이 창 안에 남는다 (KAN-195 리뷰 P2)`() {
+        /*
+         * 기침 한 번처럼 유성이 하나뿐인 녹음이 10초 자동 종료로 끝나면, 자르지 않을 때
+         * 창의 오른쪽 끝이 침묵의 끝(10초)에 붙어 그 점이 x<0으로 밀려 사라졌다.
+         */
+        val oneVoiced = List(313) { i -> frame(i * FRAME_MS, if (i == 6) CENTER_HZ else null) }
+        assertEquals("전제: 10초 자동 종료", 9984L, oneVoiced.last().timestampMs)
+        val (trimmed, windowMs) = reviewWindow(oneVoiced, GUIDE_INTERVAL, GUIDE_COUNT)
+
+        assertEquals(1, trimmed.size)
+        assertEquals(6 * FRAME_MS, trimmed.first().timestampMs)
+        assertEquals(GUIDE_MS, windowMs)
+        // 유성이 하나면 중심을 못 잡아(CENTER_MIN_VOICED_FRAMES 미달) 점은 안 그려지지만,
+        // 창 자체는 그 점을 담고 있어야 한다 - 창 밖으로 밀리면 프레임이 더 와도 못 살린다.
+        assertTrue(trimmed.first().timestampMs >= maxOf(0L, 6 * FRAME_MS - windowMs))
+    }
+
+    @Test
     fun `유성 프레임이 없으면 창은 가이드 길이고 프레임은 원본 그대로다`() {
         val silence = frames(null, null, null)
         val (kept, windowMs) = reviewWindow(silence, GUIDE_INTERVAL, GUIDE_COUNT)
