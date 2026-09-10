@@ -114,6 +114,22 @@ class UserCurveTest {
     }
 
     @Test
+    fun `발화가 바닥보다 짧고 뒤 침묵이 길면 곡선이 레인 오른쪽에 붙는다 (KAN-195)`() {
+        /*
+         * `마지막 유성 >= 바닥`이라 windowStart가 0보다 커지는 경로다. 10초 자동 종료로 뒤에
+         * 6초가 남아 있어도 유성 구간은 창 안에 그대로 들어와야 한다.
+         */
+        val lateShort = List(313) { i -> frame(i * FRAME_MS, if (i in 100..115) CENTER_HZ else null) }
+        val (trimmed, windowMs) = reviewWindow(lateShort, GUIDE_INTERVAL, GUIDE_COUNT)
+
+        assertEquals(16, trimmed.size)
+        assertEquals(GUIDE_MS, windowMs) // 발화 480ms < 바닥 1000ms
+        val points = userCurveDisplayPoints(trimmed, windowMs).single()
+        assertEquals(0.52f, points.first().x, 1e-5f) // (3200 - (3680-1000)) / 1000
+        assertEquals(1f, points.last().x, 1e-5f)
+    }
+
+    @Test
     fun `유성이 하나뿐이고 뒤에 침묵이 길어도 그 점이 창 안에 남는다 (KAN-195 리뷰 P2)`() {
         /*
          * 기침 한 번처럼 유성이 하나뿐인 녹음이 10초 자동 종료로 끝나면, 자르지 않을 때
