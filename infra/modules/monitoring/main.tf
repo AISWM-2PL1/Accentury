@@ -2,7 +2,7 @@
 #
 # 목적은 하나다. prod를 무인으로 운영하니 서버가 죽은 것을 사용자보다 먼저 알아야 한다.
 # KAN-38(전체 관측성: 지표 수집, 대시보드, correlation ID 규약)의 최소 선행분만 앞당긴
-# 것이고, KAN-38 본체는 그대로 남는다. 지표를 새로 수집하지 않는다 - AI 지표 2종을 빼면
+# 것이고, KAN-38 본체는 그대로 남는다. 지표를 새로 수집하지 않는다 - AI 호스트 지표 4종을 빼면
 # 전부 AWS가 이미 내보내는 표준 지표다.
 #
 #   필수 (KAN-134 Requirements)
@@ -16,6 +16,8 @@
 #   AI 전용 호스트 (KAN-36)
 #     ai-unhealthy      AI 호스트의 health 프로브 실패 (호스트 타이머가 올리는 커스텀 지표)
 #     ai-circuit-open   backend의 AI 회로가 열렸다 (backend가 Micrometer로 올리는 커스텀 지표)
+#     ai-disk-high      AI 호스트 루트 볼륨 사용률 (B단계, 실모델 이미지 7GB x 2 공존 - 호스트 타이머 지표)
+#     ai-mem-high       AI 호스트 메모리 사용률, 호스트 대비 (B단계, 컨테이너 상한 7GiB 직전 신호 - 호스트 타이머 지표)
 #
 # 전부 ap-northeast-2다. WAF 로그 그룹(KAN-149)만 us-east-1인데 그것은 CLOUDFRONT 스코프
 # 웹 ACL의 제약이고, 여기서 보는 ALB, RDS, ECS 지표는 리소스와 같은 서울 리전에 있다.
@@ -312,6 +314,69 @@ resource "aws_cloudwatch_metric_alarm" "ai_circuit_open" {
   ok_actions    = local.alarm_actions
 
   tags = { Name = "${local.name}-ai-circuit-open" }
+}
+
+# ---- AI 호스트 경보 3, 4: 루트 디스크와 호스트 메모리 사용률 (KAN-36 B단계, 2026-09-10) ----
+
+# 실모델 전환으로 이 호스트의 두 자원이 빠듯해졌다. ai 이미지가 7GB라 reload 중 SHA 태그 2개와 pull 임시
+# 공간이 함께 루트 볼륨(40GiB)에 놓이고, 컨테이너 RSS 최대 6.2GB(KAN-57 bf16)가 8GB 인스턴스에 올라간다.
+# 디스크가 차면 이미지 pull과 임시 오디오 쓰기가 실패하고(배포 롤백, 분석 실패), 메모리가 차면 OOM으로
+# 워커가 죽어 재적재 31초가 반복된다 - 둘 다 health는 UP인 채 조용히 나빠지는 종류라 ai-unhealthy가
+# 못 잡는다. 지표는 health 타이머(ai-host 모듈 ai-health-metric.sh)가 같은 네임스페이스로 1분마다
+# 올린다 - CloudWatch agent를 깔지 않고 이미 있는 경로 하나를 쓴다.
+#
+# 디스크 임계 80%: 정상 reload의 순간 최대치(OS 2.5 + 이미지 7 x 2 + pull 임시 4 = 약 21GB)가 40GiB의
+# 약 51%라 정상 경로는 닿지 않고, 로그 사본이나 임시파일이 새는 상태에는 pull 실패(100%) 전에 걸린다.
+# 3회 연속을 요구하는 것은 reload 중 두 이미지가 공존하는 1~2분을 넘기기 위해서다.
+#
+# treat_missing_data = "notBreaching": 타이머가 값을 못 읽으면 올리지 않고(0은 "여유 있다"라서 덮지
+# 않는다), 호스트 자체가 없는 것은 ai-unhealthy(breaching)가 잡는다 - 같은 사건에 메일을 셋 보내지 않는다.
+resource "aws_cloudwatch_metric_alarm" "ai_disk_high" {
+  alarm_name        = "${local.name}-ai-disk-high"
+  alarm_description = "accentury ${var.env}: AI 호스트의 루트 볼륨 사용률이 ${var.ai_disk_evaluation_periods}분 연속 ${var.ai_disk_threshold}%를 넘었습니다. 다음 배포의 이미지 pull이 실패할 수 있습니다. docker system df와 /var/lib/docker/containers의 로그 사본, 임시 오디오 디렉터리를 확인하세요. (KAN-36)"
+
+  namespace   = var.ai_metric_namespace
+  metric_name = "RootDiskUsedPercent"
+  dimensions  = { env = var.env }
+
+  statistic           = "Maximum"
+  period              = 60
+  evaluation_periods  = var.ai_disk_evaluation_periods
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = var.ai_disk_threshold
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = local.alarm_actions
+  ok_actions    = local.alarm_actions
+
+  tags = { Name = "${local.name}-ai-disk-high" }
+}
+
+# 메모리 임계 90%는 <b>호스트 대비</b>다 (컨테이너 mem_limit 대비가 아니다 - 티켓 결정). 지키려는 것이
+# "호스트 OOM 킬러가 SSM 에이전트나 docker를 고르는" 상황이라 기준도 호스트 메모리다. 컨테이너 상한
+# 7GiB는 호스트 7.6GiB의 92%이므로 이 경보(90%)가 상한보다 먼저 운다 - 컨테이너가 죽기 직전에 메일이
+# 온다. 값은 (total - available) / total 이라 page cache는 사용으로 세지 않는다. 추론 1건이 도는 동안
+# 잠깐 오르는 것은 정상이므로 2회 연속을 요구하고, 임계는 KAN-57 RSS 재실측으로 다시 확정한다
+# (지금 값 6.19GB = 호스트의 81%).
+resource "aws_cloudwatch_metric_alarm" "ai_memory_high" {
+  alarm_name        = "${local.name}-ai-mem-high"
+  alarm_description = "accentury ${var.env}: AI 호스트의 메모리 사용률(호스트 대비)이 ${var.ai_memory_evaluation_periods}분 연속 ${var.ai_memory_threshold}%를 넘었습니다. 컨테이너 상한(7GiB) 직전입니다 - OOM으로 워커가 죽어 재적재가 반복되는지(ai 로그 그룹), RSS가 KAN-57 실측을 넘었는지 확인하세요. (KAN-36)"
+
+  namespace   = var.ai_metric_namespace
+  metric_name = "MemoryUsedPercent"
+  dimensions  = { env = var.env }
+
+  statistic           = "Maximum"
+  period              = 60
+  evaluation_periods  = var.ai_memory_evaluation_periods
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = var.ai_memory_threshold
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = local.alarm_actions
+  ok_actions    = local.alarm_actions
+
+  tags = { Name = "${local.name}-ai-mem-high" }
 }
 
 # ---- KAN-38 경보 3종: 관측성 지표가 실제로 사람을 부르는 자리 ----

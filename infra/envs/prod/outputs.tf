@@ -94,7 +94,7 @@ output "alerts_topic_arn" {
 
 output "alarm_names" {
   value       = module.monitoring.alarm_names
-  description = "생성된 CloudWatch 경보 10종 (KAN-134의 ALB, RDS 3종 + KAN-165의 backend 서비스 2종 + KAN-36의 AI 2종 + KAN-38의 관측성 3종)"
+  description = "생성된 CloudWatch 경보 12종 (KAN-134의 ALB, RDS 3종 + KAN-165의 backend 서비스 2종 + KAN-36의 AI 4종 + KAN-38의 관측성 3종)"
 }
 
 output "dashboard_name" {

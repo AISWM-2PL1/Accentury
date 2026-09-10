@@ -1,5 +1,5 @@
 #!/bin/bash
-# ai 상태 지표 -> CloudWatch 커스텀 지표 (KAN-36 health, KAN-38 임시파일 잔존, KAN-204 단계별 지연).
+# ai 상태 지표 -> CloudWatch 커스텀 지표 (KAN-36 health와 호스트 디스크와 메모리, KAN-38 임시파일 잔존, KAN-204 단계별 지연).
 # systemd 타이머가 1분마다 부른다.
 #
 # AI 호스트는 ALB 뒤가 아니라 대상 그룹 health가 없다. 그래서 호스트가 스스로 /internal/v0/health를
@@ -30,6 +30,28 @@ if [ "$code" = 200 ]; then
 fi
 
 metric_data="MetricName=Healthy,Dimensions=[{Name=env,Value=$ACCENTURY_ENV}],Value=$value,Unit=Count"
+
+# 호스트 디스크와 메모리 사용률 (KAN-36 B단계). 이 호스트는 CloudWatch agent를 깔지 않는다 - 이 타이머가
+# 이미 같은 네임스페이스로 지표를 올리고 있어 경로 하나로 끝난다. 둘 다 health와 무관하게 매분 나간다 -
+# 컨테이너가 죽어 있어도 디스크가 차는 것(이미지 pull 실패의 원인)은 봐야 한다.
+#
+# 디스크는 루트 파일시스템 하나다. ai 이미지(7GB)와 docker 사본 로그, 임시 오디오가 전부 루트 볼륨에 있고
+# 다른 마운트는 없다. df의 Use%는 이미 예약 블록을 뺀 정수 백분율이라 그대로 쓴다.
+#
+# 메모리는 호스트 전체 대비 (total - available) / total 이다. 컨테이너 mem_limit(7GiB) 대비가 아니라 호스트
+# 대비인 이유는 티켓 결정 그대로다 - 경보가 지키려는 것은 "호스트 OOM 킬러가 SSM 에이전트나 docker를
+# 고르는" 상황이고 그 기준은 호스트 메모리다. available(page cache 회수분 포함)을 쓰므로 캐시로 찬 메모리는
+# 사용으로 세지 않는다. 값은 정수로 내림한다.
+root_disk_used=$(df --output=pcent / 2>/dev/null | tail -1 | tr -dc '0-9')
+mem_used=$(awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2} END {if (t > 0) printf "%d", (t - a) * 100 / t}' /proc/meminfo 2>/dev/null)
+# 값을 못 읽었으면 올리지 않는다 - 0은 "여유 있다"라서 조회가 막힌 순간에 경보가 거꾸로 조용해진다
+# (아래 임시파일 지표와 같은 판단). 결측은 경보의 notBreaching이 다룬다.
+if [ -n "$root_disk_used" ]; then
+  metric_data="$metric_data MetricName=RootDiskUsedPercent,Dimensions=[{Name=env,Value=$ACCENTURY_ENV}],Value=$root_disk_used,Unit=Percent"
+fi
+if [ -n "$mem_used" ]; then
+  metric_data="$metric_data MetricName=MemoryUsedPercent,Dimensions=[{Name=env,Value=$ACCENTURY_ENV}],Value=$mem_used,Unit=Percent"
+fi
 
 # JSON에서 이름 하나의 정수를 뽑는다. 이 응답의 값은 전부 정수다 (tempstore.metrics()는
 # 건수와 반올림한 초만 담는다) - jq를 깔지 않으려고 sed 하나로 끝낸다.
@@ -112,4 +134,4 @@ aws cloudwatch put-metric-data \
   --metric-data $metric_data \
   || echo "CloudWatch put-metric-data 실패 (health=$code) - 다음 회차에 재시도" >&2
 
-echo "ai health=$code -> Healthy=$value, tempFiles=${temp_files:-미확인}, tempOldestAge=${temp_oldest_age:-미확인}, tempScanFailures=${temp_scan_failures:-미확인}, stageSeries=$stage_series ($METRIC_NAMESPACE env=$ACCENTURY_ENV)"
+echo "ai health=$code -> Healthy=$value, rootDisk=${root_disk_used:-미확인}%, mem=${mem_used:-미확인}%, tempFiles=${temp_files:-미확인}, tempOldestAge=${temp_oldest_age:-미확인}, tempScanFailures=${temp_scan_failures:-미확인}, stageSeries=$stage_series ($METRIC_NAMESPACE env=$ACCENTURY_ENV)"

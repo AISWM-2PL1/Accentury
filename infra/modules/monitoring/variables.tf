@@ -112,7 +112,7 @@ variable "backend_memory_evaluation_periods" {
 
 variable "ai_metric_namespace" {
   type        = string
-  description = "AI 호스트가 Healthy 지표를 올리는 CloudWatch 네임스페이스 (KAN-36). ai-host 모듈의 metric_namespace와 같아야 한다."
+  description = "AI 호스트가 Healthy, RootDiskUsedPercent, MemoryUsedPercent 등을 올리는 CloudWatch 네임스페이스 (KAN-36). ai-host 모듈의 metric_namespace와 같아야 한다."
   default     = "accentury/ai"
 }
 
@@ -130,6 +130,52 @@ variable "ai_unhealthy_evaluation_periods" {
   validation {
     condition     = var.ai_unhealthy_evaluation_periods >= 1
     error_message = "ai_unhealthy_evaluation_periods는 1 이상이어야 합니다."
+  }
+}
+
+# ---- KAN-36 B단계: AI 호스트 자원 경보의 임계치 ----
+
+variable "ai_disk_threshold" {
+  type        = number
+  description = "AI 호스트 루트 볼륨 사용률(%) 상한 (KAN-36 B단계). 정상 reload의 순간 최대치(이미지 7GB x 2 + pull 임시 공간)가 40GiB의 약 51%라 80이면 정상 경로는 닿지 않고 pull 실패(100%) 전에 사람이 본다."
+  default     = 80
+
+  validation {
+    condition     = var.ai_disk_threshold > 0 && var.ai_disk_threshold <= 100
+    error_message = "ai_disk_threshold는 0 초과 100 이하의 퍼센트여야 합니다."
+  }
+}
+
+variable "ai_disk_evaluation_periods" {
+  type        = number
+  description = "ai-disk-high가 요구하는 연속 위반 분 수. reload 중 두 이미지가 공존하는 1~2분을 넘길 만큼."
+  default     = 3
+
+  validation {
+    condition     = var.ai_disk_evaluation_periods >= 1
+    error_message = "ai_disk_evaluation_periods는 1 이상이어야 합니다."
+  }
+}
+
+variable "ai_memory_threshold" {
+  type        = number
+  description = "AI 호스트 메모리 사용률(%, 호스트 대비) 상한 (KAN-36 B단계). 컨테이너 mem_limit 7GiB가 호스트 7.6GiB의 92%라 90이면 컨테이너가 상한에 닿기 전에 운다. KAN-57 RSS 재실측(지금 6.19GB = 81%)으로 재확정한다."
+  default     = 90
+
+  validation {
+    condition     = var.ai_memory_threshold > 0 && var.ai_memory_threshold <= 100
+    error_message = "ai_memory_threshold는 0 초과 100 이하의 퍼센트여야 합니다."
+  }
+}
+
+variable "ai_memory_evaluation_periods" {
+  type        = number
+  description = "ai-mem-high가 요구하는 연속 위반 분 수. 추론 1건(약 11초)이 도는 동안 잠깐 오르는 것은 넘기고, 워커가 재적재를 반복하는 상태를 보려는 값이다."
+  default     = 2
+
+  validation {
+    condition     = var.ai_memory_evaluation_periods >= 1
+    error_message = "ai_memory_evaluation_periods는 1 이상이어야 합니다."
   }
 }
 
