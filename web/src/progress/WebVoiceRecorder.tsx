@@ -34,7 +34,7 @@ import { CurveCard } from '../recording/CurveCard'
 import { guideCurveDisplayPoints } from '../recording/guideCurve'
 import {
   fillShortGaps,
-  reviewWindowMs,
+  reviewWindow,
   userCurveDisplayPoints,
   userCurveWindowMs,
 } from '../recording/userCurve'
@@ -197,13 +197,16 @@ export function WebVoiceRecorder({
   )
 
   /*
-   * Review에서만 짧은 무성 구멍을 메우고 창을 녹음 전체 길이로 늘린다. 녹음 중에는 곡선이
-   * 인과적이어야 해서(뒤 프레임을 보면 이미 그린 과거가 다시 그려진다) 구멍을 앞 값으로
+   * Review에서만 짧은 무성 구멍을 메우고 창을 발화 구간에 맞춘다 (`reviewWindow`). 녹음 중에는
+   * 곡선이 인과적이어야 해서(뒤 프레임을 보면 이미 그린 과거가 다시 그려진다) 구멍을 앞 값으로
    * 유지하는 수밖에 없고, 창도 최신이 오른쪽 끝에 붙도록 미끄러져야 한다 (`pitch-curve.md` §4).
    */
   const reviewing = state.phase === 'review'
-  const curveFrames = reviewing ? fillShortGaps(framesRef.current) : framesRef.current
-  const windowMs = reviewing ? reviewWindowMs(curveFrames, liveWindowMs) : liveWindowMs
+  const review = reviewing
+    ? reviewWindow(fillShortGaps(framesRef.current), item.guideF0.frameIntervalMs, item.guideF0.values.length)
+    : null
+  const curveFrames = review?.frames ?? framesRef.current
+  const windowMs = review?.windowMs ?? liveWindowMs
   const curveCard = (
     <CurveCard
       guidePoints={guidePoints}

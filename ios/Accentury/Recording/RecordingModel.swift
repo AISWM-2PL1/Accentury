@@ -101,8 +101,8 @@ final class RecordingModel: ObservableObject {
     }
 
     /// 지금이 검토 화면인가. 사용자 레인의 **창 길이 선택**이 이 값 하나로 갈린다 —
-    /// 녹음 중에는 미끄러지는 라이브 창, 끝난 뒤에는 발화 전체가 들어오는 창이다
-    /// (``AccenturyCore/reviewWindowMs(_:liveWindowMs:)``).
+    /// 녹음 중에는 미끄러지는 라이브 창, 끝난 뒤에는 발화 구간에 맞춘 창이다
+    /// (``AccenturyCore/reviewWindow(_:frameIntervalMs:valueCount:)``).
     var isReviewing: Bool {
         if case .review = uiState { return true }
         return false

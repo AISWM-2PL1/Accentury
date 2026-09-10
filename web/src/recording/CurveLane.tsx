@@ -187,7 +187,7 @@ export function CurveLane({ label, ariaLabel, segments, variant }: CurveLaneProp
 
 /**
  * 곡선 아래를 닫은 도형. 곡선 끝에서 바닥으로 내려가고, 바닥을 따라 시작점 아래까지 간 뒤
- * 닫는다 — 선분이 레인 폭 전체를 쓰지 않아도(녹음이 짧으면 왼쪽만 차 있다) 채운 면이
+ * 닫는다 — 선분이 레인 폭 전체를 쓰지 않아도(녹음 중이거나, 발화가 가이드보다 짧다) 채운 면이
  * 곡선 밑에만 남는다.
  */
 function fillPath(points: CurvePoint[], width: number): string {

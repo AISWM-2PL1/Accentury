@@ -7,8 +7,8 @@ import Foundation
 /// 부분이 흔들리지 않는 규칙이 필요하다. 아래 결정들이 그 요구에서 나왔다.
 ///
 /// - **사용자 창은 가이드 길이의 ``userCurveWindowScale``배이되 녹음 상한을 넘지 않는다**
-///   (``userCurveWindowMs(frameIntervalMs:valueCount:maxDurationMs:)``, Review는 녹음 전체 길이
-///   ``reviewWindowMs(_:liveWindowMs:)``). 시드 가이드보다 실제 발화가 길어서, 창을 가이드에
+///   (``userCurveWindowMs(frameIntervalMs:valueCount:maxDurationMs:)``, Review는 발화 구간에 맞춘
+///   ``reviewWindow(_:frameIntervalMs:valueCount:)``). 시드 가이드보다 실제 발화가 길어서, 창을 가이드에
 ///   맞춰 놓으면 발화 앞부분이 창 밖으로 밀린다. 녹음이 창 길이를 넘어가면 창이 미끄러져 최신
 ///   프레임이 항상 오른쪽 끝에 있게 하고, 밀린 프레임은 버린다. 상한을 두는 이유는
 ///   ``userCurveWindowMs(frameIntervalMs:valueCount:maxDurationMs:)``에 적었다.
@@ -154,21 +154,86 @@ public func userCurveWindowMs(frameIntervalMs: Int?, valueCount: Int?, maxDurati
     return min(windowMs, maxDurationMs)
 }
 
-/// 녹음이 끝난 Review 화면이 쓸 창 길이. 라이브 창(``userCurveWindowMs(frameIntervalMs:valueCount:maxDurationMs:)``)과
-/// "녹음 전체 길이" 중 긴 쪽이다. 프레임이 없으면 라이브 창을 그대로 쓴다.
+/// ``reviewWindow(_:frameIntervalMs:valueCount:)``가 정한 "무엇을 얼마나 넓게 보여줄 것인가" 한 벌
+public struct ReviewWindow: Equatable, Sendable {
+    /// 그릴 프레임. 발화가 있으면 유성 구간만 남긴 목록이다
+    public let frames: [RecordingEngine.PitchFrame]
+    /// 그 프레임을 담을 창 길이
+    public let windowMs: Int64
+
+    public init(frames: [RecordingEngine.PitchFrame], windowMs: Int64) {
+        self.frames = frames
+        self.windowMs = windowMs
+    }
+}
+
+/// 녹음이 끝난 Review 화면이 보여줄 구간과 창 (KAN-195).
+///
+/// 둘을 한 함수가 정하는 이유는 **서로 맞아야만 뜻이 통하기 때문**이다. 창의 왼쪽 끝은
+/// ``userCurveDisplayPoints(_:windowMs:centerHz:)``가 `max(0, 최신 프레임 - 창)`으로 유도하므로,
+/// 프레임을 어디까지 남겼는지와 창을 얼마로 잡았는지가 어긋나면 곡선이 엉뚱한 자리에 놓인다.
+/// 따로 두면 두 함수가 각자 늙는다.
+///
+/// ## 녹음 중과 규칙이 다른 이유
 ///
 /// 녹음 중에는 창이 미끄러져야 한다 - 지금 내 목소리가 오른쪽 끝에 붙어 있어야 방금 낸 소리와
-/// 화면이 같이 움직인다. 그런데 녹음이 끝나면 볼 대상이 "방금 한 발화 전체"로 바뀐다. 라이브 창을
-/// 그대로 두면 창 길이를 넘긴 발화는 마지막 구간만 남고 앞부분이 잘려 나가, 정작 다시 볼 수 있게
-/// 된 시점에 앞부분을 못 본다.
+/// 화면이 같이 움직인다. 녹음이 끝나면 볼 대상이 "방금 한 발화 전체"로 바뀐다.
 ///
-/// 창을 마지막 프레임 시각까지 늘리면 ``userCurveDisplayPoints(_:windowMs:centerHz:)``의
-/// `windowStartMs = max(0, newest - window)`가 0이 되어 처음부터 끝까지 그려진다. 한 프레임 간격
-/// (``frameIntervalMs``)을 더 얹는 건 마지막 점이 x=1인 오른쪽 모서리에 딱 붙지 않게 하기
-/// 위해서다 - 그 프레임도 자기 몫의 폭을 차지한다.
-public func reviewWindowMs(_ frames: [RecordingEngine.PitchFrame], liveWindowMs: Int64) -> Int64 {
-    guard let lastMs = frames.map({ $0.timestampMs }).max() else { return liveWindowMs }
-    return max(liveWindowMs, lastMs + Int64(frameIntervalMs.rounded()))
+/// ## 발화 구간에 맞춘다 (2026-09-10 결정)
+///
+/// 종전에는 라이브 창(가이드의 2배)을 바닥으로 깔아, 정상적으로 다 읽어도 레인의 30~40%가
+/// 빈 채로 남았다 - 가이드 4.38초 문항을 5.7초에 읽으면 창이 8.76초라 곡선이 왼쪽 62%만
+/// 차지했다. 앞뒤 침묵(보통 0.3~0.6초)까지 그 안에 들어가 곡선이 레인 한가운데 떠 있었다.
+///
+/// 그래서 **첫 유성 프레임부터 마지막 유성 프레임까지만 남기고 창을 그 길이로 잡는다.**
+/// x가 0에서 1까지 꽉 찬다 - 가이드 레인이 `x = i / lastIndex`로 이미 하고 있는 것과 같은
+/// 규칙이다 (``guideCurveDisplayPoints(_:)``). 두 레인이 같은 시각을 가리키지 않는 것은 이미
+/// 정해진 성질이고 (2026-08-25, `pitch-curve.md` §4 "가이드 레인은 별도 시간축이다"), 비교
+/// 대상은 모양이므로 양쪽 다 폭을 꽉 쓰는 편이 견주기 좋다.
+///
+/// ## 바닥은 가이드 길이다
+///
+/// 무조건 맞추지는 않는다. 40음절 문장에서 세 음절만 웅얼거리고 끝낸 녹음까지 레인을 꽉
+/// 채우면, 위 가이드 레인과 나란히 놓였을 때 비슷한 분량을 말한 것처럼 보인다. 그래서 발화가
+/// 가이드보다 짧으면 창을 가이드 길이로 두고 곡선이 그만큼만 차지하게 남긴다 - 덜 말했다는
+/// 사실이 화면에 남는다. 바닥을 라이브 창(가이드의 2배)에서 가이드 길이로 낮춘 것이 이번
+/// 변경이고, 그 사이 구간이 정상 낭독이 전부 들어오는 자리다.
+///
+/// - Parameters:
+///   - frames: 시각 순 프레임. Review는 ``fillShortGaps(_:maxGapMs:)``를 거친 목록을 넘긴다.
+///   - frameIntervalMs: 가이드의 프레임 간격. 바닥을 정하는 데만 쓴다.
+///   - valueCount: 가이드 값 개수. 가이드를 쓸 수 없으면 ``fallbackGuideMs``가 바닥이다.
+public func reviewWindow(
+    _ frames: [RecordingEngine.PitchFrame],
+    frameIntervalMs: Int?,
+    valueCount: Int?
+) -> ReviewWindow {
+    let duration = guideDurationMs(frameIntervalMs: frameIntervalMs, valueCount: valueCount)
+    let floorMs = duration > 0 ? duration : fallbackGuideMs
+
+    var firstVoicedMs: Int64?
+    var lastVoicedMs: Int64?
+    for frame in frames where frame.voicedHz != nil {
+        if firstVoicedMs == nil { firstVoicedMs = frame.timestampMs }
+        lastVoicedMs = frame.timestampMs
+    }
+
+    // 유성 프레임이 없거나 하나뿐이면 잘라 낼 구간 자체가 없다. 창만 바닥으로 두고 원본을
+    // 그대로 넘긴다 - 그리기가 알아서 빈 결과를 낸다.
+    guard let first = firstVoicedMs, let last = lastVoicedMs, last > first else {
+        return ReviewWindow(frames: frames, windowMs: floorMs)
+    }
+
+    /*
+     * 발화가 바닥에 못 미쳐도 **자르기는 한다.** 창만 넓히고 뒤쪽 침묵을 남기면 창의 오른쪽
+     * 끝이 그 침묵에 붙고(`max(0, 최신 - 창)`), 10초 자동 종료로 뒤에 몇 초가 남은 녹음에서는
+     * 유성 구간이 통째로 창 왼쪽 밖으로 밀려나 곡선이 사라진다. 자른 뒤에는 마지막 유성이 창의
+     * 오른쪽 끝이 되므로, 짧은 발화는 레인 오른쪽에 자기 몫만큼만 놓인다.
+     */
+    return ReviewWindow(
+        frames: frames.filter { $0.timestampMs >= first && $0.timestampMs <= last },
+        windowMs: max(last - first, floorMs)
+    )
 }
 
 /// 지금까지 쌓인 프레임을 표시 좌표로 바꾼다. 반환은 **선분 목록**이다 - 긴 무성 구간에서
