@@ -368,6 +368,14 @@ describe('억양 곡선 (KAN-56 Stage 5)', () => {
   const commandCount = (name: string) =>
     (lanePath(name)?.getAttribute('d') ?? '').split(/(?=[MLQ] )/).filter(Boolean).length
 
+  /**
+   * 레인의 **선** path. `lanePath`가 집는 첫 path는 곡선 아래를 닫은 채움 도형이라
+   * (`CurveLane.fillPath`) 좌표 끝이 시작점으로 되돌아간다 — 곡선의 오른쪽 끝을 재려면
+   * `stroke`가 색을 가진 쪽을 봐야 한다.
+   */
+  const strokePath = (name: string) =>
+    [...lane(name).querySelectorAll('path')].find((p) => p.getAttribute('stroke') !== 'none')!
+
   it('가이드 레인은 문항 정의의 곡선을 그린다', () => {
     renderRecorder()
 
@@ -442,6 +450,36 @@ describe('억양 곡선 (KAN-56 Stage 5)', () => {
     await act(async () => {})
 
     expect(commandCount('내 억양 곡선')).toBeGreaterThan(live)
+  })
+
+  it('라이브 창이 이 문항의 녹음 상한에서 잘린다 - 클램프 배선 (KAN-195)', async () => {
+    /*
+     * `userCurve.test.ts`는 클램프 **계산**을 덮지만, 화면이 그 계산에 상한을 실제로 넘기는지는
+     * 못 본다 — 상한 인자를 0이나 엉뚱한 상수로 바꿔도 순수 함수 테스트는 전부 통과한다.
+     * 그래서 여기서는 **렌더된 곡선의 x 좌표**로 창 길이를 되짚는다.
+     *
+     * 상한을 10초가 아닌 1초로 주는 것이 이 검사의 핵심이다. 화면이 `item.maxDurationMs`를
+     * 쓰지 않고 10초를 박아 두면 창이 2초(가이드 1초 × 2)로 남아 x가 절반으로 줄어든다.
+     *
+     *   상한 1초 + 클램프 → 창 1000ms → 마지막 점 x ≈ 0.9 → 288px
+     *   클램프를 지우거나 상한을 안 쓰면 → 창 2000ms → x ≈ 0.45 → 144px
+     *
+     * 레인 폭은 jsdom에서 `CurveLane`의 폴백 320px다.
+     */
+    const { capture } = renderRecorder(okUpload(), voiceItem({ maxDurationMs: 1_000 }))
+
+    click('녹음')
+    await act(async () => {})
+    await act(async () => {
+      // 상한(1초)에 닿기 직전까지만 흘린다 - 닿으면 자동 종료돼 Review 창 규칙으로 넘어간다
+      capture.emit(sineChunk(900, { sampleRate: capture.sampleRate, frequency: 220 }))
+    })
+
+    const d = strokePath('내 억양 곡선').getAttribute('d')!
+    const numbers = d.match(/-?\d+(\.\d+)?/g)!.map(Number)
+    const lastX = numbers[numbers.length - 2] // 마지막 명령은 `L x y`라 뒤에서 둘째가 x다
+    expect(lastX).toBeGreaterThan(200)
+    expect(lastX).toBeLessThanOrEqual(320)
   })
 
   it('[재녹음]은 앞 녹음의 곡선을 지운다', async () => {
