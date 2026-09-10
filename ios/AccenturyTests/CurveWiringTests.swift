@@ -58,7 +58,11 @@ final class CurveWiringTests: XCTestCase {
         XCTAssertEqual(review.pitchFrames.map(\.timestampMs), frames.map(\.timestampMs))
 
         // Review 창은 녹음 전체가 들어오도록 라이브 창보다 짧지 않다.
-        let liveWindowMs = userCurveWindowMs(frameIntervalMs: 10, valueCount: 120)
+        let liveWindowMs = userCurveWindowMs(
+            frameIntervalMs: 10,
+            valueCount: 120,
+            maxDurationMs: RecordingEngine.maxDurationMs
+        )
         XCTAssertGreaterThanOrEqual(reviewWindowMs(frames, liveWindowMs: liveWindowMs), liveWindowMs)
     }
 

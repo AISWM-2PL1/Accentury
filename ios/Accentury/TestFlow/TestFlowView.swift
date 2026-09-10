@@ -673,7 +673,7 @@ private struct ShareSheet: UIViewControllerRepresentable {
 /// 값이 아니라 배선과 렌더를 보는 데이터이므로 실제 발화에서 뽑을 이유가 없다.
 ///
 /// 1.2초(10ms × 120)는 시드 문항의 길이 범위(0.9~1.2초) 위쪽이다. 사용자 창은 그 2배인
-/// 2.4초가 되어(``AccenturyCore/userCurveWindowMs(frameIntervalMs:valueCount:)``) 가짜 마이크
+/// 2.4초가 되어(``AccenturyCore/userCurveWindowMs(frameIntervalMs:valueCount:maxDurationMs:)``) 가짜 마이크
 /// WAV 2.5초가 거의 그대로 들어온다.
 private var debugGuideF0: GuideF0 {
     let count = 120

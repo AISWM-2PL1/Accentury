@@ -6,10 +6,12 @@ import Foundation
 /// 아니라 "지금까지 들어온 만큼"이라는 것 - 매 청크마다 다시 불리므로, 프레임이 늘어도 이미 그린
 /// 부분이 흔들리지 않는 규칙이 필요하다. 아래 결정들이 그 요구에서 나왔다.
 ///
-/// - **사용자 창은 가이드 길이의 ``userCurveWindowScale``배다**(``userCurveWindowMs(frameIntervalMs:valueCount:)``,
-///   Review는 녹음 전체 길이 ``reviewWindowMs(_:liveWindowMs:)``). 시드 가이드보다 실제 발화가
-///   길어서, 창을 가이드에 맞춰 놓으면 발화 앞부분이 창 밖으로 밀린다. 녹음이 창 길이를 넘어가면
-///   창이 미끄러져 최신 프레임이 항상 오른쪽 끝에 있게 하고, 밀린 프레임은 버린다.
+/// - **사용자 창은 가이드 길이의 ``userCurveWindowScale``배이되 녹음 상한을 넘지 않는다**
+///   (``userCurveWindowMs(frameIntervalMs:valueCount:maxDurationMs:)``, Review는 녹음 전체 길이
+///   ``reviewWindowMs(_:liveWindowMs:)``). 시드 가이드보다 실제 발화가 길어서, 창을 가이드에
+///   맞춰 놓으면 발화 앞부분이 창 밖으로 밀린다. 녹음이 창 길이를 넘어가면 창이 미끄러져 최신
+///   프레임이 항상 오른쪽 끝에 있게 하고, 밀린 프레임은 버린다. 상한을 두는 이유는
+///   ``userCurveWindowMs(frameIntervalMs:valueCount:maxDurationMs:)``에 적었다.
 /// - **가이드 레인은 별도 시간축이다** (2026-08-25 결정). 가이드는 사용자 창이 얼마든 자기
 ///   길이로 레인 폭 전체를 쓴다 - KAN-104의 원래 모양이다. 한때 가이드를 사용자 창에 맞춰
 ///   축소해 두 레인의 같은 x가 같은 시각이 되게 했지만(KAN-104/AC4), 발화가 길수록 가이드가
@@ -119,17 +121,40 @@ public func guideDurationMs(frameIntervalMs: Int?, valueCount: Int?) -> Int64 {
     return Int64(frameIntervalMs) * Int64(valueCount - 1)
 }
 
-/// 사용자 레인 한 폭이 담을 시간. 가이드 길이의 ``userCurveWindowScale``배다.
+/// 사용자 레인 한 폭이 담을 시간. 가이드 길이의 ``userCurveWindowScale``배이되
+/// `maxDurationMs`를 넘지 않는다.
 ///
 /// 가이드가 없거나(정의에 guideF0가 없음) 길이를 계산할 수 없으면 ``fallbackGuideMs``를
 /// 가이드 길이로 놓고 같은 배율을 곱한다.
-public func userCurveWindowMs(frameIntervalMs: Int?, valueCount: Int?) -> Int64 {
+///
+/// ## 왜 녹음 상한으로 자르나 (KAN-195)
+///
+/// 배율 2배는 "시드 가이드 한 문항 0.9~1.2초"를 전제로 잡은 값이다. 정본 발행본
+/// `gn-2026.09.1`의 가이드는 3.18~5.98초라, 그대로 곱하면 창이 최대 11.96초가 되는데
+/// **녹음은 `maxDurationMs`(10초)에서 자동 종료된다**. 그러면 창의 오른쪽 끝 2초는 어떤
+/// 녹음으로도 닿을 수 없는 자리가 되고, 사용자 레인은 아무리 길게 말해도 83%까지만 찬다 -
+/// 곡선이 레인 중간에서 끊긴 것처럼 보인다. 145문항 중 29개가 이 구간이다.
+///
+/// 배율을 낮추지 않고 상한으로 자르는 쪽을 택했다. 배율을 1.6으로 낮추면 상한에 닿지 않는
+/// 나머지 116문항의 창까지 20% 좁아져, 가이드보다 느리게 읽은 발화의 앞부분이 새로 잘린다.
+/// 자르는 쪽은 실제로 넘치는 문항에서만 값이 달라진다.
+///
+/// 상한을 이 파일의 상수로 두지 않고 인자로 받는 이유는 그 값의 주인이 여기가 아니기
+/// 때문이다. 앱은 ``RecordingEngine/maxDurationMs``를, 웹은 문항 정의의 `maxDurationMs`를
+/// 쥐고 있다 - 여기에 10초를 적어 두면 서버가 상한을 올리는 날 세 클라이언트에 낡은 숫자가
+/// 하나씩 남는다.
+///
+/// - Parameter maxDurationMs: 이 문항의 녹음 상한. 0 이하면 자르지 않는다 - 상한을 알 수
+///   없다고 창을 0으로 만들면 레인이 통째로 사라진다.
+public func userCurveWindowMs(frameIntervalMs: Int?, valueCount: Int?, maxDurationMs: Int64) -> Int64 {
     let duration = guideDurationMs(frameIntervalMs: frameIntervalMs, valueCount: valueCount)
     let guideMs = duration > 0 ? duration : fallbackGuideMs
-    return Int64((Double(guideMs) * userCurveWindowScale).rounded())
+    let windowMs = Int64((Double(guideMs) * userCurveWindowScale).rounded())
+    guard maxDurationMs > 0 else { return windowMs }
+    return min(windowMs, maxDurationMs)
 }
 
-/// 녹음이 끝난 Review 화면이 쓸 창 길이. 라이브 창(``userCurveWindowMs(frameIntervalMs:valueCount:)``)과
+/// 녹음이 끝난 Review 화면이 쓸 창 길이. 라이브 창(``userCurveWindowMs(frameIntervalMs:valueCount:maxDurationMs:)``)과
 /// "녹음 전체 길이" 중 긴 쪽이다. 프레임이 없으면 라이브 창을 그대로 쓴다.
 ///
 /// 녹음 중에는 창이 미끄러져야 한다 - 지금 내 목소리가 오른쪽 끝에 붙어 있어야 방금 낸 소리와
@@ -150,7 +175,7 @@ public func reviewWindowMs(_ frames: [RecordingEngine.PitchFrame], liveWindowMs:
 /// 곡선이 끊기므로 폴리라인 하나로는 표현할 수 없다. 빈 선분은 만들지 않고, 선분 하나가
 /// 점 1개일 수도 있다(그 시각에 점만 찍는다).
 ///
-/// `frames`는 시각 순이고, `windowMs`는 ``userCurveWindowMs(frameIntervalMs:valueCount:)``가 준 값이다.
+/// `frames`는 시각 순이고, `windowMs`는 ``userCurveWindowMs(frameIntervalMs:valueCount:maxDurationMs:)``가 준 값이다.
 ///
 /// `centerHz`를 주면 그걸 y축 중심으로 쓰고(목소리 점검 화면이 미리 잰 값을 넘긴다),
 /// 없으면 ``userCurveCenterHz(_:)``로 이 녹음에서 직접 잡는다. **둘 다 없으면 빈 결과다** -

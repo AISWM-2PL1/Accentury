@@ -39,8 +39,8 @@ class UserCurveTest {
 
     @Test
     fun `창 길이는 가이드 길이의 두 배다`() {
-        assertEquals(2000L, userCurveWindowMs(frameIntervalMs = 10, valueCount = 101))
-        assertEquals(640L, userCurveWindowMs(frameIntervalMs = 32, valueCount = 11))
+        assertEquals(2000L, userCurveWindowMs(frameIntervalMs = 10, valueCount = 101, maxDurationMs = MAX_MS))
+        assertEquals(640L, userCurveWindowMs(frameIntervalMs = 32, valueCount = 11, maxDurationMs = MAX_MS))
     }
 
     @Test
@@ -49,16 +49,32 @@ class UserCurveTest {
         // 폴백(1000ms x 2 = 2000ms)과 확실히 갈리는 값이라, 창이 주저앉으면 이 수가 안 나온다.
         val guide = GuideF0Fixture.REAL
         assertEquals(3824L, guideDurationMs(guide.frameIntervalMs, guide.values.size))
-        assertEquals(7648L, userCurveWindowMs(guide.frameIntervalMs, guide.values.size))
+        assertEquals(7648L, userCurveWindowMs(guide.frameIntervalMs, guide.values.size, MAX_MS))
+    }
+
+    @Test
+    fun `두 배가 녹음 상한을 넘으면 상한에서 자른다 (KAN-195)`() {
+        // 가이드 5.98초 = 발행본 최장 문항(v63). 두 배면 11.96초라 10초 상한을 넘는다.
+        assertEquals(MAX_MS, userCurveWindowMs(frameIntervalMs = 20, valueCount = 300, maxDurationMs = MAX_MS))
+        // 상한과 정확히 같은 창은 자를 것이 없다.
+        assertEquals(MAX_MS, userCurveWindowMs(frameIntervalMs = 10, valueCount = 501, maxDurationMs = MAX_MS))
+        // 상한에 못 미치는 창은 상한이 있어도 그대로다.
+        assertEquals(9980L, userCurveWindowMs(frameIntervalMs = 10, valueCount = 500, maxDurationMs = MAX_MS))
+    }
+
+    @Test
+    fun `상한을 알 수 없으면 자르지 않는다 - 레인이 사라지는 것보다 넘치는 편이 낫다`() {
+        assertEquals(11960L, userCurveWindowMs(frameIntervalMs = 20, valueCount = 300, maxDurationMs = 0L))
+        assertEquals(11960L, userCurveWindowMs(frameIntervalMs = 20, valueCount = 300, maxDurationMs = -1L))
     }
 
     @Test
     fun `가이드를 쓸 수 없으면 창 길이는 폴백 1초의 두 배다`() {
-        assertEquals(2000L, userCurveWindowMs(frameIntervalMs = null, valueCount = null))
-        assertEquals(2000L, userCurveWindowMs(frameIntervalMs = 10, valueCount = 1))
-        assertEquals(2000L, userCurveWindowMs(frameIntervalMs = 10, valueCount = 0))
-        assertEquals(2000L, userCurveWindowMs(frameIntervalMs = 0, valueCount = 101))
-        assertEquals(2000L, userCurveWindowMs(frameIntervalMs = -5, valueCount = 101))
+        assertEquals(2000L, userCurveWindowMs(frameIntervalMs = null, valueCount = null, maxDurationMs = MAX_MS))
+        assertEquals(2000L, userCurveWindowMs(frameIntervalMs = 10, valueCount = 1, maxDurationMs = MAX_MS))
+        assertEquals(2000L, userCurveWindowMs(frameIntervalMs = 10, valueCount = 0, maxDurationMs = MAX_MS))
+        assertEquals(2000L, userCurveWindowMs(frameIntervalMs = 0, valueCount = 101, maxDurationMs = MAX_MS))
+        assertEquals(2000L, userCurveWindowMs(frameIntervalMs = -5, valueCount = 101, maxDurationMs = MAX_MS))
     }
 
     @Test
@@ -428,6 +444,12 @@ class UserCurveTest {
 
     private companion object {
         const val FRAME_MS = 32L
+
+        /**
+         * 창 길이 검사가 쓰는 녹음 상한. 실제로 녹음을 끊는 값과 같아야 검사가 화면과 같은
+         * 것을 본다 (KAN-195). 이 값보다 짧은 창은 상한과 무관하게 그대로다.
+         */
+        const val MAX_MS = RecordingEngine.MAX_DURATION_MS
 
         /**
          * 앞뒤 가장자리가 무성이고, 32ms(200Hz)와 224ms(800Hz) 사이에 192ms짜리 구멍이 있다.
