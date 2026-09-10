@@ -89,8 +89,14 @@ function violations(
   return found
 }
 
+/**
+ * VOICE 문항의 녹음 상한. 정의 JSON에는 없고 서버가 응답에 붙이는 고정값이라
+ * (`TestDefinition.VOICE_MAX_DURATION_MS`) 이 검사도 같은 값을 놓고 본다.
+ */
+const VOICE_MAX_DURATION_MS = 10_000
+
 /** 가이드를 쓸 수 없을 때의 창 길이. 어느 문항도 여기로 떨어지면 안 된다 */
-const FALLBACK_WINDOW_MS = userCurveWindowMs(null, null)
+const FALLBACK_WINDOW_MS = userCurveWindowMs(null, null, VOICE_MAX_DURATION_MS)
 
 describe('발행본 gn-2026.09.1 가이드 곡선 전수 검사 (KAN-194)', () => {
   it('음성 문항이 145개다', () => {
@@ -121,12 +127,44 @@ describe('발행본 gn-2026.09.1 가이드 곡선 전수 검사 (KAN-194)', () =
     expect(
       violations((item) => {
         const { frameIntervalMs, values } = item.guideF0
-        const actual = userCurveWindowMs(frameIntervalMs, values.length)
-        const expected = USER_CURVE_WINDOW_SCALE * frameIntervalMs * (values.length - 1)
+        const actual = userCurveWindowMs(frameIntervalMs, values.length, VOICE_MAX_DURATION_MS)
+        const doubled = USER_CURVE_WINDOW_SCALE * frameIntervalMs * (values.length - 1)
+        const expected = Math.min(doubled, VOICE_MAX_DURATION_MS)
         if (actual === expected && actual !== FALLBACK_WINDOW_MS) return null
         return { windowMs: actual, expectedWindowMs: expected, fallbackMs: FALLBACK_WINDOW_MS }
       }),
     ).toEqual([])
+  })
+
+  it('전 문항의 사용자 창이 녹음 상한을 넘지 않는다 (KAN-195)', () => {
+    // 상한을 넘는 창은 녹음으로 닿을 수 없는 오른쪽 여백이 되어 레인이 끝까지 차지 않는다.
+    expect(
+      violations((item) => {
+        const { frameIntervalMs, values } = item.guideF0
+        const windowMs = userCurveWindowMs(frameIntervalMs, values.length, VOICE_MAX_DURATION_MS)
+        return windowMs <= VOICE_MAX_DURATION_MS ? null : { windowMs, maxDurationMs: VOICE_MAX_DURATION_MS }
+      }),
+    ).toEqual([])
+  })
+
+  it('상한이 실제로 물리는 문항이 29개다 - 자르기가 죽은 코드가 아니다 (KAN-195)', () => {
+    /*
+     * 앞 검사는 자르기를 아예 지워도 통과할 수 있다. 발행본 가이드가 3.18~5.98초라 두 배가
+     * 6.36~11.96초이고, 그중 5초를 넘는 29문항만 상한에 닿는다 - 그 수가 유지되는지 함께
+     * 본다. 발행본이 바뀌어 이 수가 달라지면 창 규칙을 다시 볼 자리라는 신호다.
+     */
+    const clamped = voiceItems.filter((item) => {
+      const { frameIntervalMs, values } = item.guideF0
+      return USER_CURVE_WINDOW_SCALE * frameIntervalMs * (values.length - 1) > VOICE_MAX_DURATION_MS
+    })
+    expect(clamped.length).toBe(29)
+    expect(
+      clamped.every(
+        (item) =>
+          userCurveWindowMs(item.guideF0.frameIntervalMs, item.guideF0.values.length, VOICE_MAX_DURATION_MS) ===
+          VOICE_MAX_DURATION_MS,
+      ),
+    ).toBe(true)
   })
 
   it('단위는 semitone이고 허용 밴드는 없다 - KAN-17 1안은 중앙선만 낸다', () => {

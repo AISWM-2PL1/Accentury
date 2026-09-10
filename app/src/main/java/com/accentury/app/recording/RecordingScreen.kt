@@ -108,8 +108,10 @@ fun RecordingScreen(
     // 창 길이에는 unit 가드를 걸지 않는다. 아래 가드는 "값을 어떻게 읽을 것인가"의 문제라
     // 단위를 모르면 그릴 수 없지만, 길이는 간격 x 구간 수라서 단위와 무관하게 맞는다.
     // 그래서 가이드를 못 그리는 경우에도 두 레인의 시간축은 여전히 같게 잡을 수 있다.
+    // 상한은 이 화면이 실제로 녹음을 끊는 값과 같아야 한다 - 아래 카운트다운과 "/ n초" 표기도
+    // 같은 상수를 읽는다 (KAN-195, userCurveWindowMs KDoc).
     val liveWindowMs = remember(guideF0) {
-        userCurveWindowMs(guideF0?.frameIntervalMs, guideF0?.values?.size)
+        userCurveWindowMs(guideF0?.frameIntervalMs, guideF0?.values?.size, RecordingEngine.MAX_DURATION_MS)
     }
     // 녹음 중에는 자라는 곡선, 완료 후에는 방금 녹음의 곡선을 남긴다 (2026-08-18 결정).
     // 재녹음을 시작하면 Recording의 빈 목록으로 바뀌므로 지난 곡선이 새 녹음에 섞이지 않는다.

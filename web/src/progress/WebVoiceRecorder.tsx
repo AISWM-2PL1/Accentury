@@ -186,10 +186,14 @@ export function WebVoiceRecorder({
     () => (item.guideF0.unit === 'semitone' ? guideCurveDisplayPoints(item.guideF0.values) : []),
     [item.guideF0],
   )
-  /** 사용자 레인이 담을 시간. 가이드 길이의 2배다 (`userCurve.ts`) */
+  /**
+   * 사용자 레인이 담을 시간. 가이드 길이의 2배이되 이 문항의 녹음 상한을 넘지 않는다
+   * (`userCurve.ts`). 상한을 상수로 들지 않고 문항 정의의 값을 그대로 넘기는 이유는
+   * `userCurveWindowMs`의 주석에 적었다 — 상한의 주인은 서버다.
+   */
   const liveWindowMs = useMemo(
-    () => userCurveWindowMs(item.guideF0.frameIntervalMs, item.guideF0.values.length),
-    [item.guideF0],
+    () => userCurveWindowMs(item.guideF0.frameIntervalMs, item.guideF0.values.length, item.maxDurationMs),
+    [item.guideF0, item.maxDurationMs],
   )
 
   /*

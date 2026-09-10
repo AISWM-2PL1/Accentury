@@ -19,6 +19,12 @@ const CENTER_HZ = 200
 const WINDOW_MS = 2000
 const LONG_GAP_MS = 500
 
+/**
+ * 창 길이 검사가 쓰는 녹음 상한. 서버가 VOICE 문항에 붙이는 고정값과 같다
+ * (`TestDefinition.VOICE_MAX_DURATION_MS`). 이 값보다 짧은 창은 상한과 무관하게 그대로다.
+ */
+const MAX_DURATION_MS = 10_000
+
 const frame = (timestampMs: number, pitchHz: number | null): PitchFrame => ({ timestampMs, pitchHz })
 
 /** 실제 파이프라인과 같은 32ms 간격으로 프레임을 만든다. null은 무성 프레임이다 */
@@ -75,23 +81,39 @@ describe('창 길이', () => {
   })
 
   it('창 길이는 가이드 길이의 두 배다', () => {
-    expect(userCurveWindowMs(10, 101)).toBe(2000)
-    expect(userCurveWindowMs(32, 11)).toBe(640)
+    expect(userCurveWindowMs(10, 101, MAX_DURATION_MS)).toBe(2000)
+    expect(userCurveWindowMs(32, 11, MAX_DURATION_MS)).toBe(640)
   })
 
   it('발행본 실문항의 창은 그 문항 길이의 두 배다', () => {
     // 16ms 간격 240점이라 가이드가 3.824초, 창은 그 두 배인 7.648초다 (KAN-194)
     const { frameIntervalMs, values } = REAL_GUIDE_F0
     expect(guideDurationMs(frameIntervalMs, values.length)).toBe(3824)
-    expect(userCurveWindowMs(frameIntervalMs, values.length)).toBe(7648)
+    expect(userCurveWindowMs(frameIntervalMs, values.length, MAX_DURATION_MS)).toBe(7648)
+  })
+
+  it('두 배가 녹음 상한을 넘으면 상한에서 자른다 (KAN-195)', () => {
+    // 가이드 5.98초 = 발행본 최장 문항(v63). 두 배면 11.96초라 10초 상한을 넘는다
+    expect(userCurveWindowMs(20, 300, MAX_DURATION_MS)).toBe(MAX_DURATION_MS)
+    // 상한과 정확히 같은 창은 자를 것이 없다
+    expect(userCurveWindowMs(10, 501, MAX_DURATION_MS)).toBe(MAX_DURATION_MS)
+    // 상한에 못 미치는 창은 상한이 있어도 그대로다
+    expect(userCurveWindowMs(10, 500, MAX_DURATION_MS)).toBe(9980)
+  })
+
+  it('상한을 알 수 없으면 자르지 않는다 - 레인이 사라지는 것보다 넘치는 편이 낫다', () => {
+    expect(userCurveWindowMs(20, 300, 0)).toBe(11960)
+    expect(userCurveWindowMs(20, 300, -1)).toBe(11960)
+    expect(userCurveWindowMs(20, 300, Number.NaN)).toBe(11960)
+    expect(userCurveWindowMs(20, 300, Number.POSITIVE_INFINITY)).toBe(11960)
   })
 
   it('가이드를 쓸 수 없으면 창 길이는 폴백 1초의 두 배다', () => {
-    expect(userCurveWindowMs(null, null)).toBe(2000)
-    expect(userCurveWindowMs(10, 1)).toBe(2000)
-    expect(userCurveWindowMs(10, 0)).toBe(2000)
-    expect(userCurveWindowMs(0, 101)).toBe(2000)
-    expect(userCurveWindowMs(-5, 101)).toBe(2000)
+    expect(userCurveWindowMs(null, null, MAX_DURATION_MS)).toBe(2000)
+    expect(userCurveWindowMs(10, 1, MAX_DURATION_MS)).toBe(2000)
+    expect(userCurveWindowMs(10, 0, MAX_DURATION_MS)).toBe(2000)
+    expect(userCurveWindowMs(0, 101, MAX_DURATION_MS)).toBe(2000)
+    expect(userCurveWindowMs(-5, 101, MAX_DURATION_MS)).toBe(2000)
   })
 
   it('Review 창은 라이브 창보다 긴 녹음을 통째로 담는다', () => {

@@ -127,9 +127,12 @@ struct RecordingScreen: View {
          * "값을 어떻게 읽을 것인가"의 문제라 단위를 모르면 그릴 수 없지만, 길이는 간격 × 구간
          * 수라서 단위와 무관하게 맞는다. 그래서 가이드를 못 그리는 경우에도 창은 제 값을 잡는다.
          */
+        // 상한은 이 화면이 실제로 녹음을 끊는 값과 같아야 한다 - 아래 "/ n초" 표기도 같은 상수를
+        // 읽는다 (KAN-195, `userCurveWindowMs` 주석).
         let liveWindowMs = userCurveWindowMs(
             frameIntervalMs: guideF0?.frameIntervalMs,
-            valueCount: guideF0?.values.count
+            valueCount: guideF0?.values.count,
+            maxDurationMs: RecordingEngine.maxDurationMs
         )
         let frames = model.curvePitchFrames
         // 이 창은 사용자 레인만 쓴다. 가이드는 사용자 창과 무관하게 항상 자기 길이로 레인 폭

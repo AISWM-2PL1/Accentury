@@ -1,5 +1,6 @@
 package com.accentury.app.bridge
 
+import com.accentury.app.audio.RecordingEngine
 import com.accentury.app.recording.USER_CURVE_WINDOW_SCALE
 import com.accentury.app.recording.guideCurveDisplayPoints
 import com.accentury.app.recording.userCurveWindowMs
@@ -104,15 +105,45 @@ class PublishedGuideF0Test {
             violations { item ->
                 val guide = parseVoiceItemStart(item.payload)?.guideF0
                     ?: return@violations "guideF0가 없어 창을 가이드에서 뽑을 수 없다"
-                val actual = userCurveWindowMs(guide.frameIntervalMs, guide.values.size)
-                val expected =
+                val actual = userCurveWindowMs(guide.frameIntervalMs, guide.values.size, MAX_DURATION_MS)
+                val doubled =
                     (USER_CURVE_WINDOW_SCALE * guide.frameIntervalMs * (guide.values.size - 1)).roundToLong()
+                val expected = minOf(doubled, MAX_DURATION_MS)
                 when {
                     actual != expected -> "창 ${actual}ms != 가이드에서 나온 ${expected}ms"
                     actual == FALLBACK_WINDOW_MS -> "창이 폴백 ${FALLBACK_WINDOW_MS}ms와 같다"
                     else -> null
                 }
             },
+        )
+    }
+
+    @Test
+    fun `전 문항의 사용자 창이 녹음 상한을 넘지 않는다 (KAN-195)`() {
+        // 상한을 넘는 창은 녹음으로 닿을 수 없는 오른쪽 여백이 되어 레인이 끝까지 차지 않는다.
+        assertEquals(
+            emptyList<String>(),
+            violations { item ->
+                val guide = parseVoiceItemStart(item.payload)?.guideF0
+                    ?: return@violations "guideF0가 없어 창을 가이드에서 뽑을 수 없다"
+                val windowMs = userCurveWindowMs(guide.frameIntervalMs, guide.values.size, MAX_DURATION_MS)
+                if (windowMs <= MAX_DURATION_MS) null else "창 ${windowMs}ms가 상한 ${MAX_DURATION_MS}ms를 넘는다"
+            },
+        )
+    }
+
+    @Test
+    fun `상한이 실제로 물리는 문항이 29개다 - 자르기가 죽은 코드가 아니다 (KAN-195)`() {
+        /*
+         * 앞 검사는 자르기를 아예 지워도 통과할 수 있다. 발행본 가이드가 3.18~5.98초라 두 배가
+         * 6.36~11.96초이고, 그중 5초를 넘는 29문항만 상한에 닿는다 - 그 수가 유지되는지 함께
+         * 본다. 발행본이 바뀌어 이 수가 달라지면 창 규칙을 다시 볼 자리라는 신호다.
+         */
+        val clamped = voiceItems.mapNotNull { parseVoiceItemStart(it.payload)?.guideF0 }
+            .filter { (USER_CURVE_WINDOW_SCALE * it.frameIntervalMs * (it.values.size - 1)) > MAX_DURATION_MS }
+        assertEquals(29, clamped.size)
+        assertTrue(
+            clamped.all { userCurveWindowMs(it.frameIntervalMs, it.values.size, MAX_DURATION_MS) == MAX_DURATION_MS },
         )
     }
 
@@ -175,8 +206,14 @@ class PublishedGuideF0Test {
         /** 정의 JSON을 감싼 PostgreSQL 달러 인용 구분자 */
         const val DELIMITER = "\$definition\$"
 
+        /**
+         * 창 길이 검사가 쓰는 녹음 상한. `RecordingScreen`이 실제로 넘기는 값과 같다 (KAN-195) -
+         * 이 검사가 합성하는 브리지 payload의 `maxDurationMs`가 아니라 화면이 쓰는 값을 본다.
+         */
+        const val MAX_DURATION_MS = RecordingEngine.MAX_DURATION_MS
+
         /** 가이드를 쓸 수 없을 때의 창 길이. 어느 문항도 여기로 떨어지면 안 된다 */
-        val FALLBACK_WINDOW_MS = userCurveWindowMs(null, null)
+        val FALLBACK_WINDOW_MS = userCurveWindowMs(null, null, MAX_DURATION_MS)
 
         val json = Json { ignoreUnknownKeys = true }
 

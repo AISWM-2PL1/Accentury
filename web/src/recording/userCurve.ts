@@ -6,10 +6,11 @@
  * 부분이 흔들리지 않는 규칙이 필요하다. 아래 결정들이 그 요구에서 나왔다. 숫자를 그 값으로
  * 고른 근거는 `docs/wiki/pitch-curve.md` §2가 정본이고, 여기서는 규칙만 요약한다.
  *
- * - **사용자 창은 가이드 길이의 [USER_CURVE_WINDOW_SCALE]배다**([userCurveWindowMs], Review는
- *   녹음 전체 길이 [reviewWindowMs]). 시드 가이드보다 실제 발화가 길어서, 창을 가이드에
- *   맞춰 놓으면 발화 앞부분이 창 밖으로 밀린다. 녹음이 창 길이를 넘어가면 창이 미끄러져
- *   최신 프레임이 항상 오른쪽 끝에 있게 하고, 밀린 프레임은 버린다.
+ * - **사용자 창은 가이드 길이의 [USER_CURVE_WINDOW_SCALE]배이되 녹음 상한을 넘지 않는다**
+ *   ([userCurveWindowMs], Review는 녹음 전체 길이 [reviewWindowMs]). 시드 가이드보다 실제
+ *   발화가 길어서, 창을 가이드에 맞춰 놓으면 발화 앞부분이 창 밖으로 밀린다. 녹음이 창
+ *   길이를 넘어가면 창이 미끄러져 최신 프레임이 항상 오른쪽 끝에 있게 하고, 밀린 프레임은
+ *   버린다. 상한을 두는 이유는 [userCurveWindowMs]에 적었다.
  * - **y축은 화자 중심 ±[USER_CURVE_SPAN_SEMITONE]/2 고정 폭 창이다.** 가이드처럼 자기 min/max를
  *   쓰면 새 최고점이 찍힐 때마다 이미 그린 곡선 전체가 위아래로 튄다. 그래서 폭은 고정하고
  *   중심만 화자에 맞춘다([userCurveCenterHz]). 로그(semitone)를 쓰는 이유는 같은 음정 간격이
@@ -116,15 +117,38 @@ export function guideDurationMs(
 }
 
 /**
- * 사용자 레인 한 폭이 담을 시간. 가이드 길이의 [USER_CURVE_WINDOW_SCALE]배다.
- * 가이드가 없거나 길이를 계산할 수 없으면 [FALLBACK_GUIDE_MS]를 가이드 길이로 놓는다.
+ * 사용자 레인 한 폭이 담을 시간. 가이드 길이의 [USER_CURVE_WINDOW_SCALE]배이되
+ * [maxDurationMs]를 넘지 않는다. 가이드가 없거나 길이를 계산할 수 없으면
+ * [FALLBACK_GUIDE_MS]를 가이드 길이로 놓는다.
+ *
+ * ## 왜 녹음 상한으로 자르나 (KAN-195)
+ *
+ * 배율 2배는 "시드 가이드 한 문항 0.9~1.2초"를 전제로 잡은 값이다. 정본 발행본
+ * `gn-2026.09.1`의 가이드는 3.18~5.98초라, 그대로 곱하면 창이 최대 11.96초가 되는데
+ * **녹음은 [maxDurationMs](10초)에서 자동 종료된다**. 그러면 창의 오른쪽 끝 2초는 어떤
+ * 녹음으로도 닿을 수 없는 자리가 되고, 사용자 레인은 아무리 길게 말해도 83%까지만 찬다 —
+ * 곡선이 레인 중간에서 끊긴 것처럼 보인다. 145문항 중 29개가 이 구간이다.
+ *
+ * 배율을 낮추지 않고 상한으로 자르는 쪽을 택했다. 배율을 1.6으로 낮추면 상한에 닿지 않는
+ * 나머지 116문항의 창까지 20% 좁아져, 가이드보다 느리게 읽은 발화의 앞부분이 새로 잘린다.
+ * 자르는 쪽은 실제로 넘치는 문항에서만 값이 달라진다.
+ *
+ * 상한을 상수로 두지 않고 인자로 받는 이유는 그 값의 주인이 여기가 아니기 때문이다. 웹은
+ * 문항 정의의 `maxDurationMs`를, 앱은 `RecordingEngine`의 상수를 쥐고 있다 — 여기에 10초를
+ * 적어 두면 서버가 상한을 올리는 날 세 클라이언트에 낡은 숫자가 하나씩 남는다.
+ *
+ * @param maxDurationMs 이 문항의 녹음 상한. 0 이하이거나 유한하지 않으면 자르지 않는다 —
+ *   상한을 알 수 없다고 창을 0으로 만들면 레인이 통째로 사라진다
  */
 export function userCurveWindowMs(
   frameIntervalMs: number | null | undefined,
   valueCount: number | null | undefined,
+  maxDurationMs: number,
 ): number {
   const guideMs = guideDurationMs(frameIntervalMs, valueCount) || FALLBACK_GUIDE_MS
-  return Math.round(guideMs * USER_CURVE_WINDOW_SCALE)
+  const windowMs = Math.round(guideMs * USER_CURVE_WINDOW_SCALE)
+  if (!Number.isFinite(maxDurationMs) || maxDurationMs <= 0) return windowMs
+  return Math.min(windowMs, maxDurationMs)
 }
 
 /**

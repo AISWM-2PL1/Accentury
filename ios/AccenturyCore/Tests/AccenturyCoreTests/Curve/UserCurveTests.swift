@@ -9,6 +9,10 @@ final class UserCurveTests: XCTestCase {
     private static let windowMs: Int64 = 2000
     private static let longGapMs: Int64 = 500
 
+    /// 창 길이 검사가 쓰는 녹음 상한. 실제로 녹음을 끊는 값과 같아야 검사가 화면과 같은 것을
+    /// 본다 (KAN-195). 이 값보다 짧은 창은 상한과 무관하게 그대로다.
+    private static let maxMs: Int64 = RecordingEngine.maxDurationMs
+
     /// 앞뒤 가장자리가 무성이고, 32ms(200Hz)와 224ms(800Hz) 사이에 192ms짜리 구멍이 있다.
     /// 두 옥타브 차이라 한가운데의 기하평균이 400Hz로 딱 떨어진다.
     private static let hole192Ms: [RecordingEngine.PitchFrame] = [
@@ -27,6 +31,7 @@ final class UserCurveTests: XCTestCase {
     private var centerHz: Float { Self.centerHz }
     private var windowMs: Int64 { Self.windowMs }
     private var longGapMs: Int64 { Self.longGapMs }
+    private var maxMs: Int64 { Self.maxMs }
 
     private func frame(_ timestampMs: Int64, _ hz: Float?) -> RecordingEngine.PitchFrame {
         RecordingEngine.PitchFrame(timestampMs: timestampMs, pitchHz: hz)
@@ -65,8 +70,8 @@ final class UserCurveTests: XCTestCase {
 
     /// `창 길이는 가이드 길이의 두 배다`
     func testWindowIsTwiceTheGuideLength() {
-        XCTAssertEqual(2000, userCurveWindowMs(frameIntervalMs: 10, valueCount: 101))
-        XCTAssertEqual(640, userCurveWindowMs(frameIntervalMs: 32, valueCount: 11))
+        XCTAssertEqual(2000, userCurveWindowMs(frameIntervalMs: 10, valueCount: 101, maxDurationMs: maxMs))
+        XCTAssertEqual(640, userCurveWindowMs(frameIntervalMs: 32, valueCount: 11, maxDurationMs: maxMs))
     }
 
     /// `발행본 실문항의 창은 가이드 길이에서 나오고 폴백과 다르다`
@@ -75,16 +80,39 @@ final class UserCurveTests: XCTestCase {
         // 폴백(1000ms x 2 = 2000ms)과 확실히 갈리는 값이라, 창이 주저앉으면 이 수가 안 나온다.
         let guide = GuideF0Fixture.real
         XCTAssertEqual(3824, guideDurationMs(frameIntervalMs: guide.frameIntervalMs, valueCount: guide.values.count))
-        XCTAssertEqual(7648, userCurveWindowMs(frameIntervalMs: guide.frameIntervalMs, valueCount: guide.values.count))
+        XCTAssertEqual(
+            7648,
+            userCurveWindowMs(
+                frameIntervalMs: guide.frameIntervalMs,
+                valueCount: guide.values.count,
+                maxDurationMs: maxMs
+            )
+        )
+    }
+
+    /// `두 배가 녹음 상한을 넘으면 상한에서 자른다 (KAN-195)`
+    func testWindowIsClampedToTheRecordingLimit() {
+        // 가이드 5.98초 = 발행본 최장 문항(v63). 두 배면 11.96초라 10초 상한을 넘는다.
+        XCTAssertEqual(maxMs, userCurveWindowMs(frameIntervalMs: 20, valueCount: 300, maxDurationMs: maxMs))
+        // 상한과 정확히 같은 창은 자를 것이 없다.
+        XCTAssertEqual(maxMs, userCurveWindowMs(frameIntervalMs: 10, valueCount: 501, maxDurationMs: maxMs))
+        // 상한에 못 미치는 창은 상한이 있어도 그대로다.
+        XCTAssertEqual(9980, userCurveWindowMs(frameIntervalMs: 10, valueCount: 500, maxDurationMs: maxMs))
+    }
+
+    /// `상한을 알 수 없으면 자르지 않는다 - 레인이 사라지는 것보다 넘치는 편이 낫다`
+    func testUnknownLimitDoesNotClamp() {
+        XCTAssertEqual(11960, userCurveWindowMs(frameIntervalMs: 20, valueCount: 300, maxDurationMs: 0))
+        XCTAssertEqual(11960, userCurveWindowMs(frameIntervalMs: 20, valueCount: 300, maxDurationMs: -1))
     }
 
     /// `가이드를 쓸 수 없으면 창 길이는 폴백 1초의 두 배다`
     func testUnusableGuideFallsBackToTwoSeconds() {
-        XCTAssertEqual(2000, userCurveWindowMs(frameIntervalMs: nil, valueCount: nil))
-        XCTAssertEqual(2000, userCurveWindowMs(frameIntervalMs: 10, valueCount: 1))
-        XCTAssertEqual(2000, userCurveWindowMs(frameIntervalMs: 10, valueCount: 0))
-        XCTAssertEqual(2000, userCurveWindowMs(frameIntervalMs: 0, valueCount: 101))
-        XCTAssertEqual(2000, userCurveWindowMs(frameIntervalMs: -5, valueCount: 101))
+        XCTAssertEqual(2000, userCurveWindowMs(frameIntervalMs: nil, valueCount: nil, maxDurationMs: maxMs))
+        XCTAssertEqual(2000, userCurveWindowMs(frameIntervalMs: 10, valueCount: 1, maxDurationMs: maxMs))
+        XCTAssertEqual(2000, userCurveWindowMs(frameIntervalMs: 10, valueCount: 0, maxDurationMs: maxMs))
+        XCTAssertEqual(2000, userCurveWindowMs(frameIntervalMs: 0, valueCount: 101, maxDurationMs: maxMs))
+        XCTAssertEqual(2000, userCurveWindowMs(frameIntervalMs: -5, valueCount: 101, maxDurationMs: maxMs))
     }
 
     /// `Review 창은 라이브 창보다 긴 녹음을 통째로 담는다`

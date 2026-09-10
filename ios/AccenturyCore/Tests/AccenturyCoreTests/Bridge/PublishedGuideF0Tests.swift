@@ -85,13 +85,60 @@ final class PublishedGuideF0Tests: XCTestCase {
             guard let guide = parseVoiceItemStart(item.payload)?.guideF0 else {
                 return "guideF0가 없어 창을 가이드에서 뽑을 수 없다"
             }
-            let actual = userCurveWindowMs(frameIntervalMs: guide.frameIntervalMs, valueCount: guide.values.count)
-            let expected = Int64(
+            let actual = userCurveWindowMs(
+                frameIntervalMs: guide.frameIntervalMs,
+                valueCount: guide.values.count,
+                maxDurationMs: Self.maxDurationMs
+            )
+            let doubled = Int64(
                 (userCurveWindowScale * Double(guide.frameIntervalMs) * Double(guide.values.count - 1)).rounded()
             )
+            let expected = min(doubled, Self.maxDurationMs)
             if actual != expected { return "창 \(actual)ms != 가이드에서 나온 \(expected)ms" }
             if actual == Self.fallbackWindowMs { return "창이 폴백 \(Self.fallbackWindowMs)ms와 같다" }
             return nil
+        })
+    }
+
+    /// `전 문항의 사용자 창이 녹음 상한을 넘지 않는다 (KAN-195)`
+    func testEveryItemWindowStaysWithinTheRecordingLimit() {
+        // 상한을 넘는 창은 녹음으로 닿을 수 없는 오른쪽 여백이 되어 레인이 끝까지 차지 않는다.
+        XCTAssertEqual([], violations { item in
+            guard let guide = parseVoiceItemStart(item.payload)?.guideF0 else {
+                return "guideF0가 없어 창을 가이드에서 뽑을 수 없다"
+            }
+            let windowMs = userCurveWindowMs(
+                frameIntervalMs: guide.frameIntervalMs,
+                valueCount: guide.values.count,
+                maxDurationMs: Self.maxDurationMs
+            )
+            if windowMs > Self.maxDurationMs {
+                return "창 \(windowMs)ms가 상한 \(Self.maxDurationMs)ms를 넘는다"
+            }
+            return nil
+        })
+    }
+
+    /// `상한이 실제로 물리는 문항이 29개다 - 자르기가 죽은 코드가 아니다 (KAN-195)`
+    func testTheClampActuallyBitesOn29Items() {
+        /*
+         * 앞 검사는 자르기를 아예 지워도 통과할 수 있다. 발행본 가이드가 3.18~5.98초라 두 배가
+         * 6.36~11.96초이고, 그중 5초를 넘는 29문항만 상한에 닿는다 - 그 수가 유지되는지 함께
+         * 본다. 발행본이 바뀌어 이 수가 달라지면 창 규칙을 다시 볼 자리라는 신호다.
+         */
+        let clamped = voiceItems()
+            .compactMap { parseVoiceItemStart($0.payload)?.guideF0 }
+            .filter {
+                Int64((userCurveWindowScale * Double($0.frameIntervalMs) * Double($0.values.count - 1)).rounded())
+                    > Self.maxDurationMs
+            }
+        XCTAssertEqual(29, clamped.count)
+        XCTAssertTrue(clamped.allSatisfy {
+            userCurveWindowMs(
+                frameIntervalMs: $0.frameIntervalMs,
+                valueCount: $0.values.count,
+                maxDurationMs: Self.maxDurationMs
+            ) == Self.maxDurationMs
         })
     }
 
@@ -140,8 +187,16 @@ final class PublishedGuideF0Tests: XCTestCase {
 
     // MARK: - 발행본 읽기
 
+    /// 창 길이 검사가 쓰는 녹음 상한. `RecordingScreen`이 실제로 넘기는 값과 같다 (KAN-195) -
+    /// 이 검사가 합성하는 브리지 payload의 `maxDurationMs`가 아니라 화면이 쓰는 값을 본다.
+    private static let maxDurationMs = RecordingEngine.maxDurationMs
+
     /// 가이드를 쓸 수 없을 때의 창 길이. 어느 문항도 여기로 떨어지면 안 된다
-    private static let fallbackWindowMs = userCurveWindowMs(frameIntervalMs: nil, valueCount: nil)
+    private static let fallbackWindowMs = userCurveWindowMs(
+        frameIntervalMs: nil,
+        valueCount: nil,
+        maxDurationMs: maxDurationMs
+    )
 
     /// 정본 발행본이 담긴 마이그레이션. 레포 루트 기준 경로다
     private static let migrationRelativePath =
