@@ -196,29 +196,42 @@ export function clearSnapshot(storage: SnapshotStorage, sessionId = ''): void {
 }
 
 /**
- * 이 저장소에 남은 진행 기록을 접두사째 전부 지운다 (KAN-198).
+ * 이 저장소에 남은 진행 기록을 접두사째 훑어 지운다 (KAN-198). 지목한 세션 하나는 남길 수 있다.
  *
- * ## 왜 "전부"인가
+ * ## 왜 이 자리가 필요한가
  *
- * 부르는 자리가 인트로 하나이기 때문이다. 인트로는 어느 응시에도 속하지 않는 화면이고, 거기
- * 왔다는 것은 앞의 응시가 끝났거나 버려졌다는 뜻이다 — 계측 상관 키를 같은 자리에서 같은
- * 이유로 버린다 (`analytics/testId.ts`의 `clearTestId`). 세션 id를 하나 지목해 남기려 해도
- * 남길 것이 없다: 인트로에는 진행 중인 세션이 없고, [시작하기]는 어느 실행에서든 **새** 세션을
- * 만든다.
+ * [clearSnapshot]은 세션 id를 아는 경우만 덮는다. 결과 화면까지 가지 못하고 끊긴 응시(앱 종료,
+ * 탭 닫기)의 키는 아무도 그 id를 다시 들고 오지 않으므로 지울 사람이 없다 — 응시할 때마다 키가
+ * 하나씩 쌓이던 원인이 그것이다.
  *
- * 이 자리가 필요한 이유는 [clearSnapshot]이 세션 id를 아는 경우만 덮기 때문이다. 결과 화면까지
- * 가지 못하고 끊긴 응시(앱 종료, 탭 닫기)의 키는 아무도 그 id를 다시 들고 오지 않으므로 지울
- * 사람이 없다 — 응시할 때마다 키가 하나씩 쌓이던 원인이 그것이다.
+ * ## 왜 하나는 남기나
+ *
+ * 부르는 자리가 인트로인데, **인트로에 왔다고 응시가 끝난 것은 아니다.** 문항 화면에서 뒤로 가
+ * 인트로로 돌아오는 것은 정상 행동이고(`App.tsx`의 [goToResult] 주석 — 인트로→문항 전환은
+ * 히스토리를 쌓는다), 그때 앞으로 가면 같은 세션의 문항 화면이 그대로 되살아나야 한다. 전부
+ * 지우면 그 복귀가 1번 문항부터 다시가 된다. 그래서 지금 살아 있는 세션 하나는 훑기에서 뺀다 —
+ * 티켓의 "현재 세션 것 외에는"이 가리키는 자리다.
+ *
+ * 남길 세션을 모르는 실행(앱 안 — 세션은 네이티브가 쥐고 있고 인트로 URL에는 실리지 않는다)은
+ * `null`을 준다. 그쪽에는 히스토리 뒤로가기가 없어(네이티브가 자기 규칙으로 다룬다) 되살릴
+ * 화면도 없다.
  *
  * 지우기 전에 키를 모두 모으는 이유: `removeItem`은 뒤 인덱스를 당기므로, 훑으면서 지우면
  * 한 칸씩 건너뛴다.
+ *
+ * @param keepSessionId 훑기에서 뺄 세션. `null`이면 접두사에 걸리는 키를 전부 지운다.
+ *   빈 문자열은 과도기 키(`snapshotKey('')`)를 남기라는 뜻이라 `null`과 다르다
  */
-export function sweepSnapshots(storage: EnumerableSnapshotStorage): void {
+export function sweepSnapshots(
+  storage: EnumerableSnapshotStorage,
+  keepSessionId: string | null = null,
+): void {
+  const keep = keepSessionId === null ? null : snapshotKey(keepSessionId)
   const targets: string[] = []
   try {
     for (let index = 0; index < storage.length; index += 1) {
       const key = storage.key(index)
-      if (key === null) continue
+      if (key === null || key === keep) continue
       if (key === PROGRESS_SNAPSHOT_KEY || key.startsWith(`${PROGRESS_SNAPSHOT_KEY}:`)) {
         targets.push(key)
       }
