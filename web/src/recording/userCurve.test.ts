@@ -167,6 +167,23 @@ describe('창 길이', () => {
     expect(points[points.length - 1].x - points[0].x).toBeCloseTo(224 / GUIDE_MS, 5)
   })
 
+  it('발화가 바닥보다 짧고 뒤 침묵이 길면 곡선이 레인 오른쪽에 붙는다 (KAN-195)', () => {
+    /*
+     * `마지막 유성 >= 바닥`이라 windowStart가 0보다 커지는 경로다. 10초 자동 종료로 뒤에
+     * 6초가 남아 있어도 유성 구간은 창 안에 그대로 들어와야 한다.
+     */
+    const lateShort = frames(
+      Array.from({ length: 313 }, (_, i) => (i >= 100 && i <= 115 ? CENTER_HZ : null)),
+    )
+    const { frames: trimmed, windowMs } = reviewWindow(lateShort, GUIDE_INTERVAL, GUIDE_COUNT)
+
+    expect(trimmed.length).toBe(16)
+    expect(windowMs).toBe(GUIDE_MS) // 발화 480ms < 바닥 1000ms
+    const points = userCurveDisplayPoints(trimmed, windowMs)[0]
+    expect(points[0].x).toBeCloseTo(0.52, 5) // (3200 - (3680-1000)) / 1000
+    expect(points[points.length - 1].x).toBeCloseTo(1, 5)
+  })
+
   it('유성이 하나뿐이고 뒤에 침묵이 길어도 그 점이 창 안에 남는다 (KAN-195 리뷰 P2)', () => {
     /*
      * 기침 한 번처럼 유성이 하나뿐인 녹음이 10초 자동 종료로 끝나면, 자르지 않을 때

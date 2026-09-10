@@ -167,6 +167,24 @@ final class UserCurveTests: XCTestCase {
         XCTAssertEqual(224.0 / Float(guideMs), points.last!.x - points.first!.x, accuracy: 1e-5)
     }
 
+    /// `발화가 바닥보다 짧고 뒤 침묵이 길면 곡선이 레인 오른쪽에 붙는다 (KAN-195)`
+    func testShortLateSpeechIsPinnedToTheRightEdge() throws {
+        /*
+         * `마지막 유성 >= 바닥`이라 windowStart가 0보다 커지는 경로다. 10초 자동 종료로 뒤에
+         * 6초가 남아 있어도 유성 구간은 창 안에 그대로 들어와야 한다.
+         */
+        let lateShort = (0..<313).map { i in
+            frame(Int64(i) * frameMs, (100...115).contains(i) ? centerHz : nil)
+        }
+        let review = reviewWindow(lateShort, frameIntervalMs: guideInterval, valueCount: guideCount)
+
+        XCTAssertEqual(16, review.frames.count)
+        XCTAssertEqual(guideMs, review.windowMs) // 발화 480ms < 바닥 1000ms
+        let points = try single(userCurveDisplayPoints(review.frames, windowMs: review.windowMs))
+        XCTAssertEqual(0.52, points.first!.x, accuracy: 1e-5) // (3200 - (3680-1000)) / 1000
+        XCTAssertEqual(1, points.last!.x, accuracy: 1e-5)
+    }
+
     /// `유성이 하나뿐이고 뒤에 침묵이 길어도 그 점이 창 안에 남는다 (KAN-195 리뷰 P2)`
     func testASingleVoicedFrameSurvivesALongTrailingSilence() {
         /*
