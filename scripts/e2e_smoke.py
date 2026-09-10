@@ -22,7 +22,7 @@ AI가 실모델이 되면서 **합성 사인파로는 점수가 나오지 않는
 
 전 구간(결과 검산, 등급, 공유 카드)까지 보려면 **대본을 읽은 실제 녹음**을 준다.
 ``--voice-wav``에 ``<itemId>.wav``가 든 디렉터리를 주면 문항마다 그 파일을 올리고, 분석이
-성공하면 스크립트가 결과를 sv-0.3 집계식으로 검산한다. 발행본은 문항마다 문장이 다르므로
+성공하면 스크립트가 결과를 고정 집계식(sv-0.3, sv-0.4)으로 검산한다. 발행본은 문항마다 문장이 다르므로
 (KAN-182의 세트) 파일 하나로는 한 문항만 맞고 나머지는 게이트에 걸린다 - 그때는 스크립트가
 통과가 아니라 실패로 끊는다. 세션이 고른 세트는 정의 조회 로그의 itemId로 확인한다.
 
@@ -35,13 +35,18 @@ AI가 실모델이 되면서 **합성 사인파로는 점수가 나오지 않는
 
 검산표를 스크립트가 들고 있는 이유
 ----------------------------------
-등급 경계와 가중치(:data:`TIERS`, :data:`INTONATION_WEIGHT`)는 서버의 sv-0.3 seed
-(``backend/src/main/resources/score-versions/sv-0.3.json``)에도 있는 값이다. 그것을 조회해
+등급 경계와 가중치(:data:`TIERS`, :data:`INTONATION_WEIGHT`)는 서버의 점수 정책 seed
+(``backend/src/main/resources/score-versions/*.json``)에도 있는 값이다. 그것을 조회해
 쓰면 검산이 아니라 서버가 자기 답을 자기 표로 채점하는 것이 된다 - 집계식이 통째로 틀려도
 통과한다. 여기 적힌 표는 **독립 오라클**이고, 그래서 서버가 모르는 점수 버전을 내려주면
 조용히 넘어가지 않고 멈춘다 (:func:`verify_result`).
 
-sv-0.4로 경계가 재보정되면 이 표에 그 버전을 더한다 (KAN-21 로드맵).
+sv-0.4(KAN-200)는 억양 점수를 고정 수식에 넣기 전에 5문항 평균에 구간별 계수를 곱하는
+전처리를 더했을 뿐 가중치와 등급 경계는 sv-0.3과 같다. 이 검산은 응답에 실린 억양 점수를
+입력으로 종합 점수와 등급을 되짚으므로 두 버전에 같은 표를 쓴다 - 전처리 자체(원점수 →
+억양 점수)는 응답만으로는 되짚을 수 없고, backend 단위 테스트(ScoreAggregatorTest)와
+문항 원점수 로그 대조가 맡는다. 경계가 재보정되는 버전(sv-0.5, KAN-21 로드맵)이 오면 그때
+버전별 표로 가른다.
 """
 
 from __future__ import annotations
@@ -66,11 +71,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 # ---------------------------------------------------------------------------
-# sv-0.3 집계식 (API 명세서 §4.3, KAN-21) - 서버와 독립인 검산 오라클
+# 고정 집계식 (API 명세서 §4.3, KAN-21, KAN-200) - 서버와 독립인 검산 오라클
 # ---------------------------------------------------------------------------
 
-#: 이 스크립트가 검산할 수 있는 점수 버전. 세션이 다른 버전을 고정하면 멈춘다.
-SUPPORTED_SCORE_VERSION = "sv-0.3"
+#: 이 스크립트가 검산할 수 있는 점수 버전. 세션이 다른 버전을 고정하면 멈춘다. 둘은 가중치와
+#: 등급 경계가 같고 sv-0.4는 억양 입력 전처리만 다르다 (모듈 주석 참고).
+SUPPORTED_SCORE_VERSIONS = ("sv-0.3", "sv-0.4")
 
 INTONATION_WEIGHT = 2
 VOCABULARY_WEIGHT = 1
@@ -91,7 +97,8 @@ VOCABULARY_WEIGHT = 1
 #: 서버가 세트를 고르므로 (KAN-205) 어느 세트가 나올지 모르고, 그러면 이 정답 수 표를 상수로
 #: 둘 수 없다. 세트 1의 어휘는 풀의 poolIndex 1..5(seq 오름차순)이라
 #: (``VoiceSets.poolIndexes``) gn-2026.09.1에서는 w1..w5이고, 정답이 w1b, w2c, w3a, w4a, w5c라
-#: 첫 선택지는 2개, 둘째는 1개, 셋째는 2개, 넷째는 0개를 맞힌다.
+#: 첫 선택지는 2개, 둘째는 1개, 셋째는 2개, 넷째는 0개를 맞힌다. gn-2026.09.2는 gn-2026.09.1의
+#: 본문 그대로 scoreVersion만 sv-0.4로 바꾼 재발행이라(KAN-200, V8) 정답표와 이 수가 같다.
 #:
 #: 새 testVersion을 발행하면 여기 한 줄을 더한다. 모르는 버전을 만나면 조용히 넘어가지 않고
 #: 멈춘다 - 급하면 ``--expect-vocabulary``로 넘긴다.
@@ -108,6 +115,10 @@ EXPECTED_VOCABULARY: Dict[Tuple[str, int], int] = {
     ("gn-2026.09.1", 1): 20,
     ("gn-2026.09.1", 2): 40,
     ("gn-2026.09.1", 3): 0,
+    ("gn-2026.09.2", 0): 40,
+    ("gn-2026.09.2", 1): 20,
+    ("gn-2026.09.2", 2): 40,
+    ("gn-2026.09.2", 3): 0,
 }
 
 #: (code, name, rank, minScore) - minScore는 하한(포함)이라 경계값(20/40/60/80)은
@@ -838,7 +849,7 @@ def verify_result(
     result: Dict[str, Any],
     expected_vocabulary: int,
 ) -> None:
-    """결과 응답을 sv-0.3 집계식으로 검산한다 (§4.3, 티켓 AC).
+    """결과 응답을 고정 집계식으로 검산한다 (§4.3, 티켓 AC).
 
     서버가 내려준 억양과 단어 점수만 입력으로 삼아 종합 점수와 등급을 다시 만들고, 응답과
     맞는지 본다. 셋이 서로 맞지 않으면 사용자가 보는 화면이 스스로 모순인 상태다.
@@ -849,9 +860,9 @@ def verify_result(
     score_version = result.get("scoreVersion")
     expect(score_version == scenario.session.score_version,
            "결과의 scoreVersion이 세션과 다르다: %s" % score_version)
-    expect(score_version == SUPPORTED_SCORE_VERSION,
+    expect(score_version in SUPPORTED_SCORE_VERSIONS,
            "이 스크립트는 %s만 검산한다. 서버가 %s를 쓰므로 검산표를 갱신해야 한다."
-           % (SUPPORTED_SCORE_VERSION, score_version))
+           % ("/".join(SUPPORTED_SCORE_VERSIONS), score_version))
 
     scores = result.get("scores") or {}
     for key in ("intonation", "vocabulary", "overall"):
@@ -884,14 +895,14 @@ def verify_result(
         INTONATION_WEIGHT + VOCABULARY_WEIGHT,
     )
     expect(overall == expected_overall,
-           "종합 점수가 sv-0.3 집계식과 다르다: 억양 %d, 단어 %d -> 기대 %d, 응답 %d"
-           % (intonation, vocabulary, expected_overall, overall))
+           "종합 점수가 %s 집계식과 다르다: 억양 %d, 단어 %d -> 기대 %d, 응답 %d"
+           % (score_version, intonation, vocabulary, expected_overall, overall))
 
     code, name, rank = tier_for(overall)
     tier = result.get("tier") or {}
     expect(tier.get("code") == code and tier.get("name") == name and tier.get("rank") == rank,
-           "등급이 sv-0.3 경계와 다르다: 종합 %d -> 기대 %s(%s, rank %d), 응답 %s"
-           % (overall, code, name, rank, tier))
+           "등급이 %s 경계와 다르다: 종합 %d -> 기대 %s(%s, rank %d), 응답 %s"
+           % (score_version, overall, code, name, rank, tier))
     expect(tier.get("of") == len(TIERS),
            "tier.of가 %d가 아니다 (§3.7): %s" % (len(TIERS), tier))
 

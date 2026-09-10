@@ -26,7 +26,7 @@ public record ResultResponse(Status status, Scores scores, Tier tier, String com
         READY
     }
 
-    /** 각 0~100 - intonation은 음성 5문항 20점 환산 합, vocabulary는 정답률 x 100, overall은 가중 평균 (§4.3) */
+    /** 각 0~100 - intonation은 음성 5문항 20점 환산 합(sv-0.4부터 구간별 계수 적용, KAN-200), vocabulary는 정답률 x 100, overall은 가중 평균 (§4.3) */
     public record Scores(int intonation, int vocabulary, int overall) {
     }
 
