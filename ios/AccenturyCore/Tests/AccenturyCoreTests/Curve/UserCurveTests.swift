@@ -167,6 +167,24 @@ final class UserCurveTests: XCTestCase {
         XCTAssertEqual(224.0 / Float(guideMs), points.last!.x - points.first!.x, accuracy: 1e-5)
     }
 
+    /// `유성이 하나뿐이고 뒤에 침묵이 길어도 그 점이 창 안에 남는다 (KAN-195 리뷰 P2)`
+    func testASingleVoicedFrameSurvivesALongTrailingSilence() {
+        /*
+         * 기침 한 번처럼 유성이 하나뿐인 녹음이 10초 자동 종료로 끝나면, 자르지 않을 때
+         * 창의 오른쪽 끝이 침묵의 끝(10초)에 붙어 그 점이 x<0으로 밀려 사라졌다.
+         */
+        let oneVoiced = (0..<313).map { i in frame(Int64(i) * frameMs, i == 6 ? centerHz : nil) }
+        XCTAssertEqual(9984, oneVoiced.last!.timestampMs, "전제: 10초 자동 종료")
+        let review = reviewWindow(oneVoiced, frameIntervalMs: guideInterval, valueCount: guideCount)
+
+        XCTAssertEqual(1, review.frames.count)
+        XCTAssertEqual(6 * frameMs, review.frames.first!.timestampMs)
+        XCTAssertEqual(guideMs, review.windowMs)
+        // 유성이 하나면 중심을 못 잡아(centerMinVoicedFrames 미달) 점은 안 그려지지만,
+        // 창 자체는 그 점을 담고 있어야 한다 - 창 밖으로 밀리면 프레임이 더 와도 못 살린다.
+        XCTAssertGreaterThanOrEqual(review.frames.first!.timestampMs, max(0, 6 * frameMs - review.windowMs))
+    }
+
     /// `유성 프레임이 없으면 창은 가이드 길이고 프레임은 원본 그대로다`
     func testNoVoicedFramesKeepTheGuideWindow() {
         let silence = frames([nil, nil, nil])
