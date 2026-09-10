@@ -1402,7 +1402,25 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
  * 계측 상관 키를 같은 자리에서 같은 이유로 버리는 것과 짝이다.
  */
 describe('App — 인트로 진입의 진행 기록 훑기 (KAN-198)', () => {
-  it('남아 있던 진행 기록을 세션 구분 없이 전부 지운다', () => {
+  it('살아 있는 웹 세션의 진행 기록은 남긴다 (뒤로가기로 인트로에 온 응시)', () => {
+    setSearch('?c=kko_share')
+    saveWebSession({
+      sessionId: 's_web',
+      sessionToken: 'st_web',
+      testVersion: 'gn-2026.08.1',
+      expiresAt: '2026-08-26T03:30:00Z',
+    })
+    const stored = stubLocalStorage()
+    stored.set(snapshotKey('s_web'), '{}')
+    stored.set(snapshotKey('sess-old'), '{}')
+
+    render(<App />)
+
+    // 앞으로가기로 문항 화면에 돌아가면 이 스냅샷이 진행을 되살린다
+    expect([...stored.keys()]).toEqual([snapshotKey('s_web')])
+  })
+
+  it('저장된 웹 세션이 없으면 남은 진행 기록을 전부 지운다', () => {
     setSearch('?c=kko_share')
     const stored = stubLocalStorage()
     stored.set(snapshotKey('sess-1'), '{}')

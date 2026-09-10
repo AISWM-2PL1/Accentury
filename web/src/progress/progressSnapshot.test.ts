@@ -367,6 +367,29 @@ describe('접두사 훑기 (KAN-198) — 끊긴 응시가 남긴 키를 인트�
     expect(storage.getItem(`${PROGRESS_SNAPSHOT_KEY}-backup`)).toBe('x')
   })
 
+  it('지목한 세션 키는 남긴다 (뒤로가기로 인트로에 온 진행 중 응시)', () => {
+    const storage = fakeStorage()
+    saveSnapshot(storage, submitCount(createProgressState(tenItemDefinition()), 2), TEST_VERSION, 'sess-1')
+    saveSnapshot(storage, submitCount(createProgressState(tenItemDefinition()), 5), TEST_VERSION, 'sess-2')
+
+    sweepSnapshots(storage, 'sess-1')
+
+    // 남은 진행은 앞으로가기에서 그대로 복원돼야 한다
+    expect(currentItem(restoreProgress(storage, tenItemDefinition(), 'sess-1')!)?.itemId).toBe('item-3')
+    expect(storage.getItem(snapshotKey('sess-2'))).toBeNull()
+  })
+
+  it("빈 문자열은 과도기 키를 남기라는 뜻이라 null과 다르다", () => {
+    const storage = fakeStorage()
+    saveSnapshot(storage, submitCount(createProgressState(tenItemDefinition()), 1), TEST_VERSION)
+    saveSnapshot(storage, submitCount(createProgressState(tenItemDefinition()), 1), TEST_VERSION, 'sess-1')
+
+    sweepSnapshots(storage, '')
+
+    expect(storage.getItem(snapshotKey())).not.toBeNull()
+    expect(storage.getItem(snapshotKey('sess-1'))).toBeNull()
+  })
+
   it('지울 것이 없어도 조용히 끝난다', () => {
     const storage = fakeStorage()
     expect(() => sweepSnapshots(storage)).not.toThrow()
