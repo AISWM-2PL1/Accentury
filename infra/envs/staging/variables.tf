@@ -50,7 +50,7 @@ variable "ai_instance_type" {
 
 variable "ai_root_volume_size" {
   type        = number
-  description = "AI 호스트 루트 볼륨 GiB (KAN-36). 스텁 20, 실모델 전환(B단계)에서 40 - 가중치 포함 이미지 약 8.5GB x SHA 태그 2개 공존."
+  description = "AI 호스트 루트 볼륨 GiB (KAN-36). 스텁 20, 실모델(B단계) 40 - ai 이미지 7GB x SHA 태그 2개 공존 + pull 임시 공간. 근거는 tfvars 주석."
   default     = 20
 }
 

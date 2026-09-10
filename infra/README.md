@@ -16,7 +16,7 @@ infra/
     config/           backend, ai 환경 변수의 정본인 SSM 파라미터와 시크릿 2종 (관리자 토큰, 내부 호출 토큰) (KAN-129, KAN-36)
     edge/             internal ALB(대상 그룹 ip), VPC 오리진, CloudFront, S3 (KAN-125, KAN-126)
     waf/              CloudFront 앞단 웹 ACL. us-east-1 프로바이더로 호출한다 (KAN-149)
-    monitoring/       SNS 이메일과 CloudWatch 경보 10종(ALB, RDS 3종 + backend 서비스 2종 + AI 호스트 2종 + 관측성 3종), 운영 대시보드 1개 (KAN-134, KAN-165, KAN-36, KAN-38)
+    monitoring/       SNS 이메일과 CloudWatch 경보 12종(ALB, RDS 3종 + backend 서비스 2종 + AI 호스트 4종 + 관측성 3종), 운영 대시보드 1개 (KAN-134, KAN-165, KAN-36, KAN-38)
     deploy/           GitHub Actions가 OIDC로 맡는 환경별 배포 역할 (KAN-127)
   envs/
     staging/          main.tf + terraform.tfvars
@@ -763,7 +763,8 @@ precondition이 plan에서 크기를 검사한다.
 
 | | ai 호스트 `accentury-{env}-ai` |
 | --- | --- |
-| 인스턴스 | ASG min 1 max 1, c7i.xlarge (8GB - 실모델 RSS 7GB대를 이 컨테이너 혼자 쓴다) |
+| 인스턴스 | ASG min 1 max 1, c7i.xlarge (8GB - 실모델 RSS 최대 6.2GB를 이 컨테이너 혼자 쓴다), 루트 볼륨 40GiB (B단계, 이미지 7GB x 2 공존 + pull 임시 공간) |
+| 컨테이너 메모리 상한 | `mem_limit: 7g` (B단계, 2026-09-10). 호스트 7.6GiB에서 OS와 에이전트 몫 0.6GiB를 뺀 값 - 1.3배 규칙(8.05GB)은 8GB 호스트에서 성립하지 않아 대신 "호스트 프로세스는 살린다"를 기준으로 잡았다. 근거는 `docker-compose.ai.yml` 주석 |
 | 보안 그룹 | ai-sg (backend-sg만 8000) |
 | 컨테이너 | ai (호스트 8000, backend 태스크만 닿는다) |
 | SSM 읽기 | `/accentury/{env}/ai/*`와 `IMAGE_TAG`만 (IAM으로도 그것만) |
@@ -1096,8 +1097,8 @@ Count 관찰은 2026-08-28부터의 staging 사이클과 당일 부하 시험(�
 
 prod는 무인으로 돈다. 서버가 죽은 것을 사용자보다 먼저 알아야 하므로 SNS 토픽
 하나(`accentury-{env}-alerts`)에 이메일 구독을 걸고 CloudWatch 경보를 붙인다
-(`infra/modules/monitoring`, 두 환경 각 1벌). 이 절의 7종은 "서버가 죽었다"를 알리고,
-AI 지표 2종을 빼면 지표를 새로 수집하지 않는다 - ALB, RDS, ECS가 이미 내보내는 표준 지표다.
+(`infra/modules/monitoring`, 두 환경 각 1벌). 이 절의 9종은 "서버가 죽었다"를 알리고,
+AI 호스트 지표 4종을 빼면 지표를 새로 수집하지 않는다 - ALB, RDS, ECS가 이미 내보내는 표준 지표다.
 서비스 지표 수집과 대시보드, 그 위의 경보 3종은 아래 "관측성 지표와 대시보드 (KAN-38)"다.
 
 | 경보 | 지표 | 조건 | 결측 처리 |
@@ -1109,11 +1110,14 @@ AI 지표 2종을 빼면 지표를 새로 수집하지 않는다 - ALB, RDS, ECS
 | `backend-mem-high` (KAN-165) | `AWS/ECS` `MemoryUtilization` (ClusterName + ServiceName) | 1분 평균 >= 85%가 3회 연속 | `notBreaching` |
 | `ai-unhealthy` (KAN-36) | `accentury/ai` `Healthy` (차원 env, ai 호스트 타이머가 올린다) | 1분 최소 < 1이 3회 연속 | `breaching` |
 | `ai-circuit-open` (KAN-36) | `accentury/backend` `accentury.ai.circuit.state.value` (차원 env, backend Micrometer) | 1분 최대 >= 2(열림)가 2회 연속 | `notBreaching` |
+| `ai-disk-high` (KAN-36 B단계) | `accentury/ai` `RootDiskUsedPercent` (차원 env, ai 호스트 타이머) | 1분 최대 >= 80%가 3회 연속 | `notBreaching` |
+| `ai-mem-high` (KAN-36 B단계) | `accentury/ai` `MemoryUsedPercent` (차원 env, 호스트 대비, ai 호스트 타이머) | 1분 최대 >= 90%가 2회 연속 | `notBreaching` |
 
 앞의 둘이 KAN-134의 필수 2종이고 셋째는 "선택" 항목인데 두 환경 모두 넣기로 했다
 (2026-08-28). 넷째와 다섯째는 Fargate 전환(KAN-165)이 KAN-134의 `ec2-cpu-surplus` 자리에
-넣은 것이고, 마지막 둘은 AI 전용 호스트 분리(KAN-36)가 더한 것이다 - AI 호스트는 ALB 뒤가
-아니라 대상 그룹 health가 없고, 회로 상태는 어떤 표준 지표에도 없다. 일곱 경보 모두 ALARM과
+넣은 것이고, 여섯째와 일곱째는 AI 전용 호스트 분리(KAN-36 A단계)가 더한 것이다 - AI 호스트는 ALB 뒤가
+아니라 대상 그룹 health가 없고, 회로 상태는 어떤 표준 지표에도 없다. 마지막 둘은 실모델 전환(KAN-36
+B단계, 2026-09-10)이 더한 호스트 자원 경보다 - 아래 항목. 아홉 경보 모두 ALARM과
 OK 양쪽을 알린다. 해제 알림이 없으면 아직 죽어 있는지를 콘솔에서 확인해야 하기 때문이다.
 
 몇 가지가 의도된 선택이다.
@@ -1171,6 +1175,16 @@ OK 양쪽을 알린다. 해제 알림이 없으면 아직 죽어 있는지를 �
   시간 동안 무조건 운다 (2026-08-28 staging 실측). 초과 크레딧은 정상 부하에서 0 근처에
   머물다가 기준선을 넘겨 쓴 만큼만 쌓여 기동 오탐이 없었다. 버스트 인스턴스를 다시 쓰게
   되면 같은 선택이 유효하다.
+
+- **AI 호스트 자원 경보 2종은 실모델이 만든 것이다 (KAN-36 B단계, 2026-09-10).** ai 이미지가
+  7GB라 reload마다 SHA 2개와 pull 임시 공간이 루트 볼륨에 함께 놓이고, 컨테이너 RSS 최대 6.2GB
+  (KAN-57 bf16)가 8GB 인스턴스에 올라간다. 디스크가 차면 pull이 실패해 배포가 롤백하고, 메모리가
+  차면 OOM으로 워커가 죽어 재적재 31초가 반복된다 - 둘 다 health는 UP인 채라 `ai-unhealthy`가
+  못 잡는다. 지표는 health 타이머가 같은 경로로 올린다(CloudWatch agent 없음). 디스크 80%는
+  정상 reload의 순간 최대치(약 21GB = 40GiB의 51%)보다 위이고 pull 실패(100%)보다 아래다.
+  메모리 90%는 **호스트 대비**다 - 컨테이너 상한 7GiB(호스트의 92%)보다 조금 아래라 컨테이너가
+  죽기 전에 먼저 운다. 값은 `(MemTotal - MemAvailable) / MemTotal`이라 page cache는 사용으로 세지
+  않는다. 결측은 둘 다 `notBreaching` - 호스트가 없는 것은 `ai-unhealthy`가 잡는다.
 
 ### 수신 주소와 구독 확인
 
@@ -1304,11 +1318,30 @@ EC2 시절 `unhealthy-hosts`가 더 걸린 이유는 앞에 ALB 헬스체크 판
 `no-healthy-target`이 그보다 빠르다. 티켓 AC의 "수 분 내"는 이 값 기준이다. 복구 뒤에는 같은
 간격으로 OK 메일이 온다.
 
+AI 호스트 자원 경보 2종(KAN-36 B단계)의 2026-09-10 staging 실증이다. 티켓이 허용한 두 방법 중
+**임계 일시 하향**으로 했다 - `put-metric-alarm`으로 임계만 낮춰(디스크 80 -> 20, 메모리 90 -> 50)
+ALARM을 보고, `terraform apply`가 그 드리프트를 되돌리는 것으로 OK를 봤다. 디스크를 실제로
+채우는 방법(`fallocate`)은 지표 경로가 같으므로 결과가 다르지 않다. 그 지표 경로 자체는 같은 날
+instance refresh에서 확인됐다 - 새 인스턴스의 pull 중 `RootDiskUsedPercent`가 23%에서 36%로 올랐다
+23%로 내려왔고(이미지 7GB pull의 임시 공간), `MemoryUsedPercent`는 컨테이너 기동 전 9%에서 워밍업 뒤
+56%로 올랐다. 지표는 health와 무관하게 호스트가 뜬 직후부터 나간다.
+
+| 구간 | 걸린 시간 |
+| --- | --- |
+| `ai-disk-high` 임계 하향(11:03:59 UTC)부터 ALARM까지 | 1분 28초 (이미 쌓인 3개 데이터포인트를 새 임계로 재평가) |
+| `ai-mem-high` 임계 하향(11:05:55)부터 ALARM까지 | 39초 |
+| `terraform apply` 임계 복원(11:07:48)부터 `ai-mem-high` OK까지 | 1분 5초 |
+| 임계 복원부터 `ai-disk-high` OK까지 | 1분 11초 |
+| 시작 템플릿 갱신(루트 볼륨 40GiB)의 instance refresh: 새 인스턴스 시작부터 컨테이너 healthy까지 | 3분 39초 (10:49:23 -> 10:53:02, 이미지 7GB pull 포함) |
+
+실증 뒤 `terraform plan`은 No changes이고 경보 12종 전부 OK다. 실제 임계(80, 90)로 ALARM이 서는
+데는 여기에 조건 길이(디스크 3분, 메모리 2분)가 더해진다.
+
 ### 비용
 
 CloudWatch 표준 경보는 개당 월 0.10달러, 지표 math 경보(`alb-5xx`)는 지표 2개를 세어
-0.20달러다. 경보 7종에 환경당 월 약 0.80달러, 커스텀 지표(`Healthy` 1개 + backend `accentury.*`
-약 5개)가 이름당 월 0.30달러로 약 1.80달러다. SNS 이메일 알림은 월 1000건까지 무료다. 두 환경
+0.20달러다. 경보 9종에 환경당 월 약 1.00달러, 커스텀 지표(`Healthy`, `RootDiskUsedPercent`,
+`MemoryUsedPercent` 3개 + backend `accentury.*` 약 5개)가 이름당 월 0.30달러로 약 2.40달러다. SNS 이메일 알림은 월 1000건까지 무료다. 두 환경
 합산 월 5달러 안팎이라 상시 켜 둔다. KAN-38이 더하는 몫은 아래 절에 따로 적는다.
 
 ## 관측성 지표와 대시보드 (KAN-38)
@@ -1329,7 +1362,7 @@ CloudWatch 표준 경보는 개당 월 0.10달러, 지표 math 경보(`alb-5xx`)
 | 로그 그룹 1개 | `/accentury/{env}/ai` (KAN-203, 아래 "ai 컨테이너 로그"). backend `/accentury/{env}/backend`는 KAN-165가 만든다 |
 
 경보는 앞 절과 **같은 SNS 토픽**으로 간다. 심각도별 채널을 나누지 않는다 - 3인 팀에 채널이
-여럿이면 어느 쪽도 보지 않게 된다. 모듈 출력 `alarm_names`가 10종 전부를 준다.
+여럿이면 어느 쪽도 보지 않게 된다. 모듈 출력 `alarm_names`가 12종 전부를 준다.
 
 | 경보 | 지표 | 조건 | 결측 처리 |
 | --- | --- | --- | --- |
@@ -1342,9 +1375,10 @@ AI 호스트가 죽는 것은 `ai-unhealthy`가 이미 잡는다 - 같은 사건
 
 ### AI 임시파일 지표가 올라오는 경로
 
-`ai-health-metric.sh`(systemd 타이머, 1분)가 하는 일이 셋으로 늘었다.
+`ai-health-metric.sh`(systemd 타이머, 1분)가 하는 일이 넷으로 늘었다.
 
-1. `GET /internal/v0/health` (토큰 불필요) -> `Healthy` 0|1
+1. `GET /internal/v0/health` (토큰 불필요) -> `Healthy` 0|1. 같은 회차에 호스트의 `df /`와 `/proc/meminfo`에서
+   `RootDiskUsedPercent`, `MemoryUsedPercent`도 올린다 (KAN-36 B단계 - 토큰도 컨테이너도 필요 없다)
 2. `GET /internal/v0/metrics` (**토큰 필요**) -> `TempFiles`, `TempOldestAge`, `TempScanFailures`
 3. `GET /internal/v0/metrics/stages` (**토큰 필요**, KAN-204) -> `StageDuration` (아래 절)
 
@@ -1492,7 +1526,7 @@ for ip in $(cat /tmp/logs-ips); do iptables -I OUTPUT -d $ip -p tcp --dport 443 
 ENV=staging
 REGION=ap-northeast-2
 
-# 1. 경보 10종이 다 있고 INSUFFICIENT_DATA를 벗어났는가
+# 1. 경보 12종이 다 있고 INSUFFICIENT_DATA를 벗어났는가
 aws cloudwatch describe-alarms --region "$REGION"   --alarm-name-prefix "accentury-$ENV-"   --query 'MetricAlarms[].[AlarmName,StateValue]' --output table
 
 # 2. backend 지표가 실제로 올라오는가 (기동 뒤 2분 이상 기다린다 - 발행 주기가 1분이다)
@@ -1557,7 +1591,7 @@ Terraform 입력의 차이는 `diff -r infra/envs/staging infra/envs/prod`가 �
 | backend 태스크 (KAN-165) | 0.5 vCPU / 2 GB, desired 1 | 같은 값 | `modules/fargate` 기본값 (tfvars 아님) |
 | 관리자 토큰 | 환경별 난수 | 환경별 난수 | `ACCENTURY_ADMIN_TOKEN` |
 | 내부 호출 토큰 (KAN-36) | 환경별 난수 | 환경별 난수 | `ACCENTURY_ANALYSIS_AITOKEN`, `ai/ACCENTURY_AI_INTERNAL_TOKEN` |
-| AI 호스트 (KAN-36) | c7i.xlarge, 루트 20GB | 같은 값 | `ai_instance_type`, `ai_root_volume_size` (실모델 전환 시 40) |
+| AI 호스트 (KAN-36) | c7i.xlarge, 루트 40GiB | 같은 값 | `ai_instance_type`, `ai_root_volume_size` (B단계 2026-09-10에 20에서 40으로) |
 | RDS 삭제 보호, 최종 스냅샷 | 없음, 생략 | 켬, 남김 | RDS |
 | 배포 역할 ECR push | 허용 | 불가 | `modules/deploy` image-deploy 정책 (KAN-128 승격 모델) |
 
@@ -1748,8 +1782,8 @@ terraform destroy
   지속 추론)은 backend와 메모리를 나눌 수 없다. 분리 시점을 "실모델이 나오면"에서 "지금, 스텁으로"로
   당겨 prod를 최종 구조로 한 번만 세운다 (KAN-171). 인스턴스는 처음부터 c7i.xlarge다 (2026-09-01) -
   t3.small로 시작하는 안은 단계 전환에 인스턴스 교체를 하나 더 만들고 staging 실증과 prod의 유형을
-  다르게 했다. 대가는 스텁 기간의 월 147달러다. 루트 볼륨(40GB), `mem_limit`, 실모델 이미지는 B단계에서
-  tfvars와 KAN-22가 바꾼다. Fargate가 아니라 EC2인 이유는 모델 로드가 길고 이미지가 커서(약 8.5GB)
+  다르게 했다. 대가는 스텁 기간의 월 147달러다. 루트 볼륨(40GiB)과 `mem_limit`(7g)은 B단계(2026-09-10)가
+  tfvars와 compose로, 실모델 이미지는 KAN-22가 바꿨다. Fargate가 아니라 EC2인 이유는 모델 로드가 길고 이미지가 커서(7GB)
   스케일링 이점이 없고 GPU 선택지가 Fargate에 없기 때문이다. 1대 고정(ASG min 1 max 1)이라 교체 동안
   분석은 끊기고 회로가 열렸다 닫힌다 - 2대 이상은 내부 LB(월 약 20달러)가 필요해 미뤘다.
 - **backend가 AI를 부르는 이름은 Route 53 프라이빗 영역 (KAN-36)**: ASG가 인스턴스를 교체하면 사설

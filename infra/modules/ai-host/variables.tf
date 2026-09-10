@@ -41,7 +41,7 @@ variable "compose_version" {
 
 variable "root_volume_size" {
   type        = number
-  description = "루트 볼륨 GiB. 스텁 20, 실모델 전환(KAN-36 B단계) 시 tfvars로 40 (가중치 포함 이미지 약 8.5GB x SHA 태그 2개 공존)."
+  description = "루트 볼륨 GiB. 스텁 20, 실모델(KAN-36 B단계) tfvars 40 - ai 이미지 7GB x SHA 태그 2개 공존 + pull 임시 공간 (근거는 envs tfvars 주석). 값을 바꾸면 시작 템플릿이 새 버전이 되어 인스턴스가 교체된다."
   default     = 20
 }
 

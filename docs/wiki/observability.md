@@ -175,6 +175,7 @@ unset token
 | `accentury.http.errors` · `.polling` · `analysis.timeouts` · `analysis.poll` | 8 | 각 태그 값 2개씩 |
 | `accentury.sessions.active` · `analysis.processing` · `analysis.inflight` | 3 | 태그 없는 게이지 |
 | `accentury/ai`의 `TempFiles` · `TempOldestAge` · `TempScanFailures` | 3 | |
+| `accentury/ai`의 `RootDiskUsedPercent`와 `MemoryUsedPercent` (KAN-36 B단계) | 2 | 호스트 타이머, 태그 없음 |
 
 환경당 월 약 8.7달러다. 태그는 값이 다섯 이하로 닫힌 것만 쓴다 - 세션 ID나 IP를 태그로 쓰면
 조합 수가 트래픽에 비례해 요금이 상한 없이 늘어난다.
@@ -248,6 +249,8 @@ sum, count, avg, max만 쓴다. 그래서 `ServiceMetrics.registerPercentiles`�
 | 지표 | 무엇을 보는가 |
 |---|---|
 | `Healthy` | AI health 프로브 0/1 (KAN-36) |
+| `RootDiskUsedPercent` | 호스트 루트 볼륨 사용률(%) - `df /` (KAN-36 B단계). 이미지 7GB x 2 공존과 pull 임시 공간이 여기 놓인다 |
+| `MemoryUsedPercent` | 호스트 메모리 사용률(%) - `(MemTotal - MemAvailable) / MemTotal` (KAN-36 B단계). 컨테이너 `mem_limit` 대비가 아니라 호스트 대비다 |
 | `TempFiles` | AI 임시 디렉터리 잔존 파일 수 |
 | `TempOldestAge` | 그중 최장 잔존 시간(초) - 보존 기간 30분을 넘으면 삭제 실패다 |
 | `TempScanFailures` | 훑기 실패 누적 |
@@ -327,6 +330,7 @@ CloudWatch 대시보드 `accentury-{env}-ops` **하나**다. 바로가기는 환
 | 2 부하의 모양 | `/analyses` 요청 비율(30% 기준선) · 동시 활성 세션 수 · 폴링 요청과 429(축별) |
 | 3 파이프라인 내부 | 진행 중 건수와 회로 상태 · 타임아웃과 혼잡 발동 비율 · 임시파일 잔존 |
 | 4 추론 단계 (KAN-204) | 단계별 지연 P50, 단계별 지연 P95, 콜드 스타트와 대기 |
+| 5 AI 호스트 자원 (KAN-36 B단계) | 디스크와 메모리 사용률(%), 경보 임계선 80과 90 |
 
 4행은 AI 호스트 안이다. 3행까지가 backend가 보는 세계라면 여기는 그 뒤에서 문항 하나의 시간이
 어디로 갔는지이고, GPU 판정(KAN-57)의 입력이다.
@@ -344,7 +348,8 @@ CloudWatch 대시보드 `accentury-{env}-ops` **하나**다. 바로가기는 환
 전부 같은 SNS 토픽(`accentury-{env}-alerts`)으로 간다. 심각도별 채널을 나누지 않는다 - 3인 팀에
 채널이 여럿이면 어느 쪽도 보지 않게 된다.
 
-KAN-134/165/36의 7종은 "서버가 죽었다"를 알린다(근거는 `infra/README.md`). KAN-38이 더한 셋은
+KAN-134/165/36의 9종은 "서버가 죽었다"를 알린다(근거는 `infra/README.md` - 그중 AI 호스트 디스크와
+메모리 경보 2종은 KAN-36 B단계가 더했다). KAN-38이 더한 셋은
 "서버는 살아 있는데 파이프라인이 고장 났다"를 알린다 - 죽음은 사용자가 바로 알지만 이쪽은 대기
 화면이 길어지는 것으로만 드러나 아무도 신고하지 않는다.
 

@@ -358,6 +358,39 @@ locals {
         yAxis = { left = { min = 0, label = "ms", showUnits = false } }
       }
     },
+
+    # ---- 5행: AI 호스트 자원 (KAN-36 B단계) ----
+    #
+    # 실모델이 올라간 뒤 이 호스트에서 빠듯한 두 자원이다. 경보(ai-disk-high 80%, ai-mem-high 90%)가
+    # 임계에서 울리고, 이 그래프는 그 전에 "어느 배포부터 오르기 시작했는가"를 보는 자리다 - 디스크는
+    # reload마다 두 이미지가 공존하는 봉우리가 찍히고, 메모리는 추론 1건마다 오르내리는 톱니가 보인다.
+    # 경보 임계선을 함께 그어 임계까지의 거리를 읽게 한다.
+    {
+      type   = "metric"
+      x      = 0
+      y      = 24
+      width  = 8
+      height = 6
+      properties = {
+        title  = "AI 호스트 디스크와 메모리 사용률 (%)"
+        region = data.aws_region.current.region
+        view   = "timeSeries"
+        period = 60
+        metrics = [
+          concat([var.ai_metric_namespace, "RootDiskUsedPercent"], local.backend_dimensions,
+          [{ label = "루트 볼륨", stat = "Maximum" }]),
+          concat([var.ai_metric_namespace, "MemoryUsedPercent"], local.backend_dimensions,
+          [{ label = "메모리 (호스트 대비)", stat = "Maximum" }]),
+        ]
+        annotations = {
+          horizontal = [
+            { label = "디스크 경보 ${var.ai_disk_threshold}%", value = var.ai_disk_threshold, color = "#d62728" },
+            { label = "메모리 경보 ${var.ai_memory_threshold}%", value = var.ai_memory_threshold, color = "#ff7f0e" },
+          ]
+        }
+        yAxis = { left = { min = 0, max = 100, label = "%", showUnits = false } }
+      }
+    },
   ]
 }
 
