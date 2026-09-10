@@ -8,7 +8,7 @@ import {
   USER_CURVE_SPAN_SEMITONE,
   fillShortGaps,
   guideDurationMs,
-  reviewWindowMs,
+  reviewWindow,
   userCurveCenterHz,
   userCurveDisplayPoints,
   userCurveWindowMs,
@@ -24,6 +24,11 @@ const LONG_GAP_MS = 500
  * (`TestDefinition.VOICE_MAX_DURATION_MS`). 이 값보다 짧은 창은 상한과 무관하게 그대로다.
  */
 const MAX_DURATION_MS = 10_000
+
+/** Review 검사가 쓰는 가이드. 10ms 간격 101값 = 1000ms라 바닥이 딱 떨어진다 */
+const GUIDE_INTERVAL = 10
+const GUIDE_COUNT = 101
+const GUIDE_MS = 1000
 
 const frame = (timestampMs: number, pitchHz: number | null): PitchFrame => ({ timestampMs, pitchHz })
 
@@ -44,6 +49,19 @@ const semitone = (st: number, center = CENTER_HZ) => center * 2 ** (st / 12)
 const after = (gapMs: number) => (CENTER_MIN_VOICED_FRAMES - 1) * FRAME_MS + gapMs
 
 const gapThenJump = (gapMs: number) => [...centerFrames(), frame(after(gapMs), semitone(7))]
+
+/**
+ * 앞 10프레임·뒤 10프레임이 침묵인 100프레임 녹음 (KAN-195 Review 검사용).
+ * 실제 녹음이 이 꼴이다 — [녹음]을 누른 뒤 입을 떼기까지, 다 읽고 [정지]를 누르기까지가 비어 있다.
+ */
+const SILENCE_PADDED = frames([
+  ...Array.from({ length: 10 }, () => null),
+  ...Array.from({ length: 80 }, () => CENTER_HZ),
+  ...Array.from({ length: 10 }, () => null),
+])
+const FIRST_VOICED_MS = 10 * FRAME_MS
+const LAST_VOICED_MS = 89 * FRAME_MS
+const VOICED_SPAN_MS = LAST_VOICED_MS - FIRST_VOICED_MS
 
 /** 중심 프레임 뒤 [gapMs] 만큼 떨어진 곳에 7 semitone 점프를 두었을 때, 남은 옛 값의 비율 */
 function residualAfterGap(gapMs: number): number {
@@ -116,32 +134,50 @@ describe('창 길이', () => {
     expect(userCurveWindowMs(-5, 101, MAX_DURATION_MS)).toBe(2000)
   })
 
-  it('Review 창은 라이브 창보다 긴 녹음을 통째로 담는다', () => {
-    // 3.168초짜리 녹음이면 2초 라이브 창으로는 앞부분이 잘린다
-    const long = Array.from({ length: 100 }, (_, i) => frame(i * FRAME_MS, CENTER_HZ))
-    const lastMs = 99 * FRAME_MS
-    expect(lastMs).toBeGreaterThan(WINDOW_MS) // 전제: 녹음이 라이브 창보다 길다
-    expect(reviewWindowMs(long, WINDOW_MS)).toBe(lastMs + FRAME_MS)
+  it('Review 창은 발화 구간과 같고, 앞뒤 침묵은 잘려 나간다 (KAN-195)', () => {
+    // 앞 10프레임·뒤 10프레임이 침묵인 100프레임 녹음. 발화는 320ms부터 2848ms까지다
+    const { frames: trimmed, windowMs } = reviewWindow(SILENCE_PADDED, GUIDE_INTERVAL, GUIDE_COUNT)
+
+    expect(windowMs).toBe(VOICED_SPAN_MS)
+    expect(trimmed.length).toBe(80)
+    expect(trimmed[0].timestampMs).toBe(FIRST_VOICED_MS)
+    expect(trimmed[trimmed.length - 1].timestampMs).toBe(LAST_VOICED_MS)
   })
 
-  it('라이브 창 안에 들어오는 녹음이면 Review도 라이브 창을 쓴다', () => {
-    // 창을 녹음 길이에 맞춰 줄이면 짧은 발화가 레인 폭을 억지로 채워 늘어져 보인다
-    expect(reviewWindowMs(centerFrames(), WINDOW_MS)).toBe(WINDOW_MS)
+  it('Review로 그리면 곡선이 레인 양끝에 닿는다 (KAN-195)', () => {
+    // 가이드 레인이 `x = i / lastIndex`로 0~1을 쓰는 것과 같은 규칙이다 (guideCurve.ts)
+    const { frames: trimmed, windowMs } = reviewWindow(SILENCE_PADDED, GUIDE_INTERVAL, GUIDE_COUNT)
+    const points = userCurveDisplayPoints(trimmed, windowMs)[0]
+
+    expect(points.length).toBe(80)
+    expect(points[0].x).toBe(0)
+    expect(points[points.length - 1].x).toBe(1)
   })
 
-  it('프레임이 없으면 Review 창은 라이브 창 그대로다', () => {
-    expect(reviewWindowMs([], WINDOW_MS)).toBe(WINDOW_MS)
+  it('발화가 가이드보다 짧으면 창은 가이드 길이고 곡선이 레인을 다 쓰지 않는다', () => {
+    /*
+     * 세 음절만 웅얼거리고 끝낸 녹음까지 레인을 꽉 채우면, 위 가이드 레인과 나란히 놓였을 때
+     * 비슷한 분량을 말한 것처럼 보인다. 덜 말했다는 사실이 폭으로 남아야 한다.
+     */
+    const short = centerFrames() // 8프레임 = 224ms 발화
+    const { frames: trimmed, windowMs } = reviewWindow(short, GUIDE_INTERVAL, GUIDE_COUNT)
+
+    expect(windowMs).toBe(GUIDE_MS)
+    const points = userCurveDisplayPoints(trimmed, windowMs)[0]
+    expect(points[points.length - 1].x - points[0].x).toBeCloseTo(224 / GUIDE_MS, 5)
   })
 
-  it('Review 창으로 그리면 첫 프레임부터 마지막 프레임까지 다 들어온다', () => {
-    const total = 100
-    const long = Array.from({ length: total }, (_, i) => frame(i * FRAME_MS, CENTER_HZ))
-    const windowMs = reviewWindowMs(long, WINDOW_MS)
-    const points = userCurveDisplayPoints(long, windowMs)[0]
+  it('유성 프레임이 없으면 창은 가이드 길이고 프레임은 원본 그대로다', () => {
+    const silence = frames([null, null, null])
+    const { frames: kept, windowMs } = reviewWindow(silence, GUIDE_INTERVAL, GUIDE_COUNT)
 
-    expect(points.length).toBe(total)
-    expect(points[0].x).toBeCloseTo(long[0].timestampMs / windowMs, 5)
-    expect(points[points.length - 1].x).toBeLessThan(1)
+    expect(windowMs).toBe(GUIDE_MS)
+    expect(kept).toBe(silence)
+    expect(reviewWindow([], GUIDE_INTERVAL, GUIDE_COUNT).windowMs).toBe(GUIDE_MS)
+  })
+
+  it('가이드를 쓸 수 없으면 바닥은 폴백 1초다', () => {
+    expect(reviewWindow(centerFrames(), null, null).windowMs).toBe(1000)
   })
 })
 

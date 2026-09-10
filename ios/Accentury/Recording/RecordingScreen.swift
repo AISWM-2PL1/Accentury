@@ -134,13 +134,21 @@ struct RecordingScreen: View {
             valueCount: guideF0?.values.count,
             maxDurationMs: RecordingEngine.maxDurationMs
         )
-        let frames = model.curvePitchFrames
         // 이 창은 사용자 레인만 쓴다. 가이드는 사용자 창과 무관하게 항상 자기 길이로 레인 폭
         // 전체를 쓴다 (2026-08-25 결정 — `docs/wiki/pitch-curve.md` §4 "가이드 레인은 별도
         // 시간축이다"). 두 레인은 같은 시각을 맞춰 보는 도구가 아니라 모양을 견주는 도구다.
-        let windowMs = model.isReviewing
-            ? reviewWindowMs(frames, liveWindowMs: liveWindowMs)
-            : liveWindowMs
+        //
+        // Review에서는 창과 보여줄 구간을 `reviewWindow`가 함께 정한다 (KAN-195) — 발화 구간에
+        // 맞춰 앞뒤 침묵을 걷어내므로 곡선이 레인 양끝에 닿는다.
+        let review = model.isReviewing
+            ? reviewWindow(
+                model.curvePitchFrames,
+                frameIntervalMs: guideF0?.frameIntervalMs,
+                valueCount: guideF0?.values.count
+            )
+            : nil
+        let frames = review?.frames ?? model.curvePitchFrames
+        let windowMs = review?.windowMs ?? liveWindowMs
         let guidePoints = guideCurve.points(for: guideF0)
         let userSegments = userCurveDisplayPoints(frames, windowMs: windowMs, centerHz: centerHz)
 

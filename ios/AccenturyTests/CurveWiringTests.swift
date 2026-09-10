@@ -57,13 +57,11 @@ final class CurveWiringTests: XCTestCase {
         XCTAssertEqual(review.pitchFrames.count, frames.count)
         XCTAssertEqual(review.pitchFrames.map(\.timestampMs), frames.map(\.timestampMs))
 
-        // Review 창은 녹음 전체가 들어오도록 라이브 창보다 짧지 않다.
-        let liveWindowMs = userCurveWindowMs(
-            frameIntervalMs: 10,
-            valueCount: 120,
-            maxDurationMs: RecordingEngine.maxDurationMs
-        )
-        XCTAssertGreaterThanOrEqual(reviewWindowMs(frames, liveWindowMs: liveWindowMs), liveWindowMs)
+        // Review 창은 발화 구간에 맞춰 잡히고, 그 구간 안에 녹음의 유성 프레임이 다 들어온다
+        // (KAN-195). 라이브 창과의 대소는 더 이상 규칙이 아니다 — 짧게 말하면 창도 짧아진다.
+        let review = reviewWindow(frames, frameIntervalMs: 10, valueCount: 120)
+        XCTAssertGreaterThan(review.windowMs, 0)
+        XCTAssertEqual(frames.filter { $0.pitchHz != nil }.count, review.frames.filter { $0.pitchHz != nil }.count)
     }
 
     /// 화면을 떠나면 곡선도 사라진다 — 남겨 두면 다음 문항의 빈 레인에 지난 곡선이 비친다.

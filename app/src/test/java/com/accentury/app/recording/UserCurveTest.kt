@@ -78,40 +78,54 @@ class UserCurveTest {
     }
 
     @Test
-    fun `Review 창은 라이브 창보다 긴 녹음을 통째로 담는다`() {
-        // 3.168초짜리 녹음이면 2초 라이브 창으로는 앞부분이 잘린다
-        val long = List(100) { frame(it * FRAME_MS, CENTER_HZ) }
-        val lastMs = 99 * FRAME_MS
-        assertTrue("전제: 녹음이 라이브 창보다 길다", lastMs > WINDOW_MS)
-        assertEquals(lastMs + FRAME_MS, reviewWindowMs(long, WINDOW_MS))
+    fun `Review 창은 발화 구간과 같고 앞뒤 침묵은 잘려 나간다 (KAN-195)`() {
+        // 앞 10프레임·뒤 10프레임이 침묵인 100프레임 녹음. 발화는 320ms부터 2848ms까지다
+        val (trimmed, windowMs) = reviewWindow(SILENCE_PADDED, GUIDE_INTERVAL, GUIDE_COUNT)
+
+        assertEquals(VOICED_SPAN_MS, windowMs)
+        assertEquals(80, trimmed.size)
+        assertEquals(FIRST_VOICED_MS, trimmed.first().timestampMs)
+        assertEquals(LAST_VOICED_MS, trimmed.last().timestampMs)
     }
 
     @Test
-    fun `라이브 창 안에 들어오는 녹음이면 Review도 라이브 창을 쓴다`() {
-        // 창을 녹음 길이에 맞춰 줄이면 짧은 발화가 레인 폭을 억지로 채워 늘어져 보인다
-        assertEquals(WINDOW_MS, reviewWindowMs(centerFrames(), WINDOW_MS))
+    fun `Review로 그리면 곡선이 레인 양끝에 닿는다 (KAN-195)`() {
+        // 가이드 레인이 `x = i / lastIndex`로 0~1을 쓰는 것과 같은 규칙이다 (GuideCurve)
+        val (trimmed, windowMs) = reviewWindow(SILENCE_PADDED, GUIDE_INTERVAL, GUIDE_COUNT)
+        val points = userCurveDisplayPoints(trimmed, windowMs).single()
+
+        assertEquals(80, points.size)
+        assertEquals(0f, points.first().x, 1e-6f)
+        assertEquals(1f, points.last().x, 1e-6f)
     }
 
     @Test
-    fun `프레임이 없으면 Review 창은 라이브 창 그대로다`() {
-        assertEquals(WINDOW_MS, reviewWindowMs(emptyList(), WINDOW_MS))
+    fun `발화가 가이드보다 짧으면 창은 가이드 길이고 곡선이 레인을 다 쓰지 않는다`() {
+        /*
+         * 세 음절만 웅얼거리고 끝낸 녹음까지 레인을 꽉 채우면, 위 가이드 레인과 나란히 놓였을 때
+         * 비슷한 분량을 말한 것처럼 보인다. 덜 말했다는 사실이 폭으로 남아야 한다.
+         */
+        val short = centerFrames() // 8프레임 = 224ms 발화
+        val (trimmed, windowMs) = reviewWindow(short, GUIDE_INTERVAL, GUIDE_COUNT)
+
+        assertEquals(GUIDE_MS, windowMs)
+        val points = userCurveDisplayPoints(trimmed, windowMs).single()
+        assertEquals(224f / GUIDE_MS, points.last().x - points.first().x, 1e-5f)
     }
 
     @Test
-    fun `Review 창으로 그리면 첫 프레임부터 마지막 프레임까지 다 들어온다`() {
-        val total = 100
-        val long = List(total) { frame(it * FRAME_MS, CENTER_HZ) }
-        val windowMs = reviewWindowMs(long, WINDOW_MS)
-        val points = userCurveDisplayPoints(long, windowMs).single()
+    fun `유성 프레임이 없으면 창은 가이드 길이고 프레임은 원본 그대로다`() {
+        val silence = frames(null, null, null)
+        val (kept, windowMs) = reviewWindow(silence, GUIDE_INTERVAL, GUIDE_COUNT)
 
-        assertEquals(total, points.size)
-        assertEquals(
-            "첫 점은 첫 프레임 시각 자리다",
-            long.first().timestampMs.toFloat() / windowMs,
-            points.first().x,
-            1e-5f,
-        )
-        assertTrue("마지막 점은 오른쪽 모서리에 붙지 않는다: ${points.last().x}", points.last().x < 1f)
+        assertEquals(GUIDE_MS, windowMs)
+        assertEquals(silence, kept)
+        assertEquals(GUIDE_MS, reviewWindow(emptyList(), GUIDE_INTERVAL, GUIDE_COUNT).windowMs)
+    }
+
+    @Test
+    fun `가이드를 쓸 수 없으면 바닥은 폴백 1초다`() {
+        assertEquals(1000L, reviewWindow(centerFrames(), null, null).windowMs)
     }
 
     // --- 그릴 게 없는 경우 ---------------------------------------------------
@@ -450,6 +464,22 @@ class UserCurveTest {
          * 것을 본다 (KAN-195). 이 값보다 짧은 창은 상한과 무관하게 그대로다.
          */
         const val MAX_MS = RecordingEngine.MAX_DURATION_MS
+
+        /** Review 검사가 쓰는 가이드. 10ms 간격 101값 = 1000ms라 바닥이 딱 떨어진다 */
+        const val GUIDE_INTERVAL = 10
+        const val GUIDE_COUNT = 101
+        const val GUIDE_MS = 1000L
+
+        /**
+         * 앞 10프레임·뒤 10프레임이 침묵인 100프레임 녹음 (KAN-195 Review 검사용).
+         * 실제 녹음이 이 꼴이다 - [녹음]을 누른 뒤 입을 떼기까지, 다 읽고 [정지]를 누르기까지가 비어 있다.
+         */
+        val SILENCE_PADDED: List<RecordingEngine.PitchFrame> = List(100) { i ->
+            RecordingEngine.PitchFrame(i * FRAME_MS, if (i in 10..89) CENTER_HZ else null)
+        }
+        const val FIRST_VOICED_MS = 10 * FRAME_MS
+        const val LAST_VOICED_MS = 89 * FRAME_MS
+        const val VOICED_SPAN_MS = LAST_VOICED_MS - FIRST_VOICED_MS
 
         /**
          * 앞뒤 가장자리가 무성이고, 32ms(200Hz)와 224ms(800Hz) 사이에 192ms짜리 구멍이 있다.
