@@ -30,22 +30,31 @@ class RewardedRetestAd(
 ) {
     private var loaded: RewardedAd? = null
     private var loading = false
+    private val generation = AdLoadGeneration()
 
-    /** 다음 재응시를 위해 미리 받아 둔다. 이미 있거나 받는 중이면 아무 일도 없다. */
+    /**
+     * 다음 재응시를 위해 미리 받아 둔다. 이미 있거나 받는 중이면 아무 일도 없다.
+     * 동의가 `unknown`이면 요청하지 않고([shouldRequestAds], P1-1), 로드 중 [discard]된 결과는 버린다 (P1-2) —
+     * [InterstitialGate.preload]와 같은 규칙이다.
+     */
     fun preload() {
+        if (!shouldRequestAds(consent())) return
         if (loaded != null || loading) return
         loading = true
+        val token = generation.begin()
         RewardedAd.load(
             context,
             adUnitId,
             buildAdRequest(consent()),
             object : RewardedAdLoadCallback() {
                 override fun onAdLoaded(ad: RewardedAd) {
+                    if (!generation.isCurrent(token)) return
                     loading = false
                     loaded = ad
                 }
 
                 override fun onAdFailedToLoad(error: LoadAdError) {
+                    if (!generation.isCurrent(token)) return
                     loading = false
                     loaded = null
                     Log.w(TAG, "보상형 광고 로드 실패: code=${error.code} domain=${error.domain}")
@@ -54,8 +63,10 @@ class RewardedRetestAd(
         )
     }
 
-    /** 받아 둔 광고를 버린다 — 동의가 바뀌었을 때 ([AdsController.setConsent]). */
+    /** 받아 둔 광고와 진행 중인 로드를 버린다 — 동의가 바뀌었을 때 ([AdsController.setConsent], [InterstitialGate.discard]와 같다). */
     fun discard() {
+        generation.invalidate()
+        loading = false
         loaded = null
     }
 

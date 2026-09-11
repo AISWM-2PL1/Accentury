@@ -43,28 +43,37 @@ class InterstitialGate(
 ) {
     private var loaded: InterstitialAd? = null
     private var loading = false
+    private val generation = AdLoadGeneration()
 
     /**
      * 다음 표시를 위해 미리 받아 둔다. 이미 있거나 받는 중이면 아무 일도 없다.
+     *
+     * **동의가 `unknown`이면 요청하지 않는다** ([shouldRequestAds]). [AdsController]의 프리로드만 거르면
+     * [show]가 만드는 재로드 경로가 시트 전에 요청을 낸다 — 판정은 허브와 게이트가 같은 함수를 쓴다 (P1-1).
      *
      * 로드 실패에 재시도 루프를 두지 않는다 — 실패한 자리에서 곧바로 다시 요청하면 무효 트래픽으로
      * 잡힐 수 있어 SDK 문서가 말리는 패턴이다. 다음 기회는 [show]가 만든다: 보여줄 것이 없을 때
      * 한 번 더 받아 두므로 세션 하나가 광고 없이 지나가더라도 그다음 세션에는 있다.
      */
     fun preload() {
+        if (!shouldRequestAds(consent())) return
         if (loaded != null || loading) return
         loading = true
+        // 요청 시점의 세대를 들고 간다 — 로드 중에 동의가 바뀌어 discard()가 세대를 올리면 이 결과는 버린다.
+        val token = generation.begin()
         InterstitialAd.load(
             context,
             adUnitId,
             buildAdRequest(consent()),
             object : InterstitialAdLoadCallback() {
                 override fun onAdLoaded(ad: InterstitialAd) {
+                    if (!generation.isCurrent(token)) return
                     loading = false
                     loaded = ad
                 }
 
                 override fun onAdFailedToLoad(error: LoadAdError) {
+                    if (!generation.isCurrent(token)) return
                     loading = false
                     loaded = null
                     // 값은 코드·도메인뿐이라 남겨도 된다 (KAN-38). 로드 실패는 정상 경로(무재고)라
@@ -75,8 +84,16 @@ class InterstitialGate(
         )
     }
 
-    /** 받아 둔 광고를 버린다 — 동의가 바뀌어 요청 조건이 달라졌을 때 ([AdsController.setConsent]). */
+    /**
+     * 받아 둔 광고를 버린다 — 동의가 바뀌어 요청 조건이 달라졌을 때 ([AdsController.setConsent]).
+     *
+     * 진행 중인 로드도 버린다 ([AdLoadGeneration]): 세대를 올려 그 콜백이 결과를 들이지 못하게 하고,
+     * `loading`을 내려 뒤따르는 [preload]가 새 조건으로 곧바로 나가게 한다. 참조만 비우면 옛 조건으로
+     * 나간 로드가 완료돼 `loaded`로 들어온다 (P1-2).
+     */
     fun discard() {
+        generation.invalidate()
+        loading = false
         loaded = null
     }
 

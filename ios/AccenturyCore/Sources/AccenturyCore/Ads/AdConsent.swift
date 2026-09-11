@@ -42,3 +42,18 @@ public enum AdConsent: String, Equatable, Sendable, CaseIterable {
 public func personalizationAllowed(_ consent: AdConsent) -> Bool {
     consent == .granted
 }
+
+/// 동의 → 요청 가능 판정 (KAN-196 리뷰 P1-1). 안드로이드 `AdRequests.kt`의 `shouldRequestAds`.
+/// **``AdConsent/unknown``만 false다.**
+///
+/// ``personalizationAllowed(_:)``가 "어떤 요청인가"(맞춤형/npa)를 정한다면 이 함수는 "요청이 나가도 되는가"를
+/// 정한다. 시트가 뜨기 전(`unknown`)에는 npa를 붙이더라도 "묻기 전에 광고 서버와 통신했다"가 되므로
+/// 요청 자체가 없어야 한다 — webview-bridge.md §8.5, ads-admob.md §4.
+///
+/// 처음에는 `AdsController`의 프리로드만 이 판정을 했고 게이트의 `preload()`는 무조건 요청했다. 그런데
+/// 게이트는 브리지 `showInterstitialAd`·`startRetest`에서도 불리고(받아 둔 광고가 없으면 한 번 더 받는
+/// 자리), 그 경로는 시트를 우회할 수 있다 — `WebAutoDriver`의 JS click, 심 경합으로 `getAdConsent()`가
+/// `""`인 찰나. 그래서 판정을 순수 함수 하나로 빼서 허브와 두 게이트가 **같은 줄**을 쓴다.
+public func shouldRequestAds(_ consent: AdConsent) -> Bool {
+    consent != .unknown
+}

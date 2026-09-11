@@ -172,7 +172,8 @@ final class AdsController: ObservableObject {
 
     private func preloadIfConsented() {
         guard sdkReady else { return }
-        if consentStore.read() == .unknown { return }
+        // 게이트의 preload()도 같은 판정을 한다 — 여기서만 거르면 show/run의 재로드 경로가 샌다 (P1-1).
+        if !shouldRequestAds(consentStore.read()) { return }
         interstitial.preload()
         rewarded.preload()
     }
