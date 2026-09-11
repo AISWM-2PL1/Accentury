@@ -83,12 +83,22 @@ REQUIRE_ADMOB_IDS=YES`를 함께 준다.
 | `denied` | `denied` | `npa=1` | 한다 |
 | `granted` | `granted` | 맞춤형 | 한다 |
 
-- 판정은 순수 함수 `personalizationAllowed(consent)` 하나다 — `Granted`만 true (`AdRequests.kt`)
+- 판정은 순수 함수 둘이다 (`AdRequests.kt`, iOS Core `AdConsent.swift`) — "어떤 요청인가"는
+  `personalizationAllowed(consent)`(`Granted`만 true), "요청이 나가도 되는가"는 `shouldRequestAds(consent)`
+  (`Unknown`만 false)
 - **`unknown`이면 요청을 아예 내지 않는다.** 시트가 뜨기 전이라 npa를 붙이더라도 "묻기 전에 광고
   서버와 통신했다"가 된다. 첫 `setAdConsent`가 프리로드의 시작점이고, 그 뒤로는 앱 시작마다 저장값으로
-  바로 받아 둔다 (`AdsController.preloadIfConsented`)
+  바로 받아 둔다 (`AdsController.preloadIfConsented`). **게이트의 `preload()` 첫 줄도 같은 판정을 한다**
+  (리뷰 P1-1, 2026-09-11) — 처음엔 허브만 걸렀는데 `show`/`run`이 "받아 둔 것이 없으면 한 번 더 받는"
+  경로가 시트를 우회할 수 있다(iOS 구동기의 JS click, 심 경합으로 `getAdConsent()`가 `""`인 찰나). 요청이
+  나가는 자리가 셋이면 판정도 셋이 같은 함수를 써야 한다
 - 동의가 **바뀌면** 받아 둔 광고를 버리고 새 조건으로 다시 받는다 — 허용으로 받은 맞춤형 광고가 거부 뒤에
   한 번 더 나가면 안 된다. 같은 값을 다시 고르면 버리지 않는다(노출 없는 요청만 는다)
+- **로드 중에 바뀌어도 버린다** (리뷰 P1-2). SDK 로드에는 취소가 없어 `discard()`가 참조만 비우면 옛
+  조건으로 나간 요청이 잠시 뒤 완료돼 `loaded`로 들어오고, `loading`이 선 채라 새 조건의 `preload()`는
+  물러난다. 그래서 게이트마다 세대 카운터 `AdLoadGeneration`(`begin`/`invalidate`/`isCurrent`)을 두고 —
+  `discard()`가 세대를 올리고 `loading`을 내리며, 로드 콜백은 요청 시점 토큰이 현재 세대가 아니면 성공·실패
+  둘 다 버린다. 순수 클래스라 JVM·`swift test`가 세 갈래를 못박는다 (`AdLoadGenerationTest[s]`)
 - 초기화 전에 온 `setAdConsent`는 잃지 않는다 — 초기화 완료 콜백이 저장값을 다시 본다
 
 ## 5. 흐름
@@ -253,7 +263,8 @@ ATT 시트가 시트 허용 직후 뜨는지, 허용/거부 뒤 첫 맞춤형 �
 |---|---|
 | `app/src/main/java/com/accentury/app/ads/AdConsent.kt` | 동의 enum·브리지 문자열 매핑 |
 | `…/ads/AdConsentStore.kt` | 저장소 인터페이스 + SharedPreferences 구현 |
-| `…/ads/AdRequests.kt` | `personalizationAllowed`·`buildAdRequest`(npa) |
+| `…/ads/AdRequests.kt` | `personalizationAllowed`·`shouldRequestAds`·`buildAdRequest`(npa) |
+| `…/ads/AdLoadGeneration.kt` | 로드 세대 카운터 — 로드 중 동의 변경 시 옛 결과 폐기 |
 | `…/ads/InterstitialGate.kt` | 전면 광고 로드·표시 |
 | `…/ads/RewardedRetestGate.kt` | 보상형 → 재응시 순수 상태기계 |
 | `…/ads/RewardedRetestAd.kt` | 보상형 SDK 결선 |
@@ -263,13 +274,14 @@ ATT 시트가 시트 허용 직후 뜨는지, 허용/거부 뒤 첫 맞춤형 �
 | `web/AccenturyBridge.kt` | `getAdConsent`·`setAdConsent`·`showInterstitialAd` |
 | `bridge/RetestFailure.kt` | `adDismissedRetestFailure()` |
 | `app/build.gradle.kts` | ID 주입·릴리스 빗장, `AndroidManifest.xml` APPLICATION_ID |
-| 테스트 | `app/src/test/…/ads/{AdConsentTest,AdRequestsTest,RewardedRetestGateTest}.kt`, `web/AccenturyBridgeTest.kt` |
+| 테스트 | `app/src/test/…/ads/{AdConsentTest,AdRequestsTest,AdLoadGenerationTest,RewardedRetestGateTest}.kt`, `web/AccenturyBridgeTest.kt` |
 
 ### 8.1 iOS
 
 | 파일 | 역할 |
 |---|---|
-| `ios/AccenturyCore/Sources/AccenturyCore/Ads/AdConsent.swift` | 동의 enum·브리지 문자열, `personalizationAllowed` |
+| `ios/AccenturyCore/Sources/AccenturyCore/Ads/AdConsent.swift` | 동의 enum·브리지 문자열, `personalizationAllowed`·`shouldRequestAds` |
+| `…/Ads/AdLoadGeneration.swift` | 로드 세대 카운터 (Android와 같다) |
 | `…/Ads/AdConsentStore.swift` | 저장소 프로토콜 + `UserDefaultsAdConsentStore`(키 `ad_consent.state`) |
 | `…/Ads/RewardedRetestGate.swift` | 보상형 → 재응시 순수 상태기계 (Android와 같은 표) |
 | `…/Bridge/RetestFailure.swift` | `adDismissedRetestFailure()`·`codeAdDismissed` |
@@ -285,4 +297,4 @@ ATT 시트가 시트 허용 직후 뜨는지, 허용/거부 뒤 첫 맞춤형 �
 | `ios/Accentury/Web/AccenturyBridge.swift` | `setAdConsent` 거름·`showInterstitialAd` 라우팅 |
 | `ios/Accentury/Web/WebViewHost.swift` | `adConsent` 값 push (`pushAdConsent`) |
 | `ios/Accentury/AppConfig.swift`, `Config/Base.xcconfig`, `Info-*.plist`, `project.yml` | ID 주입·plist 키·SwiftPM·릴리스 빗장 |
-| 테스트 | Core `Tests/AccenturyCoreTests/Ads/{AdConsentTests,UserDefaultsAdConsentStoreTests,AdRequestsTests,RewardedRetestGateTests}.swift`, `Bridge/RetestFailedDeliveryTests.swift`(`AdDismissedRetestFailureTests`); 앱 `AccenturyTests/{AccenturyBridgeTests,BridgeUserScriptTests}.swift` |
+| 테스트 | Core `Tests/AccenturyCoreTests/Ads/{AdConsentTests,UserDefaultsAdConsentStoreTests,AdRequestsTests,AdLoadGenerationTests,RewardedRetestGateTests}.swift`, `Bridge/RetestFailedDeliveryTests.swift`(`AdDismissedRetestFailureTests`); 앱 `AccenturyTests/{AccenturyBridgeTests,BridgeUserScriptTests}.swift` |

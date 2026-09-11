@@ -17,6 +17,21 @@ import com.google.android.gms.ads.AdRequest
 fun personalizationAllowed(consent: AdConsent): Boolean = consent == AdConsent.Granted
 
 /**
+ * 동의 → 요청 가능 판정 (KAN-196 리뷰 P1-1). **[AdConsent.Unknown]만 false다.**
+ *
+ * [personalizationAllowed]가 "어떤 요청인가"(맞춤형/npa)를 정한다면 이 함수는 "요청이 나가도 되는가"를
+ * 정한다. 시트가 뜨기 전(`unknown`)에는 npa를 붙이더라도 "묻기 전에 광고 서버와 통신했다"가 되므로
+ * 요청 자체가 없어야 한다 — webview-bridge.md §8.5, ads-admob.md §4.
+ *
+ * 처음에는 [AdsController]의 프리로드만 이 판정을 했고 게이트의 `preload()`는 무조건 요청했다. 그런데
+ * 게이트는 브리지 `showInterstitialAd`·`startRetest`에서도 불리고(받아 둔 광고가 없으면 한 번 더 받는
+ * 자리), 그 경로는 시트를 우회할 수 있다(iOS 구동기의 JS click, `getAdConsent()`가 `""`인 찰나). 그래서
+ * 판정을 순수 함수 하나로 빼서 허브와 두 게이트가 **같은 줄**을 쓴다 — 요청이 나가는 자리가 셋인데 판정이
+ * 한 곳에만 있으면 나머지 둘은 언젠가 다시 새는 구멍이다.
+ */
+fun shouldRequestAds(consent: AdConsent): Boolean = consent != AdConsent.Unknown
+
+/**
  * 동의 상태에 맞는 광고 요청을 만든다.
  *
  * 비맞춤은 AdMob 어댑터 extras `npa=1`이다. Google Mobile Ads SDK 문서 「Forward consent to the

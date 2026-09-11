@@ -23,6 +23,7 @@ final class RewardedRetestAd: NSObject, FullScreenContentDelegate {
     private let gate: RewardedRetestGate
     private var loaded: RewardedAd?
     private var loading = false
+    private let generation = AdLoadGeneration()
 
     /// 지금 떠 있는 광고의 결과를 받을 상대. 표시 한 건에 한 쌍이고 닫히면 비운다.
     private var onProceed: (() -> Void)?
@@ -35,19 +36,24 @@ final class RewardedRetestAd: NSObject, FullScreenContentDelegate {
     }
 
     /// 다음 재응시를 위해 미리 받아 둔다. 이미 있거나 받는 중이면 아무 일도 없다.
+    /// 동의가 `unknown`이면 요청하지 않고(``AccenturyCore/shouldRequestAds(_:)``, P1-1), 로드 중 ``discard()``된
+    /// 결과는 버린다 (P1-2) — ``InterstitialGate/preload()``와 같은 규칙이다.
     func preload() {
+        if !shouldRequestAds(consent()) { return }
         if loaded != nil || loading { return }
         loading = true
+        let token = generation.begin()
         RewardedAd.load(with: adUnitId, request: AdRequests.make(consent: consent())) { [weak self] ad, error in
             // 완료 핸들러는 메인으로 오지만 `@Sendable`로 선언돼 있어 격리를 타입으로 다시 못박는다 —
             // 로드 상태는 메인에서만 바뀐다는 계약을 컴파일러가 확인하게 둔다.
             Task { @MainActor in
-                self?.onLoaded(ad, error: error)
+                self?.onLoaded(ad, error: error, token: token)
             }
         }
     }
 
-    private func onLoaded(_ ad: RewardedAd?, error: Error?) {
+    private func onLoaded(_ ad: RewardedAd?, error: Error?, token: Int) {
+        guard generation.isCurrent(token) else { return }
         loading = false
         guard let ad else {
             loaded = nil
@@ -57,8 +63,11 @@ final class RewardedRetestAd: NSObject, FullScreenContentDelegate {
         loaded = ad
     }
 
-    /// 받아 둔 광고를 버린다 — 동의가 바뀌었을 때 (``AdsController/setConsent(_:)``).
+    /// 받아 둔 광고와 진행 중인 로드를 버린다 — 동의가 바뀌었을 때 (``AdsController/setConsent(_:)``,
+    /// ``InterstitialGate/discard()``와 같다).
     func discard() {
+        generation.invalidate()
+        loading = false
         loaded = nil
     }
 
