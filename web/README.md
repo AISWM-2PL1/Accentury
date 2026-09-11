@@ -94,8 +94,12 @@ docker compose -f docker-compose.yml -f /tmp/ai-ports.yml up -d --wait ai
 
 # 3) Backend — 시스템 java가 없으면 Android Studio의 JBR을 쓴다.
 #    툴체인 JDK 25는 foojay resolver가 알아서 받는다.
+#    - CORS에 5174가 있어야 한다: Playwright가 E2E 전용 포트에 개발 서버를 띄우는데, 브라우저는
+#      같은 출처라도 POST에 Origin을 실어 보내고 프록시가 그대로 넘기므로 없으면 세션 생성이 403이다.
+#    - ai-token은 compose의 ai가 검사하는 내부 토큰(ACCENTURY_AI_INTERNAL_TOKEN)과 같은 값이어야
+#      한다. 빠지면 BE→AI 호출이 401로 막혀 회로가 열리고, 분석 대기에서 멈춘다.
 cd backend && JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" \
-  ./gradlew bootRun --args="--accentury.cors.allowed-origins=http://localhost:5173,http://127.0.0.1:5173 --accentury.analysis.ai-base-url=http://127.0.0.1:8000"
+  ./gradlew bootRun --args="--accentury.cors.allowed-origins=http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174 --accentury.analysis.ai-base-url=http://127.0.0.1:8000 --accentury.analysis.ai-token=local-internal-token-0123456789abcdef"
 
 # 4) 확인 — 둘 다 200이어야 한다
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/actuator/health
@@ -119,9 +123,17 @@ npm run test:e2e -- --headed      # 브라우저를 눈으로 보면서
 npm run test:e2e:ui               # 스펙을 골라 되감아 보는 UI
 npm run test:e2e -- smoke         # 파일 이름으로 좁히기
 
+# 출신 지역 선택 화면(KAN-202)을 거치는 판. 개발 서버가 이 값으로 뜨고 스펙이 지역을 고른 뒤
+# 세션 본문에 region이 실렸는지까지 본다. 안 주면 화면 없는 빌드로 돌고 본문에 region이 없는지 본다.
+VITE_REGION_SELECT=true npm run test:e2e
+
 # 실패하면 trace가 남는다 — 요청·콘솔·DOM 스냅샷이 다 들어 있다
 npx playwright show-trace test-results/<실패한-스펙>/trace.zip
 ```
+
+지역 화면 판을 위해 스펙을 따로 두지 않는다 — `startTest`가 화면에 뜬 것을 보고 지역 화면이
+있으면 고르고 없으면 지나가므로, 같은 스펙이 켠 빌드·끈 빌드·`E2E_BASE_URL`의 staging에서
+그대로 돈다. 둘 다 돌려야 양쪽 AC가 다 확인된다.
 
 #### 실패 갈래 돌리기
 
@@ -182,7 +194,14 @@ E2E_BASE_URL=https://staging.accentury.app npm run test:e2e
 - 대상 버킷, 배포 ID, IAM 역할은 GitHub environment 변수다 (infra/README.md "GitHub 설정").
 - `VITE_PLAY_STORE_URL` 같은 빌드 시점 값은 아직 주입하지 않는다 (코드 기본값). 필요해지면
   environment 변수로 넘긴다 - 두 환경이 같은 값이면 저장소 변수로 둔다.
-- 예외가 하나 있다: `VITE_GA4_MEASUREMENT_ID`(KAN-33). GitHub environment 변수
+- 예외가 둘 있다. 하나는 `VITE_GA4_MEASUREMENT_ID`(KAN-33). GitHub environment 변수
   `GA4_MEASUREMENT_ID`를 워크플로가 빌드에 넘긴다. staging과 prod가 **다른 스트림**이어야
   우리 확인 트래픽이 실사용 집계에 섞이지 않는다. 비워 두면 계측 없이 빌드된다 -
   로컬 개발도 그 상태이고, 이벤트가 실제로 도는지는 콘솔의 `[track]` 로그로 본다.
+- 다른 하나는 `VITE_REGION_SELECT`(KAN-202). GitHub environment 변수 `REGION_SELECT`를
+  넘기며, **staging만 `true`**이고 prod에는 변수를 등록하지 않는다. 켜진 빌드는 시작
+  게이트에 출신 지역 선택 화면이 생기고 세션 생성 본문에 `region`이 실린다 - KAN-201이
+  staging 학습 데이터를 지역별로 뽑는 라벨이라 내부 테스터가 응시하는 staging에만 필요하다.
+  정확히 문자열 `true`일 때만 켜지고 비어 있으면 화면도 요청 필드도 없는 것이 정상이다
+  (`src/region/regions.ts`). 로컬에서 보려면 `web/.env.local`에 `VITE_REGION_SELECT=true`를
+  둔다 (`.env.*`는 gitignore 대상).
