@@ -8,11 +8,14 @@ import {
   isStandaloneWeb,
   logAnalyticsEvent,
   openExternalUrl,
+  readAdConsent,
   REQUIRED_BRIDGE_VERSION,
   requestMicPermission,
   shareResult,
+  showInterstitialAd,
   startRetest,
   startVoiceItem,
+  writeAdConsent,
   type AccenturyBridge,
   type SharePayload,
   type VoiceItemStart,
@@ -403,5 +406,80 @@ describe('openExternalUrl — 외부 링크 넘기기 (KAN-177)', () => {
     window.AccenturyBridge = fakeBridge() // openExternalUrl 없음
 
     expect(openExternalUrl('https://accentury.app/privacy.html')).toBe(false)
+  })
+})
+
+describe('readAdConsent — 맞춤형 광고 동의 읽기 (KAN-196)', () => {
+  it.each(['granted', 'denied', 'unknown'] as const)('계약 안의 값 %s 을 그대로 돌려준다', (state) => {
+    window.AccenturyBridge = fakeBridge({ getAdConsent: () => state })
+
+    expect(readAdConsent()).toBe(state)
+  })
+
+  it('브리지가 없으면(브라우저 단독, KAN-197 범위) null — 광고 동의라는 개념이 없다', () => {
+    expect(readAdConsent()).toBeNull()
+  })
+
+  it('메서드를 모르는 구버전 앱에서도 null이다 (메서드 추가는 계약 버전을 올리지 않는다)', () => {
+    window.AccenturyBridge = fakeBridge() // getAdConsent 없음
+
+    expect(readAdConsent()).toBeNull()
+  })
+
+  it('계약 밖 문자열은 unknown이 아니라 null이다 — 어긋난 앱에 시트를 띄우지 않는다', () => {
+    window.AccenturyBridge = fakeBridge({ getAdConsent: () => 'GRANTED' })
+    expect(readAdConsent()).toBeNull()
+
+    window.AccenturyBridge = fakeBridge({ getAdConsent: () => '' })
+    expect(readAdConsent()).toBeNull()
+
+    // 문자열이 아닌 값도 같다 — 계약은 문자열 셋이다
+    window.AccenturyBridge = fakeBridge({ getAdConsent: () => 1 as unknown as string })
+    expect(readAdConsent()).toBeNull()
+  })
+})
+
+describe('writeAdConsent — 맞춤형 광고 동의 쓰기 (KAN-196)', () => {
+  it('고른 값을 그대로 네이티브에 넘기고 true를 돌려준다', () => {
+    const set = vi.fn()
+    window.AccenturyBridge = fakeBridge({ setAdConsent: set })
+
+    expect(writeAdConsent('granted')).toBe(true)
+    expect(set).toHaveBeenCalledWith('granted')
+
+    expect(writeAdConsent('denied')).toBe(true)
+    expect(set).toHaveBeenLastCalledWith('denied')
+  })
+
+  it('브리지가 없으면(브라우저 단독) false — 저장할 곳이 없다', () => {
+    expect(writeAdConsent('granted')).toBe(false)
+  })
+
+  it('메서드를 모르는 구버전 앱에서도 false다', () => {
+    window.AccenturyBridge = fakeBridge() // setAdConsent 없음
+
+    expect(writeAdConsent('denied')).toBe(false)
+  })
+})
+
+describe('showInterstitialAd — 전면 광고 요청 (KAN-196)', () => {
+  it('인자 없이 네이티브를 부르고 true를 돌려준다', () => {
+    const show = vi.fn()
+    window.AccenturyBridge = fakeBridge({ showInterstitialAd: show })
+
+    expect(showInterstitialAd()).toBe(true)
+    expect(show).toHaveBeenCalledTimes(1)
+    // 회신도 인자도 없는 계약이다 — 무엇을 실어 보내면 계약이 바뀐 것이다
+    expect(show).toHaveBeenCalledWith()
+  })
+
+  it('브리지가 없으면(브라우저 단독) false — 광고가 없는 실행이다', () => {
+    expect(showInterstitialAd()).toBe(false)
+  })
+
+  it('메서드를 모르는 구버전 앱에서도 false다', () => {
+    window.AccenturyBridge = fakeBridge() // showInterstitialAd 없음
+
+    expect(showInterstitialAd()).toBe(false)
   })
 })

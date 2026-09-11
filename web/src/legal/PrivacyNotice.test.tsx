@@ -65,3 +65,25 @@ describe('PrivacyNotice — 인트로 고지 한 줄 (KAN-177)', () => {
     expect(fireEvent.click(link())).toBe(true)
   })
 })
+
+describe('PrivacyNotice — 「맞춤형 광고 설정」 (KAN-196)', () => {
+  it('핸들러를 받으면 방침 링크 옆에 버튼으로 그리고, 누르면 그 핸들러가 불린다', () => {
+    const onAdConsentSettings = vi.fn()
+    render(<PrivacyNotice onAdConsentSettings={onAdConsentSettings} />)
+
+    // 링크가 아니라 버튼이다 — 바깥으로 나가는 이동이 아니라 앱 안에서 시트를 여는 동작이다
+    const button = screen.getByRole('button', { name: '맞춤형 광고 설정' })
+    expect(screen.queryByRole('link', { name: '맞춤형 광고 설정' })).not.toBeInTheDocument()
+    fireEvent.click(button)
+
+    expect(onAdConsentSettings).toHaveBeenCalledTimes(1)
+    // 방침 링크는 그대로 있다
+    expect(link()).toBeInTheDocument()
+  })
+
+  it('핸들러가 없으면 그리지 않는다 — 광고 동의가 없는 실행에 죽은 링크를 두지 않는다', () => {
+    render(<PrivacyNotice />)
+
+    expect(screen.queryByRole('button', { name: '맞춤형 광고 설정' })).not.toBeInTheDocument()
+  })
+})

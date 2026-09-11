@@ -30,9 +30,21 @@
  *   수 있어 막다른 길이 아니다 — 여기에 재응시를 놓으면 곧 끝날 분석을 버리게 만든다
  * - 정상 진행(`POLLING`·`READY`)과 누를 것이 남아 있는 `ACTION_REQUIRED`에는 출구가 없다.
  *   KAN-147 그대로다
+ *
+ * ## 전면 광고는 이 화면이 부른다 (KAN-196)
+ *
+ * 마운트 때 한 번 `showInterstitialAd`를 요청한다. 호출 자리가 App이나 진행 화면이 아니라
+ * 여기인 이유는 폴링과 같다 — `useAnalysisPolling`을 이 화면이 직접 세우듯, "분석을 기다리기
+ * 시작했다"를 아는 곳이 이 화면이다. 광고는 그 기다림을 채우는 것이라 같은 자리에서 시작한다.
+ *
+ * 세션당 한 번이라는 규칙은 `ads/interstitial.ts`가 센다. 이 화면은 StrictMode 이중 실행·
+ * 재녹음 뒤 리렌더·재마운트로 여러 번 마운트될 수 있어, 화면 안의 ref로는 마지막 경우를 못
+ * 막는다. 회신은 없다 — 광고가 떴든 닫혔든 실패했든 이 화면이 달라질 것이 없고, 폴링은 광고
+ * 아래에서 그대로 돈다.
  */
 
 import { Fragment, useEffect, useRef } from 'react'
+import { showInterstitialAdOnce } from '../ads/interstitial'
 import type { RetakeReason } from '../analytics/events'
 import { track } from '../analytics/track'
 import { Button, StatusBlock } from '../ui'
@@ -143,6 +155,15 @@ export function AnalysisWaitingScreen({
     sessionToken,
     fetchImpl,
   })
+
+  /*
+   * 전면 광고 (KAN-196, 파일 헤더 참고). 세션 id를 의존성으로 둔다 — 같은 컴포넌트가 다른
+   * 세션으로 다시 그려지는 일은 없지만(세션 전환은 리로드다), 있더라도 "세션당 한 번"이
+   * 지켜지는 쪽이 맞다. 브라우저 단독 실행에서는 래퍼가 false라 아무 일도 없다.
+   */
+  useEffect(() => {
+    showInterstitialAdOnce(sessionId)
+  }, [sessionId])
 
   // 결과 확정은 화면 전환으로 이어진다. 렌더 중이 아니라 이펙트에서 부르는 이유는,
   // 호출자가 이 콜백에서 상태를 바꾸거나 페이지를 옮기기 때문이다.

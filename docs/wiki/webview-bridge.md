@@ -48,6 +48,9 @@
 | `shareResult(payloadJson)` | KAN-30 | 카카오 피드 템플릿으로 공유. payload = `{imageUrl, text, webTestUrl}` — 점수·세션 id·등급 코드 없음 | `navigator.share` → 링크 복사 |
 | `logEvent(name, paramsJson)` | KAN-33 | 계측 이벤트를 네이티브 Firebase로. 앱 안 이벤트를 웹 gtag로 보내면 앱 사용자가 웹 트래픽으로 세어진다 | gtag 경로 |
 | `openExternalUrl(url)` | KAN-177 | 앱 **밖** 브라우저로 링크를 연다 (§4) | `<a>`의 기본 동작 |
+| `getAdConsent(): string` | KAN-196 | 맞춤형 광고 동의 상태. `'granted' \| 'denied' \| 'unknown'` 중 하나를 동기 반환 (§8) | 래퍼 `readAdConsent()`가 null — 시트도 링크도 광고 라벨도 없다. 계약 밖 문자열도 null |
+| `setAdConsent(state)` | KAN-196 | 동의를 네이티브 저장소에 쓴다. 인자는 `'granted' \| 'denied'` — `'unknown'`으로 되돌리는 길은 없다 | 래퍼 false. `readAdConsent()`가 null인 실행에서는 애초에 부르지 않는다 |
+| `showInterstitialAd()` | KAN-196 | 분석 대기 화면의 전면 광고. **인자도 회신도 없다** (`shareResult`와 같은 규칙) | 래퍼 false — 광고 없이 대기 화면만 |
 
 `@JavascriptInterface`·`postMessage`는 문자열만 주고받으므로 구조체는 JSON으로 직렬화해 넘긴다.
 
@@ -56,7 +59,7 @@
 | 슬롯 | 티켓 | 하는 일 |
 |---|---|---|
 | `onItemResult(payloadJson)` | KAN-100 | 네이티브 녹음이 끝난 문항 결과 |
-| `onRetestFailed(payloadJson)` | KAN-34 | 재응시 실패. **성공은 오지 않는다** — 성공하면 페이지가 리로드된다 |
+| `onRetestFailed(payloadJson)` | KAN-34 | 재응시 실패. **성공은 오지 않는다** — 성공하면 페이지가 리로드된다. KAN-196부터 보상형 광고를 중간에 닫은 경우도 이 슬롯이다: `{code:'AD_DISMISSED', message:'광고를 끝까지 보시면 다시 테스트할 수 있어요', retryable:true, retryAfterMs:null}` (§8) |
 
 슬롯 단위로 갈아끼운다. 객체를 통째로 교체하면 나중에 설치한 수신자가 먼저 설치된 것을 지운다.
 
@@ -195,7 +198,8 @@ https://accentury.app/privacy.html
 
 ## 7. 계약을 바꿀 때 고칠 곳
 
-메서드를 하나 더할 때 손대는 자리 전부다 (KAN-177이 실제로 지나간 경로).
+메서드를 하나 더할 때 손대는 자리 전부다 (KAN-177이 실제로 지나간 경로. KAN-196은 웹 쪽
+1·7·테스트를 2단계에서 끝냈고 2~6은 3·4단계가 지나간다).
 
 | 순서 | 파일 |
 |---|---|
@@ -209,3 +213,85 @@ https://accentury.app/privacy.html
 
 테스트도 같은 수만큼 늘어난다: `bridge.test.ts`, `AccenturyBridgeTest.kt`,
 `AccenturyBridgeTests.swift`, `BridgeUserScriptTests.swift`(메서드 목록).
+
+웹 쪽에서 메서드의 **유무**를 보고 화면을 가르는 자리도 있다 — `readAdConsent() !== null`이
+동의 시트·「맞춤형 광고 설정」 링크·[광고 보고 다시 테스트하기] 라벨의 공통 판정이다 (§8).
+메서드를 지우거나 이름을 바꾸면 이 셋이 한꺼번에 사라진다.
+
+## 8. 광고·동의 (KAN-196)
+
+1차 배포에 Google AdMob 맞춤형 광고가 들어간다 (2026-09-11 확정). 형식은 둘 — 분석 대기
+화면의 **전면(interstitial) 1회**, 결과 화면 [다시 테스트하기]의 **보상형(rewarded)**. 맞춤형
+동의는 앱 첫 실행에 인트로 위 시트로 묻고, 거부하면 비맞춤(npa) 광고만 나온다. 철회·재동의는
+인트로 하단 방침 링크(§4) 옆 「맞춤형 광고 설정」이다.
+
+웹 단독 실행은 이 티켓 범위 밖이다 (KAN-197). `readAdConsent()`가 null이라 시트도 링크도
+광고 호출도 없다 — 브리지 부재가 곧 "광고 없음"이다.
+
+### 8.1 동의 저장이 네이티브인 이유
+
+세 가지가 겹친다.
+
+- **소비자가 네이티브다.** 동의 값을 읽는 것은 AdMob SDK 초기화(npa 여부)와 iOS ATT 흐름이고
+  둘 다 네이티브에 산다. 웹이 들고 있으면 SDK를 세우는 쪽이 매번 WebView가 뜨기를 기다려
+  물어봐야 한다
+- **WebView 저장소는 사용자가 지운다.** 웹 localStorage는 앱 설정의 "WebView 데이터 삭제"·
+  iOS "웹사이트 데이터 지우기"로 함께 날아간다. 동의는 법적 고지의 결과라 사용자가 의도하지
+  않은 경로로 사라지면 안 된다
+- **KAN-197 웹 단독과 저장소가 다르다.** 웹 단독은 브라우저 저장소를, 앱은 네이티브 저장소를
+  쓰게 된다. 웹이 자기 저장소를 정본으로 삼으면 같은 코드가 두 저장소를 오가야 한다
+
+그래서 정본은 SharedPreferences(Android) · UserDefaults(iOS)이고 웹은 `getAdConsent` /
+`setAdConsent`로 읽고 쓸 뿐이다. 웹 훅(`ads/adConsent.ts`)은 마운트 때 한 번 읽어 둔 사본이다.
+
+### 8.2 보상형 광고가 `startRetest` 안인 이유
+
+새 메서드가 없다. 광고를 아는 앱은 `startRetest()`를 받으면 **보상형 광고 → 완주 → 새 세션
+생성 → 인트로 리로드**를 한 트랜잭션으로 진행한다. 중도에 닫으면 기존 `onRetestFailed`로
+`AD_DISMISSED`를 보내고(위 §3 payload), 결과 화면은 그대로 남아 버튼이 다시 열린다. **광고
+로드 실패는 막지 않는다** — 광고 없이 그대로 재응시로 통과시킨다.
+
+웹이 사이에 끼는 설계(`showRewardedAd()` → 완주 회신 → 웹이 `startRetest()`)를 두지 않은
+이유: 광고는 봤는데 세션 생성이 실패한 상태를 **웹이** 들고 있어야 한다. 그 상태에서 사용자가
+다시 누르면 광고를 두 번 보게 되고, 안 보게 하려면 "광고 완주 크레딧"을 웹이 기억해야 하는데
+그 기억은 리로드로 사라진다. 네이티브 한 곳에서 끝내면 이 상태가 존재하지 않는다.
+
+문구 정본은 네이티브다 (`RetestFailure` 계약 그대로). 웹은 `message`를 그대로 그리고 코드로
+문구를 고르지 않는다 — `AD_DISMISSED`도 예외가 아니다.
+
+### 8.3 전면 광고가 fire-and-forget인 이유
+
+`showInterstitialAd()`는 인자도 회신도 없다. 광고가 떴는지·언제 닫혔는지·로드에 실패했는지에
+따라 대기 화면이 달라질 것이 하나도 없다 — 폴링은 광고 아래에서 그대로 돌고, 결과가 나오면
+광고를 닫은 뒤 그 화면이 기다리고 있다. `shareResult`가 카톡 결말을 회신하지 않는 것과 같은
+판단이다.
+
+**세션당 한 번**은 웹이 센다 (`ads/interstitial.ts`, 세션 id 키의 모듈 상태). 대기 화면은
+StrictMode 이중 실행·재녹음 뒤 리렌더·재마운트로 여러 번 마운트되므로 화면 안 ref로는
+부족하다. 네이티브는 받은 만큼 띄우면 된다 — 횟수 방어를 두 곳에 두지 않는다.
+
+### 8.4 라벨 규칙
+
+결과 화면·대기 화면의 재응시 버튼 라벨은 `readAdConsent() !== null`이면 **[광고 보고 다시
+테스트하기]**, 아니면 예전 그대로 [다시 테스트하기]다 (`result/RetestAction.tsx`). 동의 값이
+아니라 **유무**를 보는 이유는 값이 무엇이든 광고는 나오기 때문이다(허용 → 맞춤형, 거부 →
+일반). null인 실행(웹 단독·구버전 앱)에서는 광고가 뜨지 않으니 "광고 보고"라고 적으면
+거짓말이 된다.
+
+### 8.5 3·4단계 네이티브가 구현할 것
+
+| 항목 | 내용 |
+|---|---|
+| `getAdConsent()` | 저장소 값을 `'granted' \| 'denied' \| 'unknown'` 문자열로. 저장된 적 없으면 `'unknown'` |
+| `setAdConsent(state)` | `'granted' \| 'denied'`만 받는다. 그 밖의 값은 §5 규칙대로 조용히 버리고 Crashlytics 흔적 |
+| `showInterstitialAd()` | 전면 광고 로드·표시. 실패하면 아무 일 없음. 회신 없음 |
+| `startRetest()` | 보상형 광고 완주 후에만 기존 재응시 흐름. 중도 닫힘 → `onRetestFailed` `AD_DISMISSED` (`retryable:true`, `retryAfterMs:null`). 로드 실패 → 광고 없이 통과 |
+| 동의 → SDK | `denied`면 npa 요청(`GADExtras`/`AdRequest` `npa=1`). `granted`만 맞춤형. `unknown`은 시트가 뜨기 전이라 광고 요청 자체가 없어야 하지만, 있다면 npa로 보내는 것이 안전하다 |
+| iOS ATT | 시트 동의와 ATT 프롬프트의 순서·관계는 **3·4단계에서 정한다** — 웹 계약에는 들어 있지 않다. ATT 결과를 `setAdConsent`로 접어 넣지는 말 것: 그 값은 사용자가 시트에서 고른 것이어야 「맞춤형 광고 설정」이 보여 주는 상태와 맞는다 |
+
+**스모크 구동기는 동의를 미리 심어야 한다.** `WebAutoDriver.swift`는 인트로에서 [시작하기]를
+JS `.click()`으로 누르므로 시트의 막에 걸리지는 않지만, 동의가 `unknown`인 채 진행되고
+전면·보상형 광고가 실제 SDK를 부르면 자동 진행이 광고 위에서 멈춘다. 3·4단계에서
+`-AutoFlowDrive`(iOS)·안드로이드 스모크 진입 시 저장소에 `denied`를 미리 쓰고, 광고 단위는
+테스트 단위 id를 쓰거나 스모크 플래그로 광고 호출을 no-op으로 둔다. 웹 쪽
+`nativeSmokeSelectors.test.ts`는 구동기가 보는 클래스만 지키므로 이 조건을 잡지 못한다.
