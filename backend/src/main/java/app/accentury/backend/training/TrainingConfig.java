@@ -45,6 +45,9 @@ class TrainingConfig {
      */
     @Bean
     S3Client trainingS3Client(AccenturyProperties properties) {
+        // 빈 문자열 검사는 여기서도 한다 - 이 빈이 저장 빈보다 먼저 만들어지므로, 리전을 못 찾는 환경(CI 러너)에서는
+        // SDK의 리전 오류가 먼저 나와 "설정 실수"라는 원인이 묻힌다.
+        requireBucket(properties);
         S3ClientBuilder builder = S3Client.builder()
                 .httpClientBuilder(ApacheHttpClient.builder()
                         .connectionTimeout(CONNECTION_TIMEOUT)
@@ -63,12 +66,16 @@ class TrainingConfig {
     @Bean
     TrainingSampleStore trainingSampleStore(S3Client trainingS3Client, AccenturyProperties properties,
                                             ObjectMapper objectMapper, MeterRegistry meterRegistry) {
+        return new S3TrainingSampleStore(trainingS3Client, requireBucket(properties), objectMapper,
+                Clock.systemUTC(), meterRegistry);
+    }
+
+    private static String requireBucket(AccenturyProperties properties) {
         String bucket = Objects.requireNonNull(properties.training().bucket());
         if (bucket.isBlank()) {
             throw new IllegalStateException("accentury.training.bucket이 비어 있다 - 학습 데이터 저장을 끄려면 "
                     + "값을 지우고(SSM ACCENTURY_TRAINING_BUCKET 없음), 켜려면 버킷 이름을 넣는다 (KAN-201)");
         }
-        return new S3TrainingSampleStore(trainingS3Client, bucket, objectMapper, Clock.systemUTC(),
-                meterRegistry);
+        return bucket;
     }
 }

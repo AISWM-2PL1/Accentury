@@ -43,9 +43,13 @@ class TrainingConfigTest {
 
     @Test
     void 빈_문자열_버킷은_설정_실수라_기동을_세운다() {
-        runner.withPropertyValues("accentury.training.bucket=")
-                .run(context -> assertTrue(context.getStartupFailure() != null
-                        && context.getStartupFailure().getMessage().contains("accentury.training.bucket")));
+        // 리전을 명시한다 - CI 러너처럼 AWS 리전이 없는 환경에서는 SDK의 리전 오류가 먼저 나와 원인을 가린다.
+        runner.withPropertyValues("accentury.training.bucket=", "accentury.training.region=ap-northeast-2")
+                .run(context -> {
+                    Throwable failure = context.getStartupFailure();
+                    assertTrue(failure != null && rootMessage(failure).contains("accentury.training.bucket"),
+                            () -> "기동 실패 사유가 다르다: " + failure);
+                });
     }
 
     @Configuration(proxyBeanMethods = false)
@@ -60,5 +64,14 @@ class TrainingConfigTest {
         MeterRegistry meterRegistry() {
             return new SimpleMeterRegistry();
         }
+    }
+
+    /** 예외 사슬을 끝까지 따라가 마지막 원인의 메시지를 돌려준다. */
+    private static String rootMessage(Throwable failure) {
+        Throwable cause = failure;
+        while (cause.getCause() != null) {
+            cause = cause.getCause();
+        }
+        return String.valueOf(cause.getMessage());
     }
 }
