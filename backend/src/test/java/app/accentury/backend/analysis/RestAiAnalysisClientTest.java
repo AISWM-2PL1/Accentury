@@ -180,6 +180,47 @@ class RestAiAnalysisClientTest {
     }
 
     @Test
+    void ALB의_502도_미도달이고_서버_헤더는_대소문자를_가리지_않는다() {
+        server.expect(requestTo("http://ai.test/internal/v0/analyze"))
+                .andRespond(withStatus(HttpStatus.BAD_GATEWAY)
+                        .header("server", "AWSELB/2.0")
+                        .contentType(MediaType.TEXT_HTML)
+                        .body("<html><body><h1>502 Bad Gateway</h1></body></html>"));
+
+        AiAnalysisClient.AiUnavailableException e =
+                assertThrows(AiAnalysisClient.AiUnavailableException.class,
+                        () -> client.analyze(request(), "c_test"));
+        assertEquals(AiAnalysisClient.AiUnavailableException.Kind.UNREACHED, e.kind());
+    }
+
+    @Test
+    void ALB의_504는_읽기_타임아웃과_같은_timedOut이다() {
+        // 대상이 idle timeout 안에 답하지 못한 것이라 AI는 아직 그 오디오를 추론 중일 수 있다 - 같은 WAV를
+        // 다시 보내면 안 된다 (KAN-172). 미도달로 접으면 백오프 뒤 재전송된다 (PR #105 리뷰 P2).
+        server.expect(requestTo("http://ai.test/internal/v0/analyze"))
+                .andRespond(withStatus(HttpStatus.GATEWAY_TIMEOUT)
+                        .header("Server", "awselb/2.0")
+                        .contentType(MediaType.TEXT_HTML)
+                        .body("<html><body><h1>504 Gateway Time-out</h1></body></html>"));
+
+        AiAnalysisClient.AiUnavailableException e =
+                assertThrows(AiAnalysisClient.AiUnavailableException.class,
+                        () -> client.analyze(request(), "c_test"));
+        assertEquals(AiAnalysisClient.AiUnavailableException.Kind.TIMED_OUT, e.kind());
+    }
+
+    @Test
+    void 서버_헤더_없는_5xx는_종전대로_도달한_장애다() {
+        server.expect(requestTo("http://ai.test/internal/v0/analyze"))
+                .andRespond(withStatus(HttpStatus.BAD_GATEWAY));
+
+        AiAnalysisClient.AiUnavailableException e =
+                assertThrows(AiAnalysisClient.AiUnavailableException.class,
+                        () -> client.analyze(request(), "c_test"));
+        assertEquals(AiAnalysisClient.AiUnavailableException.Kind.SERVER_ERROR, e.kind());
+    }
+
+    @Test
     void AI가_직접_낸_5xx는_ALB를_거쳐도_도달한_장애다() {
         // ALB가 프록시한 AI 응답은 uvicorn의 Server 헤더가 그대로 온다 - 분석 시간 초과 503(§4.1)이 여기다.
         server.expect(requestTo("http://ai.test/internal/v0/analyze"))

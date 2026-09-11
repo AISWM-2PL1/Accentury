@@ -179,9 +179,21 @@ class SessionApiTest extends IntegrationTest {
     }
 
     @Test
+    void 빈_region은_보내지_않은_것과_같다() throws Exception {
+        // 웹이 미선택을 빈 값으로 보내도 세션 생성이 막히지 않는다 (PR #105 리뷰).
+        String body = mockMvc.perform(post("/v0/sessions")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{ \"region\": \"\" }"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        assertNull(sessionRepository.findById(objectMapper.readTree(body).get("sessionId").asString())
+                .orElseThrow().region());
+    }
+
+    @Test
     void 코드_밖의_region은_400_VALIDATION_FAILED다() throws Exception {
         // 소문자, 모르는 지역, 저장 전용 UNKNOWN 전부 거절한다 - campaignToken 형식 검증과 같은 결과다.
-        for (String bad : new String[] {"busan", "gyeongnam", "UNKNOWN", ""}) {
+        for (String bad : new String[] {"busan", "gyeongnam", "UNKNOWN", " GYEONGNAM"}) {
             mockMvc.perform(post("/v0/sessions")
                             .contentType(MediaType.APPLICATION_JSON)
                             .content("{ \"region\": \"" + bad + "\" }"))
