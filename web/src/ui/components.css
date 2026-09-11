@@ -560,9 +560,43 @@
   grid-template-columns: 1fr 1fr;
 }
 
-/* 좁은 칸에서 라벨이 두 줄로 꺾여 카드 높이가 달라지지 않게 */
+/*
+ * 지역 카드의 글자 (KAN-202). 어휘 선택지는 문장이라 왼쪽에서 읽기 시작하지만 지역 이름은
+ * 두 글자 단어라 가운데가 자연스럽다 — 왼쪽에 붙이면 2열 카드의 오른쪽이 비어 보인다.
+ * 글꼴은 인트로 제목·주 버튼과 같은 Jua로 맞춰 화면 톤을 잇는다. 크기·자간은 .btn--primary와
+ * 같은 값이다 — 한 화면에서 "누르는 것"이 같은 글자로 보이게. nowrap은 좁은 칸에서 라벨이
+ * 두 줄로 꺾여 카드 높이가 달라지지 않게 한다.
+ */
 .choice-list--columns .choice {
+  position: relative;
+  justify-content: center;
+  text-align: center;
   white-space: nowrap;
+  font-family: var(--font-display);
+  font-size: var(--text-title-sm);
+  font-weight: var(--weight-normal);
+  letter-spacing: 0.02em;
+}
+
+/*
+ * Jua는 굵기 하나짜리 폰트다(tokens.css의 굵기 주석) — .choice--selected의 500을 그대로 두면
+ * 글꼴에 없는 굵기를 요청하는 셈이라 브라우저에 따라 합성 굵기가 생긴다. 고른 것은 테두리·
+ * 그림자·체크 셋이 이미 말하므로 굵기는 400에 고정한다.
+ */
+.choice-list--columns .choice--selected {
+  font-weight: var(--weight-normal);
+}
+
+/*
+ * 체크 표시는 흐름에서 빼서 오른쪽에 띄운다. flex 항목으로 두면 가운데 정렬의 중심이 라벨+체크
+ * 묶음으로 옮겨가 고른 카드만 라벨이 왼쪽으로 밀린다. 라벨이 두 글자라 체크와 겹칠 자리는
+ * 없다. .choice:active의 translate는 카드 자체를 옮기므로 그 안의 절대 위치도 같이 움직인다.
+ */
+.choice-list--columns .choice .choice__check {
+  position: absolute;
+  right: var(--space-4);
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 /*
