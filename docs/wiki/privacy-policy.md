@@ -11,10 +11,10 @@
 
 - 티켓: **KAN-176** (방침 본문 작성)
 - 본문 정본: [`infra/privacy/privacy.html`](../../infra/privacy/privacy.html) — 14개 절
-- 계약 테스트: [`infra/privacy/privacy.test.mjs`](../../infra/privacy/privacy.test.mjs) 13건 (1항 표 검사는 행 목록으로 확장한다 — KAN-164 행 포함), CI `edge-test` 잡에 결선 (`.github/workflows/test.yml`)
+- 계약 테스트: [`infra/privacy/privacy.test.mjs`](../../infra/privacy/privacy.test.mjs) 17건 (1항 표 검사는 행 목록으로 확장한다 — KAN-164 행 포함. KAN-196 1단계에서 사업자 확정 3건 추가), CI `edge-test` 잡에 결선 (`.github/workflows/test.yml`)
 - 호스팅과 게시 경로: **KAN-133** — `infra/privacy/README.md`, `scripts/publish-privacy.sh`
 - 앱 안 링크: **KAN-177** — 인트로 하단 한 줄, 구현 완료. 계약과 여는 방법은 [`webview-bridge.md` §4](webview-bridge.md), URL 정본은 `web/src/legal/privacyPolicy.ts` · 스토어 등록: **KAN-174**(Play) **KAN-175**(App Store)
-- 광고 도입: **KAN-196**(앱 SDK·동의 UI·ATT·스토어 신고) **KAN-197**(웹 광고)
+- 광고 도입: **KAN-196**(앱 SDK·동의 UI·ATT·스토어 신고) **KAN-197**(웹 광고). 사업자는 2026-09-11 팀장 결정으로 **Google LLC의 Google AdMob** (Firebase 프로젝트 공유). KAN-196 1단계(방침 정합)는 2026-09-11 완료, 2~4단계(SDK·동의 UI·ATT 배선)는 진행 예정
 - 카카오 공유 웹훅 수신: **KAN-164** — 이 브랜치 분기 뒤 Dev에 병합됐고 1·5·9항에 반영했다
 
 ## 1. 절별 근거 매핑
@@ -48,7 +48,7 @@
 | 보안 로그 | 7일, 인증 헤더는 가림 | `infra/modules/waf/variables.tf:21-24` (기본값 7), `infra/modules/waf/main.tf:286,313,319` (샘플 저장 끔 + `redacted_fields`) | `1항 표의 보유 기간이 행마다 코드와 맞는다` |
 | 이용 통계 이벤트 | 보존은 GA 설정에 따름 (기본값 2개월) | **미확인** — 콘솔 기본값이고 레포에 근거가 없다 (7항 참조) | — |
 | 비정상 종료 로그 | 90일 | **미확인** — Crashlytics 콘솔 기본값이고 레포에 근거가 없다 (7항 참조). 수집 항목 자체는 KAN-33, `docs/wiki/analytics.md` §8 | `1항 표의 보유 기간이 행마다 코드와 맞는다` (표기가 90일인지만 붙든다) |
-| 광고 | 사업자 방침에 따름 | 2026-09-07 팀 결정, KAN-196·KAN-197. **아직 배선 없음** | `맞춤형 광고 절이 있고 동의·거부 방법이 적혀 있다` |
+| 광고 | Google 개인정보처리방침에 따름 | 2026-09-07 팀 결정(광고 도입) + 2026-09-11 팀장 결정(사업자 = Google AdMob), KAN-196·KAN-197. 코드 배선은 KAN-196 2~4단계에서 들어온다 | `맞춤형 광고 절이 있고 동의·거부 방법이 적혀 있다` |
 
 같은 항의 산문 부분은 위 행들의 풀이다. 「재응시하면 이전 세션과 결과를 즉시 삭제」는
 `backend/src/main/java/app/accentury/backend/session/SessionService.java:28,87-88,201-203,245-247`과
@@ -62,12 +62,12 @@
 | 절 | 핵심 주장 | 근거 | 계약 테스트 |
 |---|---|---|---|
 | 2. 제3자 제공 | 광고 사업자 제공은 제3자 제공에 해당 | 광고 SDK가 자기 목적으로 처리하는 구조 — 2026-09-07 팀 결정, KAN-196 | — |
-| 2. 제3자 제공 | 제공받는 자는 **확정 후 기재** (294행) | 사업자 미정. prod 게이트 (4항 참조) | — |
+| 2. 제3자 제공 | 제공받는 자는 Google LLC (Google AdMob), 보유 기간은 Google 개인정보처리방침에 따름 | 2026-09-11 팀장 결정 (KAN-196 1단계). 이 자리는 2026-09-11 전까지 「확정 후 기재」였다 | `2항 제3자 제공 표와 10항 광고 절에 Google AdMob이 적혀 있다`·`「확정 후 기재」 자리표시자가 남아 있지 않다` |
 | 2. 제3자 제공 | 위탁·공유는 제3자 제공이 아님 | 3항(위탁)과 9항(이용자 선택 공유)의 구분 | — |
 | 3. 위탁 | AWS 서울 리전(ap-northeast-2) | `infra/envs/prod/terraform.tfvars:3`, `infra/envs/staging/terraform.tfvars:3` | `데이터 소재지가 서울 리전이라고 적혀 있다` |
 | 3. 위탁 | Google LLC(Firebase Analytics·Crashlytics) | KAN-33, `docs/wiki/analytics.md` | — |
-| 4. 국외 이전 | 이전 대상은 이용 통계와 오류 로그뿐 | 음성·세션·결과는 서울 리전 (`infra/envs/prod/terraform.tfvars:3`, `infra/envs/staging/terraform.tfvars:3`), Firebase만 국외 | `데이터 소재지가 서울 리전이라고 적혀 있다` |
-| 4. 국외 이전 | 광고 사업자 국외 이전은 **확정 후 기재** (361~363행) | 사업자 미정. prod 게이트 | — |
+| 4. 국외 이전 | 이전 대상은 이용 통계·오류 로그·광고 관련 항목이고 이전받는 자는 전부 Google LLC | 음성·세션·결과는 서울 리전 (`infra/envs/prod/terraform.tfvars:3`, `infra/envs/staging/terraform.tfvars:3`), Google(Firebase·GA·AdMob)만 국외 | `데이터 소재지가 서울 리전이라고 적혀 있다` |
+| 4. 국외 이전 | 광고 관련 항목은 기존 Google LLC `<dl>`에 합쳐 적었다 — 이전받는 자에 Google AdMob, 이전되는 항목에 10항의 광고 항목, 이용 목적에 맞춤형 광고 표시·성과 측정 | AdMob도 Google LLC라 이전받는 자·국가·방법이 Firebase와 같다. 별도 행을 만들면 같은 사업자를 두 번 고지하게 된다 (2026-09-11 KAN-196 1단계). 이 자리는 그 전까지 「확정 후 기재」였다 | `4항 국외 이전에 광고 항목이 들어 있다` |
 | 4. 이용 통계 이벤트 | 수집 항목 목록 | `web/src/analytics/events.ts:71` (`AnalyticsEvent` 유니온이 이름·파라미터의 정본), `docs/wiki/analytics.md` §1 | — |
 | 4. 이용 통계 이벤트 | 응시 구분 무작위 키는 탭을 닫으면 사라짐 | `web/src/analytics/testId.ts:21-23,93` (`sessionStorage`) | — |
 | 4. 이용 통계 이벤트 | 세션 id·토큰·문항·점수 원값을 싣지 않음 | `docs/wiki/analytics.md` §3 「익명 규칙」, `web/src/analytics/events.ts` | — |
@@ -77,19 +77,22 @@
 | 6. 정보주체 권리 | 특정 이용자의 정보를 지목할 수단이 없음 | 계정 없음, 세션은 익명 (`backend/src/main/java/app/accentury/backend/session/TestSession.java` — 사람을 가리키는 컬럼 없음) | — |
 | 6. 정보주체 권리 | 탭을 닫으면 세션 토큰·응시 키는 사라지고, 진행 기록은 결과 화면 진입에서 지워진다 | `web/src/session/webSession.ts`·`web/src/analytics/testId.ts:21-23` (`sessionStorage`) 대 `web/src/progress/progressSnapshot.ts` (`localStorage`, 키 `accentury:progress:<sessionId>`). 삭제 배선은 `web/src/App.tsx`의 `ResultRoute`(`clearSnapshot`)와 `IntroRoute`(`sweepSnapshots` — 결과까지 못 간 응시의 잔여 키) 두 자리다 (KAN-198) | `진행 기록의 삭제 시점이 적혀 있다` |
 | 7. 만 14세 미만 | 아동 대상 아님, 마켓에도 그렇게 등록 | `docs/wiki/play-store-listing.md` §6 (타겟 연령 13세 이상) — **KAN-174 브랜치에만 있는 파일** | — |
-| 7. 만 14세 미만 | 아동에게 맞춤형 광고 미표시 | 2026-09-07 팀 결정, KAN-196에서 SDK 설정으로 구현 예정 | — |
+| 7. 만 14세 미만 | 아동에게 맞춤형 광고 미표시 | 2026-09-07 팀 결정. 아동 대상 아님을 유지하고 AdMob SDK의 아동 대상 플래그는 off — KAN-196 2단계에서 SDK 설정으로 구현 예정 | — |
 | 8. 자동 수집 장치 | 웹에는 GA4 태그가 쿠키를 저장 | `web/src/analytics/ga4.ts:75-81` — `config`에 쿠키를 끄는 옵션이 없다(기본 동작이 쿠키 설정) | — |
 | 8. 자동 수집 장치 | 앱 WebView에는 태그를 깔지 않음 | `web/src/main.tsx:20` — `isStandaloneWeb`일 때만 `installGa4Tag()` | — |
 | 8. 자동 수집 장치 | 진행 기록은 브라우저 저장소에 두되 결과 화면 진입에서 지우고, 끊긴 응시의 기록은 다음 인트로 진입에서 걷는다 | `web/src/progress/progressSnapshot.ts` (키 `accentury:progress:<sessionId>`, `defaultSnapshotStorage`가 `window.localStorage`), `web/src/App.tsx` `ResultRoute`의 `clearSnapshot`·`IntroRoute`의 `sweepSnapshots`. 복원에 실패한 스냅샷(형태 손상·버전 불일치·재생 거부)도 `restoreProgress`가 그 자리에서 버린다 (KAN-198) | `진행 기록의 삭제 시점이 적혀 있다` |
 | 8. 자동 수집 장치 | 세션 토큰·응시 키는 탭 저장소 | `web/src/session/webSession.ts`, `web/src/analytics/testId.ts:21-23` (`sessionStorage`) | — |
-| 8. 자동 수집 장치 | 광고 SDK가 광고 식별자를 사용 | 2026-09-07 팀 결정, KAN-196. **아직 배선 없음** | — |
+| 8. 자동 수집 장치 | 광고 SDK가 광고 식별자를 사용 | 2026-09-07 팀 결정, 사업자는 Google AdMob (2026-09-11). 코드 배선은 KAN-196 2~4단계에서 들어온다 | — |
 | 9. 공유 기능 | payload에 점수·세션·음성이 없음 | `app/src/main/java/com/accentury/app/bridge/SharePayload.kt:28-31` (필드는 `imageUrl`·`text`·`webTestUrl` 셋), `web/src/share/shareResult.ts:57-59` (payload 필드가 `imageUrl`·`text`·`webTestUrl` 셋뿐, KAN-30 요구) | — |
 | 9. 공유 기능 | 링크를 받은 사람은 자기 테스트를 시작 | `docs/wiki/app-links.md` §1 — 링크가 읽는 쿼리는 `c` 하나뿐 | — |
 | 9. 공유 기능 | 전송 완료 알림(웹훅)에서 남기는 것은 전송 건수와 식별값뿐 | `backend/src/main/java/app/accentury/backend/share/KakaoShareWebhookController.java:100-112`(핸들러가 하는 일은 인증·중복 판별·카운터 1 증가 셋), `backend/src/main/resources/db/migration/V7__share_webhook.sql:14` (「채팅방 해시(HASH_CHAT_ID), 채팅방 종류, 세션 id, 토큰, 점수는 어디에도 저장하지 않는다 (티켓 AC)」), KAN-164 | — |
 | 9. 공유 기능 | 웹훅 검증은 Admin 키 일치 확인 (서명 없음) | `backend/src/main/java/app/accentury/backend/share/KakaoWebhookAuth.java:96-112` (상수 시간 비교), 키 값은 로그에서 가려진다 (`backend/src/main/java/app/accentury/backend/common/LogMasking.java`의 `KAKAO_AK`·`NAMED_SECRET`) | — |
 | 10. 광고 | 광고 절이 존재하고 동의·거부 경로가 있음 | 2026-09-07 팀 결정, KAN-196·KAN-197 | `맞춤형 광고 절이 있고 동의·거부 방법이 적혀 있다` |
 | 10. 광고 | 「광고와 추적이 없습니다」는 이제 거짓 | 같은 결정으로 삭제한 문장. 되살아나는 것을 테스트가 막는다 | `"광고와 추적이 없습니다"가 남아 있지 않다` |
-| 10. 광고 | 사업자·동의 UI 위치·국외 이전은 **확정 후 기재** (499·530·539~541행) | 사업자 미정. prod 게이트 | — |
+| 10. 광고 | 사업자는 Google LLC의 Google AdMob. 광고 자리는 분석 대기 중 전면 광고와 재응시 전 보상형 광고 둘 | 2026-09-11 팀장 결정 (KAN-196 1단계). 이 자리는 그 전까지 「확정 후 기재」였다 | `2항 제3자 제공 표와 10항 광고 절에 Google AdMob이 적혀 있다` |
+| 10. 광고 | 동의는 앱 첫 실행 때 동의 시트로 받고, 철회는 인트로 하단 개인정보처리방침 링크(KAN-177) 옆의 맞춤형 광고 링크에서 한다 | 2026-09-11 팀장 결정. UI 구현은 KAN-196 3단계. 이 자리는 그 전까지 「도입 시 위치 확정」이었다 | `「확정 후 기재」 자리표시자가 남아 있지 않다` |
+| 10. 광고 | 거부 시 비맞춤 광고만, iOS ATT 거부 시 IDFA 미사용 | AdMob 비개인화 광고 요청(npa) — KAN-196 2단계에서 배선 | `맞춤형 광고 절이 있고 동의·거부 방법이 적혀 있다` |
+| 10. 광고 | 보유 기간은 Google 개인정보처리방침, 국외 이전은 4항 | Google LLC는 국외 사업자. 방침 링크는 4항의 `https://policies.google.com/privacy`와 같다 | — |
 | 11. 안전성 확보 | HTTPS, 토큰 해시, 임시 파일 최소 권한, 로그 비식별, WAF, 관리자 토큰 | `backend/src/main/java/app/accentury/backend/session/TestSession.java:45-46`, `ai/app/tempstore.py:6-16`, `infra/modules/waf/main.tf:313,319`, `backend/src/main/java/app/accentury/backend/common/AccenturyProperties.java:29` (admin 시크릿) | — |
 | 12. 동의 방식 | 동의 화면을 따로 두지 않되 광고는 별도 동의 | KAN-2 「동의 화면 범위 제외」 결정 + 2026-09-07 광고 결정의 부분 번복 (6항 참조) | — |
 | 13. 보호책임자 | 이성주, team2pl1@gmail.com | 2026-09-07 팀 결정 | `연락처가 있다 (Play·App Store 심사가 요구하는 항목)` |
@@ -100,28 +103,32 @@
 
 ## 2. 스토어 신고 대조표
 
-Play 데이터 안전 답안의 정본은 `docs/wiki/play-store-listing.md` §5다 (**KAN-174 브랜치에만 있고
-Dev에는 아직 없다**). 그 문서는 광고 도입 결정 이전에 쓰였으므로 지금 답안과 방침 본문 사이에
-어긋나는 자리가 넷 있다. **고치는 것은 KAN-196 소관이고, 이 티켓에서는 건드리지 않는다.**
+Play 데이터 안전 답안의 정본은 `docs/wiki/play-store-listing.md` §5·§6이지만 그 파일은 **로컬
+브랜치 `feature/KAN-174-play-console-listing`에만 있고 Dev에는 없다.** 그래서 KAN-196 브랜치에서
+직접 고치지 않는다 — 아래 「확정 답안」 열을 KAN-174 브랜치가 §5·§6에 옮겨 적어야 한다.
+App Store(KAN-175) 문서는 아직 없으므로 **이 표가 App Store 라벨 답안의 정본이다.**
 
-| Play 데이터 안전 질문 | 지금 KAN-174 답 | 방침 본문의 대응 | 광고 도입 후 바뀔 답 |
+답안은 2026-09-11 사업자 확정(Google AdMob)으로 굳었다. KAN-174 문서는 광고 도입 결정 이전에
+쓰였으므로 지금 답과 확정 답안이 어긋나는 자리가 넷 있다.
+
+| Play 데이터 안전 질문 | 지금 KAN-174 답 | 방침 본문의 대응 | 확정 답안 (2026-09-11) |
 |---|---|---|---|
 | 데이터를 수집·공유하나 | 예 | 1항 표 전체 | 그대로 예 |
-| 제3자와 공유하나 | **아니요** ("광고 네트워크로 보내는 곳도 없다") | 2항 제3자 제공 표 — 광고 사업자 1행 | **예**. 제공 항목은 광고 식별자·IP·기기 정보·노출/클릭 기록 |
-| 광고 ID 수집 | **수집하지 않음** (`google_analytics_adid_collection_enabled=false`) | 8항·10항 — 광고 SDK가 광고 식별자를 사용 | **수집함**. 목적은 「광고 또는 마케팅」. Analytics 쪽 false는 그대로 두고 광고 SDK 몫을 따로 신고 |
+| 제3자와 공유하나 | **아니요** ("광고 네트워크로 보내는 곳도 없다") | 2항 제3자 제공 표 — Google LLC (Google AdMob) 1행 | **예**. 제공 항목은 광고 식별자·IP·기기 정보·노출/클릭 기록, 받는 곳은 Google AdMob |
+| 광고 ID 수집 | **수집하지 않음** (`google_analytics_adid_collection_enabled=false`) | 8항·10항 — 광고 SDK가 광고 식별자를 사용 | **수집함**. 목적은 「광고 또는 마케팅」. Analytics 쪽 false는 그대로 두고 AdMob SDK 몫을 따로 신고 |
 | 광고 포함 (§6 콘텐츠 등급) | **아니요** | 10항 「서비스에는 광고가 표시됩니다」 | **예**. 콘텐츠 등급 설문도 다시 제출 |
 | 음성 또는 사운드 녹음 | 수집됨, 「일시적으로만 처리되며 저장되지 않음」 | 1항 음성 행 + 「음성 녹음」 산문 | 변화 없음 |
 | 앱 상호작용 | 수집됨, 목적 분석 | 1항 이용 통계 이벤트 행, 4항 | 변화 없음 |
 | 비정상 종료 로그 | 수집됨, 목적 분석 | 1항 비정상 종료 로그 행, 4항 | 변화 없음 |
 | 삭제 요청 방법 제공 | 아니요 | 6항 — 지목할 수단이 없음 | 변화 없음 |
 
-App Store(KAN-175)도 같은 이유로 두 줄이 바뀐다.
+App Store(KAN-175)도 같은 이유로 세 줄이 바뀐다. KAN-175 문서가 생기면 이 표를 옮겨 적는다.
 
-| App Store 개인정보 라벨 | 지금 기준 | 광고 도입 후 |
+| App Store 개인정보 라벨 | 지금 기준 | 확정 답안 (2026-09-11) |
 |---|---|---|
-| 「추적(Tracking)」 해당 여부 | 해당 없음 — IDFA 미수집, ATT 프롬프트 불필요 (`docs/wiki/analytics.md` §8) | **해당함**. ATT 프롬프트 필요, 「사용자를 추적하는 데 사용되는 데이터」에 식별자·사용 데이터 신고 |
-| 식별자 › 기기 ID | 신고 없음 | **신고함** (광고 SDK의 IDFA — 이용자가 허용한 경우) |
-| 사용 데이터 › 제품 상호작용 | 「사용자와 연결되지 않음」 | 광고 SDK 몫은 「추적에 사용됨」으로 별도 표기 |
+| 「추적(Tracking)」 해당 여부 | 해당 없음 — IDFA 미수집, ATT 프롬프트 불필요 (`docs/wiki/analytics.md` §8) | **해당함**. ATT 프롬프트 필요, 「사용자를 추적하는 데 사용되는 데이터」에 식별자·사용 데이터 신고. ATT 거부 시 IDFA 미사용 |
+| 식별자 › 기기 ID | 신고 없음 | **신고함** (AdMob SDK의 IDFA — 이용자가 ATT를 허용한 경우) |
+| 사용 데이터 › 제품 상호작용 | 「사용자와 연결되지 않음」 | AdMob SDK 몫은 「추적에 사용됨」으로 별도 표기 |
 | 진단 › 비정상 종료·성능 | 「사용자와 연결되지 않음」 | 변화 없음 |
 
 ## 3. prod 게시 게이트
@@ -133,16 +140,17 @@ prod 게시(`scripts/publish-privacy.sh prod`) 전에는 아래를 전부 닫는
 
 | # | 자리 | 본문 행 | 닫는 조건 |
 |---|---|---|---|
-| 1 | 2항 제3자 제공 표 「광고 사업자 (확정 후 기재)」 | 294 | 광고 사업자 확정 (KAN-196) |
-| 2 | 4항 광고 국외 이전 「(확정 후 기재)」 | 361~363 | 사업자 확정 + 소재 국가·항목·기간 확인 |
-| 3 | 10항 「광고 사업자(확정 후 기재)」 | 499 | 사업자 확정 |
-| 4 | 10항 동의 설정 위치 「(도입 시 위치 확정)」 | 530 | 앱 광고 동의 UI 구현 (KAN-196) |
-| 5 | 10항 「4항과 이 항, 2항의 제3자 제공 표를 함께 채웁니다 (확정 후 기재)」 | 539~541 | 위 1~4가 닫히면 이 문장도 확정 문장으로 교체 |
-| 6 | 시행일 「정식 게시일에 기재합니다」 | 102, 587 | 게시 당일 날짜로 교체 (두 자리 모두) |
-| 7 | 스토어 답안 일치 | — | KAN-174 §5·§6과 KAN-175 라벨이 2절 「광고 도입 후 바뀔 답」대로 갱신됐는지 확인 |
+| 1 | 2항 제3자 제공 표 「광고 사업자 (확정 후 기재)」 | 294 | **완료 (2026-09-11, KAN-196 1단계)** — Google LLC (Google AdMob) |
+| 2 | 4항 광고 국외 이전 「(확정 후 기재)」 | 361~363 | **완료 (2026-09-11)** — Google LLC 행에 합침 |
+| 3 | 10항 「광고 사업자(확정 후 기재)」 | 499 | **완료 (2026-09-11)** |
+| 4 | 10항 동의 설정 위치 「(도입 시 위치 확정)」 | 530 | **완료 (2026-09-11)** — 첫 실행 동의 시트 + 인트로 하단 링크로 확정 서술. UI 자체는 KAN-196 3단계가 만든다 |
+| 5 | 10항 「4항과 이 항, 2항의 제3자 제공 표를 함께 채웁니다 (확정 후 기재)」 | 539~541 | **완료 (2026-09-11)** — 확정 문장으로 교체 |
+| 6 | 시행일 「정식 게시일에 기재합니다」 | 102, 603 | 게시 당일 날짜로 교체 (두 자리 모두) |
+| 7 | 스토어 답안 일치 | — | KAN-174 §5·§6과 KAN-175 라벨이 2절 「확정 답안」대로 갱신됐는지 확인 |
 
-자리표시자 자체는 계약 테스트로 막지 않는다. 막으면 확정 전 단계의 본문을 커밋할 수 없어
-문서가 코드보다 뒤처지기 때문이다 (`privacy.test.mjs` 머리주석).
+1~5의 자리표시자는 확정 전에는 계약 테스트로 막지 않았다 — 막으면 확정 전 단계의 본문을 커밋할
+수 없어 문서가 코드보다 뒤처지기 때문이다. 2026-09-11 확정 뒤로는 반대로 되살아나는 쪽을
+막는다 (`「확정 후 기재」 자리표시자가 남아 있지 않다`, `privacy.test.mjs` 머리주석).
 
 ## 4. 변경 절차
 
@@ -173,10 +181,11 @@ prod 게시(`scripts/publish-privacy.sh prod`) 전에는 아래를 전부 닫는
 | 2026-09-07 | **1차 배포에 맞춤형 광고를 넣는다 (앱과 웹 모두).** 사업자 미정 | 1항 광고 행, 2항 제3자 제공 표, 4항, 8항, 10항 전체, 12항 |
 | 2026-09-07 | PR #89 리뷰: 분기 뒤 Dev에 들어온 **KAN-164(카카오 공유 웹훅 수신)**를 본문에 반영한다 — 저장하는 것은 전송 완료 수와 중복 판별용 식별값(7일)뿐 | 1항 표 「익명 통계」·「공유 전송 알림 기록」 행과 산문, 5항 파기 목록, 9항 |
 | 2026-09-07 | 위 결정으로 KAN-2의 「동의 화면 범위 제외」가 부분 번복됐다 — 개인정보 수집·이용 동의 화면은 여전히 두지 않지만, **맞춤형 광고 동의 UI는 별도로 둔다** | 12항 「다만 맞춤형 광고는 별도로 동의를 받습니다」 |
+| 2026-09-11 | **광고 사업자는 Google LLC의 Google AdMob** (Firebase 프로젝트 공유, KAN-196 팀장 결정). 광고 자리는 분석 대기 화면 전면 광고와 결과 화면 「다시 테스트하기」 보상형 광고 둘. 동의는 인트로 첫 실행 동의 시트, 철회는 인트로 하단 방침 링크(KAN-177) 옆 링크. 거부 시 비맞춤 광고(npa)만, iOS ATT 거부 시 IDFA 미사용. 아동 대상 아님 유지 | 1항 광고 행, 2항 제3자 제공 표, 4항 Google LLC `<dl>`, 10항 도입·거부와 철회·보유 기간과 국외 이전 |
 
 ## 6. 팀 확인이 필요한 것
 
 - **Crashlytics 90일, GA4 2개월** — 둘 다 콘솔 기본값으로 적었고 레포에는 근거가 없다. 콘솔에서 실제 설정을 확인해 다르면 1항 표와 4항을 고친다.
 - **운영 주체 표기** — 지금은 「Accentury 팀(이박이일)」이다. 사업자 등록이 없어 상호·대표자·주소를 적지 않았다. 광고 수익이 생기면 사업자 표기가 필요한지 확인해야 한다.
 - **App Store 연령 등급** — Play는 13세 이상으로 정했으나(`docs/wiki/play-store-listing.md` §6) App Store 쪽 등급은 아직 정하지 않았다. 7항의 「만 14세 미만 대상 아님」과 어긋나지 않게 맞춘다.
-- **광고 사업자** — 확정되면 3절의 자리표시자 7개가 한꺼번에 열린다.
+- **광고 사업자** — 2026-09-11 Google AdMob으로 확정돼 3절의 자리표시자 1~5를 닫았다. 남은 게이트는 시행일(6)과 스토어 답안 일치(7)뿐이다.

@@ -11,10 +11,10 @@
 // 된다. 핵심 사실을 여기서 붙들어 두면, 사실이 바뀔 때 이 테스트가 먼저 깨져서 문서를 고치라고
 // 알려 준다 - 거짓 고지가 배포되는 쪽보다 낫다.
 //
-// 광고 사업자가 확정되기 전에는 이 본문을 prod에 게시하면 안 된다. 「확정 후 기재」 자리표시자가
-// 2항(제3자 제공 표), 4항(국외 이전), 10항(광고)에 남아 있고, 사업자가 정해지면 그 세 자리를
-// 함께 채워야 한다. 자리표시자 자체는 테스트로 막지 않는다 - 막으면 확정 전 단계의 본문을
-// 커밋할 수 없어서 오히려 문서가 코드보다 뒤처진다.
+// 광고 사업자는 2026-09-11에 Google AdMob으로 확정됐다 (KAN-196 1단계). 그 전까지 2항(제3자
+// 제공 표), 4항(국외 이전), 10항(광고)에 남아 있던 「확정 후 기재」 자리표시자를 이때 함께
+// 채웠고, 이제는 되살아나는 쪽을 테스트로 막는다. 확정 전에 막지 않았던 것은 막으면 확정 전
+// 단계의 본문을 커밋할 수 없어서 오히려 문서가 코드보다 뒤처졌기 때문이다.
 //
 // `node --test 'infra/privacy/*.test.mjs'` 로 돈다. 디렉터리 경로를 그냥 넘기면 안 된다 -
 // node 22.6부터 --test의 위치 인자는 glob 패턴으로 해석돼서, 디렉터리를 주면 그 이름의 모듈을
@@ -198,6 +198,44 @@ test('진행 기록의 삭제 시점이 적혀 있다 (KAN-198, web/src/App.tsx)
   assert.ok(!html.includes('서비스가 따로 지우지 않'), '삭제 배선 전의 문장이 남아 있다');
   assert.ok(html.includes('결과 화면을 보시는 때에'), '진행 기록을 지우는 시점이 적혀 있지 않다');
   assert.ok(html.includes('다음에 첫 화면을 여시면'), '끊긴 응시의 기록을 지우는 시점이 없다');
+});
+
+test('「확정 후 기재」 자리표시자가 남아 있지 않다 (KAN-196)', () => {
+  // 2026-09-11 사업자 확정으로 2·4·10항의 자리표시자를 전부 채웠다. 본문을 손보다가 한 자리라도
+  // 되살아나면 prod에 미정 문구가 게시되므로 여기서 막는다. 10항의 동의 설정 위치에 있던
+  // 「도입 시 위치 확정」도 같은 자리표시자다.
+  assert.ok(!html.includes('확정 후 기재'), '「확정 후 기재」가 남아 있다');
+  assert.ok(!html.includes('도입 시 위치 확정'), '「도입 시 위치 확정」이 남아 있다');
+});
+
+/** 절 제목 사이의 본문을 자른다. `from` 제목부터 `to` 제목 직전까지. */
+function section(from, to) {
+  const start = html.indexOf(from);
+  const end = html.indexOf(to);
+  assert.ok(start >= 0 && end > start, `절을 찾지 못했다: ${from} ~ ${to}`);
+  return html.slice(start, end);
+}
+
+test('2항 제3자 제공 표와 10항 광고 절에 Google AdMob이 적혀 있다 (KAN-196 2026-09-11 사업자 확정)', () => {
+  // 「Google」은 3항·4항의 Firebase 행에도 나오므로 문서 전체 includes로는 광고 사업자가 적혔는지
+  // 알 수 없다. 광고 사업자를 적어야 하는 절 둘을 각각 본다.
+  const thirdParty = section('<h2>2. 개인정보의 제3자 제공', '<h2>3. 개인정보 처리의 위탁');
+  assert.ok(thirdParty.includes('Google LLC (Google AdMob)'), '2항 제3자 제공 표에 Google AdMob이 없다');
+  const ads = section('<h2>10. 광고</h2>', '<h2>11. 개인정보의 안전성 확보 조치');
+  assert.ok(ads.includes('Google AdMob'), '10항 광고 절에 Google AdMob이 없다');
+  // 사업자가 정해졌으니 광고가 어디서 나오는지도 적어야 한다 (전면 광고는 분석 대기, 보상형은 재응시).
+  assert.ok(ads.includes('전면 광고'), '10항에 전면 광고 자리가 없다');
+  assert.ok(ads.includes('보상형 광고'), '10항에 보상형 광고 자리가 없다');
+});
+
+test('4항 국외 이전에 광고 항목이 들어 있다 (KAN-196, Google LLC 행에 합침)', () => {
+  // AdMob도 Google LLC라 Firebase·GA와 같은 이전받는 자다. 별도 행을 만들지 않고 기존 Google LLC
+  // 행의 이전받는 자·이전되는 항목·이용 목적에 광고 몫을 더했다. 셋 중 하나라도 빠지면 광고
+  // 식별자가 국외로 가는 사실을 고지하지 않는 셈이다.
+  const abroad = section('<h2>4. 개인정보의 국외 이전', '<h3>이용 통계 이벤트');
+  assert.ok(abroad.includes('Google AdMob'), '4항 이전받는 자에 Google AdMob이 없다');
+  assert.ok(abroad.includes('광고 식별자'), '4항 이전되는 항목에 광고 식별자가 없다');
+  assert.ok(abroad.includes('맞춤형 광고 표시'), '4항 이용 목적에 맞춤형 광고 표시가 없다');
 });
 
 test('데이터 소재지가 서울 리전이라고 적혀 있다 (infra, AWS ap-northeast-2)', () => {
