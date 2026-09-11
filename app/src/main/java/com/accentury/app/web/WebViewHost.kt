@@ -27,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import com.accentury.app.BuildConfig
+import com.accentury.app.ads.AdConsent
 import com.accentury.app.analytics.EventParam
 import com.accentury.app.ui.components.AccenturyButton
 import com.accentury.app.ui.components.StatusBlock
@@ -60,6 +61,9 @@ sealed interface WebLoadState {
  *   여기 오는 값은 GA4에 그대로 실을 수 있다. 메인 스레드로 온다
  * @param onOpenExternalUrl 인트로의 개인정보처리방침 링크 (KAN-177). 검증을 통과한 URL만 오고
  *   여는 것은 Custom Tabs다. 메인 스레드로 온다
+ * @param readAdConsent 광고 동의 정본 (KAN-196). 브리지가 JS 스레드에서 동기로 읽는다
+ * @param onSetAdConsent 시트에서 고른 동의 (KAN-196). `granted`·`denied`만 온다. 메인 스레드로 온다
+ * @param onShowInterstitialAd 대기 화면의 전면 광고 (KAN-196). 메인 스레드로 온다
  * @param onWebViewCreated 결과를 웹으로 주입하려면(evaluateJavascript) 상위가 인스턴스를 알아야 한다
  * @param onWebViewReleased 해제된 인스턴스. 상위가 들고 있는 참조를 놓을 자리다
  */
@@ -75,6 +79,9 @@ fun WebViewHost(
     onShareResult: (SharePayload) -> Unit,
     onLogEvent: (String, Map<String, EventParam>) -> Unit,
     onOpenExternalUrl: (String) -> Unit,
+    readAdConsent: () -> AdConsent,
+    onSetAdConsent: (AdConsent) -> Unit,
+    onShowInterstitialAd: () -> Unit,
     modifier: Modifier = Modifier,
     timeoutMs: Long = LOAD_TIMEOUT_MS,
     onWebViewCreated: (WebView) -> Unit = {},
@@ -176,6 +183,9 @@ fun WebViewHost(
                                 onShareResult = onShareResult,
                                 onLogEvent = onLogEvent,
                                 onOpenExternalUrl = onOpenExternalUrl,
+                                readAdConsent = readAdConsent,
+                                onSetAdConsent = onSetAdConsent,
+                                onShowInterstitialAd = onShowInterstitialAd,
                             ),
                             "AccenturyBridge",
                         )

@@ -1,11 +1,12 @@
 package com.accentury.app
 
 import android.app.Application
+import com.accentury.app.ads.AdsController
 import com.accentury.app.analytics.CrashReports
 import com.kakao.sdk.common.KakaoSdk
 
 /**
- * 앱 전역 초기화 지점 — 카카오 SDK(KAN-30)와 크래시 리포트(KAN-33).
+ * 앱 전역 초기화 지점 — 카카오 SDK(KAN-30)·크래시 리포트(KAN-33)·광고(KAN-196).
  *
  * Application이 필요한 이유: 카카오 SDK는 앱 키를 프로세스 단위로 한 번만 등록받고
  * (`ShareClient.instance`가 그 값을 전제로 만들어진다) 공유 호출 시점에는 이미 초기화돼 있어야 한다.
@@ -13,6 +14,14 @@ import com.kakao.sdk.common.KakaoSdk
  * 반대로 Activity 없이 도는 경로(추후 워커·서비스)에서는 아예 안 돈다.
  */
 class AccenturyApplication : Application() {
+
+    /**
+     * 광고 허브 (KAN-196). 프로세스 단위인 이유는 AdsController KDoc에 있다 — 미리 받아 둔 광고와
+     * 동의 저장소가 Activity 수명보다 길다. 화면은 [AdsController.from]으로 찾는다.
+     */
+    lateinit var ads: AdsController
+        private set
+
     override fun onCreate() {
         super.onCreate()
 
@@ -39,5 +48,14 @@ class AccenturyApplication : Application() {
          * 않는다 (setUserId 금지, 익명 규칙).
          */
         CrashReports.install()
+
+        /*
+         * 광고 SDK (KAN-196). 카카오와 달리 "키가 없으면 끈다"는 분기가 없다 — 앱 ID·광고 단위가
+         * 주입되지 않은 빌드는 Google 테스트 ID로 떨어지므로(build.gradle.kts) 광고 경로는 늘
+         * 살아 있고, 테스트 광고가 나올 뿐이다. 요청 자체가 나가는 조건(동의가 정해졌는가)은
+         * AdsController가 본다.
+         */
+        ads = AdsController.create(this)
+        ads.initialize()
     }
 }

@@ -17,6 +17,7 @@ kakaoSdk = "2.24.0"
 firebaseBom = "34.18.0"
 googleServices = "4.5.0"
 firebaseCrashlyticsPlugin = "3.0.8"
+playServicesAds = "25.4.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -49,6 +50,10 @@ kakao-share = { group = "com.kakao.sdk", name = "v2-share", version.ref = "kakao
 firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.ref = "firebaseBom" }
 firebase-analytics = { group = "com.google.firebase", name = "firebase-analytics" }
 firebase-crashlytics = { group = "com.google.firebase", name = "firebase-crashlytics" }
+# 광고 (KAN-196). Firebase BoM과는 별개 아티팩트라 버전을 직접 박는다 - BoM은 firebase-* 좌표만
+# 잡고 play-services-ads는 그 목록에 없다. 25.4.0 = 2026-06-17 릴리스 (developers.google.com/admob/android/rel-notes),
+# Google Maven maven-metadata의 latest와 같다 (2026-09-11 확인). minSdk 23+·compileSdk 35+ 요구.
+play-services-ads = { group = "com.google.android.gms", name = "play-services-ads", version.ref = "playServicesAds" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

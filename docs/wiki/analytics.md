@@ -150,7 +150,7 @@ web track(event)
 |---|---|
 | 사용자 ID | `setUserId`/`setUserID`를 부르는 코드가 세 런타임 어디에도 없다 |
 | 웹 광고 신호 | `gtag('config', …, { allow_google_signals: false, allow_ad_personalization_signals: false })` |
-| Android 광고 ID | 매니페스트 `google_analytics_adid_collection_enabled=false` |
+| Android 광고 ID | 매니페스트 `google_analytics_adid_collection_enabled=false` — **Analytics 한정**. AdMob(KAN-196)은 광고 요청에 쓸 GAID를 자기 경로로 읽고 그 개인화는 사용자 동의(npa)가 정한다 (`ads-admob.md` §6). 계측은 계속 익명이다 |
 | iOS 광고 ID(IDFA) | **SwiftPM product를 `FirebaseAnalyticsCore`로 고른다** (`ios/project.yml`) |
 
 iOS만 방식이 다른 이유: IDFA 수집은 설정 플래그가 아니라 **무엇을 링크했는가**로 갈린다. 기본

@@ -62,7 +62,9 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.accentury.app.audio.AudioQuality
 import com.accentury.app.audio.QualityStatus
 import com.accentury.app.audio.WavWriter
+import com.accentury.app.ads.AdsController
 import com.accentury.app.bridge.VoiceItemStart
+import com.accentury.app.bridge.adDismissedRetestFailure
 import com.accentury.app.bridge.itemResultDeliveryJs
 import com.accentury.app.bridge.retestFailedDeliveryJs
 import com.accentury.app.bridge.retestFailurePayload
@@ -414,17 +416,24 @@ private fun TestFlow(appLink: StateFlow<AppLinkEntry?>, modifier: Modifier = Mod
 
     val scope = rememberCoroutineScope()
 
+    /*
+     * 광고 허브 (KAN-196). Application이 든 프로세스 단위 인스턴스라 remember 키가 없다 —
+     * 미리 받아 둔 광고가 회전을 넘겨야 해서 컴포지션이 소유하지 않는다 (AdsController KDoc).
+     */
+    val ads = remember(appContext) { AdsController.from(appContext) }
+
     /**
-     * 결과 화면의 [다시 테스트하기] (KAN-34 2단계, KAN-107).
+     * 재응시 본체 (KAN-34 2단계, KAN-107). 보상형 광고 게이트를 통과한 뒤에만 온다 ([startRetest]).
      *
      * 세션 게이트 화면이 아니라 여기서 요청을 거는 이유: 재응시가 벌어지는 자리에는 그 화면이 없다.
      * 사용자는 결과 화면(웹)을 보고 있고 그 화면은 요청이 도는 동안에도 그대로 있어야 한다 —
      * 실패하면 돌아갈 곳이 거기다.
      *
-     * 이 함수는 브리지 콜백(postToMain)을 타고 메인 스레드에서 불린다. 진행 중 판정과 상태 전이는
-     * 전부 [SessionGateController]가 하고 여기서는 요청을 걸어 결과를 넘겨줄 뿐이다.
+     * 메인 스레드에서 불린다 — 브리지 콜백(postToMain)에서 직접, 또는 광고 SDK 콜백(메인)에서.
+     * 진행 중 판정과 상태 전이는 전부 [SessionGateController]가 하고 여기서는 요청을 걸어 결과를
+     * 넘겨줄 뿐이다.
      */
-    fun startRetest() {
+    fun proceedRetest() {
         // null이면 이미 요청이 나가 있거나 버릴 세션이 없다 — 어느 쪽이든 할 일은 없다.
         val previousToken = sessionGate.beginRetest() ?: return
         scope.launch {
@@ -471,6 +480,36 @@ private fun TestFlow(appLink: StateFlow<AppLinkEntry?>, modifier: Modifier = Mod
                 }
             }
         }
+    }
+
+    /**
+     * 결과 화면의 [다시 테스트하기] → 보상형 광고 → 재응시 (KAN-196, webview-bridge.md §8.2).
+     *
+     * 광고를 아는 앱에서는 이 호출이 곧 보상형 광고다. 끝까지 보면(또는 보여줄 광고가 없거나 표시에
+     * 실패하면) [proceedRetest]가 기존 흐름을 밟고, 중도에 닫으면 `AD_DISMISSED`를 웹에 회신해
+     * 결과 화면이 버튼을 다시 연다. 갈래는 [com.accentury.app.ads.RewardedRetestGate]가 정한다.
+     *
+     * **`beginRetest()`(retestInFlight)는 광고 완주 뒤에 건다** — 그 플래그는 "세션 요청이 나가
+     * 있다"는 뜻이고 광고 시청은 그 앞 단계다. 광고 앞에서 걸면 광고 도중 회전으로 이 스코프가
+     * 취소됐을 때 요청은 없는데 플래그만 선 상태가 생기고, 그 반대(광고 중 두 번째 탭)는 웹의
+     * pending 잠금(useRetest)과 게이트의 표시 중 플래그가 막는다.
+     *
+     * 브리지 콜백(postToMain)을 타고 메인 스레드에서 불린다. SDK 콜백도 메인이라 [proceedRetest]가
+     * 어느 쪽에서 불려도 같은 스레드다.
+     */
+    fun startRetest() {
+        ads.rewarded.run(
+            activity = activity,
+            onProceed = { proceedRetest() },
+            onDismissed = {
+                // 결과 화면은 그대로 살아 있다 — 세션 요청은 나가지도 않았다. 서버 실패 회신과
+                // 같은 수신 지점(onRetestFailed)으로 보내고, 웹은 문구를 그대로 그린다.
+                webView?.evaluateJavascript(
+                    retestFailedDeliveryJs(adDismissedRetestFailure()),
+                    null,
+                )
+            },
+        )
     }
 
     Column(modifier = modifier.fillMaxSize()) {
@@ -534,6 +573,15 @@ private fun TestFlow(appLink: StateFlow<AppLinkEntry?>, modifier: Modifier = Mod
                  * URL 검증은 브리지가 이미 끝냈다.
                  */
                 onOpenExternalUrl = { ExternalBrowser.open(context, it) },
+                /*
+                 * 광고 동의와 전면 광고 (KAN-196). 동의 정본은 네이티브 저장소라 읽기는 저장소로
+                 * 바로 가고(브리지가 JS 스레드에서 동기로 읽는다), 쓰기는 허브를 거친다 — 저장이
+                 * 곧 광고 프리로드의 시작이라 저장소만 갱신하면 광고가 영영 안 받아진다.
+                 * 전면 광고는 Activity 위에 서야 하므로 여기서 activity를 붙인다.
+                 */
+                readAdConsent = { ads.consentStore.read() },
+                onSetAdConsent = { ads.setConsent(it) },
+                onShowInterstitialAd = { ads.interstitial.show(activity) },
                 onWebViewCreated = { webView = it },
                 // 내가 들고 있는 인스턴스일 때만 놓는다 — 재생성 순서에 따라 새 WebView가 먼저
                 // 등록된 뒤 옛 것이 해제될 수 있고, 그때 방금 받은 참조를 지우면 안 된다.

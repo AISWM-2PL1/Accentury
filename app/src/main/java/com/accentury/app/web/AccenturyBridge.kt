@@ -1,6 +1,7 @@
 package com.accentury.app.web
 
 import android.webkit.JavascriptInterface
+import com.accentury.app.ads.AdConsent
 import com.accentury.app.analytics.CrashReports
 import com.accentury.app.analytics.EventParam
 import com.accentury.app.analytics.isAnalyticsName
@@ -14,10 +15,12 @@ import com.accentury.app.bridge.parseVoiceItemStart
  * 웹 → 네이티브 브리지 (webview-layer.md §8). `window.AccenturyBridge`로 주입된다.
  *
  * 최소 표면 원칙 — 화면 전환(KAN-100)·답안 제출 인증(KAN-13)·재응시(KAN-34)·결과 공유(KAN-30)·
- * 계측(KAN-33)·외부 링크(KAN-177)까지 필요한 여덟 메서드만 둔다. 늘리기 전에 웹에서 해결
- * 가능한지 먼저 볼 것.
+ * 계측(KAN-33)·외부 링크(KAN-177)·광고 동의와 전면 광고(KAN-196)까지 필요한 열한 메서드만 둔다.
+ * 늘리기 전에 웹에서 해결 가능한지 먼저 볼 것.
  *
- * 메서드 추가는 하위호환이라 [BRIDGE_CONTRACT_VERSION]을 올리지 않는다 (§5).
+ * 메서드 추가는 하위호환이라 [BRIDGE_CONTRACT_VERSION]을 올리지 않는다 (§5). KAN-196의 세 메서드도
+ * 추가라 2를 유지한다 — 광고를 모르는 구버전 앱에서는 웹 래퍼가 메서드 부재를 null로 접어 시트도
+ * 광고 호출도 하지 않는다 (webview-bridge.md §8).
  *
  * @JavascriptInterface 메서드는 WebView에 로드된 임의 페이지의 JS가 **별도 스레드**에서
  * 호출한다. 그래서 상태를 바꾸는 호출은 (1) 메인 스레드로 넘긴 뒤 (2) 실행 시점의 현재 URL이
@@ -37,6 +40,12 @@ import com.accentury.app.bridge.parseVoiceItemStart
  *   보낼지는 창구 너머의 sink가 정한다 (analytics/AppEvents.kt)
  * @param onOpenExternalUrl 앱 밖으로 열 링크 (KAN-177). [externalUrlToOpen]을 통과한 URL만 온다 —
  *   어떻게 열지는 창구 너머가 정한다 (ExternalBrowser의 Custom Tabs)
+ * @param readAdConsent 광고 동의 정본 읽기 (KAN-196). [getAdConsent]가 **JS 스레드에서 동기로**
+ *   부르므로 임의 스레드에서 안전해야 한다 (SharedPreferences는 그렇다)
+ * @param onSetAdConsent 시트에서 고른 동의 (KAN-196). `granted`·`denied`만 온다 — 저장과 광고
+ *   프리로드는 창구 너머가 한다 (AdsController.setConsent)
+ * @param onShowInterstitialAd 대기 화면의 전면 광고 (KAN-196). 로드된 것이 없으면 아무 일도 없다
+ *   (InterstitialGate)
  */
 class AccenturyBridge(
     private val postToMain: (() -> Unit) -> Unit,
@@ -49,6 +58,9 @@ class AccenturyBridge(
     private val onShareResult: (SharePayload) -> Unit,
     private val onLogEvent: (String, Map<String, EventParam>) -> Unit,
     private val onOpenExternalUrl: (String) -> Unit,
+    private val readAdConsent: () -> AdConsent,
+    private val onSetAdConsent: (AdConsent) -> Unit,
+    private val onShowInterstitialAd: () -> Unit,
 ) {
     /** §5 스큐 협상 — 웹이 앱의 계약 버전을 런타임에 재확인할 때 쓴다. 상태 변경이 없어 스레드 무관. */
     @JavascriptInterface
@@ -197,6 +209,57 @@ class AccenturyBridge(
                 return@postToMain
             }
             onOpenExternalUrl(target)
+        }
+    }
+
+    /**
+     * 맞춤형 광고 동의 상태 (KAN-196, §8.5). `'granted' | 'denied' | 'unknown'`, 저장된 적 없으면 `unknown`.
+     *
+     * 동기 반환이라 [getSessionToken]과 같은 꼴이다 — postToMain을 못 쓰고 [isOriginAllowedNow]
+     * 플래그를 본다. **허용이 아니면 빈 문자열이다.** `unknown`을 돌려주지 않는 이유: `unknown`은
+     * "사용자에게 물어야 한다"는 진짜 상태라, 거부에 그 값을 쓰면 우리 웹이 아닌 페이지에 시트를
+     * 띄우라는 답을 준 셈이 된다. 빈 문자열은 계약 밖이라 웹 래퍼가 null("이 실행에 광고 동의
+     * 개념이 없다")로 접는데, allowlist 밖 페이지에는 그것이 정확히 맞는 답이다 — 토큰 거부가
+     * 빈 문자열인 것과 같은 규칙이다. 동의 값은 비밀은 아니지만 사용자가 고른 값이고, 남에게
+     * 알려 줄 이유가 없다.
+     */
+    @JavascriptInterface
+    fun getAdConsent(): String = if (isOriginAllowedNow()) readAdConsent().bridgeValue else ""
+
+    /**
+     * 시트에서 고른 동의를 적는다 (KAN-196). `granted`·`denied`만 받는다.
+     *
+     * `unknown`을 거르는 이유: 그 값은 "고른 적 없음"이라 사용자가 고를 수 있는 것이 아니다. 웹이
+     * 보낸다면 계약을 다르게 알고 있는 것이고, 받아 적으면 이미 고른 동의를 되돌리는 통로가 된다.
+     * 계약 밖 값과 함께 조용히 버리고 흔적만 남긴다 ([startVoiceItem]과 같은 규칙, §5).
+     *
+     * 저장이 곧 광고 프리로드의 시작이다 — `unknown`인 동안은 광고 요청이 없다가 이 호출로
+     * 처음 나간다 (AdsController KDoc). 회신은 없다: 쓰기가 동기라 웹은 되읽으면 같은 값이고,
+     * 웹 훅은 되읽지도 않는다 (`ads/adConsent.ts`).
+     */
+    @JavascriptInterface
+    fun setAdConsent(state: String) {
+        postToMain {
+            if (!isCurrentUrlAllowed()) return@postToMain
+            val consent = AdConsent.fromBridgeValue(state)?.takeIf { it != AdConsent.Unknown } ?: run {
+                CrashReports.recordBridgeParseFailure("setAdConsent")
+                return@postToMain
+            }
+            onSetAdConsent(consent)
+        }
+    }
+
+    /**
+     * 분석 대기 화면의 전면 광고 (KAN-196, §8.3). 인자도 회신도 없다 — 광고가 떴는지·닫혔는지·
+     * 실패했는지에 따라 대기 화면이 달라질 것이 없다. 세션당 한 번은 웹이 센다.
+     *
+     * 이 호출이 광고 요청의 시작점은 아니다 — 광고는 동의가 정해진 뒤 미리 받아 두고([setAdConsent]
+     * 이후 AdsController), 여기서는 받아 둔 것을 띄울 뿐이다. 없으면 아무 일도 없다.
+     */
+    @JavascriptInterface
+    fun showInterstitialAd() {
+        postToMain {
+            if (isCurrentUrlAllowed()) onShowInterstitialAd()
         }
     }
 }
