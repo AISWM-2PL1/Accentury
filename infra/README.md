@@ -798,9 +798,11 @@ PROCESSING이 약 2분간 6 이상이었고, 시작 2분 44초 뒤 경보 `ai-sc
 `ai/<인스턴스 ID>`), 부하를 거둔 뒤 16분에 3 -> 2, 19분에 2 -> 1로 돌아왔다. 순차 reload는 아래 절과 Jira
 KAN-201 코멘트에 있다.
 
-ALB 뒤에서 달라진 backend 쪽 판정 하나: 대상이 없거나 연결을 거부해 ALB가 스스로 만든 502/503/504는
-`Server: awselb/2.0`으로 오는데, backend는 이것을 미도달(UNREACHED)로 접어 시도 예산(§2.5)에서 뺀다
-(`RestAiAnalysisClient`). AI가 직접 낸 503(분석 시간 초과)은 uvicorn 헤더로 오므로 종전대로 도달한 장애다.
+ALB 뒤에서 달라진 backend 쪽 판정 하나: ALB가 스스로 만든 응답은 `Server: awselb/2.0`으로 오는데, 대상이
+없거나 연결을 거부한 502/503은 미도달(UNREACHED)로 접어 시도 예산(§2.5)에서 빼고, 대상이 idle timeout 안에
+답하지 못한 504는 읽기 타임아웃과 같은 TIMED_OUT(재전송 없음, KAN-172)이다 (`RestAiAnalysisClient`). AI가
+직접 낸 503(분석 시간 초과)은 uvicorn 헤더로 오므로 종전대로 도달한 장애다. `ai-timeout`을 SSM으로 ALB idle
+timeout(90초) 이상으로 올리면 504 경로가 실제로 열린다.
 
 **배포 시 순차 reload.** 파이프라인(`deploy.yml`의 `reload_host`)은 ASG의 InService 인스턴스를 한 대씩 돈다 -
 SSM 에이전트 등록 대기, Run Command로 `accentury-up.sh` 재실행(docker healthy까지), 그 대상이 ALB 대상 그룹에서

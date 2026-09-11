@@ -21,12 +21,12 @@ public enum Region {
     UNKNOWN;
 
     /**
-     * 세션 생성 요청의 {@code region}을 코드로 바꾼다. null은 "보내지 않음"이라 그대로 null이고,
-     * 코드 10개 밖의 값(대소문자 다른 것 포함, {@code UNKNOWN} 포함)은 400 {@code VALIDATION_FAILED}다 -
-     * campaignToken의 형식 검증과 같은 결과다.
+     * 세션 생성 요청의 {@code region}을 코드로 바꾼다. null과 빈 문자열은 "보내지 않음"이라 null이고(웹이
+     * 미선택을 빈 값으로 보내도 세션 생성이 막히지 않는다 - PR #105 리뷰), 코드 10개 밖의 값(대소문자 다른 것
+     * 포함, {@code UNKNOWN} 포함)은 400 {@code VALIDATION_FAILED}다 - campaignToken의 형식 검증과 같은 결과다.
      */
     public static @Nullable Region fromRequest(@Nullable String code) {
-        if (code == null) {
+        if (code == null || code.isBlank()) {
             return null;
         }
         for (Region region : values()) {

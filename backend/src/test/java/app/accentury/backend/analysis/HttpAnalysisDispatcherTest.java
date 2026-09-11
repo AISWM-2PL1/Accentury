@@ -7,10 +7,15 @@ import app.accentury.backend.observability.ServiceMetrics;
 import app.accentury.backend.session.TestSessionRepository;
 import app.accentury.backend.training.TrainingSample;
 import app.accentury.backend.training.TrainingSampleStore;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.task.SyncTaskExecutor;
 
@@ -712,6 +717,20 @@ class HttpAnalysisDispatcherTest extends IntegrationTest {
     }
 
     @Test
+    void 저장은_상태_전이가_끝난_뒤에_일어난다() {
+        // "상태 전이 뒤, wipeAudio 전"의 앞쪽 절반 - 저장 시점에 DB 행이 이미 종결돼 있어야 한다 (PR #105 리뷰 P3).
+        AnalysisJob job = saveProcessingJob();
+        RecordingStore store = new RecordingStore();
+        ScriptedClient client = new ScriptedClient()
+                .then(new AiAnalysisClient.Completed(78, "OK", "rmvpe-0.2", "sv-0.3"));
+
+        dispatcher(client, 0, store).dispatch(request(job));
+
+        store.only();
+        assertEquals(AnalysisJobStatus.COMPLETED, store.statusAtSave, "저장 시점에 행이 아직 PROCESSING이면 순서가 뒤집힌 것이다");
+    }
+
+    @Test
     void 저장소가_예외를_내도_종결과_버퍼_파기는_그대로다() {
         AnalysisJob job = saveProcessingJob();
         AnalysisDispatcher.AnalysisRequest request = request(job);
@@ -720,6 +739,7 @@ class HttpAnalysisDispatcherTest extends IntegrationTest {
         TrainingSampleStore broken = sample -> {
             throw new IllegalStateException("S3 권한 없음");
         };
+        ListAppender<ILoggingEvent> logs = captureDispatcherLogs();
 
         dispatcher(client, 0, broken).dispatch(request);
 
@@ -727,17 +747,33 @@ class HttpAnalysisDispatcherTest extends IntegrationTest {
         assertEquals(AnalysisJobStatus.COMPLETED, saved.status());
         assertEquals(78, saved.intonationScore());
         assertArrayEquals(new byte[] {0, 0, 0}, request.audio());
+        // 저장소 예외는 안쪽 catch가 WARN으로 삼킨다 - 바깥 catch(워커 실패 ERROR + 이중 종결 시도)까지 가면 안 된다
+        // (PR #105 리뷰 P3). 결과만 보면 조건부 UPDATE 0행이라 같아서, 로그로 경로를 가른다.
+        List<ILoggingEvent> events = logs.list;
+        assertTrue(events.stream().anyMatch(e -> e.getLevel() == Level.WARN
+                && e.getFormattedMessage().contains("학습 샘플 저장소가 예외를 냈다")), "안쪽 catch의 WARN이 없다");
+        assertFalse(events.stream().anyMatch(e -> e.getLevel() == Level.ERROR), "바깥 catch의 ERROR가 찍혔다: " + events);
     }
 
-    /** 저장 호출을 기록하는 저장소 - 오디오는 호출 시점의 사본을 떠 둔다 (그 뒤 파기되므로). */
-    private static final class RecordingStore implements TrainingSampleStore {
+    private static ListAppender<ILoggingEvent> captureDispatcherLogs() {
+        Logger logger = (Logger) LoggerFactory.getLogger(HttpAnalysisDispatcher.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        return appender;
+    }
+
+    /** 저장 호출을 기록하는 저장소 - 오디오는 호출 시점의 사본을 떠 두고(그 뒤 파기되므로) DB 상태도 그 시점에 읽는다. */
+    private final class RecordingStore implements TrainingSampleStore {
         final List<TrainingSample> samples = new ArrayList<>();
         byte @Nullable [] audioSeen;
+        @Nullable AnalysisJobStatus statusAtSave;
 
         @Override
         public void save(TrainingSample sample) {
             samples.add(sample);
             audioSeen = sample.audio().clone();
+            statusAtSave = repository.findById(sample.analysisJobId()).orElseThrow().status();
         }
 
         TrainingSample only() {
