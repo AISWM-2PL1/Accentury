@@ -10,7 +10,7 @@
 - 사업자 결정: 지라 KAN-196 코멘트 (2026-09-11, 팀장) —
   https://accentury.atlassian.net/browse/KAN-196. AdFit 대비 스토어 게시 전 매체 등록·테스트
   광고가 가능하고 비맞춤 전환 플래그(npa)가 문서화돼 있다는 것이 근거였다
-- 방침 반영: 1단계 커밋 `af35b1f` (2·4·10항, `web/public/privacy.html`)
+- 방침 반영: 1단계 커밋 `af35b1f` (2·4·10항, `infra/privacy/privacy.html`)
 - 계약·웹 시트: 2단계 커밋 `eacdbda`
 
 ## 2. SDK
@@ -146,6 +146,9 @@ MainActivity는 onPause로 내려가지만, WebView의 JS 타이머는 `WebView.
 - 보상 콜백이 닫힘보다 먼저 오므로 세션 생성·인트로 리로드는 광고가 닫히기 전에 시작된다. 닫으면 인트로가
   기다리고 있다
 - 로드 실패·표시 실패는 광고 없이 통과 (§8.2 "응시 흐름을 막지 않는다")
+- 보상 콜백 ~ 닫힘 사이에 회전하면 `proceedRetest`의 코루틴 스코프(Activity)가 취소돼 세션 요청이 끊기는
+  창이 있다 (리뷰 P2-4, 2026-09-11). 광고가 닫힌 뒤 인트로가 안 오면 웹의 pending 잠금이 풀리지 않으므로
+  사용자는 다시 탭한다 — 보상형 광고 중 회전은 드물고 SDK가 광고 Activity의 방향을 고정하므로 수정 없이 기록만 둔다
 
 ### 5.3 로드 실패 뒤
 
@@ -232,6 +235,9 @@ Android와 달리 **광고 SDK가 AdSupport·AppTrackingTransparency를 링크�
 
 **`setAdConsent("granted")`가 들어온 직후 `ATTrackingManager.requestTrackingAuthorization`을 부른다.**
 `AdsController.setConsent` → `preloadAfterTrackingSettled` → `TrackingAuthorization.requestIfUndetermined`.
+"지금 물어야 하나"는 Core의 순수 함수 `shouldRequestTracking(consent:status:)`(`granted && notDetermined`)이고
+`swift test`가 네 갈래를 못박는다 (리뷰 P2-6). ATT 상태는 앱 타깃 `TrackingAuthorization.status`가 Core의
+`TrackingStatus`로 옮겨 넘긴다 — Core는 AppTrackingTransparency를 링크하지 않는다.
 
 - 시트가 먼저여야 ATT 프롬프트가 맥락을 가진다 — 사용자가 방금 「맞춤형 광고 허용」을 골랐고, iOS는 그 허용을 실행하려면
   기기 식별자 접근을 한 번 더 확인한다. `NSUserTrackingUsageDescription` 문구가 그 맥락으로 적혀 있다
@@ -255,7 +261,9 @@ App Store 개인정보 라벨·«추적» 항목(`analytics.md` KAN-175 표)은 
 Debug 빌드 한정, 릴리스에는 그 블록이 없다. `webview-bridge.md` §8.5 하단 참고.
 
 **실기기 미확인 항목** (시뮬레이터에서 테스트 광고는 뜨지만 ATT 프롬프트·IDFA는 시뮬레이터 값이 다르다):
-ATT 시트가 시트 허용 직후 뜨는지, 허용/거부 뒤 첫 맞춤형 광고 요청, 보상형 완주 → 인트로 리로드, 중도 닫힘 → `AD_DISMISSED`.
+ATT 시트가 시트 허용 직후 뜨는지, 허용/거부 뒤 첫 맞춤형 광고 요청, 보상형 완주 → 인트로 리로드, 중도 닫힘 → `AD_DISMISSED`,
+**iOS 첫 실행 동의 시트 노출** — 심(`adConsent` 문서 변수)의 push 타이밍이 인트로의 첫 `getAdConsent()`보다 늦으면
+`""`가 읽혀 시트가 안 뜰 수 있다 (§7.4, 리뷰 P2-5). 실기기에서 첫 설치 → 인트로 → 시트가 서는지 본다.
 
 ## 8. 파일 지도
 
@@ -280,7 +288,7 @@ ATT 시트가 시트 허용 직후 뜨는지, 허용/거부 뒤 첫 맞춤형 �
 
 | 파일 | 역할 |
 |---|---|
-| `ios/AccenturyCore/Sources/AccenturyCore/Ads/AdConsent.swift` | 동의 enum·브리지 문자열, `personalizationAllowed`·`shouldRequestAds` |
+| `ios/AccenturyCore/Sources/AccenturyCore/Ads/AdConsent.swift` | 동의 enum·브리지 문자열, `personalizationAllowed`·`shouldRequestAds`·`shouldRequestTracking`·`TrackingStatus` |
 | `…/Ads/AdLoadGeneration.swift` | 로드 세대 카운터 (Android와 같다) |
 | `…/Ads/AdConsentStore.swift` | 저장소 프로토콜 + `UserDefaultsAdConsentStore`(키 `ad_consent.state`) |
 | `…/Ads/RewardedRetestGate.swift` | 보상형 → 재응시 순수 상태기계 (Android와 같은 표) |
@@ -288,7 +296,7 @@ ATT 시트가 시트 허용 직후 뜨는지, 허용/거부 뒤 첫 맞춤형 �
 | `ios/Accentury/Ads/AdRequests.swift` | `AdRequests.make(consent:)` — npa extras |
 | `ios/Accentury/Ads/InterstitialGate.swift` | 전면 광고 로드·표시 (`FullScreenContentDelegate`) |
 | `ios/Accentury/Ads/RewardedRetestAd.swift` | 보상형 SDK 결선 |
-| `ios/Accentury/Ads/TrackingAuthorization.swift` | ATT 프롬프트 — active 대기, 중복 요청 합치기 |
+| `ios/Accentury/Ads/TrackingAuthorization.swift` | ATT 프롬프트 — active 대기, 중복 요청 합치기, `status`(Core `TrackingStatus`로 옮김) |
 | `ios/Accentury/Ads/AdsController.swift` | 프로세스 허브 `shared` — 초기화·연령 태그·동의 저장·ATT 순서·프리로드·스모크 스위치 |
 | `ios/Accentury/UI/TopViewController.swift` | 광고·Safari 시트가 present할 최상단 VC |
 | `ios/Accentury/AccenturyApp.swift` | `AdsController.shared.start()` (Firebase 뒤) |

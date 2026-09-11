@@ -162,8 +162,9 @@ final class AdsController: ObservableObject {
     }
 
     /// `granted`이고 ATT가 아직 안 물어본 상태면 먼저 묻고, 답이 난 뒤 프리로드한다. 그 밖에는 바로.
+    /// 판정은 Core의 순수 함수 `shouldRequestTracking`이고 `swift test`가 네 갈래를 못박는다 (P2-6).
     private func preloadAfterTrackingSettled() {
-        guard consentStore.read() == .granted, TrackingAuthorization.isUndetermined else {
+        guard shouldRequestTracking(consent: consentStore.read(), status: TrackingAuthorization.status) else {
             preloadIfConsented()
             return
         }

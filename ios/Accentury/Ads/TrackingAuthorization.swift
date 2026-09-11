@@ -1,3 +1,4 @@
+import AccenturyCore
 import AppTrackingTransparency
 import UIKit
 
@@ -17,7 +18,21 @@ enum TrackingAuthorization {
 
     /// 아직 안 물어본 상태인가. 물어본 적 있으면(허용·거부·제한) 다시 뜨지 않는다 — iOS가 한 번만 묻는다.
     static var isUndetermined: Bool {
-        ATTrackingManager.trackingAuthorizationStatus == .notDetermined
+        status == .notDetermined
+    }
+
+    /// 지금 ATT 상태를 Core의 거울 값으로 옮긴다 — "물어야 하나"는 `AdsController`가 Core의
+    /// `shouldRequestTracking(consent:status:)`로 판정한다 (P2-6). 여기서는 판정하지 않고 옮기기만 한다.
+    /// `@unknown default`는 `.notDetermined`가 아니라 `.restricted`로 접는다 — 모르는 상태에서 프롬프트를
+    /// 띄우는 쪽보다 안 띄우는 쪽이 안전하다(띄워 봐야 iOS가 무시하거나 거부로 돌린다).
+    static var status: TrackingStatus {
+        switch ATTrackingManager.trackingAuthorizationStatus {
+        case .notDetermined: return .notDetermined
+        case .restricted: return .restricted
+        case .denied: return .denied
+        case .authorized: return .authorized
+        @unknown default: return .restricted
+        }
     }
 
     /// 프롬프트가 끝나기를 기다리는 완료 콜백들. 하나가 떠 있는 동안 두 번째 요청이 오면
