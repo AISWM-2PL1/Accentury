@@ -512,6 +512,97 @@ describe('App — 웹 단독 실행 (KAN-31)', () => {
   })
 
   /*
+   * 출신 지역 선택 (KAN-202). 빌드 스위치 `VITE_REGION_SELECT === 'true'`(staging)일 때만 권한과
+   * 점검 사이에 한 칸이 더 선다: [시작하기] → 권한 → **지역** → 점검 → 세션 생성. 스위치가 꺼진
+   * 빌드(prod, 이 파일의 다른 테스트 전부)는 화면도 없고 세션 생성 본문도 이 티켓 전과 같다.
+   */
+  describe('출신 지역 선택 (KAN-202)', () => {
+    const REGION_TITLE = '어느 지역 말씨가 몸에 배어 있나요?'
+
+    /** 세션 생성 요청의 본문. 첫 호출이 `POST /v0/sessions`다 */
+    function sessionBody(fetchStub: ReturnType<typeof vi.fn>): Record<string, unknown> {
+      const [, init] = fetchStub.mock.calls[0] as unknown as [string, RequestInit]
+      return JSON.parse(init.body as string) as Record<string, unknown>
+    }
+
+    afterEach(() => {
+      vi.unstubAllEnvs()
+    })
+
+    it('켜진 빌드는 권한 뒤에 지역부터 묻고, 고른 코드가 세션 생성 본문에 실린다', async () => {
+      vi.stubEnv('VITE_REGION_SELECT', 'true')
+      setSearch('')
+      stubMicrophone()
+      const fetchStub = stubSessionFetch()
+      const navigate = vi.fn()
+      const capture = createFakeCapture()
+
+      render(<App navigate={navigate} voiceCheckCapture={capture.factory} />)
+      await tapStart()
+
+      // 지역이 점검 앞이다 — 네트워크를 안 쓰는 화면을 세션 앞에 모아 고아 세션을 안 만든다
+      expect(screen.getByRole('heading', { level: 1, name: REGION_TITLE })).toBeInTheDocument()
+      expect(screen.queryByText('목소리를 확인할게요')).not.toBeInTheDocument()
+      expect(fetchStub).not.toHaveBeenCalled()
+      // 기본 선택도 건너뛰기도 없다 — 고르기 전에는 [다음]이 잠긴다
+      expect(screen.getByRole('button', { name: '다음' })).toBeDisabled()
+
+      fireEvent.click(screen.getByRole('radio', { name: '경남' }))
+      fireEvent.click(screen.getByRole('button', { name: '다음' }))
+      // 점검 화면은 마운트 즉시 듣기 시작한다(비동기) — `tapStart`와 같은 이유로 microtask를 비운다
+      await act(async () => {})
+      await act(async () => {})
+
+      // 지역을 넘기면 원래 흐름(점검)이 이어진다. 아직 세션은 없다
+      expect(screen.getByText('목소리를 확인할게요')).toBeInTheDocument()
+      expect(screen.queryByRole('heading', { level: 1, name: REGION_TITLE })).not.toBeInTheDocument()
+      expect(fetchStub).not.toHaveBeenCalled()
+
+      await passVoiceCheck(capture)
+
+      expect(fetchStub).toHaveBeenCalledTimes(1)
+      expect(sessionBody(fetchStub)).toMatchObject({ region: 'GYEONGNAM', client: { platform: 'WEB' } })
+      expect(navigate).toHaveBeenCalledTimes(1)
+    })
+
+    it('꺼진 빌드는 지역 화면이 없고 본문에 region 키 자체가 없다 — prod는 이 티켓 전과 같다', async () => {
+      // GitHub vars가 정의되지 않은 환경은 빈 문자열로 들어온다 - 그 값도 꺼짐이어야 한다
+      vi.stubEnv('VITE_REGION_SELECT', '')
+      setSearch('')
+      stubMicrophone()
+      const fetchStub = stubSessionFetch()
+      const capture = createFakeCapture()
+
+      render(<App navigate={vi.fn()} voiceCheckCapture={capture.factory} />)
+      await tapStart()
+
+      expect(screen.getByText('목소리를 확인할게요')).toBeInTheDocument()
+      expect(screen.queryByText(REGION_TITLE)).not.toBeInTheDocument()
+
+      await passVoiceCheck(capture)
+
+      expect(fetchStub).toHaveBeenCalledTimes(1)
+      expect('region' in sessionBody(fetchStub)).toBe(false)
+    })
+
+    it('앱 안 실행에는 스위치를 켜도 지역 화면이 없다 — 세션은 네이티브가 만든다', async () => {
+      vi.stubEnv('VITE_REGION_SELECT', 'true')
+      setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0`)
+      stubBridge()
+      stubMicrophone()
+      const capture = createFakeCapture()
+
+      render(<App navigate={vi.fn()} voiceCheckCapture={capture.factory} />)
+      await tapStart()
+
+      // 인트로의 onWebStart가 비어 있어 micGranted가 오르지 않는다 — 점검이 없는 것과 같은 이유
+      expect(screen.queryByText(REGION_TITLE)).not.toBeInTheDocument()
+      expect(screen.queryByText('목소리를 확인할게요')).not.toBeInTheDocument()
+      expect(screen.getByRole('heading', { level: 1, name: '사투리 좀 치나?' })).toBeInTheDocument()
+    })
+  })
+
+  /*
    * 결과 화면 전환만 히스토리를 덮어쓴다 (KAN-31). 쌓으면 결과에서 뒤로 갔을 때 끝난
    * `?screen=test` 문서가 되살아나 대기 화면이 다시 폴링하고, READY를 보고 결과로 또 넘어온다.
    */
