@@ -54,3 +54,25 @@ fun retestFailurePayload(failed: RetestOutcome.Failed): RetestFailure = RetestFa
     retryable = failed.reason != SessionFailureReason.Unsupported,
     retryAfterMs = failed.retryAfterMs,
 )
+
+/**
+ * 보상형 광고를 중도에 닫았을 때의 회신 (KAN-196, webview-bridge.md §8.2).
+ *
+ * [retestFailurePayload]와 달리 서버 응답이 없다 — 세션 요청은 아직 나가지도 않았다. 그래서 `code`는
+ * 서버 코드가 아니라 **앱이 정한 값** `AD_DISMISSED`다. "앱이 코드를 지어내지 않는다"는 위 규칙의
+ * 예외이고, 예외인 이유는 이 실패가 서버와 무관하게 앱 안에서 끝난 일이라서다: 웹이 이 코드로
+ * 문구를 고르지는 않지만(문구는 [RetestFailure.message]가 든다) 계측·로그에서 서버 거절과 갈라
+ * 읽을 수 있어야 한다.
+ *
+ * `retryable = true`, `retryAfterMs = null` — 다시 누르면 광고가 다시 뜨고, 기다릴 이유가 없다.
+ * 문구는 여기가 정본이다. 웹은 `message`를 그대로 그리고 코드로 문구를 고르지 않는다 (§8.2).
+ */
+fun adDismissedRetestFailure(): RetestFailure = RetestFailure(
+    code = CODE_AD_DISMISSED,
+    message = "광고를 끝까지 보시면 다시 테스트할 수 있어요",
+    retryable = true,
+    retryAfterMs = null,
+)
+
+/** 웹 계약의 코드 문자열 (`bridge.ts`의 `RetestFailure` 주석과 같은 값). 4단계 iOS도 같은 값이다. */
+const val CODE_AD_DISMISSED = "AD_DISMISSED"

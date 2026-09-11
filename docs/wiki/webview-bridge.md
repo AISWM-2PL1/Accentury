@@ -48,7 +48,7 @@
 | `shareResult(payloadJson)` | KAN-30 | 카카오 피드 템플릿으로 공유. payload = `{imageUrl, text, webTestUrl}` — 점수·세션 id·등급 코드 없음 | `navigator.share` → 링크 복사 |
 | `logEvent(name, paramsJson)` | KAN-33 | 계측 이벤트를 네이티브 Firebase로. 앱 안 이벤트를 웹 gtag로 보내면 앱 사용자가 웹 트래픽으로 세어진다 | gtag 경로 |
 | `openExternalUrl(url)` | KAN-177 | 앱 **밖** 브라우저로 링크를 연다 (§4) | `<a>`의 기본 동작 |
-| `getAdConsent(): string` | KAN-196 | 맞춤형 광고 동의 상태. `'granted' \| 'denied' \| 'unknown'` 중 하나를 동기 반환 (§8) | 래퍼 `readAdConsent()`가 null — 시트도 링크도 광고 라벨도 없다. 계약 밖 문자열도 null |
+| `getAdConsent(): string` | KAN-196 | 맞춤형 광고 동의 상태. `'granted' \| 'denied' \| 'unknown'` 중 하나를 동기 반환 (§8). origin이 allowlist 밖이면 `getSessionToken`처럼 빈 문자열 | 래퍼 `readAdConsent()`가 null — 시트도 링크도 광고 라벨도 없다. 계약 밖 문자열도 null |
 | `setAdConsent(state)` | KAN-196 | 동의를 네이티브 저장소에 쓴다. 인자는 `'granted' \| 'denied'` — `'unknown'`으로 되돌리는 길은 없다 | 래퍼 false. `readAdConsent()`가 null인 실행에서는 애초에 부르지 않는다 |
 | `showInterstitialAd()` | KAN-196 | 분석 대기 화면의 전면 광고. **인자도 회신도 없다** (`shareResult`와 같은 규칙) | 래퍼 false — 광고 없이 대기 화면만 |
 
@@ -278,16 +278,20 @@ StrictMode 이중 실행·재녹음 뒤 리렌더·재마운트로 여러 번 �
 일반). null인 실행(웹 단독·구버전 앱)에서는 광고가 뜨지 않으니 "광고 보고"라고 적으면
 거짓말이 된다.
 
-### 8.5 3·4단계 네이티브가 구현할 것
+### 8.5 네이티브 구현 (Android 완료 — 3단계 / iOS — 4단계)
 
-| 항목 | 내용 |
-|---|---|
-| `getAdConsent()` | 저장소 값을 `'granted' \| 'denied' \| 'unknown'` 문자열로. 저장된 적 없으면 `'unknown'` |
-| `setAdConsent(state)` | `'granted' \| 'denied'`만 받는다. 그 밖의 값은 §5 규칙대로 조용히 버리고 Crashlytics 흔적 |
-| `showInterstitialAd()` | 전면 광고 로드·표시. 실패하면 아무 일 없음. 회신 없음 |
-| `startRetest()` | 보상형 광고 완주 후에만 기존 재응시 흐름. 중도 닫힘 → `onRetestFailed` `AD_DISMISSED` (`retryable:true`, `retryAfterMs:null`). 로드 실패 → 광고 없이 통과 |
-| 동의 → SDK | `denied`면 npa 요청(`GADExtras`/`AdRequest` `npa=1`). `granted`만 맞춤형. `unknown`은 시트가 뜨기 전이라 광고 요청 자체가 없어야 하지만, 있다면 npa로 보내는 것이 안전하다 |
-| iOS ATT | 시트 동의와 ATT 프롬프트의 순서·관계는 **3·4단계에서 정한다** — 웹 계약에는 들어 있지 않다. ATT 결과를 `setAdConsent`로 접어 넣지는 말 것: 그 값은 사용자가 시트에서 고른 것이어야 「맞춤형 광고 설정」이 보여 주는 상태와 맞는다 |
+| 항목 | 내용 | Android (3단계) |
+|---|---|---|
+| `getAdConsent()` | 저장소 값을 `'granted' \| 'denied' \| 'unknown'` 문자열로. 저장된 적 없으면 `'unknown'`. origin 거부는 빈 문자열(§2) | `AccenturyBridge.getAdConsent` → `SharedPreferencesAdConsentStore` (파일 `ad_consent`, 키 `state`) |
+| `setAdConsent(state)` | `'granted' \| 'denied'`만 받는다. 그 밖의 값(`'unknown'` 포함)은 §5 규칙대로 조용히 버리고 Crashlytics 흔적 | `AccenturyBridge.setAdConsent` → `AdsController.setConsent` (저장 + 프리로드 시작) |
+| `showInterstitialAd()` | 전면 광고 표시. 받아 둔 것이 없으면 아무 일 없음. 회신 없음 | `InterstitialGate.show` |
+| `startRetest()` | 보상형 광고 완주 후에만 기존 재응시 흐름. 중도 닫힘 → `onRetestFailed` `AD_DISMISSED` (`retryable:true`, `retryAfterMs:null`). 로드·표시 실패 → 광고 없이 통과 | `MainActivity.startRetest` → `RewardedRetestAd.run` (상태기계 `RewardedRetestGate`) → `proceedRetest`. 회신 payload는 `adDismissedRetestFailure()` |
+| 동의 → SDK | `granted`만 맞춤형. `denied`·`unknown`은 npa 요청(`AdRequest` extras `npa=1`). **`unknown`이면 요청을 아예 내지 않는다** — 첫 `setAdConsent`가 프리로드의 시작점 | `AdRequests.kt` `personalizationAllowed`·`buildAdRequest`, 프리로드 조건은 `AdsController.preloadIfConsented` |
+| SDK 초기화 | 앱 시작에 한 번, 백그라운드 스레드. 아동 대상 아님·동의 연령 미만 아님 명시 | `AccenturyApplication` → `AdsController.initialize` |
+| iOS ATT | 시트 동의와 ATT 프롬프트의 순서·관계는 **4단계에서 정한다** — 웹 계약에는 들어 있지 않다. ATT 결과를 `setAdConsent`로 접어 넣지는 말 것: 그 값은 사용자가 시트에서 고른 것이어야 「맞춤형 광고 설정」이 보여 주는 상태와 맞는다 | — |
+
+Android 쪽 결정의 근거(ID 주입, 전면 광고 중 폴링, 프리로드 시점, 릴리스 빗장)는 `ads-admob.md`에
+있다. iOS 4단계가 맞춰야 하는 것도 그 문서 §7이다.
 
 **스모크 구동기는 동의를 미리 심어야 한다.** `WebAutoDriver.swift`는 인트로에서 [시작하기]를
 JS `.click()`으로 누르므로 시트의 막에 걸리지는 않지만, 동의가 `unknown`인 채 진행되고
