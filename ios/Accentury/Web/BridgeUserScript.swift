@@ -26,9 +26,16 @@ private let jsParagraphSeparator = "\u{2029}"
 ///    본다 — 즉 우리 주입이 페이지 스크립트보다 **먼저** 끝나 있어야 한다
 ///
 /// 그래서 브리지 객체 자체를 JS로 적어 `WKUserScript`(`.atDocumentStart`)로 심는다.
-/// 값을 돌려주는 두 메서드는 JS 안의 값을 읽고, 상태를 바꾸는 다섯 메서드는
-/// `window.webkit.messageHandlers.accentury.postMessage`로 네이티브에 넘긴다.
-/// **웹은 이 차이를 모른다** — `bridge.ts`는 한 글자도 바뀌지 않는다.
+/// 값을 돌려주는 세 메서드(`getContractVersion`·`getSessionToken`·`getAdConsent`)는 JS 안의 값을
+/// 읽고, 상태를 바꾸는 여덟 메서드는 `window.webkit.messageHandlers.accentury.postMessage`로
+/// 네이티브에 넘긴다. **웹은 이 차이를 모른다** — `bridge.ts`는 한 글자도 바뀌지 않는다.
+///
+/// 광고 동의(KAN-196)는 토큰과 **같은 구조**로 심는다 — 문서에 매인 변수 `adConsent`, 네이티브가
+/// 미는 setter(``adConsentSetterName``), 심보다 먼저 도착한 값을 두는 자리(``pendingAdConsentSlotName``).
+/// 안드로이드는 `getAdConsent`가 JS 스레드에서 저장소를 동기로 읽지만 여기는 그 자리가 없으므로
+/// 저장값이 바뀔 때마다(`AdsController.consent`) 네이티브가 다시 민다 (`WebViewHost`).
+/// origin 거부 문서에는 빈 문자열이 남는다 — 안드로이드가 `""`를 돌려주는 규칙과 같고, 웹 래퍼는
+/// 그것을 null("이 실행에 광고 동의 개념이 없다")로 접는다.
 ///
 /// ## 보안: 안드로이드의 fail-closed `AtomicBoolean`과 같은 자리
 ///
@@ -79,6 +86,12 @@ enum BridgeUserScript {
     /// 않는다: 심은 문자열만 받아들이고, 페이지가 스스로 적은 값은 그 페이지가 이미 알던 값이다.
     static let pendingSlotName = "__accenturyPendingSessionToken"
 
+    /// 네이티브가 광고 동의 값을 밀어 넣는 전역 함수 이름 (KAN-196). ``setterName``과 같은 규칙.
+    static let adConsentSetterName = "__accenturySetAdConsent"
+
+    /// 광고 동의가 setter보다 먼저 도착했을 때 놓아 두는 자리. ``pendingSlotName``과 같은 규칙·같은 근거.
+    static let pendingAdConsentSlotName = "__accenturyPendingAdConsent"
+
     /// 페이지 스크립트보다 먼저 도는 주입 소스.
     ///
     /// 계약 버전을 손으로 적지 않고 ``AccenturyCore/bridgeContractVersion``에서 조립한다 —
@@ -90,6 +103,8 @@ enum BridgeUserScript {
         (function(){ if (window.AccenturyBridge) return;
           var token = (typeof window.\(pendingSlotName) === "string") ? window.\(pendingSlotName) : "";
           try { delete window.\(pendingSlotName); } catch (e) { window.\(pendingSlotName) = ""; }
+          var adConsent = (typeof window.\(pendingAdConsentSlotName) === "string") ? window.\(pendingAdConsentSlotName) : "";
+          try { delete window.\(pendingAdConsentSlotName); } catch (e) { window.\(pendingAdConsentSlotName) = ""; }
           /* payload는 대개 문자열 하나지만 `logEvent`(KAN-33)만 인자가 둘이라 객체로 싣는다 —
              웹 계약(`bridge.ts`)이 `logEvent(name, paramsJson)`이고, 이름을 JSON 안에 끼워 넣으면
              네이티브가 파라미터와 같은 신뢰 수준으로 읽게 된다. 봉투의 모양을 갈라 두면 이름은
@@ -103,6 +118,10 @@ enum BridgeUserScript {
             value: function(t){ token = (typeof t === "string") ? t : ""; },
             writable: false, configurable: false
           });
+          Object.defineProperty(window, "\(adConsentSetterName)", {
+            value: function(c){ adConsent = (typeof c === "string") ? c : ""; },
+            writable: false, configurable: false
+          });
           window.AccenturyBridge = Object.freeze({
             getContractVersion: function(){ return \(contractVersion); },
             getSessionToken: function(){ return token; },
@@ -111,7 +130,10 @@ enum BridgeUserScript {
             startRetest: function(){ post("startRetest"); },
             shareResult: function(json){ post("shareResult", String(json)); },
             logEvent: function(name, json){ post("logEvent", {name: String(name), params: String(json)}); },
-            openExternalUrl: function(url){ post("openExternalUrl", String(url)); }
+            openExternalUrl: function(url){ post("openExternalUrl", String(url)); },
+            getAdConsent: function(){ return adConsent; },
+            setAdConsent: function(s){ post("setAdConsent", String(s)); },
+            showInterstitialAd: function(){ post("showInterstitialAd"); }
           });
         })();
         """
@@ -141,6 +163,17 @@ enum BridgeUserScript {
         return "(function(){ var t = \(literal);"
             + " if (typeof window.\(setterName) === \"function\") { window.\(setterName)(t); }"
             + " else { window.\(pendingSlotName) = t; } })();"
+    }
+
+    /// 네이티브 → JS 광고 동의 주입 한 조각 (KAN-196). ``sessionTokenPushJs(_:)``와 같은 모양·같은
+    /// 근거이고 setter·대기 자리 이름만 다르다. 값은 계약의 세 문자열(`granted`·`denied`·`unknown`)
+    /// 중 하나라 이스케이프가 필요한 글자가 없지만, 같은 인코더를 지나는 이유는 "주입한 코드가
+    /// 파싱되는지가 데이터에 좌우돼서는 안 된다"는 규칙을 값의 모양에 기대지 않기 위해서다.
+    static func adConsentPushJs(_ consent: String) -> String {
+        let literal = jsStringLiteral(consent)
+        return "(function(){ var c = \(literal);"
+            + " if (typeof window.\(adConsentSetterName) === \"function\") { window.\(adConsentSetterName)(c); }"
+            + " else { window.\(pendingAdConsentSlotName) = c; } })();"
     }
 
     /// 임의 문자열을 JS 소스에 넣어도 되는 리터럴로 만든다.

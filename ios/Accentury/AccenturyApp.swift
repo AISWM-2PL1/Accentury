@@ -36,6 +36,13 @@ struct AccenturyApp: App {
         if let kakaoAppKey = AppConfig.kakaoNativeAppKey {
             KakaoSDK.initSDK(appKey: kakaoAppKey)
         }
+
+        /*
+         * 광고 SDK (KAN-196). Firebase 뒤인 이유는 위와 같다 — 초기화에서 나는 사고가 리포트에
+         * 남아야 한다. 카카오와 달리 조건이 없다: 키가 없어도 Google 테스트 ID로 켜 둔다
+         * (Base.xcconfig). 요청은 동의가 정해지기 전에는 나가지 않는다 (AdsController).
+         */
+        AdsController.shared.start()
     }
 
     var body: some Scene {

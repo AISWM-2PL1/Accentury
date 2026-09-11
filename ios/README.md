@@ -52,6 +52,11 @@ PR에서 `ios/**`가 바뀌면 `.github/workflows/test.yml`의 `ios-test` 잡이
 - `KAKAO_NATIVE_APP_KEY` — 카카오톡 공유 앱 키 (KAN-180). 안드로이드 `local.properties`의
   `kakaoNativeAppKey=`와 **같은 앱의 같은 키**다. 비어 있으면 카카오 경로가 꺼지고 공유가
   OS 공유 시트로만 가며, 그게 기본 상태다 — 아래 참고.
+- `ADMOB_APP_ID` / `ADMOB_INTERSTITIAL_ID` / `ADMOB_REWARDED_ID` — AdMob **iOS 앱**의 앱 ID·전면·
+  보상형 광고 단위 (KAN-196). 안드로이드 `admobAppId=` 등과 같은 자리이되 플랫폼별 ID다. 없으면
+  `Base.xcconfig`의 Google 테스트 ID로 빌드되고 테스트 광고가 정상으로 뜬다 — 그게 기본 상태다.
+  아카이브는 명령줄로 넘기고 `REQUIRE_ADMOB_IDS=YES`를 붙이면 테스트 ID가 남았을 때 빌드가 즉시
+  실패한다 (`docs/wiki/ads-admob.md` §7.2).
 
 ## 카카오톡 공유 (KAN-180)
 
@@ -284,6 +289,11 @@ xcrun simctl launch --console-pty booted com.accentury.app \
 
 `-StubSession`을 **주지 않는다** — 실제 세션이어야 업로드가 받아들여지고, 그래야 결과 주입까지
 간다. 가짜 마이크(`FAKE_MIC_ASSET`)가 물려 있어야 문항마다 같은 발화가 들어간다.
+
+광고 동의(KAN-196)는 구동기가 켜지면 앱 시작에 **`denied`로 미리 적히고** 전면·보상형 호출은 광고
+없이 통과한다 (`ADS: smoke consent=denied suppressed=true`). 시트가 [시작하기] 앞을 막지 않고, 광고
+위에서 구동기가 멈추지 않게 하기 위해서다 — `-AutoStartSmoke 1`만 줘도 같다. 시뮬레이터에서 실제
+테스트 광고를 보려면 두 인자 없이 띄워 시트를 손으로 고른다.
 
 `RESULT:` 줄이 이 스모크의 핵심이다. `accepted=false`나 «webView 없음»이면 업로드는 됐는데 결과가
 웹에 닿지 않았다는 뜻이고, 그때 웹은 «잠시만요…»에서 멈춘다.

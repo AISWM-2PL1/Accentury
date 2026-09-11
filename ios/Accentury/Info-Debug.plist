@@ -115,17 +115,245 @@
 	<!-- 광고 관련 동의 기본값을 끈다 (KAN-33). 웹에서 `allow_google_signals`·
 	     `allow_ad_personalization_signals`를 끈 것과 같은 요구이고, 안드로이드 매니페스트의
 	     `google_analytics_adid_collection_enabled=false` 자리다.
-	     iOS의 광고 식별자(IDFA) 수집은 사실 이 값들이 아니라 **무엇을 링크했는가**로 갈리고,
-	     우리는 `FirebaseAnalyticsCore` product를 골라 수집 코드 자체를 바이너리에서 뺐다
+	     iOS 계측 SDK의 광고 식별자(IDFA) 수집은 사실 이 값들이 아니라 **무엇을 링크했는가**로
+	     갈리고, 우리는 `FirebaseAnalyticsCore` product를 골라 측정 라이브러리에서 수집 코드를 뺐다
 	     (ios/project.yml). 그래서 이 세 줄은 이미 꺼진 것을 한 번 더 끄는 셈인데, 설정에도
 	     적어 두는 이유는 product를 되돌리는 변경이 이 파일을 보지 않고도 광고 신호를 켜지
-	     못하게 하기 위해서다. -->
+	     못하게 하기 위해서다. AdMob(KAN-196)이 IDFA를 읽는 것은 별개 경로다 — 아래 ATT 문구. -->
 	<key>GOOGLE_ANALYTICS_DEFAULT_ALLOW_AD_STORAGE</key>
 	<false/>
 	<key>GOOGLE_ANALYTICS_DEFAULT_ALLOW_AD_USER_DATA</key>
 	<false/>
 	<key>GOOGLE_ANALYTICS_DEFAULT_ALLOW_AD_PERSONALIZATION_SIGNALS</key>
 	<false/>
+
+	<!-- AdMob (KAN-196). 앱 ID는 SDK가 초기화 시점에 이 키에서 읽는다 — 안드로이드 매니페스트의
+	     `com.google.android.gms.ads.APPLICATION_ID` meta-data 자리다. 값의 출처는 Config/Base.xcconfig이고
+	     **기본은 Google 테스트 앱 ID**다(카카오 키와 달리 빈 값이 아니다 — 그쪽 주석 참고).
+	     광고 단위 둘은 SDK가 읽는 키가 아니라 우리가 AppConfig.swift에서 읽는 값이라 이름을 우리
+	     식으로 뒀다 (WEB_URL과 같은 사슬). -->
+	<key>GADApplicationIdentifier</key>
+	<string>$(ADMOB_APP_ID)</string>
+	<key>ADMOB_INTERSTITIAL_ID</key>
+	<string>$(ADMOB_INTERSTITIAL_ID)</string>
+	<key>ADMOB_REWARDED_ID</key>
+	<string>$(ADMOB_REWARDED_ID)</string>
+
+	<!-- 추적 허용 안내 문구 (KAN-196). ATT 프롬프트는 시트에서 「맞춤형 광고 허용」을 고른 직후에만
+	     뜬다 (Ads/AdsController.swift) — 거부를 고른 사람에게는 추적 자체가 없어 묻지 않는다.
+	     문구는 웹 동의 시트(web/src/ads/adConsentText.ts AD_CONSENT_EFFECT)와 같은 취지다:
+	     거부의 결과를 숨기지 않되 거부를 나쁜 선택처럼 읽히게 하지 않는다. -->
+	<key>NSUserTrackingUsageDescription</key>
+	<string>허용하시면 관심사에 맞는 광고를 보여 드려요. 허용하지 않으셔도 광고는 나오지만 맞춤형이 아닌 일반 광고만 나와요.</string>
+
+	<!-- SKAdNetwork 식별자 (KAN-196). ATT를 거부한 사용자에게도 광고 전환을 집계할 수 있게
+	     iOS가 요구하는 목록이고, AdMob 문서 developers.google.com/admob/ios/quick-start
+	     「Update your Info.plist」의 전체 목록을 **그대로** 옮겼다 (2026-09-11 기준 50개).
+	     한 항목이 빠지면 그 네트워크의 광고만 조용히 전환 집계에서 빠진다 — 빌드도 실행도 멀쩡하다.
+	     갱신 방법: 같은 문서의 목록을 다시 받아 이 배열을 통째로 바꾼다 (ads-admob.md §7). -->
+	<key>SKAdNetworkItems</key>
+	<array>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>cstr6suwn9.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>4fzdc2evr5.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>2fnua5tdw4.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>ydx93a7ass.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>p78axxw29g.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>v72qych5uu.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>ludvb6z3bs.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>cp8zw746q7.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>3sh42y64q3.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>c6k4g5qg8m.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>s39g8k73mm.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>wg4vff78zm.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>3qy4746246.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>f38h382jlk.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>hs6bdukanm.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>mlmmfzh3r3.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>v4nxqhlyqp.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>wzmmz9fp6w.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>su67r6k2v3.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>yclnxrl5pm.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>t38b2kh725.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>7ug5zh24hu.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>gta9lk7p23.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>vutu7akeur.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>y5ghdn5j9k.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>v9wttpbfk9.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>n38lu8286q.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>47vhws6wlr.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>kbd757ywx3.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>9t245vhmpl.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>a2p9lx4jpn.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>22mmun2rn5.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>44jx6755aq.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>k674qkevps.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>4468km3ulz.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>2u9pt9hc89.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>8s468mfl3y.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>klf5c3l5u5.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>ppxm28t8ap.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>kbmxgpxpgc.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>uw77j35x4d.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>578prtvx9j.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>4dzt52r2t5.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>tl55sbb4fm.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>c3frkrj4fj.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>e5fvkxwrpn.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>8c4e2ghe7u.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>3rd42ekr43.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>97r2b46745.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>3qcr597p9d.skadnetwork</string>
+		</dict>
+	</array>
 
 	<!-- 마이크 권한 안내 문구 (FR-OB-04). iOS는 이 문자열이 없으면 권한 요청 순간 앱이 죽는다. -->
 	<key>NSMicrophoneUsageDescription</key>

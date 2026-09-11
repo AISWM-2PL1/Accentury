@@ -20,17 +20,22 @@ import os
 /// 판정을 여기 하나로 모으는 이유도 카카오 분기와 같다: "설정이 없다"를 화면마다 다시 물으면 어떤
 /// 화면은 묻는 것을 잊고, 그 화면만 초기화되지 않은 SDK를 부르게 된다. 그 접근은 그 자체로 사고다.
 ///
-/// ## 광고 식별자를 링크하지 않는다
+/// ## 계측은 광고 식별자를 읽지 않는다
 ///
-/// 안드로이드는 매니페스트의 `google_analytics_adid_collection_enabled=false`로 끄지만, iOS의 IDFA
-/// 수집은 설정이 아니라 **무엇을 링크했는가**로 갈린다. 그래서 SwiftPM product를
+/// 안드로이드는 매니페스트의 `google_analytics_adid_collection_enabled=false`로 끄지만, iOS의
+/// **계측 SDK의** IDFA 수집은 설정이 아니라 **무엇을 링크했는가**로 갈린다. 그래서 SwiftPM product를
 /// `FirebaseAnalyticsCore`로 고른다 (`ios/project.yml`) — 기본 `FirebaseAnalytics` product가 끌고
 /// 오는 `GoogleAppMeasurement`(IDFA 수집·전환 측정 포함) 대신 `GoogleAppMeasurementCore`를 물어
-/// AdSupport·AppTrackingTransparency가 바이너리에 아예 들어오지 않는다. 켤 수 있는 코드가 없는
-/// 것이 플래그로 끄는 것보다 강한 보장이고, App Store 개인정보 라벨(KAN-175)에 적을 항목도 그만큼 준다.
+/// 측정 라이브러리 안에 IDFA를 읽는 코드가 없다.
 ///
-/// 광고 개인화 동의 기본값(`GOOGLE_ANALYTICS_DEFAULT_ALLOW_AD_*`)은 Info plist가 끈다. 링크를
-/// 안 했으니 실질적으로는 이미 꺼진 상태지만, 웹에서 `allow_google_signals`를 끈 것과 같은 요구를
+/// KAN-33 때는 "AdSupport·AppTrackingTransparency가 바이너리에 아예 들어오지 않는다"까지 말할 수
+/// 있었는데, KAN-196부터는 아니다 — AdMob SDK가 두 프레임워크를 자기 경로로 링크하고, 맞춤형 광고를
+/// 허용한 사용자에 한해 IDFA를 광고 요청에 쓴다 (`Ads/AdsController.swift`의 ATT 순서). 그래도 Core
+/// product를 유지하는 이유: 이 선택이 지키는 것은 "계측이 광고 식별자를 안 붙인다"이고 그건 광고
+/// SDK가 들어와도 그대로다 — 계측은 익명(FR-AN-09), 광고만 동의를 따른다 (`ads-admob.md` §7.1).
+///
+/// 광고 개인화 동의 기본값(`GOOGLE_ANALYTICS_DEFAULT_ALLOW_AD_*`)은 Info plist가 끈다. 측정 라이브러리가
+/// 읽지 않으니 실질적으로는 이미 꺼진 상태지만, 웹에서 `allow_google_signals`를 끈 것과 같은 요구를
 /// 설정에도 한 번 더 적어 둔다.
 enum FirebaseSetup {
 

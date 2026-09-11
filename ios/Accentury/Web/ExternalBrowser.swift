@@ -31,7 +31,7 @@ enum ExternalBrowser {
             CrashReports.recordExternalLinkFailure("bad_url")
             return
         }
-        guard let presenter = topmostViewController() else {
+        guard let presenter = TopViewController.current() else {
             CrashReports.recordExternalLinkFailure("no_presenter")
             return
         }
@@ -47,23 +47,5 @@ enum ExternalBrowser {
         // [완료]가 아니라 [닫기]다 — 무언가를 끝낸 것이 아니라 읽던 것을 덮는 동작이다
         safari.dismissButtonStyle = .close
         presenter.present(safari, animated: true)
-    }
-
-    /// 지금 화면에 서 있는 뷰 컨트롤러. 시트를 띄울 상대다.
-    ///
-    /// SwiftUI 앱이라 우리가 직접 든 뷰 컨트롤러가 없어서 창에서 거슬러 올라간다. 이미 떠 있는
-    /// 시트(권한 안내·공유)가 있으면 그 위에 얹어야 한다 — 가려진 컨트롤러에서 present하면
-    /// iOS가 조용히 무시한다.
-    private static func topmostViewController() -> UIViewController? {
-        let scene = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first { $0.activationState == .foregroundActive }
-            ?? UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
-
-        guard var top = scene?.windows.first(where: \.isKeyWindow)?.rootViewController else { return nil }
-        while let presented = top.presentedViewController {
-            top = presented
-        }
-        return top
     }
 }

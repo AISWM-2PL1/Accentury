@@ -31,6 +31,11 @@ struct TestFlowView: View {
     @StateObject private var voiceCheck = VoiceCheckModel()
     @StateObject private var uploads = UploadModel()
 
+    /// 광고 허브 (KAN-196). 프로세스 단위 인스턴스라 `@StateObject`가 아니라 `@ObservedObject`다 —
+    /// 미리 받아 둔 광고가 화면 재생성을 넘겨야 해서 뷰가 소유하지 않는다 (``AdsController`` 주석).
+    /// 관측하는 값은 `consent` 하나이고, 그것이 바뀌면 `WebViewHost`가 현재 문서에 다시 민다.
+    @ObservedObject private var ads = AdsController.shared
+
     /// 결과를 웹에 넣으려면 `evaluateJavaScript`를 부를 인스턴스가 필요하다.
     /// 로드 실패 화면·재시도 구간에는 WebView가 아예 없으므로 옵셔널이다.
     @State private var webView: WKWebView?
@@ -63,9 +68,10 @@ struct TestFlowView: View {
                     url: model.webUrl,
                     allowedOrigins: model.allowedOrigins,
                     sessionToken: model.bridgeToken,
+                    adConsent: ads.consent.bridgeValue,
                     onRequestMicPermission: { model.onRequestMicPermission() },
                     onStartVoiceItem: { model.onStartVoiceItem($0) },
-                    onStartRetest: { Task { @MainActor in await handleRetest() } },
+                    onStartRetest: { handleRetest() },
                     onShareResult: { model.onShareResult($0) },
                     /*
                      * 웹이 센 사건을 앱 스트림으로 넘긴다 (KAN-33). 이름을 여기서 손대지 않는 것이
@@ -80,6 +86,13 @@ struct TestFlowView: View {
                      * (``ExternalBrowser``). URL 검증은 브리지가 이미 끝냈다.
                      */
                     onOpenExternalUrl: { ExternalBrowser.open($0) },
+                    /*
+                     * 광고 (KAN-196). 저장과 프리로드는 허브가 하고, 전면 광고는 받아 둔 것을 띄울
+                     * 뿐이다. 판단은 하나도 여기 없다 — 시트 값 걸러내기는 브리지가, 요청 조건은
+                     * 허브가, 재응시 갈래는 Core 상태기계가 정한다.
+                     */
+                    onSetAdConsent: { ads.setConsent($0) },
+                    onShowInterstitialAd: { ads.showInterstitial() },
                     onWebViewCreated: { created in
                         webView = created
                         #if DEBUG
@@ -580,8 +593,38 @@ struct TestFlowView: View {
     }
     #endif
 
+    /// 결과 화면의 [다시 테스트하기] → 보상형 광고 → 재응시 (KAN-196, webview-bridge.md §8.2).
+    /// 안드로이드 `MainActivity.startRetest` 자리다.
+    ///
+    /// 광고를 아는 앱에서는 이 호출이 곧 보상형 광고다. 끝까지 보면(또는 보여줄 광고가 없거나 표시에
+    /// 실패하면) ``proceedRetest()``가 기존 흐름을 밟고, 중도에 닫으면 `AD_DISMISSED`를 웹에 회신해
+    /// 결과 화면이 버튼을 다시 연다. 갈래는 Core ``AccenturyCore/RewardedRetestGate``가 정한다.
+    ///
+    /// **`beginRetest()`(retestInFlight)는 광고 완주 뒤에 건다** — ``TestFlowModel/startRetest()`` 안에
+    /// 있으므로 광고 앞에서는 아무 플래그도 서지 않는다. 그 플래그는 "세션 요청이 나가 있다"는
+    /// 뜻이고 광고 시청은 그 앞 단계다. 광고 중 두 번째 탭은 웹의 pending 잠금(useRetest)과
+    /// 게이트의 표시 중 플래그가 막는다.
+    ///
+    /// 브리지 메시지(메인)에서 불리고 SDK 콜백도 메인이라 ``proceedRetest()``가 어느 쪽에서
+    /// 불려도 같은 스레드다.
     @MainActor
-    private func handleRetest() async {
+    private func handleRetest() {
+        ads.runRewardedRetest(
+            onProceed: { Task { @MainActor in await proceedRetest() } },
+            onDismissed: {
+                // 결과 화면은 그대로 살아 있다 — 세션 요청은 나가지도 않았다. 서버 실패 회신과
+                // 같은 수신 지점(onRetestFailed)으로 보내고, 웹은 문구를 그대로 그린다.
+                webView?.evaluateJavaScript(
+                    retestFailedDeliveryJs(adDismissedRetestFailure()),
+                    completionHandler: nil
+                )
+            }
+        )
+    }
+
+    /// 재응시 본체 (KAN-34 2단계, KAN-107). 보상형 광고 게이트를 통과한 뒤에만 온다 (``handleRetest()``).
+    @MainActor
+    private func proceedRetest() async {
         guard let failure = await model.startRetest() else { return }
         // 결과 화면은 그대로 살아 있다 — 왜 아무 일도 일어나지 않았는지 그 화면에 회신한다.
         webView?.evaluateJavaScript(retestFailedDeliveryJs(failure), completionHandler: nil)

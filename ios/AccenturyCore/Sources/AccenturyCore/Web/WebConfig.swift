@@ -6,6 +6,10 @@ import Foundation
 ///
 /// KAN-205에서 1 → 2로 올렸다. 진입 쿼리의 `voiceSet`이 웹에 필수가 됐고, 그 값을 싣지 않는
 /// 구버전 앱은 문항 화면에서 빠져나올 수 없다 — 웹의 `REQUIRED_BRIDGE_VERSION`과 짝이다.
+///
+/// KAN-196(광고 동의 `getAdConsent`·`setAdConsent`·`showInterstitialAd`)은 **2를 유지한다** — 메서드
+/// 추가뿐이라 하위호환이고, 웹은 없는 메서드를 `readAdConsent() === null`("광고 개념 없음")로 접는다.
+/// 광고 없는 구버전 앱이 신버전 웹을 열어도 응시가 막히지 않으므로 올릴 이유가 없다.
 public let bridgeContractVersion = 2
 
 /// 로드 실패 판정 자체 타임아웃 (§6). 페이지 로드 완료 콜백이 영영 안 오는 경우를 대비한다.
