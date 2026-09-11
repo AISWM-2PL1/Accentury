@@ -126,6 +126,34 @@ describe('createWebSession — 요청 형태 (§3.1)', () => {
 
     expect(headersOf(fetchImpl)).not.toHaveProperty('Authorization')
   })
+
+  it('출신 지역 코드를 그대로 싣는다 (KAN-202, staging 선택 화면)', async () => {
+    const fetchImpl = createdFetch()
+
+    await createWebSession(API_BASE, { region: 'JEJU' }, fetchImpl)
+
+    expect(bodyOf(fetchImpl).region).toBe('JEJU')
+  })
+
+  // prod 번들은 이 티켓 전과 같은 본문을 보내야 한다 - 값이 없을 때 null이 아니라 키 자체가 없다
+  it('지역이 없거나 null이면 region 키 자체가 없다', async () => {
+    const omitted = createdFetch()
+    await createWebSession(API_BASE, {}, omitted)
+    expect('region' in bodyOf(omitted)).toBe(false)
+
+    const nulled = createdFetch()
+    await createWebSession(API_BASE, { region: null }, nulled)
+    expect('region' in bodyOf(nulled)).toBe(false)
+  })
+
+  it('형태가 어긋난 지역 값은 400을 부르는 대신 필드째 뺀다', async () => {
+    const fetchImpl = createdFetch()
+
+    // 소문자는 서버가 name().equals로 받지 않는다 - 학습 라벨 하나 때문에 응시가 막히면 안 된다
+    await createWebSession(API_BASE, { region: 'seoul' as never }, fetchImpl)
+
+    expect(bodyOf(fetchImpl)).not.toHaveProperty('region')
+  })
 })
 
 describe('createWebSession — 응답 해석', () => {
