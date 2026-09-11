@@ -10,6 +10,8 @@ import { getSessionToken, isBridgeCompatible, isStandaloneWeb } from './bridge/b
 import { buildIntroUrl, buildResultUrl, buildTestUrl } from './navigation/entryUrl'
 import { clearSnapshot, defaultSnapshotStorage, sweepSnapshots } from './progress/progressSnapshot'
 import { TestFlowScreen } from './progress/TestFlowScreen'
+import { isRegionSelectEnabled, type RegionCode } from './region/regions'
+import { RegionSelectScreen } from './region/RegionSelectScreen'
 import { ResultScreen } from './result/ResultScreen'
 import { useRetest } from './result/useRetest'
 import { readCampaignToken, sanitizeCampaignToken } from './session/campaign'
@@ -239,6 +241,13 @@ function IntroRoute({
    * 이 값도 false로 돌아간다 — 재응시는 마이크를 새로 열게 되므로 점검도 다시 한다(앱과 같다).
    */
   const [micGranted, setMicGranted] = useState(false)
+  /*
+   * 고른 출신 지역 (KAN-202). 스위치가 켜진 빌드(staging)에서만 값이 잡히고, 그 외에는 늘 null이다.
+   * `micGranted`와 같은 이유로 URL 화면이 아니라 이 문서의 상태다 — 리로드하면 권한부터 다시
+   * 받는 흐름이라 지역도 그 문서 안에서만 살면 되고, 세션을 만들 때 한 번 쓰고 나면 필요 없다
+   * (`RegionSelectScreen` 헤더).
+   */
+  const [region, setRegion] = useState<RegionCode | null>(null)
   /** 점검은 통과했는데 세션 생성이 막혔다. 값이 곧 사용자에게 보일 문구다 */
   const [startFailure, setStartFailure] = useState<string | null>(null)
   /*
@@ -259,7 +268,7 @@ function IntroRoute({
       if (startingRef.current) return
       startingRef.current = true
       setStartFailure(null)
-      startStandaloneTest(navigate, centerHz)
+      startStandaloneTest(navigate, centerHz, region)
         .catch((error: unknown) => {
           setStartFailure(error instanceof Error ? error.message : START_FAILED_MESSAGE)
         })
@@ -267,7 +276,7 @@ function IntroRoute({
           startingRef.current = false
         })
     },
-    [navigate],
+    [navigate, region],
   )
 
   /*
@@ -275,7 +284,15 @@ function IntroRoute({
    * 권한 → 목소리 점검 → 세션 생성. 세션을 점검 뒤로 미루는 이유는 점검이 네트워크를 쓰지
    * 않아 실패할 구석이 없기 때문이다 — 앞에 두면 이미 발급된 세션을 든 채 점검에 붙들리는
    * 구간이 생긴다 (`VoiceCheckScreen` 헤더).
+   *
+   * staging 빌드는 권한과 점검 사이에 출신 지역 선택이 하나 더 선다 (KAN-202): 권한 → **지역** →
+   * 점검 → 세션 생성. 지역도 네트워크를 쓰지 않으므로 같은 근거로 세션 앞에 둔다. 스위치가
+   * 꺼진 빌드(prod)는 이 분기를 타지 않아 이 티켓 전과 흐름이 같다.
    */
+  if (standalone && micGranted && isRegionSelectEnabled() && region === null) {
+    return <RegionSelectScreen onDone={setRegion} />
+  }
+
   if (standalone && micGranted) {
     return (
       <VoiceCheckScreen
@@ -339,9 +356,14 @@ function startedTest(sessionId: string, campaign: string | null): void {
  * 화면은 화면 전환(문서 리로드)을 건너온 뒤에 그 값을 읽는다.
  *
  * @param userCurveCenterHz 목소리 점검이 잰 이 화자의 중심 음높이 (Hz)
+ * @param region 출신 지역 코드 (KAN-202). 스위치가 꺼진 빌드에서는 늘 null이라 본문이 그대로다
  * @throws Error 사용자에게 보일 문구를 담은 오류 ([startFailureMessage] 참고)
  */
-async function startStandaloneTest(navigate: Navigate, userCurveCenterHz: number): Promise<void> {
+async function startStandaloneTest(
+  navigate: Navigate,
+  userCurveCenterHz: number,
+  region: RegionCode | null,
+): Promise<void> {
   const search = window.location.search
 
   /*
@@ -364,6 +386,9 @@ async function startStandaloneTest(navigate: Navigate, userCurveCenterHz: number
       // 세션 전체가 아니라 토큰만 본다 (KAN-205) - 세트가 계약에 들어오기 전에 저장된
       // 세션도 폐기 대상이다. 읽지 못하면 폐기 없이 새 세션만 만들어진다.
       previousToken: getWebSessionToken(),
+      // staging의 지역 선택이 준 값 (KAN-202). 스위치가 꺼진 빌드에서는 null이고, 그때
+      // `createWebSession`이 필드째 빼므로 prod 본문은 이 티켓 전과 같다.
+      region,
     })
   } catch (error: unknown) {
     throw new Error(startFailureMessage(error))

@@ -30,7 +30,8 @@ export const REGIONS = [
   { code: 'JEONNAM', label: '전남' },
   { code: 'GYEONGBUK', label: '경북' },
   { code: 'GYEONGNAM', label: '경남' },
-  { code: 'JEJU', label: '제주도' },
+  // 지라 표는 '제주도'였다 - 2026-09-11 다른 지역과 표기를 통일해 '제주'로 (팀장 결정).
+  { code: 'JEJU', label: '제주' },
 ] as const
 
 /** 서버가 받아 주는 코드 열 개. `UNKNOWN`은 서버 저장 전용이라 여기 없다 */
