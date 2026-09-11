@@ -8,9 +8,10 @@
  * 스위치(`isRegionSelectEnabled`, staging 한정)가 켜진 번들에만 이 화면이 있고, prod 번들은
  * 이 화면도 요청 필드도 없이 이 티켓 전과 같다 (`regions.ts` 헤더).
  *
- * 묻는 것은 지금 사는 곳이 아니라 **자라면서 몸에 밴 말씨의 고향**이다. 라벨의 뜻이 "이 녹음의
- * 화자가 어느 사투리 화자인가"라서, 부제가 그 구분을 한 줄로 못 박는다. 결과에 영향이 없다는
- * 말도 같은 줄에 둔다 — 없으면 "유리한 지역"을 고르려는 사람이 생긴다.
+ * 묻는 것은 **출신 지역**이다. 라벨의 뜻이 "이 녹음의 화자가 어느 사투리 화자인가"라서, 부제가
+ * "본인이 사용한다고 생각하는 억양의 지역"으로 그 기준을 한 줄로 못 박는다 (문안은 2026-09-11
+ * 팀장 확정). 결과에 영향이 없다는 말도 같은 줄에 둔다 — 없으면 "유리한 지역"을 고르려는
+ * 사람이 생긴다.
  *
  * ## 왜 점검 앞인가
  *
@@ -74,13 +75,14 @@ export function RegionSelectScreen({ onDone }: RegionSelectScreenProps) {
     <main className="item-screen">
       <div>
         <h1 id="region-title" className="type-title-sm">
-          어느 지역 말씨가 몸에 배어 있나요?
+          출신 지역이 어디신가요?
         </h1>
         <p
           className="type-body-sm"
           style={{ color: 'var(--color-muted-foreground)', marginTop: 'var(--space-2)' }}
         >
-          지금 사는 곳이 아니라, 자라면서 몸에 밴 말씨의 고향이에요. 결과에는 영향이 없어요.
+          본인이 사용한다고 생각하는 억양의 지역을 골라주시면 됩니다. 
+          결과에는 영향이 없어요.
         </p>
       </div>
 

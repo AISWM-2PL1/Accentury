@@ -10,7 +10,7 @@ import { RegionSelectScreen } from './RegionSelectScreen'
  */
 const DISPLAY_LABELS = ['서울', '강원', '경기', '충북', '전북', '충남', '전남', '경북', '제주', '경남']
 
-const TITLE = '어느 지역 말씨가 몸에 배어 있나요?'
+const TITLE = '출신 지역이 어디신가요?'
 
 function renderScreen() {
   const onDone = vi.fn<(region: RegionCode) => void>()
@@ -37,10 +37,11 @@ describe('RegionSelectScreen — 선택지', () => {
     expect(screen.getByRole('radiogroup', { name: TITLE })).toBeInTheDocument()
   })
 
-  it('지금 사는 곳이 아니라 자란 곳을 묻는다고 밝힌다 (AC: 출신 지역)', () => {
+  it('출신 지역을 묻고 결과에 영향이 없음을 밝힌다 (AC: 출신 지역)', () => {
     renderScreen()
 
-    expect(screen.getByText(/지금 사는 곳이 아니라/)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: /출신 지역/ })).toBeInTheDocument()
+    expect(screen.getByText(/억양의 지역을 골라/)).toBeInTheDocument()
     expect(screen.getByText(/결과에는 영향이 없어요/)).toBeInTheDocument()
   })
 })

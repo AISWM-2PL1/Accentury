@@ -517,7 +517,7 @@ describe('App — 웹 단독 실행 (KAN-31)', () => {
    * 빌드(prod, 이 파일의 다른 테스트 전부)는 화면도 없고 세션 생성 본문도 이 티켓 전과 같다.
    */
   describe('출신 지역 선택 (KAN-202)', () => {
-    const REGION_TITLE = '어느 지역 말씨가 몸에 배어 있나요?'
+    const REGION_TITLE = '출신 지역이 어디신가요?'
 
     /** 세션 생성 요청의 본문. 첫 호출이 `POST /v0/sessions`다 */
     function sessionBody(fetchStub: ReturnType<typeof vi.fn>): Record<string, unknown> {

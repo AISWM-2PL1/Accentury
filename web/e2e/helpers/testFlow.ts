@@ -80,7 +80,7 @@ export async function startTest(page: Page): Promise<void> {
    */
   const regionHeading = page.getByRole('heading', {
     level: 1,
-    name: '어느 지역 말씨가 몸에 배어 있나요?',
+    name: '출신 지역이 어디신가요?',
   })
   const voiceHeading = page.getByRole('heading', { name: '목소리를 확인할게요' })
   await expect(regionHeading.or(voiceHeading)).toBeVisible()
