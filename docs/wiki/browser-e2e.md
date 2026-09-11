@@ -117,6 +117,41 @@ AI 스텁은 `ACCENTURY_AI_STUB_FAIL_ITEM`으로 특정 문항을 반드시 실�
 skip은 실패가 아니라 **"이 무대는 내 것이 아니다"라는 선언**이다. 조건부 분기를 한 스펙에
 밀어 넣는 것보다 각자 자기 무대에서만 도는 편이 실패했을 때 원인이 분명하다.
 
+## 지역 화면은 스펙이 아니라 헬퍼가 가른다 (KAN-202, 2026-09-11)
+
+출신 지역 선택 화면은 빌드 변수 `VITE_REGION_SELECT`가 정확히 `'true'`인 번들에만 있다
+(`web/src/region/regions.ts`) — staging은 켜고 prod는 변수 자체가 없다. 위의 `E2E_FAIL_ITEM`과
+달리 이것은 **대칭 스킵으로 가르지 않았다.** 스택 상태가 아니라 화면 유무의 문제이고, 화면은
+스펙이 직접 볼 수 있기 때문이다.
+
+`startTest`가 [내 억양 테스트하기] 뒤에 지역 제목과 점검 제목 중 **먼저 뜨는 쪽**을 기다린다
+(`regionHeading.or(voiceHeading)`). 지역 화면이면 라디오 하나(경남)를 고르고 [다음], 아니면
+그대로 점검으로 간다. 빌드 변수를 읽지 않는 이유는 `E2E_BASE_URL`로 staging을 겨눌 때 스펙
+프로세스의 환경이 번들과 아무 관계가 없기 때문이다 — 스펙에 주소를 두지 않아 같은 스펙이
+로컬·배포 양쪽을 도는 원칙의 연장이다. 그래서 스펙 파일은 한 벌이고 켠 판·끈 판은 **같은
+파일을 두 번** 돌린다.
+
+두 순서가 중요하다.
+
+- `.or()`로 먼저 기다리고 나서 `isVisible()`로 어느 쪽인지 본다. `isVisible()`은 기다리지
+  않는 즉답이라, 먼저 부르면 권한 승인 직후의 빈 순간을 "지역 화면 없음"으로 읽는다.
+- 지역 라디오도 어휘 문항과 같은 `.choice__radio`(1px + clip-path)라 `check({ force: true })`다.
+
+"지나갔다"에서 끝내지 않는다. 세션 생성 요청을 `waitForRequest`로 따로 잡아 `postDataJSON()`을
+보고, 지역 화면을 봤으면 `region === 'GYEONGNAM'`, 못 봤으면 `'region' in body === false`를
+단언한다. 201 응답(`waitForResponse`)은 서버가 받아 줬다는 것만 말하고 무엇을 보냈는지는
+말하지 않는다 — 꺼진 빌드가 "키 자체를 안 보낸다"는 AC는 요청 본문에서만 확인된다.
+
+### 켜는 법과 `.env.local` 함정
+
+로컬은 `VITE_REGION_SELECT=true npm run test:e2e`. `playwright.config.ts`의 `webServer.env`가
+`VITE_REGION_SELECT: process.env.VITE_REGION_SELECT ?? ''`로 넘긴다. Playwright는 `env`를
+부모 환경 위에 얹으므로(`...process.env, ...env`, 1.62.1 소스 실측) 셸 값을 넘기는 데는 이
+줄이 필요 없다. 이 줄의 값은 **`?? ''`** 쪽에 있다 — Vite의 `loadEnv`는 `process.env`에 있는
+키를 `.env.local`보다 우선하므로, 개발자가 화면 확인용으로 `web/.env.local`에
+`VITE_REGION_SELECT=true`를 둔 채 E2E를 돌려도 빈 값이 그 파일을 눌러 끈 빌드가 뜬다.
+그 줄이 없으면 그 기계에서는 끈 판이 영영 돌지 않는다. `VITE_API_BASE: ''`와 같은 모양이다.
+
 ## 발견: 브라우저 단독에는 재녹음 복구가 없다
 
 처음 겨눈 것은 "분석이 실패한 문항을 재녹음해 복구하고 완주한다"였는데, **그 길은 브라우저에
@@ -161,10 +196,16 @@ correlationId가 달라져도 마찬가지다.
 
 ### 실패 갈래를 돌리려면 CORS에 5174가 있어야 한다 (2026-09-08 실측)
 
-`web/README.md`의 백엔드 기동 예시는 허용 출처로 5173만 적는데, Playwright는 **E2E 전용 포트
-5174**에 개발 서버를 띄운다. 브라우저는 같은 출처라도 POST에 `Origin`을 싣고 Vite 프록시가 그
-헤더를 그대로 넘기므로, 5174가 목록에 없으면 세션 생성이 **403**으로 끊긴다(`startTest`의 201
-단언에서 죽는다). 기동 인자에 `http://localhost:5174,http://127.0.0.1:5174`를 함께 넣는다.
+`web/README.md`의 백엔드 기동 예시는 허용 출처로 5173만 적었는데(2026-09-11 KAN-202 3단계에서
+5174와 `ai-token` 인자를 예시에 넣어 정정), Playwright는 **E2E 전용 포트 5174**에 개발 서버를
+띄운다. 브라우저는 같은 출처라도 POST에 `Origin`을 싣고 Vite 프록시가 그 헤더를 그대로
+넘기므로, 5174가 목록에 없으면 세션 생성이 **403**으로 끊긴다(`startTest`의 201 단언에서
+죽는다). 기동 인자에 `http://localhost:5174,http://127.0.0.1:5174`를 함께 넣는다.
+
+같은 예시에서 빠져 있던 것이 하나 더 있다 — `--accentury.analysis.ai-token`. compose의 `ai`가
+`ACCENTURY_AI_INTERNAL_TOKEN`으로 `X-Accentury-Internal-Token`을 검사하므로(KAN-36) 백엔드를
+호스트에서 띄울 때 같은 값을 넘기지 않으면 BE→AI가 401로 막혀 회로가 열리고, `full-run`이
+분석 대기에서 멈춘다. 스모크는 세션 생성까지라 이 누락을 못 본다.
 
 ## 실측 수치
 
