@@ -127,6 +127,8 @@ public class SessionService {
         String testVersion = active.definition().testVersion();
         String scoreVersion = active.definition().scoreVersion();
         int voiceSet = resolveVoiceSet(request, active.voiceSetCount());
+        // 출신 지역은 코드 10개 안에서만 받는다 (KAN-201) - 검증은 저장보다 먼저다.
+        Region region = Region.fromRequest(request != null ? request.region() : null);
         // 세트를 누가 골랐는지는 로그에만 쓴다 - 편중을 나중에 로그로 되짚으려면
         // 서버가 고른 세션과 클라이언트가 지정한 세션이 구분돼야 한다 (KAN-205).
         boolean voiceSetRequested = request != null && request.voiceSet() != null;
@@ -159,6 +161,7 @@ public class SessionService {
                     client != null && client.platform() != null ? client.platform().name() : null,
                     client != null ? client.appVersion() : null,
                     request != null ? request.campaignToken() : null,
+                    region,
                     traffic,
                     now,
                     expiresAt));
@@ -173,9 +176,9 @@ public class SessionService {
         }
 
         // 토큰은 로그에 남기지 않는다 (§2.6, NFR-SC-07).
-        log.info("세션 생성 sessionId={} platform={} testVersion={} voiceSet={} voiceSetBy={} traffic={}",
+        log.info("세션 생성 sessionId={} platform={} testVersion={} voiceSet={} voiceSetBy={} region={} traffic={}",
                 sessionId, client != null ? client.platform() : null, testVersion, voiceSet,
-                voiceSetRequested ? "client" : "server", traffic);
+                voiceSetRequested ? "client" : "server", region, traffic);
 
         // 응시 시도 1건 (KAN-106) - 폐기+생성 트랜잭션이 커밋된 뒤다.
         // 실패는 카운터 쪽에서 삼킨다 - 통계가 세션 생성을 막으면 안 된다 (FR-AN-10).

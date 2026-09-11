@@ -151,7 +151,7 @@ class SessionRetakeApiTest extends IntegrationTest {
         seedChildren(old.id());
         long sessionsBefore = sessionRepository.count();
 
-        CreateSessionRequest oversized = new CreateSessionRequest("a".repeat(80), null, null);
+        CreateSessionRequest oversized = new CreateSessionRequest("a".repeat(80), null, null, null);
         assertThrows(RuntimeException.class, () -> sessionService.create(
                 oversized, "127.0.0.1", "Bearer " + old.token(), null));
 
@@ -183,7 +183,7 @@ class SessionRetakeApiTest extends IntegrationTest {
         Instant now = Instant.now();
         TestSession expired = sessionRepository.save(new TestSession(
                 SessionTokens.newSessionId(), SessionTokens.hash(token),
-                activeTestVersion(), activeScoreVersion(), 1, null, null, null, Traffic.REAL,
+                activeTestVersion(), activeScoreVersion(), 1, null, null, null, null, Traffic.REAL,
                 now.minus(31, ChronoUnit.MINUTES), now.minus(1, ChronoUnit.MINUTES)));
 
         retake(token);

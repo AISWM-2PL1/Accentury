@@ -67,3 +67,9 @@ variable "ai_analysis_timeout_seconds" {
   description = "AI 서버가 분석 1건에 거는 상한(초, ACCENTURY_AI_ANALYSIS_TIMEOUT_SECONDS). backend의 analysis_ai_timeout보다 짧아야 한다 (KAN-22). 단일 lock 대기와 워커 재적재 대기까지 포함하는 값이라 롤링 배포 중 backend 태스크 최대 6개(상한 3 x 200%)가 겹친 6 x P95 11초 = 67초와 재적재 31초 + 추론 11초 = 42초를 덮는 75초로 확정 (KAN-172, Codex 리뷰 P1 - 짧으면 추론 중인 요청을 끊어 멀쩡한 워커를 죽이고 재전송이 새 워커를 또 죽인다). 코드 기본값과 같다."
   default     = 75
 }
+
+variable "training_bucket_name" {
+  type        = string
+  description = "staging 전용 학습 데이터 S3 버킷 이름 (KAN-201). 값이 있으면 ACCENTURY_TRAINING_BUCKET 파라미터를 만들어 backend가 분석 종결마다 음성 WAV와 메타 JSON을 그 버킷에 남긴다 (accentury.training.bucket). null이면 파라미터 자체가 없고 backend는 저장 코드를 만들지 않는다 - prod는 반드시 null이다 (FR-DP-01 그대로)."
+  default     = null
+}

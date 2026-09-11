@@ -1,8 +1,10 @@
 package app.accentury.backend.analysis;
 
 import app.accentury.backend.common.AccenturyProperties;
+import app.accentury.backend.training.TrainingSampleStore;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
@@ -80,7 +82,8 @@ class AnalysisDispatchConfig {
                                           AnalysisBacklog backlog,
                                           AnalysisMetrics metrics,
                                           ObjectMapper objectMapper,
-                                          MeterRegistry meterRegistry) {
+                                          MeterRegistry meterRegistry,
+                                          ObjectProvider<TrainingSampleStore> trainingSamples) {
         String aiBaseUrl = properties.analysis().aiBaseUrl();
         if (aiBaseUrl == null || aiBaseUrl.isBlank()) {
             return new NoopAnalysisDispatcher();
@@ -131,7 +134,9 @@ class AnalysisDispatchConfig {
                 new RestAiAnalysisClient(restClient, healthRestClient, objectMapper,
                         properties.analysis().aiToken()),
                 analysisExecutor, transitions, backlog, circuitBreaker, metrics,
-                properties.analysis().aiRetries());
+                // 학습 샘플 저장소는 staging에만 빈이 있다 (KAN-201, TrainingConfig) - 없으면 no-op이다.
+                trainingSamples.getIfAvailable(() -> TrainingSampleStore.NONE),
+                properties.analysis().aiRetries(), HttpAnalysisDispatcher.RETRY_BACKOFF_MS);
     }
 
     /**

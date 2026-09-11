@@ -1,5 +1,5 @@
 #!/bin/bash
-# ai 호스트 첫 부팅 부트스트랩 (KAN-124, 전용 호스트 KAN-36). docker와 compose를 깔고 compose 파일과 기동
+# ai 호스트 첫 부팅 부트스트랩 (KAN-124, 전용 호스트 KAN-36, ALB 뒤 KAN-201). docker와 compose를 깔고 compose 파일과 기동
 # 스크립트를 /opt/accentury에 놓고 systemd 유닛을 등록한다. IMAGE_TAG는 파이프라인(KAN-128) 몫이라 그 전까지
 # 유닛은 실패한 채 기다린다. iptables egress 가드와 health 지표 타이머도 여기서 놓는다.
 # cloud-init은 인스턴스당 한 번만 돈다 - 여기 든 파일이 바뀌면 시작 템플릿 새 버전으로 인스턴스가 교체된다 (main.tf).
@@ -25,8 +25,6 @@ ECR_REGISTRY=${ecr_registry}
 AWS_REGION=${region}
 METRIC_NAMESPACE=${metric_namespace}
 AI_LOG_GROUP=${ai_log_group}
-AI_DNS_NAME=${ai_dns_name}
-AI_ZONE_ID=${ai_zone_id}
 VPC_CIDR=${vpc_cidr}
 CONF
 

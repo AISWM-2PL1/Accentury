@@ -21,6 +21,11 @@ import org.jspecify.annotations.Nullable;
  *                      400 {@code VALIDATION_FAILED}이고, 그 검증은 {@link SessionService}가
  *                      활성 정의 스냅샷 하나에서 한다. 정수가 아닌 값은 프레임워크가 파싱 단계에서
  *                      400으로 끊는다.
+ * @param region        응시자의 출신(모어 사투리) 지역 코드 (KAN-201, {@link Region}). 웹 응시 흐름의
+ *                      선택 화면(KAN-202, staging 빌드 한정)이 보내고, 앱과 앱 안 WebView는 보내지
+ *                      않는다. 코드 10개 밖의 값은 400 {@code VALIDATION_FAILED}이고 검증은
+ *                      {@link SessionService}가 한다 (campaignToken의 형식 검증과 같은 결과). 응답에는
+ *                      실리지 않는다.
  */
 public record CreateSessionRequest(
         @Nullable
@@ -29,7 +34,9 @@ public record CreateSessionRequest(
 
         @Nullable @Valid Client client,
 
-        @Nullable Integer voiceSet
+        @Nullable Integer voiceSet,
+
+        @Nullable String region
 ) {
 
     /**

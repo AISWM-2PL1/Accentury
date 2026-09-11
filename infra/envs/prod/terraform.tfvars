@@ -24,6 +24,12 @@ ai_instance_type = "c7i.xlarge"
 # 옛 SHA와 새 SHA가 공존하는 데다 pull이 압축 레이어를 임시로 한 벌 더 풀어 순간 최대치가 약 2.5(OS와 docker) +
 # 7 x 2 + 4 = 21GB다. 20GB에서는 pull이 디스크 부족으로 실패할 수 있어(실측 여유 11.8GB) 두 배로 올린다.
 ai_root_volume_size = 40
+# AI 호스트 오토스케일링 상한 (KAN-201, 2026-09-11 결정). 평시 1대, 진행 중 분석 6건 이상 2분 연속이면 +1, 1건 이하
+# 15분 연속이면 -1. 내부 ALB(least_outstanding_requests)가 backend 태스크 3개의 동시 호출을 빈 인스턴스로 나눈다.
+ai_max_size = 3
+
+# 학습 데이터 S3는 staging 전용이다 (KAN-201). prod는 FR-DP-01 그대로 - 원본 음성이 어디에도 남지 않는다.
+training_bucket_enabled = false
 
 ssm_prefix = "/accentury/prod"
 

@@ -5,6 +5,7 @@ import app.accentury.backend.analysis.AnalysisJob;
 import app.accentury.backend.analysis.AnalysisJobRepository;
 import app.accentury.backend.analysis.AnalysisJobStatus;
 import app.accentury.backend.analysis.AnalysisJobTransitions;
+import app.accentury.backend.session.Region;
 import app.accentury.backend.session.SessionService;
 import app.accentury.backend.session.TestSession;
 import app.accentury.backend.session.TestSessionRepository;
@@ -376,7 +377,8 @@ class ResultApiTest extends IntegrationTest {
         sessionRepository.flush();
         sessionRepository.save(new TestSession(stored.id(), stored.tokenHash(),
                 stored.testVersion(), stored.scoreVersion(), stored.voiceSet(), stored.platform(), stored.appVersion(),
-                stored.campaignToken(), stored.traffic(), stored.createdAt(),
+                stored.campaignToken(), stored.region() != null ? Region.valueOf(stored.region()) : null,
+                stored.traffic(), stored.createdAt(),
                 Instant.now().minusSeconds(1)));
     }
 
