@@ -8,6 +8,7 @@ import {
   type AnalysisWaitingScreenProps,
 } from './AnalysisWaitingScreen'
 import type { RetestControl } from '../result/useRetest'
+import { REQUIRED_BRIDGE_VERSION } from '../bridge/bridge'
 
 /**
  * 재응시 상태 대역 (KAN-191). 기본값은 "누를 수 있고 아직 아무 일도 없었다" — 실제 브리지
@@ -113,6 +114,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers()
   delete window.gtag
+  delete window.AccenturyBridge
 })
 
 /** GA4 태그 자리의 대역 (KAN-33). 도착한 이벤트를 순서대로 모은다 */
@@ -706,5 +708,56 @@ describe('재녹음 계측 (KAN-33)', () => {
     })
     // 세는 것과 여는 것은 다른 일이다 — 계측이 붙어도 재녹음은 그대로 열린다
     expect(onRetake).toHaveBeenCalledWith('v2')
+  })
+})
+
+describe('전면 광고 — 세션당 한 번 (KAN-196)', () => {
+  /** 전면 광고를 아는 브리지 대역. 세션 id는 테스트마다 다르다 (`ads/interstitial.test.ts` 주석) */
+  function adBridge() {
+    const show = vi.fn()
+    window.AccenturyBridge = {
+      requestMicPermission: vi.fn(),
+      startVoiceItem: vi.fn(),
+      getContractVersion: () => REQUIRED_BRIDGE_VERSION,
+      showInterstitialAd: show,
+    }
+    return show
+  }
+
+  it('마운트하면 한 번 요청한다', async () => {
+    const show = adBridge()
+
+    await renderScreen({ sessionId: 'ad-mount' })
+
+    expect(show).toHaveBeenCalledTimes(1)
+  })
+
+  it('폴링이 돌며 다시 그려져도 한 번이다', async () => {
+    const show = adBridge()
+    const view = await renderScreen({ sessionId: 'ad-rerender' })
+
+    view.rerender(<AnalysisWaitingScreen {...props({ sessionId: 'ad-rerender', refreshNonce: 1 })} />)
+    await act(async () => {})
+    view.rerender(<AnalysisWaitingScreen {...props({ sessionId: 'ad-rerender', refreshNonce: 2 })} />)
+    await act(async () => {})
+
+    expect(show).toHaveBeenCalledTimes(1)
+  })
+
+  it('화면이 내려갔다 다시 서도 같은 세션이면 한 번이다 — 재녹음 뒤 돌아오는 경로', async () => {
+    const show = adBridge()
+    const view = await renderScreen({ sessionId: 'ad-remount' })
+    view.unmount()
+
+    await renderScreen({ sessionId: 'ad-remount' })
+
+    expect(show).toHaveBeenCalledTimes(1)
+  })
+
+  it('브라우저 단독 실행(브리지 없음)에서는 아무 일도 없다 — 웹 단독은 KAN-197 범위다', async () => {
+    // 브리지 없이 마운트해도 크래시하지 않고, 폴링은 그대로 돈다
+    await renderScreen({ sessionId: 'ad-none' })
+
+    expect(screen.getByRole('heading', { name: '결과를 만들고 있어요' })).toBeInTheDocument()
   })
 })

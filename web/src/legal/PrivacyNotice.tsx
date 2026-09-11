@@ -13,24 +13,19 @@
  * 같은 줄을 세 번 적지 않는 것이 이 화면을 웹으로 만든 이유이기도 하다.
  */
 
-import type { MouseEvent } from 'react'
-import { openExternalUrl } from '../bridge/bridge'
-import { privacyPolicyUrl } from './privacyPolicy'
+import { AD_CONSENT_SETTINGS_LINK } from '../ads/adConsentText'
+import { PrivacyPolicyLink } from './PrivacyPolicyLink'
 
-export function PrivacyNotice() {
-  const url = privacyPolicyUrl()
-
+export interface PrivacyNoticeProps {
   /**
-   * 앱 안에서는 네이티브가 연다 (Custom Tabs·SFSafariViewController). 브리지가 받아 주면
-   * 링크의 기본 동작을 막는다 — 막지 않으면 WebView가 같은 URL로 이동을 시도해서, 시트가
-   * 덮이는 동시에 그 아래 인트로가 정책 문서로 바뀌거나 allowlist에 걸려 오류 화면이 뜬다.
-   *
-   * 브리지가 없으면(브라우저 단독 실행) 아무것도 하지 않고 `<a>`의 기본 동작에 맡긴다.
+   * 「맞춤형 광고 설정」을 눌렀다 (KAN-196). **없으면 그 링크를 그리지 않는다** — 광고 동의라는
+   * 개념이 없는 실행(웹 단독·광고를 모르는 앱, `readAdConsent() === null`)에서 눌러도 아무
+   * 일 없는 링크를 두지 않는다. 판정은 인트로가 하고 이 줄은 받은 것만 그린다.
    */
-  function handleClick(event: MouseEvent<HTMLAnchorElement>) {
-    if (openExternalUrl(url)) event.preventDefault()
-  }
+  onAdConsentSettings?: () => void
+}
 
+export function PrivacyNotice({ onAdConsentSettings }: PrivacyNoticeProps = {}) {
   return (
     <p className="type-caption privacy-notice">
       녹음한 음성은 분석이 끝나면 바로 지워요.
@@ -44,23 +39,28 @@ export function PrivacyNotice() {
       */}
       <br />
       {/*
-        버튼이 아니라 `<a>`인 이유는 `MicBlockedScreen`의 스토어 링크와 같다 — 바깥으로
-        나가는 것은 이동이라 링크의 기본 동작(길게 눌러 복사, 스크린 리더의 "링크" 안내)이
-        전부 의미를 갖는다.
-
-        `target="_blank"`는 브라우저 단독 실행을 위한 것이다: 같은 탭에서 열면 응시하려던
-        사람이 정책 문서에 남고 인트로로는 뒤로가기로만 돌아온다. 앱 안에서는 이 속성이
-        아무 일도 하지 않지만(팝업 미지원) 그 경로는 위 `handleClick`이 먼저 가로챈다.
+        링크의 요소 선택(`<a>`)과 여는 규칙(앱 안은 네이티브, 밖은 새 탭)은 `PrivacyPolicyLink`가
+        갖는다 — 광고 동의 시트(KAN-196)도 같은 링크를 쓴다.
       */}
-      <a
-        className="text-link"
-        href={url}
-        target="_blank"
-        rel="noopener noreferrer"
-        onClick={handleClick}
-      >
-        개인정보처리방침
-      </a>
+      <PrivacyPolicyLink />
+      {onAdConsentSettings !== undefined && (
+        <>
+          {/*
+            방침 링크와 같은 줄에 가운뎃점으로 잇는다 (KAN-196). 둘 다 "내 정보가 어떻게
+            다뤄지는지"로 가는 문이라 한 줄에 서는 것이 맞고, 셋째 줄을 만들면 하단이 주버튼
+            아래 세 줄이 되어 시안의 배치가 흐려진다. 폭은 캡션 13px에 두 링크 합쳐 열넉 자라
+            312dp 안에 넉넉히 든다.
+
+            `<a>`가 아니라 `<button>`인 이유는 방침 링크와 반대다 — 저쪽은 바깥으로 나가는
+            이동이고, 이쪽은 앱 안에서 시트를 여는 동작이다. `href`가 없는 링크는 길게 눌러도
+            복사할 것이 없고 스크린 리더가 "링크"라고 읽어 주면 사실과 어긋난다.
+          */}
+          {' · '}
+          <button type="button" className="text-link ad-consent-settings" onClick={onAdConsentSettings}>
+            {AD_CONSENT_SETTINGS_LINK}
+          </button>
+        </>
+      )}
     </p>
   )
 }

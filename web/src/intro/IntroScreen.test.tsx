@@ -1,6 +1,8 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { AD_CONSENT_ALLOW, AD_CONSENT_DENY, AD_CONSENT_SETTINGS_LINK, AD_CONSENT_TITLE } from '../ads/adConsentText'
 import type { MicPermission } from '../audio/microphone'
+import { REQUIRED_BRIDGE_VERSION, type AccenturyBridge } from '../bridge/bridge'
 import { IntroScreen } from './IntroScreen'
 
 const ANDROID_UA =
@@ -135,5 +137,116 @@ describe('IntroScreen — 인트로 히어로', () => {
     expect(screen.getByText('사투리 좀 치는지, 지금 확인해봐요.')).toBeInTheDocument()
     // 제목 자리를 넘겨받은 것이지 하나 더 생긴 것이 아니다 — h1은 여전히 하나다
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
+  })
+})
+
+describe('IntroScreen — 맞춤형 광고 동의 (KAN-196)', () => {
+  /** 광고 동의를 아는 앱의 브리지 대역. 읽기 값은 인자, 쓰기는 기록만 한다 */
+  function adBridge(consent: string, setAdConsent = vi.fn()): AccenturyBridge {
+    return {
+      requestMicPermission: vi.fn(),
+      startVoiceItem: vi.fn(),
+      getContractVersion: () => REQUIRED_BRIDGE_VERSION,
+      getAdConsent: () => consent,
+      setAdConsent,
+    }
+  }
+
+  const dialog = () => screen.queryByRole('dialog', { name: AD_CONSENT_TITLE })
+  const settingsLink = () => screen.queryByRole('button', { name: AD_CONSENT_SETTINGS_LINK })
+
+  it('아직 묻지 않았으면(unknown) 시트를 띄운 채 시작한다', () => {
+    window.AccenturyBridge = adBridge('unknown')
+
+    render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
+
+    expect(dialog()).toBeInTheDocument()
+    // 인트로는 그 아래 그대로 있다 — 시트가 화면을 갈아치우는 것이 아니다
+    expect(screen.getByRole('button', { name: '내 억양 테스트하기' })).toBeInTheDocument()
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
+  })
+
+  it.each(['granted', 'denied'] as const)('이미 골랐으면(%s) 시트가 뜨지 않고 링크만 있다', (consent) => {
+    window.AccenturyBridge = adBridge(consent)
+
+    render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
+
+    expect(dialog()).not.toBeInTheDocument()
+    expect(settingsLink()).toBeInTheDocument()
+  })
+
+  it('광고 동의를 모르는 실행(브리지 없음)에는 시트도 링크도 없다 — 웹 단독은 KAN-197 범위다', () => {
+    render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
+
+    expect(dialog()).not.toBeInTheDocument()
+    expect(settingsLink()).not.toBeInTheDocument()
+  })
+
+  it('메서드를 모르는 구버전 앱에도 시트도 링크도 없다', () => {
+    window.AccenturyBridge = {
+      requestMicPermission: vi.fn(),
+      startVoiceItem: vi.fn(),
+      getContractVersion: () => REQUIRED_BRIDGE_VERSION,
+    }
+
+    render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
+
+    expect(dialog()).not.toBeInTheDocument()
+    expect(settingsLink()).not.toBeInTheDocument()
+  })
+
+  it('[맞춤형 광고 허용]은 granted를 네이티브에 쓰고 시트를 닫는다', () => {
+    const setAdConsent = vi.fn()
+    window.AccenturyBridge = adBridge('unknown', setAdConsent)
+    render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
+
+    fireEvent.click(screen.getByRole('button', { name: AD_CONSENT_ALLOW }))
+
+    expect(setAdConsent).toHaveBeenCalledWith('granted')
+    expect(dialog()).not.toBeInTheDocument()
+    // 고른 뒤에는 바꿀 길이 남는다
+    expect(settingsLink()).toBeInTheDocument()
+  })
+
+  it('[일반 광고만 보기]는 denied를 쓰고 시트를 닫는다', () => {
+    const setAdConsent = vi.fn()
+    window.AccenturyBridge = adBridge('unknown', setAdConsent)
+    render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
+
+    fireEvent.click(screen.getByRole('button', { name: AD_CONSENT_DENY }))
+
+    expect(setAdConsent).toHaveBeenCalledWith('denied')
+    expect(dialog()).not.toBeInTheDocument()
+  })
+
+  it('「맞춤형 광고 설정」은 시트를 지금 상태와 함께 다시 연다', () => {
+    const setAdConsent = vi.fn()
+    window.AccenturyBridge = adBridge('denied', setAdConsent)
+    render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
+
+    fireEvent.click(settingsLink()!)
+
+    expect(dialog()).toBeInTheDocument()
+    expect(screen.getByText('지금은 일반 광고만 보는 상태예요.')).toBeInTheDocument()
+
+    // 바꾸면 사본도 따라간다 — 다시 열었을 때 새 상태를 말한다
+    fireEvent.click(screen.getByRole('button', { name: AD_CONSENT_ALLOW }))
+    expect(setAdConsent).toHaveBeenCalledWith('granted')
+    expect(dialog()).not.toBeInTheDocument()
+    fireEvent.click(settingsLink()!)
+    expect(screen.getByText('지금은 맞춤형 광고를 허용한 상태예요.')).toBeInTheDocument()
+  })
+
+  it('시트가 떠 있는 동안 고른 뒤에야 [시작하기]가 네이티브 게이트로 간다', () => {
+    const requestMicPermission = vi.fn()
+    window.AccenturyBridge = { ...adBridge('unknown'), requestMicPermission }
+    render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
+
+    // 시트는 막으로 손을 막는 것이지 버튼을 잠그는 것이 아니다 — 잠갔다면 스모크 구동기가
+    // 인트로에서 멈춘다. 그래서 여기서 확인하는 것은 "고른 뒤 정상 경로가 그대로"까지다.
+    fireEvent.click(screen.getByRole('button', { name: AD_CONSENT_DENY }))
+    clickStart()
+
+    expect(requestMicPermission).toHaveBeenCalledTimes(1)
   })
 })

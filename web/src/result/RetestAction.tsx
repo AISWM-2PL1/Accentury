@@ -18,8 +18,26 @@
  * 대기 화면이 `progress/`의 문항 타입을 가져다 쓰는 것과 같은 방향이다.
  */
 
+import { readAdConsent } from '../bridge/bridge'
 import { Button, type ButtonVariant } from '../ui'
 import type { RetestControl } from './useRetest'
+
+/**
+ * 버튼 라벨 (KAN-196). 광고를 아는 앱에서는 [다시 테스트하기]가 곧 보상형 광고라
+ * (`startRetest` 주석) 누르기 전에 그 사실을 라벨이 말해야 한다 — 광고가 갑자기 뜨면 사용자는
+ * 잘못 눌렀다고 여겨 닫고, 그러면 `AD_DISMISSED`로 되돌아와 다시 눌러야 한다.
+ *
+ * 판정 근거는 `readAdConsent() !== null`이다. "광고를 아는 앱"을 가르는 신호가 그것뿐이다 —
+ * 동의 값이 무엇이든(허용·일반·아직 안 물음) 광고는 나오므로 값이 아니라 **유무**를 본다.
+ * 웹 단독 실행(KAN-197 범위 밖)과 이 메서드를 모르는 구버전 앱은 null이라 예전 라벨 그대로다:
+ * 그 실행에서는 광고가 뜨지 않으니 "광고 보고"라고 적으면 거짓말이 된다.
+ *
+ * `showInterstitialAd`나 `startRetest`의 유무로 가르지 않는 이유: 전자는 전면 광고의 신호지
+ * 보상형의 신호가 아니고, 후자는 광고 이전(KAN-34)부터 있던 메서드다.
+ */
+function retestLabel(): string {
+  return readAdConsent() !== null ? '광고 보고 다시 테스트하기' : '다시 테스트하기'
+}
 
 export interface RetestActionProps {
   /** 버튼이 그릴 상태 한 덩이 — 잠금·진행·실패 문구·대기 초가 여기 다 있다 */
@@ -41,7 +59,7 @@ export function RetestAction({ retest, variant }: RetestActionProps) {
           성공하면 회신이 아니라 페이지 교체가 온다. 그 사이 create 왕복 동안 화면은 아무것도
           모르므로, 할 수 있는 말은 "받았고 진행 중"까지다 — 몇 초 걸리는지도 알 수 없다.
         */}
-        {pending ? '준비 중…' : '다시 테스트하기'}
+        {pending ? '준비 중…' : retestLabel()}
       </Button>
 
       {message !== null && (

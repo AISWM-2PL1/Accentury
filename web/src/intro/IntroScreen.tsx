@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { useAdConsent } from '../ads/adConsent'
+import { AdConsentSheet } from '../ads/AdConsentSheet'
 import { requestMicrophonePermission, type MicPermission } from '../audio/microphone'
 import { detectStorePlatform } from '../audio/storeLink'
 import { requestMicPermission } from '../bridge/bridge'
@@ -44,6 +46,17 @@ export interface IntroScreenProps {
  * 배치는 Papercut 아트보드(`Main.dc.html`)를 따른다 — 워드마크·제목·숫자 카드와 바닥의
  * 주버튼. 문항 수·시간은 `introText.ts`의 상수가 정본이라 KAN-10 연동 때 서버 값으로
  * 바꾸면 화면은 그대로 따라간다.
+ *
+ * ## 맞춤형 광고 동의 시트가 여기 있는 이유 (KAN-196)
+ *
+ * 시트는 이 화면 위에 덮이고, 시트를 다시 여는 링크(「맞춤형 광고 설정」)도 이 화면 하단에
+ * 있다 — 여닫는 상태를 아는 곳이 둘 다 이 화면이라 App까지 올릴 이유가 없다. 수신자 설치를
+ * 부모가 하는 규칙(webview-layer.md §8)은 네이티브 → 웹 슬롯의 마운트 순서 문제인데, 동의는
+ * 웹 → 네이티브 동기 읽기·쓰기뿐이라 그 규칙이 걸리지 않는다.
+ *
+ * 앱의 첫 실행에 묻는다는 것은 곧 인트로에서 묻는다는 뜻이다 — 앱에 인트로보다 먼저 서는
+ * 웹 화면이 없다. 권한 차단 화면(`MicBlockedScreen`)으로 갈아치운 뒤에는 시트를 그리지
+ * 않는다: 그 화면은 웹 단독 실행에만 서고, 그 실행에는 광고 동의가 없다.
  */
 export function IntroScreen({
   onWebStart = warnWebStartUnwired,
@@ -56,6 +69,13 @@ export function IntroScreen({
   const [blocked, setBlocked] = useState<Exclude<MicPermission, 'granted'> | null>(null)
   /** 권한은 통과했는데 시작이 막혔다 (세션 생성 실패). 값이 곧 사용자에게 보일 문구다 */
   const [startFailure, setStartFailure] = useState<string | null>(null)
+  /*
+   * 맞춤형 광고 동의 (KAN-196). `unknown`이면 아직 묻지 않은 것이라 시트를 띄운 채 시작한다.
+   * null이면 이 실행에 광고 동의라는 개념이 없어(웹 단독·광고를 모르는 앱) 시트도 링크도
+   * 없다 — `granted`·`denied`와 같이 시트는 닫혀 있지만, 링크의 유무가 다르다.
+   */
+  const { consent, choose: chooseConsent } = useAdConsent()
+  const [consentSheetOpen, setConsentSheetOpen] = useState(consent === 'unknown')
 
   async function startWebGate() {
     setRequesting(true)
@@ -184,8 +204,31 @@ export function IntroScreen({
           버튼의 크기도 탭 영역도 그대로다 — 늘어나는 것은 하단 자리의 높이뿐이고, 바닥에
           붙는 것이 버튼에서 이 한 줄로 바뀐다. 캡션 글자라 주버튼과 무게가 겹치지 않는다.
         */}
-        <PrivacyNotice />
+        <PrivacyNotice
+          /*
+           * 링크는 광고 동의가 있는 실행에만 준다 (KAN-196). `PrivacyNotice`는 값이 없으면
+           * 그리지 않으므로 판정을 여기서 한 번만 한다.
+           */
+          onAdConsentSettings={consent === null ? undefined : () => setConsentSheetOpen(true)}
+        />
       </div>
+
+      {/*
+        동의 시트 (KAN-196). `position: fixed`라 `.screen`의 flex 흐름 밖에서 화면 전체를
+        덮는다 — 하단 자리(`.screen__footer`) 뒤에 두는 이유는 쌓임 순서다: sticky가 만드는
+        맥락보다 뒤에 와야 막이 고지 줄을 덮는다 (`.ad-consent-sheet`의 z-index와 함께).
+        `consent`가 null이면 열릴 수 없다 — 초기값이 `unknown`에서만 true이고, 링크가 없어
+        다시 열 길도 없다.
+      */}
+      {consentSheetOpen && consent !== null && (
+        <AdConsentSheet
+          current={consent}
+          onChoose={(state) => {
+            chooseConsent(state)
+            setConsentSheetOpen(false)
+          }}
+        />
+      )}
     </main>
   )
 }
