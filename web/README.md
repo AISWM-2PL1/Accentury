@@ -147,7 +147,7 @@ E2E_FAIL_ITEM= docker compose -f docker-compose.yml -f /tmp/ai-ports.yml up -d -
 `E2E_BASE_URL`이 있으면 개발 서버를 띄우지 않고 그 주소를 그대로 연다.
 
 ```bash
-E2E_BASE_URL=https://staging.accentury.app npm run test:e2e
+E2E_BASE_URL=https://<staging 도메인> npm run test:e2e   # 도메인은 infra/envs/staging/terraform.tfvars
 ```
 
 - `E2E_FAIL_ITEM`을 줄 수 없으므로 `retake`는 언제나 skip된다.
@@ -168,7 +168,7 @@ E2E_BASE_URL=https://staging.accentury.app npm run test:e2e
 ## 배포 (KAN-127)
 
 `.github/workflows/web-deploy.yml`이 한다. `web/**` 변경이 Dev에 병합되면 staging
-(`staging.accentury.app`), Release에 병합되면 prod(`accentury.app`)로 올라간다. 빌드는
+(추측 불가 서브도메인, KAN-206), Release에 병합되면 prod(`accentury.app`)로 올라간다. 빌드는
 `npm ci && npm run build` 그대로이고 환경별 값을 주입하지 않는다. 화면과 API가 같은 출처라
 `API_BASE`가 배포 빌드에서 빈 문자열(상대 경로)이기 때문이다 (`src/App.tsx`).
 

@@ -2,7 +2,7 @@
 env    = "staging"
 region = "ap-northeast-2"
 
-domain                 = "staging.accentury.app"
+domain                 = "xxa4wqi37strbf.accentury.app"
 hosted_zone_name       = "accentury.app"
 acm_certificate_domain = "accentury.app"
 
