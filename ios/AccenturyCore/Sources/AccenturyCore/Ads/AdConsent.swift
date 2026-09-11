@@ -57,3 +57,24 @@ public func personalizationAllowed(_ consent: AdConsent) -> Bool {
 public func shouldRequestAds(_ consent: AdConsent) -> Bool {
     consent != .unknown
 }
+
+/// iOS ATT 프롬프트를 지금 띄워야 하는가 (KAN-196 리뷰 P2-6). `AdsController.preloadAfterTrackingSettled`의
+/// 판정을 순수 함수로 뺀 것이다 — ads-admob.md §7.5의 순서 규칙이 곧 이 한 줄이다.
+///
+/// - `granted`일 때만 묻는다. `denied`는 추적 자체가 없는데 추적 허용을 묻는 셈이라 사용자에게도 심사에도
+///   설명이 안 되고(npa 요청은 IDFA가 필요 없다), `unknown`은 시트가 아직 안 뜬 것이라 ATT가 먼저면 맥락이 없다
+/// - ATT가 ``TrackingStatus/notDetermined``일 때만 묻는다. 이미 답이 있으면 iOS가 다시 띄우지 않는다
+public func shouldRequestTracking(consent: AdConsent, status: TrackingStatus) -> Bool {
+    consent == .granted && status == .notDetermined
+}
+
+/// `ATTrackingManager.AuthorizationStatus`의 Core 거울 (P2-6). Core는 AppTrackingTransparency를 링크하지
+/// 않아(macOS `swift test`) 앱 타깃의 `TrackingAuthorization`이 프레임워크 값을 이 값으로 옮겨 넘긴다.
+/// 판정(``shouldRequestTracking(consent:status:)``)이 보는 것은 "아직 안 물어봤나" 하나지만, 네 값을 그대로
+/// 두는 이유는 옮기는 쪽이 판정을 미리 하지 않게 하려는 것이다 — 판정은 한 곳에만 있어야 한다.
+public enum TrackingStatus: Equatable, Sendable {
+    case notDetermined
+    case restricted
+    case denied
+    case authorized
+}

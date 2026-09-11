@@ -34,4 +34,27 @@ final class AdRequestsTests: XCTestCase {
         XCTAssertFalse(shouldRequestAds(.unknown))
     }
 
+    // MARK: shouldRequestTracking — ATT 프롬프트 순서 (ads-admob.md §7.5, P2-6)
+
+    func testGrantedAndNotYetAskedRequestsTracking() {
+        // 시트에서 허용을 고른 직후 — 프롬프트가 "왜 지금 묻는지"를 가지는 유일한 자리다.
+        XCTAssertTrue(shouldRequestTracking(consent: .granted, status: .notDetermined))
+    }
+
+    func testGrantedButAlreadyAnsweredDoesNotAskAgain() {
+        // 이미 답이 있으면 iOS가 다시 띄우지 않는다 — 허용·거부·제한 셋 다.
+        XCTAssertFalse(shouldRequestTracking(consent: .granted, status: .authorized))
+        XCTAssertFalse(shouldRequestTracking(consent: .granted, status: .denied))
+        XCTAssertFalse(shouldRequestTracking(consent: .granted, status: .restricted))
+    }
+
+    func testDeniedNeverAsks() {
+        // 추적 자체가 없는데 추적 허용을 묻지 않는다. npa 요청은 IDFA가 필요 없다.
+        XCTAssertFalse(shouldRequestTracking(consent: .denied, status: .notDetermined))
+    }
+
+    func testNotYetChosenNeverAsks() {
+        // 시트가 먼저다 — 시트 전에 ATT가 뜨면 프롬프트에 맥락이 없다.
+        XCTAssertFalse(shouldRequestTracking(consent: .unknown, status: .notDetermined))
+    }
 }

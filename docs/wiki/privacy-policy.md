@@ -48,7 +48,7 @@
 | 보안 로그 | 7일, 인증 헤더는 가림 | `infra/modules/waf/variables.tf:21-24` (기본값 7), `infra/modules/waf/main.tf:286,313,319` (샘플 저장 끔 + `redacted_fields`) | `1항 표의 보유 기간이 행마다 코드와 맞는다` |
 | 이용 통계 이벤트 | 보존은 GA 설정에 따름 (기본값 2개월) | **미확인** — 콘솔 기본값이고 레포에 근거가 없다 (7항 참조) | — |
 | 비정상 종료 로그 | 90일 | **미확인** — Crashlytics 콘솔 기본값이고 레포에 근거가 없다 (7항 참조). 수집 항목 자체는 KAN-33, `docs/wiki/analytics.md` §8 | `1항 표의 보유 기간이 행마다 코드와 맞는다` (표기가 90일인지만 붙든다) |
-| 광고 | Google 개인정보처리방침에 따름 | 2026-09-07 팀 결정(광고 도입) + 2026-09-11 팀장 결정(사업자 = Google AdMob), KAN-196·KAN-197. 코드 배선은 KAN-196 2~4단계에서 들어온다 | `맞춤형 광고 절이 있고 동의·거부 방법이 적혀 있다` |
+| 광고 | Google 개인정보처리방침에 따름 | 2026-09-07 팀 결정(광고 도입) + 2026-09-11 팀장 결정(사업자 = Google AdMob), KAN-196·KAN-197. 코드 배선은 KAN-196 2~4단계에서 완료 (`docs/wiki/ads-admob.md`) | `맞춤형 광고 절이 있고 동의·거부 방법이 적혀 있다` |
 
 같은 항의 산문 부분은 위 행들의 풀이다. 「재응시하면 이전 세션과 결과를 즉시 삭제」는
 `backend/src/main/java/app/accentury/backend/session/SessionService.java:28,87-88,201-203,245-247`과
@@ -71,18 +71,18 @@
 | 4. 이용 통계 이벤트 | 수집 항목 목록 | `web/src/analytics/events.ts:71` (`AnalyticsEvent` 유니온이 이름·파라미터의 정본), `docs/wiki/analytics.md` §1 | — |
 | 4. 이용 통계 이벤트 | 응시 구분 무작위 키는 탭을 닫으면 사라짐 | `web/src/analytics/testId.ts:21-23,93` (`sessionStorage`) | — |
 | 4. 이용 통계 이벤트 | 세션 id·토큰·문항·점수 원값을 싣지 않음 | `docs/wiki/analytics.md` §3 「익명 규칙」, `web/src/analytics/events.ts` | — |
-| 4. 이용 통계 이벤트 | 광고 식별자를 쓰지 않음 (Android·iOS·웹 각각) | `app/src/main/AndroidManifest.xml:43-49` (`google_analytics_adid_collection_enabled=false`, 개인화 신호 false), `ios/Accentury/Analytics/FirebaseEventSink.swift:23-32` (`GoogleAppMeasurementCore`로 AdSupport·ATT를 바이너리에서 배제), `web/src/analytics/ga4.ts:75-81` (`allow_google_signals:false`, `allow_ad_personalization_signals:false`) | — |
+| 4. 이용 통계 이벤트 | 광고 식별자를 쓰지 않음 (Android·iOS·웹 각각) | `app/src/main/AndroidManifest.xml:43-49` (`google_analytics_adid_collection_enabled=false`, 개인화 신호 false), `ios/Accentury/Analytics/FirebaseEventSink.swift:23-32` (`FirebaseAnalyticsCore`로 계측 라이브러리 안에서만 AdSupport·ATT를 배제 — KAN-196 4단계부터 AdMob SDK가 AdSupport·ATT를 링크하므로 「바이너리에 없다」는 더는 사실이 아니고, 계측이 IDFA를 안 읽는다는 것만 지킨다, `docs/wiki/ads-admob.md` §7.1), `web/src/analytics/ga4.ts:75-81` (`allow_google_signals:false`, `allow_ad_personalization_signals:false`) | — |
 | 4. 비정상 종료 로그 | 스택·기기·OS·앱 버전, 사용자 ID 없음 | KAN-33, `docs/wiki/analytics.md` §3 「크래시 리포트에도 같은 규칙이 선다」 | — |
 | 5. 파기 | 파기 시점 여섯 가지 | 1항의 근거를 그대로 반복한다 (음성 즉시·30분, 미완주 세션 30분, 완주 세션 완료 후 24시간, 재응시 즉시, 공유 전송 알림 식별값 7일, 로그 14일/7일) | `음성은 분석 직후…`·`임시 파일 청소 기준 30분…`·`세션·결과 보유 기간 24시간…` |
 | 6. 정보주체 권리 | 특정 이용자의 정보를 지목할 수단이 없음 | 계정 없음, 세션은 익명 (`backend/src/main/java/app/accentury/backend/session/TestSession.java` — 사람을 가리키는 컬럼 없음) | — |
 | 6. 정보주체 권리 | 탭을 닫으면 세션 토큰·응시 키는 사라지고, 진행 기록은 결과 화면 진입에서 지워진다 | `web/src/session/webSession.ts`·`web/src/analytics/testId.ts:21-23` (`sessionStorage`) 대 `web/src/progress/progressSnapshot.ts` (`localStorage`, 키 `accentury:progress:<sessionId>`). 삭제 배선은 `web/src/App.tsx`의 `ResultRoute`(`clearSnapshot`)와 `IntroRoute`(`sweepSnapshots` — 결과까지 못 간 응시의 잔여 키) 두 자리다 (KAN-198) | `진행 기록의 삭제 시점이 적혀 있다` |
 | 7. 만 14세 미만 | 아동 대상 아님, 마켓에도 그렇게 등록 | `docs/wiki/play-store-listing.md` §6 (타겟 연령 13세 이상) — **KAN-174 브랜치에만 있는 파일** | — |
-| 7. 만 14세 미만 | 아동에게 맞춤형 광고 미표시 | 2026-09-07 팀 결정. 아동 대상 아님을 유지하고 AdMob SDK의 아동 대상 플래그는 off — KAN-196 2단계에서 SDK 설정으로 구현 예정 | — |
+| 7. 만 14세 미만 | 아동에게 맞춤형 광고 미표시 | 2026-09-07 팀 결정. 아동 대상 아님을 유지하고 AdMob SDK의 아동 대상 플래그는 off — KAN-196 3단계(Android `AdsController.initialize`, `TAG_FOR_CHILD_DIRECTED_TREATMENT_FALSE`)·4단계(iOS `AdsController.start`, `tagForChildDirectedTreatment = false`)에서 완료, `docs/wiki/ads-admob.md` §6·§7.1 | — |
 | 8. 자동 수집 장치 | 웹에는 GA4 태그가 쿠키를 저장 | `web/src/analytics/ga4.ts:75-81` — `config`에 쿠키를 끄는 옵션이 없다(기본 동작이 쿠키 설정) | — |
 | 8. 자동 수집 장치 | 앱 WebView에는 태그를 깔지 않음 | `web/src/main.tsx:20` — `isStandaloneWeb`일 때만 `installGa4Tag()` | — |
 | 8. 자동 수집 장치 | 진행 기록은 브라우저 저장소에 두되 결과 화면 진입에서 지우고, 끊긴 응시의 기록은 다음 인트로 진입에서 걷는다 | `web/src/progress/progressSnapshot.ts` (키 `accentury:progress:<sessionId>`, `defaultSnapshotStorage`가 `window.localStorage`), `web/src/App.tsx` `ResultRoute`의 `clearSnapshot`·`IntroRoute`의 `sweepSnapshots`. 복원에 실패한 스냅샷(형태 손상·버전 불일치·재생 거부)도 `restoreProgress`가 그 자리에서 버린다 (KAN-198) | `진행 기록의 삭제 시점이 적혀 있다` |
 | 8. 자동 수집 장치 | 세션 토큰·응시 키는 탭 저장소 | `web/src/session/webSession.ts`, `web/src/analytics/testId.ts:21-23` (`sessionStorage`) | — |
-| 8. 자동 수집 장치 | 광고 SDK가 광고 식별자를 사용 | 2026-09-07 팀 결정, 사업자는 Google AdMob (2026-09-11). 코드 배선은 KAN-196 2~4단계에서 들어온다 | — |
+| 8. 자동 수집 장치 | 광고 SDK가 광고 식별자를 사용 | 2026-09-07 팀 결정, 사업자는 Google AdMob (2026-09-11). 코드 배선은 KAN-196 2~4단계에서 완료 (`docs/wiki/ads-admob.md` §4) | — |
 | 9. 공유 기능 | payload에 점수·세션·음성이 없음 | `app/src/main/java/com/accentury/app/bridge/SharePayload.kt:28-31` (필드는 `imageUrl`·`text`·`webTestUrl` 셋), `web/src/share/shareResult.ts:57-59` (payload 필드가 `imageUrl`·`text`·`webTestUrl` 셋뿐, KAN-30 요구) | — |
 | 9. 공유 기능 | 링크를 받은 사람은 자기 테스트를 시작 | `docs/wiki/app-links.md` §1 — 링크가 읽는 쿼리는 `c` 하나뿐 | — |
 | 9. 공유 기능 | 전송 완료 알림(웹훅)에서 남기는 것은 전송 건수와 식별값뿐 | `backend/src/main/java/app/accentury/backend/share/KakaoShareWebhookController.java:100-112`(핸들러가 하는 일은 인증·중복 판별·카운터 1 증가 셋), `backend/src/main/resources/db/migration/V7__share_webhook.sql:14` (「채팅방 해시(HASH_CHAT_ID), 채팅방 종류, 세션 id, 토큰, 점수는 어디에도 저장하지 않는다 (티켓 AC)」), KAN-164 | — |
@@ -90,7 +90,7 @@
 | 10. 광고 | 광고 절이 존재하고 동의·거부 경로가 있음 | 2026-09-07 팀 결정, KAN-196·KAN-197 | `맞춤형 광고 절이 있고 동의·거부 방법이 적혀 있다` |
 | 10. 광고 | 「광고와 추적이 없습니다」는 이제 거짓 | 같은 결정으로 삭제한 문장. 되살아나는 것을 테스트가 막는다 | `"광고와 추적이 없습니다"가 남아 있지 않다` |
 | 10. 광고 | 사업자는 Google LLC의 Google AdMob. 광고 자리는 분석 대기 중 전면 광고와 재응시 전 보상형 광고 둘 | 2026-09-11 팀장 결정 (KAN-196 1단계). 이 자리는 그 전까지 「확정 후 기재」였다 | `2항 제3자 제공 표와 10항 광고 절에 Google AdMob이 적혀 있다` |
-| 10. 광고 | 동의는 앱 첫 실행 때 동의 시트로 받고, 철회는 인트로 하단 개인정보처리방침 링크(KAN-177) 옆의 맞춤형 광고 링크에서 한다 | 2026-09-11 팀장 결정. UI 구현은 KAN-196 3단계. 이 자리는 그 전까지 「도입 시 위치 확정」이었다 | `「확정 후 기재」 자리표시자가 남아 있지 않다` |
+| 10. 광고 | 동의는 앱 첫 실행 때 동의 시트로 받고, 철회는 인트로 하단 개인정보처리방침 링크(KAN-177) 옆의 맞춤형 광고 링크에서 한다 | 2026-09-11 팀장 결정. UI는 KAN-196 2단계 웹 동의 시트(`webview-bridge.md` §8), 저장은 3·4단계 네이티브. 이 자리는 그 전까지 「도입 시 위치 확정」이었다 | `「확정 후 기재」 자리표시자가 남아 있지 않다` |
 | 10. 광고 | 거부 시 맞춤형이 아닌 일반 광고만. 이때 광고 식별자는 관심사 추정에는 쓰지 않고 빈도 제한·집계 보고·부정 사용 방지에만 쓴다. iOS ATT 거부 시 IDFA 미사용 | AdMob 비개인화 광고 요청(npa) — KAN-196 3단계(Android `AdRequests.kt`)·4단계(iOS `AdRequests.swift`)에서 배선 완료. npa=1은 식별자 전송을 막는 플래그가 아니다 — Google 「맞춤 광고 및 맞춤 설정되지 않은 광고」: 비맞춤 광고도 빈도 제한·집계 광고 보고·사기 및 악용 방지에 쿠키·모바일 광고 식별자를 쓴다 (https://support.google.com/admob/answer/7676680). 1단계 초안의 「광고 식별자 대신 IP 주소와 기기 정보」는 그래서 거짓이었고 리뷰 P1-4(2026-09-11)에서 고쳤다 | `맞춤형 광고 절이 있고 동의·거부 방법이 적혀 있다`·`비맞춤 광고에서 「광고 식별자 대신」이라고 적지 않는다` |
 | 10. 광고 | 보유 기간은 Google 개인정보처리방침, 국외 이전은 4항 | Google LLC는 국외 사업자. 방침 링크는 4항의 `https://policies.google.com/privacy`와 같다 | — |
 | 11. 안전성 확보 | HTTPS, 토큰 해시, 임시 파일 최소 권한, 로그 비식별, WAF, 관리자 토큰 | `backend/src/main/java/app/accentury/backend/session/TestSession.java:45-46`, `ai/app/tempstore.py:6-16`, `infra/modules/waf/main.tf:313,319`, `backend/src/main/java/app/accentury/backend/common/AccenturyProperties.java:29` (admin 시크릿) | — |
@@ -182,7 +182,7 @@ prod 게시(`scripts/publish-privacy.sh prod`) 전에는 아래를 전부 닫는
 | 2026-09-07 | PR #89 리뷰: 분기 뒤 Dev에 들어온 **KAN-164(카카오 공유 웹훅 수신)**를 본문에 반영한다 — 저장하는 것은 전송 완료 수와 중복 판별용 식별값(7일)뿐 | 1항 표 「익명 통계」·「공유 전송 알림 기록」 행과 산문, 5항 파기 목록, 9항 |
 | 2026-09-07 | 위 결정으로 KAN-2의 「동의 화면 범위 제외」가 부분 번복됐다 — 개인정보 수집·이용 동의 화면은 여전히 두지 않지만, **맞춤형 광고 동의 UI는 별도로 둔다** | 12항 「다만 맞춤형 광고는 별도로 동의를 받습니다」 |
 | 2026-09-11 | **광고 사업자는 Google LLC의 Google AdMob** (Firebase 프로젝트 공유, KAN-196 팀장 결정). 광고 자리는 분석 대기 화면 전면 광고와 결과 화면 「다시 테스트하기」 보상형 광고 둘. 동의는 인트로 첫 실행 동의 시트, 철회는 인트로 하단 방침 링크(KAN-177) 옆 링크. 거부 시 비맞춤 광고(npa)만, iOS ATT 거부 시 IDFA 미사용. 아동 대상 아님 유지 | 1항 광고 행, 2항 제3자 제공 표, 4항 Google LLC `<dl>`, 10항 도입·거부와 철회·보유 기간과 국외 이전 |
-| 2026-09-11 | KAN-196 리뷰 반영. (P1-4) 비맞춤 광고 문장에서 「광고 식별자 대신」을 뺐다 — npa는 식별자를 빈도 제한·집계·부정 방지에 계속 쓴다(위 10항 근거 행) | 10항 「동의」 문단, `privacy.test.mjs` 「광고 식별자 대신」 가드 |
+| 2026-09-11 | KAN-196 리뷰 반영. (P1-4) 비맞춤 광고 문장에서 「광고 식별자 대신」을 뺐다 — npa는 식별자를 빈도 제한·집계·부정 방지에 계속 쓴다(위 10항 근거 행). (P2-1) 10항 「앱과 웹에」 → 「앱에」 — 웹 광고는 KAN-197에서 사업자·형식이 정해지면 그때 적는다. 2026-09-07 「앱과 웹 모두」 결정 자체는 유효하고 웹 몫의 고지만 미룬 것이다 | 10항 도입 문장, 10항 「동의」 문단, `privacy.test.mjs` 「광고 식별자 대신」 가드 |
 
 ## 6. 팀 확인이 필요한 것
 
