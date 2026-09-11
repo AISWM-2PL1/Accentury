@@ -248,11 +248,49 @@ resource "aws_cloudwatch_metric_alarm" "backend_memory_high" {
   tags = { Name = "${local.name}-backend-mem-high" }
 }
 
+# ---- AI 호스트 경보 0: 대상 그룹에 healthy 대상 없음 (KAN-201) ----
+
+# AI 호스트가 내부 ALB 뒤로 가면서(KAN-201) backend의 관점과 같은 신호가 생겼다 - "받아 줄 healthy AI가
+# 없다". 대상 그룹 상태 검사는 준비 상태 게이트(/internal/v0/health, 워밍업 전 503)를 보므로 모델이 적재된
+# 대상만 센다. 아래 ai-unhealthy(호스트 타이머 지표)보다 이쪽이 정본이다 - 같은 조건을 ALB가 직접 판정한다.
+# 오토스케일링으로 늘어난 대상 중 하나가 죽은 것은 여기 안 잡히지만 ASG가 교체한다 (no-healthy-target과 같다).
+#
+# treat_missing_data = "breaching": 등록된 대상이 하나도 없으면 지표가 끊기는데 그것도 장애다 (ASG가 인스턴스를
+# 못 띄움). 대가로 apply 직후와 1대 교체 직후 몇 분은 한 번 운다 - OK 알림이 따라온다.
+resource "aws_cloudwatch_metric_alarm" "ai_no_healthy_host" {
+  alarm_name        = "${local.name}-ai-alb-no-healthy-host"
+  alarm_description = "accentury ${var.env}: AI 대상 그룹에 healthy 대상이 없습니다. ai 컨테이너 준비 상태(STARTING), ASG 인스턴스, 인스턴스 교체 진행을 확인하세요. (KAN-201)"
+
+  namespace   = "AWS/ApplicationELB"
+  metric_name = "HealthyHostCount"
+  dimensions = {
+    TargetGroup  = var.ai_target_group_arn_suffix
+    LoadBalancer = var.ai_alb_arn_suffix
+  }
+
+  statistic           = "Minimum"
+  period              = 60
+  evaluation_periods  = var.ai_unhealthy_evaluation_periods
+  comparison_operator = "LessThanThreshold"
+  threshold           = 1
+  treat_missing_data  = "breaching"
+
+  alarm_actions = local.alarm_actions
+  ok_actions    = local.alarm_actions
+
+  tags = { Name = "${local.name}-ai-alb-no-healthy-host" }
+}
+
 # ---- AI 호스트 경보 1: health 프로브 실패 (KAN-36) ----
 
-# AI 호스트는 ALB 뒤가 아니라 대상 그룹 health가 없다. 대신 호스트의 systemd 타이머
-# (ai-host 모듈 ai-health-metric.sh)가 1분마다 /internal/v0/health를 찔러 Healthy 0|1을
-# 올린다 (네임스페이스 accentury/ai, 차원 env). 워밍업 중(503 STARTING)도 0이다.
+# 호스트의 systemd 타이머(ai-host 모듈 ai-health-metric.sh)가 1분마다 /internal/v0/health를 찔러
+# Healthy 0|1을 올린다 (네임스페이스 accentury/ai, 차원 env). 워밍업 중(503 STARTING)도 0이다.
+# 내부 ALB(KAN-201) 이후 정본은 위 ai-alb-no-healthy-host이고, 이 경보는 ALB나 대상 그룹 자체가
+# 사라진 경우까지 덮는 이중 안전망이다.
+#
+# 통계는 Maximum이다 (KAN-201) - 인스턴스가 여럿이면 전부 같은 차원(env)으로 올라와 한 지표로 섞인다.
+# Minimum이면 오토스케일링으로 새로 뜬 인스턴스가 워밍업 동안 올리는 0이 3분 연속 잡혀 확대할 때마다
+# 운다. Maximum < 1은 "어느 인스턴스도 healthy가 아니다"라 KAN-36의 1대 시절과 같은 뜻이다.
 #
 # treat_missing_data = "breaching": 지표가 끊겼다는 것은 타이머가 도는 호스트 자체가 없거나
 # (ASG 교체 중, 스택 철거) 지표를 못 올리는 상태라 그것도 장애로 센다. 대가로 apply 직후와
@@ -266,7 +304,7 @@ resource "aws_cloudwatch_metric_alarm" "ai_unhealthy" {
   metric_name = "Healthy"
   dimensions  = { env = var.env }
 
-  statistic           = "Minimum"
+  statistic           = "Maximum"
   period              = 60
   evaluation_periods  = var.ai_unhealthy_evaluation_periods
   comparison_operator = "LessThanThreshold"

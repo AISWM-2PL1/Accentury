@@ -5,10 +5,13 @@ import app.accentury.backend.common.AccenturyProperties;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import app.accentury.backend.training.TrainingSampleStore;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.web.client.RestClient;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -29,7 +32,7 @@ class AnalysisDispatchConfigTest {
         AnalysisDispatchConfig config = new AnalysisDispatchConfig();
         // 검증이 조립보다 먼저 실행되므로 협력자는 쓰이지 않는다.
         assertThrows(IllegalStateException.class, () -> config.analysisDispatcher(
-                props(Duration.ofSeconds(240)), null, null, null, null, null, null));
+                props(Duration.ofSeconds(240)), null, null, null, null, null, null, noStore()));
     }
 
     @Test
@@ -39,7 +42,7 @@ class AnalysisDispatchConfigTest {
         AnalysisDispatcher dispatcher = new AnalysisDispatchConfig().analysisDispatcher(
                 props(Duration.ofSeconds(300)), new ThreadPoolTaskExecutor(), null,
                 new AnalysisBacklog(), TestMetrics.analysisMetrics(meterRegistry), new ObjectMapper(),
-                meterRegistry);
+                meterRegistry, noStore());
 
         assertInstanceOf(HttpAnalysisDispatcher.class, dispatcher);
         // 회로 상태 게이지가 등록되고 닫힘(0)으로 시작한다 (KAN-36) - CloudWatch 경보 ai-circuit-open의 입력이다.
@@ -54,7 +57,7 @@ class AnalysisDispatchConfigTest {
                 PropertiesFixture.analysis(6, "http://ai.test", Duration.ofSeconds(300), Duration.ofSeconds(85)));
 
         assertThrows(IllegalStateException.class, () -> new AnalysisDispatchConfig().analysisDispatcher(
-                props, null, null, null, null, null, null));
+                props, null, null, null, null, null, null, noStore()));
     }
 
     @Test
@@ -88,7 +91,7 @@ class AnalysisDispatchConfigTest {
                 Duration.ofMillis(500), Duration.ofSeconds(30));
         RestAiAnalysisClient client = new RestAiAnalysisClient(restClient, restClient, new ObjectMapper(), null);
         AnalysisDispatcher.AnalysisRequest request = new AnalysisDispatcher.AnalysisRequest(
-                "a_connect", "s_connect", "v1", null, "gn-2026.08.1", "sv-0.3", 3000, new byte[] {1, 2, 3});
+                "a_connect", "s_connect", "v1", null, "gn-2026.08.1", "sv-0.3", null, 3000, new byte[] {1, 2, 3});
 
         long started = System.nanoTime();
         AiAnalysisClient.AiUnavailableException e = assertThrows(AiAnalysisClient.AiUnavailableException.class,
@@ -107,7 +110,7 @@ class AnalysisDispatchConfigTest {
                 PropertiesFixture.analysis(6, null, Duration.ofSeconds(300), Duration.ofSeconds(1)));
 
         AnalysisDispatcher dispatcher = new AnalysisDispatchConfig().analysisDispatcher(
-                props, null, null, null, null, null, null);
+                props, null, null, null, null, null, null, noStore());
 
         assertInstanceOf(NoopAnalysisDispatcher.class, dispatcher);
     }
@@ -116,5 +119,15 @@ class AnalysisDispatchConfigTest {
     private static AccenturyProperties props(Duration processingTimeout) {
         return PropertiesFixture.withAnalysis(
                 PropertiesFixture.analysis(6, "http://ai.test", processingTimeout));
+    }
+
+    /** 학습 데이터 버킷 없는 배포의 자리 (KAN-201) - 빈이 없어 NONE으로 채워지는 경로다. */
+    private static ObjectProvider<TrainingSampleStore> noStore() {
+        return new ObjectProvider<>() {
+            @Override
+            public Stream<TrainingSampleStore> stream() {
+                return Stream.empty();
+            }
+        };
     }
 }

@@ -1,5 +1,7 @@
 output "parameter_names" {
-  value = [
+  # 학습 데이터 버킷(KAN-201)은 값이 있는 환경(staging)에만 붙는다 - 목록이 곧 태스크 정의 secrets와 실행 역할 허용
+  # 목록이라, prod 목록에는 그 이름이 없어야 한다.
+  value = concat([
     aws_ssm_parameter.spring_profiles_active.name,
     aws_ssm_parameter.ai_base_url.name,
     aws_ssm_parameter.datasource_url.name,
@@ -12,7 +14,7 @@ output "parameter_names" {
     aws_ssm_parameter.analysis_processing_timeout.name,
     aws_ssm_parameter.analysis_dispatch_concurrency.name,
     aws_ssm_parameter.kakao_admin_key.name,
-  ]
+  ], aws_ssm_parameter.training_bucket[*].name)
   description = "이 모듈이 만드는 backend용 SSM 파라미터 이름. fargate 모듈이 태스크 정의 secrets와 실행 역할 허용 목록으로 쓴다 (KAN-165). IMAGE_TAG(KAN-128)는 여기 없다."
 }
 

@@ -42,6 +42,11 @@ accentury:
     # SSM ACCENTURY_RESULT_ASSETBASEURL - https://<이 환경 도메인>/share (KAN-132). 등급 이미지는 이 아래
     # <code>.png다. web-test-url과 같은 이유로 비워 두고 DeploymentConfigGuard가 요구한다.
     asset-base-url: ""
+  # staging 전용 학습 데이터 S3 (KAN-201). 버킷 이름은 SSM ACCENTURY_TRAINING_BUCKET이 staging 태스크에만
+  # 넣는다 - 여기는 리전만 명시한다 (CloudWatch 레지스트리와 같은 값). bucket이 없는 prod는 이 값이 있어도
+  # 클라이언트를 만들지 않는다 (TrainingConfig의 조건이 bucket이다).
+  training:
+    region: ap-northeast-2
 
 # CloudWatch 지표 내보내기 (KAN-36, CloudWatchMetricsConfig). accentury.* 지표만 1분마다 올린다 - 회로 상태
 # (accentury.ai.circuit.state)는 경보 ai-circuit-open(infra/modules/monitoring)이 본다. 네임스페이스는

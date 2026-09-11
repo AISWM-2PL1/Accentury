@@ -85,6 +85,14 @@ public final class ServiceMetrics {
     /** 전달 접수부터 종결까지 걸린 시간 - NFR-PF-01(3초)의 측정값이다. */
     public static final String ANALYSIS_DURATION = "accentury.analysis.duration";
 
+    // ---- 학습 데이터 (S3TrainingSampleStore, staging 한정) ----
+
+    /**
+     * 학습 샘플 저장 시도 수 - 태그 {@code result}는 {@code saved} | {@code failed}다 (KAN-201).
+     * 실패는 분석 결과에 영향을 주지 않으므로 이 지표와 WARN 로그가 유일한 신호다.
+     */
+    public static final String TRAINING_SAMPLES = "accentury.training.samples";
+
     /** 대시보드와 경보가 읽는 유일한 백분위. 늘리면 지표 수가 그만큼 늘어난다. */
     public static final double PERCENTILE = 0.95;
 

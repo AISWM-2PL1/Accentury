@@ -164,6 +164,37 @@ class RestAiAnalysisClientTest {
     }
 
     @Test
+    void ALB가_대신_답한_5xx는_미도달로_구분된다() {
+        // 대상 그룹에 healthy 대상이 없거나(인스턴스 교체, reload 중) 대상이 연결을 거부하면 내부 ALB(KAN-201)가
+        // 자기 서명(Server: awselb/2.0)으로 502/503을 만든다 - AI에 닿지 않았으므로 시도 예산에서 빠져야 한다.
+        server.expect(requestTo("http://ai.test/internal/v0/analyze"))
+                .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE)
+                        .header("Server", "awselb/2.0")
+                        .contentType(MediaType.TEXT_HTML)
+                        .body("<html><body><h1>503 Service Temporarily Unavailable</h1></body></html>"));
+
+        AiAnalysisClient.AiUnavailableException e =
+                assertThrows(AiAnalysisClient.AiUnavailableException.class,
+                        () -> client.analyze(request(), "c_test"));
+        assertEquals(AiAnalysisClient.AiUnavailableException.Kind.UNREACHED, e.kind());
+    }
+
+    @Test
+    void AI가_직접_낸_5xx는_ALB를_거쳐도_도달한_장애다() {
+        // ALB가 프록시한 AI 응답은 uvicorn의 Server 헤더가 그대로 온다 - 분석 시간 초과 503(§4.1)이 여기다.
+        server.expect(requestTo("http://ai.test/internal/v0/analyze"))
+                .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE)
+                        .header("Server", "uvicorn")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body("{\"status\":\"FAILED\",\"detail\":\"분석 시간 초과\"}"));
+
+        AiAnalysisClient.AiUnavailableException e =
+                assertThrows(AiAnalysisClient.AiUnavailableException.class,
+                        () -> client.analyze(request(), "c_test"));
+        assertEquals(AiAnalysisClient.AiUnavailableException.Kind.SERVER_ERROR, e.kind());
+    }
+
+    @Test
     void 타임아웃은_timedOut으로_구분된다() {
         server.expect(requestTo("http://ai.test/internal/v0/analyze"))
                 .andRespond(mockRequest -> {
@@ -374,6 +405,6 @@ class RestAiAnalysisClientTest {
 
     private static AnalysisDispatcher.AnalysisRequest request(String scriptKey) {
         return new AnalysisDispatcher.AnalysisRequest("a_client-test", "s_client", "v1", scriptKey,
-                "gn-2026.08.1", "sv-0.3", 3000, new byte[] {82, 73, 70, 70});
+                "gn-2026.08.1", "sv-0.3", null, 3000, new byte[] {82, 73, 70, 70});
     }
 }

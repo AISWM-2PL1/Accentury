@@ -194,3 +194,16 @@ resource "aws_ssm_parameter" "kakao_admin_key" {
   value_wo         = "unset-put-parameter-after-apply"
   value_wo_version = 1
 }
+
+# ---- staging 전용 학습 데이터 S3 (KAN-201) ----
+
+# 값이 있는 환경에만 파라미터가 생긴다 - prod 태스크 정의에는 이 환경 변수가 아예 없어 backend가 S3 클라이언트도
+# 저장 빈도 만들지 않는다 (TrainingConfig의 조건이 이 프로퍼티다). 두 환경이 같은 deploy 프로파일을 쓰므로
+# 환경별 yml 없이 이 파라미터 하나가 스위치다. 이름은 Spring 프로퍼티 규칙(accentury.training.bucket)이다.
+resource "aws_ssm_parameter" "training_bucket" {
+  count = var.training_bucket_name == null ? 0 : 1
+
+  name  = "${var.ssm_prefix}/ACCENTURY_TRAINING_BUCKET"
+  type  = "String"
+  value = var.training_bucket_name
+}

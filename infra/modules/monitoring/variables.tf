@@ -23,6 +23,16 @@ variable "target_group_arn_suffix" {
   description = "대상 그룹의 CloudWatch 차원 값 (aws_lb_target_group.arn_suffix, targetgroup/이름/id 형태)"
 }
 
+variable "ai_alb_arn_suffix" {
+  type        = string
+  description = "AI 호스트 앞 내부 ALB의 CloudWatch 차원 값 (ai-host 모듈 alb_arn_suffix, KAN-201)"
+}
+
+variable "ai_target_group_arn_suffix" {
+  type        = string
+  description = "AI 대상 그룹의 CloudWatch 차원 값 (ai-host 모듈 target_group_arn_suffix, KAN-201)"
+}
+
 variable "db_instance_identifier" {
   type        = string
   description = "RDS 인스턴스 식별자 (DBInstanceIdentifier 차원)"

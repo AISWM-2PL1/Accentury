@@ -48,6 +48,18 @@ variable "ai_instance_type" {
   description = "AI 추론 호스트 인스턴스 타입 (KAN-36). 2026-09-01 결정으로 A단계 스텁 모드부터 c7i.xlarge - 실모델(RSS 7.1GB, 지속 추론)에 t 계열은 탈락이고, 단계 전환에 인스턴스 교체를 없앤다. P95 미달 시 c7i.2xlarge 또는 g4dn.xlarge (KAN-57 실측 후)."
 }
 
+variable "ai_max_size" {
+  type        = number
+  description = "AI 호스트 ASG 최대 대수 (KAN-201). 두 환경 tfvars 3. 평시 1대이고 진행 중 분석이 6건 이상으로 밀리면 1대씩 늘린다 (ai-host 모듈 스케일링 정책). 비용 상한이지 쿼터 한계가 아니다 - 계정 vCPU 쿼터로는 64대까지 된다."
+  default     = 1
+}
+
+variable "training_bucket_enabled" {
+  type        = bool
+  description = "staging 전용 학습 데이터 S3 버킷과 그 접근 권한, SSM ACCENTURY_TRAINING_BUCKET을 만들지 (KAN-201). staging true, prod false - prod는 FR-DP-01 그대로라 반드시 false다. 값을 바꾸면 태스크 정의 secrets가 바뀌어 backend 태스크가 새로 뜬다."
+  default     = false
+}
+
 variable "ai_root_volume_size" {
   type        = number
   description = "AI 호스트 루트 볼륨 GiB (KAN-36). 스텁 20, 실모델(B단계) 40 - ai 이미지 7GB x SHA 태그 2개 공존 + pull 임시 공간. 근거는 tfvars 주석."

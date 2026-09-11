@@ -58,6 +58,47 @@ module "data" {
   skip_final_snapshot = var.db_skip_final_snapshot
 }
 
+# ---- staging 전용 학습 데이터 S3 (KAN-201) ----
+
+# 원본 음성은 영속 저장소에 남지 않는다는 FR-DP-01의 staging 예외다 (2026-09-08 결정). backend가 분석 종결마다
+# 내부 테스터의 음성 WAV와 AI 원점수 메타 JSON을 여기 남긴다 - 모델 재학습용이고, 학습 데이터라 자동 삭제하지
+# 않는다(수명주기 규칙 없음). 두 환경의 main.tf는 같아야 하므로(KAN-140) 스위치는 tfvars의
+# training_bucket_enabled이고, prod는 false라 버킷도 정책도 파라미터도 생기지 않아 prod plan에 이 이름이 없다.
+# 이름은 web 버킷 규약(edge 모듈)대로 계정 ID를 붙인다. force_destroy는 web 버킷과 같이 teardown을 위해서다 -
+# staging을 부수고 다시 지으면 모인 샘플도 함께 사라진다 (README).
+data "aws_caller_identity" "current" {}
+
+resource "aws_s3_bucket" "training" {
+  count = var.training_bucket_enabled ? 1 : 0
+
+  bucket        = "accentury-${var.env}-training-${data.aws_caller_identity.current.account_id}"
+  force_destroy = true
+}
+
+resource "aws_s3_bucket_public_access_block" "training" {
+  count = var.training_bucket_enabled ? 1 : 0
+
+  bucket = aws_s3_bucket.training[0].id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+# SSE-S3 기본 암호화. 버전 관리는 켜지 않는다 - 키에 분석 작업 ID가 들어 덮어쓰기가 없다 (객체 규약).
+resource "aws_s3_bucket_server_side_encryption_configuration" "training" {
+  count = var.training_bucket_enabled ? 1 : 0
+
+  bucket = aws_s3_bucket.training[0].id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
 # backend, ai 컨테이너 환경 변수 (KAN-129, KAN-36). 값이 network, data 모듈 출력이라 여기서 조립한다.
 module "config" {
   source = "../../modules/config"
@@ -68,6 +109,8 @@ module "config" {
   rds_endpoint               = module.data.endpoint
   rds_master_user_secret_arn = module.data.master_user_secret_arn
   ai_dns_name                = module.network.ai_dns_name
+  # 학습 데이터 버킷이 있는 환경(staging)에만 ACCENTURY_TRAINING_BUCKET 파라미터가 생긴다 (KAN-201).
+  training_bucket_name = one(aws_s3_bucket.training[*].bucket)
 }
 
 # 커스텀 지표 네임스페이스 (KAN-36). 지표를 올리는 역할의 PutMetricData 조건과 경보가 같은 이름을 봐야 하므로
@@ -125,25 +168,32 @@ module "fargate" {
   target_group_arn_suffix = module.edge.target_group_arn_suffix
   # 태스크 정의 secrets로 전부 주입한다 - 실행 역할도 이 목록만 읽는다.
   config_parameter_names = module.config.parameter_names
+  # 학습 데이터 버킷이 있는 환경(staging)에만 태스크 역할에 PutObject 문장이 생긴다 (KAN-201).
+  training_bucket_arn = one(aws_s3_bucket.training[*].arn)
 }
 
-# ai 호스트 - ASG(min 1, max 1)의 전용 추론 EC2 (KAN-36 A단계, 스텁 모드). 인스턴스 유형은 2026-09-01
-# 결정으로 처음부터 c7i.xlarge이고, 루트 볼륨만 실모델 전환(B단계)에서 tfvars로 40GB가 된다.
+# ai 호스트 - 내부 ALB 뒤 ASG(min 1, max = tfvars ai_max_size)의 전용 추론 EC2 (KAN-36, ALB와 오토스케일링은
+# KAN-201). 인스턴스 유형은 2026-09-01 결정으로 처음부터 c7i.xlarge이고, 루트 볼륨만 실모델 전환(B단계)에서
+# tfvars로 40GB가 된다. 스케일링 기준은 backend 지표(accentury.analysis.processing)라 그 네임스페이스를 넘긴다.
 module "ai_host" {
   source = "../../modules/ai-host"
 
-  env               = var.env
-  subnet_ids        = module.network.public_subnet_ids
-  security_group_id = module.network.ai_sg_id
-  instance_type     = var.ai_instance_type
-  root_volume_size  = var.ai_root_volume_size
-  ssm_prefix        = var.ssm_prefix
-  metric_namespace  = local.ai_metric_namespace
+  env                   = var.env
+  vpc_id                = module.network.vpc_id
+  subnet_ids            = module.network.public_subnet_ids
+  security_group_id     = module.network.ai_sg_id
+  alb_security_group_id = module.network.ai_alb_sg_id
+  instance_type         = var.ai_instance_type
+  root_volume_size      = var.ai_root_volume_size
+  max_size              = var.ai_max_size
+  ssm_prefix            = var.ssm_prefix
+  metric_namespace      = local.ai_metric_namespace
   # ai 호스트 역할은 자기 하위 경로(/ai)와 IMAGE_TAG만 읽는다 - 내부 호출 토큰이 먼저 있어야 한다.
-  config_parameter_names = module.config.ai_parameter_names
-  private_zone_id        = module.network.private_zone_id
-  dns_name               = module.network.ai_dns_name
-  vpc_cidr               = var.vpc_cidr
+  config_parameter_names   = module.config.ai_parameter_names
+  private_zone_id          = module.network.private_zone_id
+  dns_name                 = module.network.ai_dns_name
+  vpc_cidr                 = var.vpc_cidr
+  scaling_metric_namespace = local.backend_metric_namespace
 }
 
 # KAN-36에서는 compute 모듈을 role = "ai"로 부른 module.ai_compute였다 (backend 역할 호출 module.compute는
@@ -189,4 +239,7 @@ module "monitoring" {
   ecs_service_name         = module.fargate.service_name
   ai_metric_namespace      = local.ai_metric_namespace
   backend_metric_namespace = local.backend_metric_namespace
+  # AI 대상 그룹의 healthy 대상 경보 (KAN-201).
+  ai_alb_arn_suffix          = module.ai_host.alb_arn_suffix
+  ai_target_group_arn_suffix = module.ai_host.target_group_arn_suffix
 }

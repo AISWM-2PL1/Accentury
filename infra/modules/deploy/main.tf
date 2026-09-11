@@ -99,11 +99,12 @@ resource "aws_iam_role_policy" "web_deploy" {
 # update-service, 배포 상태 조회, 스모크용 관리자 토큰 읽기. ECR push는 staging 역할만 갖는다
 # (승격 모델) - prod 역할로는 새 이미지를 만들 수 없고 staging이 검증한 SHA를 고를 수만 있다.
 #
-# Run Command 대상은 인스턴스 ID가 아니라 tag:Name이다. ASG 교체로 인스턴스가 바뀌는데(ai-host 모듈)
-# ID를 변수로 따라가면 그때마다 GitHub 변수를 고쳐야 한다. 신뢰 정책과 마찬가지로 이 환경 이름이
-# 붙은 ai 호스트(accentury-{env}-ai)에만 보낼 수 있다. backend는 EC2가 아니라 ECS 서비스라(KAN-165)
-# Run Command 대상이 아니고, 아래 ECS 문장들이 그 자리다. 파이프라인은 ai를 먼저, backend를 다음에
-# 반영한다.
+# Run Command는 ASG의 InService 인스턴스를 한 대씩 순서대로 보낸다 (KAN-201 - ALB 뒤 여러 대가 한꺼번에
+# reload하면 전부 대상 그룹에서 빠진다). 인스턴스 ID는 실행 때마다 ASG에서 읽으므로(DescribeAutoScalingGroups)
+# GitHub 변수에 박히지 않고, 보낼 수 있는 대상은 여전히 이 환경 이름 태그(accentury-{env}-ai)가 붙은
+# 인스턴스뿐이다(SendCommand의 태그 조건). 한 대를 reload한 뒤 그 대상이 대상 그룹에서 healthy가 되기를
+# 기다린다(DescribeTargetHealth). backend는 EC2가 아니라 ECS 서비스라(KAN-165) Run Command 대상이 아니고,
+# 아래 ECS 문장들이 그 자리다. 파이프라인은 ai를 먼저, backend를 다음에 반영한다.
 
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
@@ -161,6 +162,29 @@ data "aws_iam_policy_document" "image_deploy" {
     sid       = "ReadCommandResult"
     actions   = ["ssm:ListCommandInvocations", "ssm:GetCommandInvocation"]
     resources = ["*"]
+  }
+
+  # 순차 reload의 재료 (KAN-201): ASG의 InService 인스턴스 목록, 각 인스턴스의 SSM 에이전트 등록 여부(갓 뜬
+  # 인스턴스는 1.5분에서 2분 뒤에야 등록된다), reload 뒤 대상 그룹 healthy. 전부 Describe라 리소스 수준
+  # 제한이 없는 API다.
+  statement {
+    sid = "InspectAiHostRollout"
+    actions = [
+      "autoscaling:DescribeAutoScalingGroups",
+      "ssm:DescribeInstanceInformation",
+      "elasticloadbalancing:DescribeTargetGroups",
+      "elasticloadbalancing:DescribeTargetHealth",
+    ]
+    resources = ["*"]
+  }
+
+  # reload 동안 ASG의 상태 검사 교체와 스케일링을 멈췄다 되돌린다 (KAN-201, Codex 리뷰 P1). ELB 상태 검사를 보는 ASG는
+  # reload로 컨테이너가 내려간 인스턴스를 유예 기간이 지난 뒤 unhealthy로 교체해 버린다. 이 환경의 ai ASG 하나로
+  # 좁힌다 - 리소스 태그 조건이 아니라 ASG ARN의 이름 조각이다.
+  statement {
+    sid       = "PauseAiAsgDuringRollout"
+    actions   = ["autoscaling:SuspendProcesses", "autoscaling:ResumeProcesses"]
+    resources = ["arn:aws:autoscaling:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:autoScalingGroup:*:autoScalingGroupName/${local.name}-ai"]
   }
 
   # ---- backend Fargate 서비스 (KAN-165) ----

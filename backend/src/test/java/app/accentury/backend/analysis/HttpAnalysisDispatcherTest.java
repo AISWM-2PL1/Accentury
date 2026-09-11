@@ -5,7 +5,10 @@ import app.accentury.backend.SteppingClock;
 import app.accentury.backend.TestSessions;
 import app.accentury.backend.observability.ServiceMetrics;
 import app.accentury.backend.session.TestSessionRepository;
+import app.accentury.backend.training.TrainingSample;
+import app.accentury.backend.training.TrainingSampleStore;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,7 +18,9 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -623,6 +628,129 @@ class HttpAnalysisDispatcherTest extends IntegrationTest {
         assertArrayEquals(new byte[] {0, 0, 0}, request.audio());
     }
 
+    // === 학습 샘플 (KAN-201) - 종결 뒤, 버퍼 파기 전 ===
+
+    @Test
+    void 성공한_분석은_학습_샘플로_남고_점수와_AI_버전이_실린다() {
+        AnalysisJob job = saveProcessingJob();
+        RecordingStore store = new RecordingStore();
+        ScriptedClient client = new ScriptedClient()
+                .then(new AiAnalysisClient.Completed(78, "OK", "rmvpe-0.2", "sv-ai-0.1"));
+
+        dispatcher(client, 0, store).dispatch(request(job, "GYEONGNAM"));
+
+        TrainingSample sample = store.only();
+        assertEquals(job.id(), sample.analysisJobId());
+        assertEquals("GYEONGNAM", sample.region());
+        assertEquals(TrainingSample.Outcome.COMPLETED, sample.outcome());
+        assertEquals(78, sample.intonationScore());
+        assertEquals("OK", sample.qualityCode());
+        assertEquals("rmvpe-0.2", sample.modelVersion());
+        assertEquals("sv-ai-0.1", sample.aiScoreVersion(), "AI 응답의 scoreVersion - 세션의 sv-0.3과 다른 값이다");
+        assertEquals("sv-0.3", sample.scoreVersion());
+        assertNull(sample.errorCode());
+        assertEquals(3000, sample.durationMs());
+        assertArrayEquals(new byte[] {1, 2, 3}, store.audioSeen, "저장 시점에는 원본 음성이 아직 살아 있다");
+    }
+
+    @Test
+    void 지역_없는_세션의_샘플은_UNKNOWN이다() {
+        RecordingStore store = new RecordingStore();
+        ScriptedClient client = new ScriptedClient()
+                .then(new AiAnalysisClient.Completed(78, "OK", "rmvpe-0.2", "sv-0.3"));
+
+        dispatcher(client, 0, store).dispatch(request(saveProcessingJob()));
+
+        assertEquals("UNKNOWN", store.only().region());
+    }
+
+    @Test
+    void 판정_실패도_오류_코드와_함께_학습_샘플로_남는다() {
+        // 부정 샘플도 학습에 쓴다 (2026-09-08 확정) - 점수 자리는 비고 errorCode가 실린다.
+        AnalysisJob job = saveProcessingJob();
+        RecordingStore store = new RecordingStore();
+        ScriptedClient client = new ScriptedClient()
+                .then(AiAnalysisClient.Rejected.judged("AUDIO_TOO_QUIET", true));
+
+        dispatcher(client, 0, store).dispatch(request(job));
+
+        TrainingSample sample = store.only();
+        assertEquals(TrainingSample.Outcome.RETRYABLE_FAILED, sample.outcome());
+        assertEquals("AUDIO_TOO_QUIET", sample.errorCode());
+        assertNull(sample.intonationScore());
+        assertNull(sample.modelVersion());
+    }
+
+    @Test
+    void 비재시도_판정_실패의_샘플은_FAILED다() {
+        RecordingStore store = new RecordingStore();
+        ScriptedClient client = new ScriptedClient()
+                .then(AiAnalysisClient.Rejected.judged("INTERNAL_ERROR", false));
+
+        dispatcher(client, 0, store).dispatch(request(saveProcessingJob()));
+
+        assertEquals(TrainingSample.Outcome.FAILED, store.only().outcome());
+    }
+
+    @Test
+    void 계약_위반과_AI_불가는_학습_샘플로_남지_않는다() {
+        // 원점수도 판정도 없는 건이다 - 타임아웃도 AI 불가의 한 갈래다.
+        RecordingStore store = new RecordingStore();
+        ScriptedClient client = new ScriptedClient()
+                .then(AiAnalysisClient.Rejected.contractViolation())
+                .then(new AiAnalysisClient.AiUnavailableException("연결 실패",
+                        AiAnalysisClient.AiUnavailableException.Kind.UNREACHED, null))
+                .then(new AiAnalysisClient.AiUnavailableException("읽기 타임아웃",
+                        AiAnalysisClient.AiUnavailableException.Kind.TIMED_OUT, null));
+        HttpAnalysisDispatcher dispatcher = dispatcher(client, 0, store);
+
+        dispatcher.dispatch(request(saveProcessingJob()));
+        dispatcher.dispatch(request(saveProcessingJob()));
+        dispatcher.dispatch(request(saveProcessingJob()));
+
+        assertEquals(List.of(), store.samples);
+    }
+
+    @Test
+    void 저장소가_예외를_내도_종결과_버퍼_파기는_그대로다() {
+        AnalysisJob job = saveProcessingJob();
+        AnalysisDispatcher.AnalysisRequest request = request(job);
+        ScriptedClient client = new ScriptedClient()
+                .then(new AiAnalysisClient.Completed(78, "OK", "rmvpe-0.2", "sv-0.3"));
+        TrainingSampleStore broken = sample -> {
+            throw new IllegalStateException("S3 권한 없음");
+        };
+
+        dispatcher(client, 0, broken).dispatch(request);
+
+        AnalysisJob saved = repository.findById(job.id()).orElseThrow();
+        assertEquals(AnalysisJobStatus.COMPLETED, saved.status());
+        assertEquals(78, saved.intonationScore());
+        assertArrayEquals(new byte[] {0, 0, 0}, request.audio());
+    }
+
+    /** 저장 호출을 기록하는 저장소 - 오디오는 호출 시점의 사본을 떠 둔다 (그 뒤 파기되므로). */
+    private static final class RecordingStore implements TrainingSampleStore {
+        final List<TrainingSample> samples = new ArrayList<>();
+        byte @Nullable [] audioSeen;
+
+        @Override
+        public void save(TrainingSample sample) {
+            samples.add(sample);
+            audioSeen = sample.audio().clone();
+        }
+
+        TrainingSample only() {
+            assertEquals(1, samples.size(), "샘플은 정확히 1건이어야 한다");
+            return samples.getFirst();
+        }
+    }
+
+    private HttpAnalysisDispatcher dispatcher(AiAnalysisClient client, int retries, TrainingSampleStore store) {
+        return new HttpAnalysisDispatcher(client, new SyncTaskExecutor(), transitions,
+                new AnalysisBacklog(), openCircuitNever(), TestMetrics.analysisMetrics(), store, retries, 0);
+    }
+
     private HttpAnalysisDispatcher dispatcher(AiAnalysisClient client, int retries) {
         return dispatcher(client, retries, openCircuitNever());
     }
@@ -668,7 +796,12 @@ class HttpAnalysisDispatcherTest extends IntegrationTest {
     }
 
     private static AnalysisDispatcher.AnalysisRequest request(AnalysisJob job) {
+        return request(job, null);
+    }
+
+    private static AnalysisDispatcher.AnalysisRequest request(AnalysisJob job,
+                                                              @Nullable String region) {
         return new AnalysisDispatcher.AnalysisRequest(job.id(), job.sessionId(), job.itemId(), null,
-                "gn-2026.08.1", "sv-0.3", 3000, new byte[] {1, 2, 3});
+                "gn-2026.08.1", "sv-0.3", region, 3000, new byte[] {1, 2, 3});
     }
 }

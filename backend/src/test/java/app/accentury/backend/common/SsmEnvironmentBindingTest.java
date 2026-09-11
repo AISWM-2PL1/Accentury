@@ -42,13 +42,15 @@ class SsmEnvironmentBindingTest {
      * <p>
      * 프로파일 스위치는 검증 대상이 아니라 검증을 켜는 값이고, 분석 시간 예산 셋(KAN-22)은 없어도
      * 기동이 되는 조정값이다 - 없으면 application.yml의 기본값으로 뜬다. 가드에 넣으면 "없으면
-     * 기동을 세운다"가 되어, 값 하나 지웠다고 배포가 멎는다.
+     * 기동을 세운다"가 되어, 값 하나 지웠다고 배포가 멎는다. 학습 데이터 버킷(KAN-201)은 staging에만
+     * 만들어지는 optional 파라미터라 역시 가드 밖이다 - prod에는 이름 자체가 없어야 한다.
      */
     private static final Set<String> TERRAFORM_ONLY = Set.of(
             "SPRING_PROFILES_ACTIVE",
             "ACCENTURY_ANALYSIS_AITIMEOUT",
             "ACCENTURY_ANALYSIS_PROCESSINGTIMEOUT",
-            "ACCENTURY_ANALYSIS_DISPATCHCONCURRENCY");
+            "ACCENTURY_ANALYSIS_DISPATCHCONCURRENCY",
+            "ACCENTURY_TRAINING_BUCKET");
 
     /** 가드 정본에는 있지만 Terraform이 만들지 않는 이름 - 자격 증명은 Secrets Manager에서 온다. */
     private static final Set<String> GUARD_ONLY = Set.of(
@@ -92,11 +94,15 @@ class SsmEnvironmentBindingTest {
         tuned.getPropertySources().addFirst(new SystemEnvironmentPropertySource("tuned-systemEnvironment",
                 Map.of("ACCENTURY_ANALYSIS_AITIMEOUT", "100s",
                         "ACCENTURY_ANALYSIS_PROCESSINGTIMEOUT", "400s",
-                        "ACCENTURY_ANALYSIS_DISPATCHCONCURRENCY", "2")));
+                        "ACCENTURY_ANALYSIS_DISPATCHCONCURRENCY", "2",
+                        "ACCENTURY_TRAINING_BUCKET", "accentury-staging-training-123456789012")));
         Binder tunedBinder = Binder.get(tuned);
         assertEquals("100s", tunedBinder.bind("accentury.analysis.ai-timeout", String.class).get());
         assertEquals("400s", tunedBinder.bind("accentury.analysis.processing-timeout", String.class).get());
         assertEquals(2, tunedBinder.bind("accentury.analysis.dispatch-concurrency", Integer.class).get());
+        // 학습 데이터 버킷 (KAN-201) - staging에만 오는 optional 값. 이름이 어긋나면 staging에서 샘플이 조용히 안 쌓인다.
+        assertEquals("accentury-staging-training-123456789012",
+                tunedBinder.bind("accentury.training.bucket", String.class).get());
 
         // 목록 프로퍼티는 쉼표 한 줄이 원소로 갈라져야 한다 (ClientIps가 List<String>으로 받는다).
         assertEquals(List.of("10.1.0.0/16"),

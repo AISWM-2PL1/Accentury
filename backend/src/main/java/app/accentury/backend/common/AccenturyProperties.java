@@ -28,6 +28,7 @@ import java.util.Map;
  * @param analytics      익명 집계 카운터의 일자 경계와 조회 상한 (KAN-106)
  * @param admin          운영자 전용 API(§6)의 공유 시크릿 (KAN-106, KAN-26)
  * @param share          카카오톡 공유 웹훅의 검증 키와 수신 기록 보존 기간 (KAN-164)
+ * @param training       staging 전용 학습 데이터 S3 (KAN-201) - 버킷이 없으면 저장 코드가 호출되지 않는다.
  * @param trustedProxies 요청 제한의 기준 IP를 정할 때 신뢰하는 프록시 대역 (KAN-28, §2.5).
  *                       CIDR 또는 단일 IP 목록이고, 직접 접속한 상대가 이 목록에 들어야만
  *                       {@code X-Forwarded-For}를 읽는다. 비어 있으면 헤더를 무시하고 접속 IP만
@@ -42,6 +43,7 @@ public record AccenturyProperties(Session session,
                                   @DefaultValue Completion completion, @DefaultValue Cors cors,
                                   @DefaultValue Result result, @DefaultValue Analytics analytics,
                                   @DefaultValue Admin admin, @DefaultValue Share share,
+                                  @DefaultValue Training training,
                                   @DefaultValue List<String> trustedProxies) {
 
     /**
@@ -262,6 +264,19 @@ public record AccenturyProperties(Session session,
      */
     public record Share(@Nullable String kakaoAdminKey,
                         @DefaultValue("7d") Duration receiptRetention) {
+    }
+
+    /**
+     * staging 전용 학습 데이터 수집 (KAN-201, {@code training} 패키지).
+     *
+     * @param bucket 음성 WAV와 메타 JSON을 넣을 S3 버킷 이름. <b>미설정이 기본값이고, 그러면 S3 클라이언트도
+     *               저장 빈도 만들어지지 않는다</b> - 로컬, 테스트, prod 전부 이 상태다 (FR-DP-01 그대로).
+     *               staging에서만 SSM {@code ACCENTURY_TRAINING_BUCKET}으로 들어온다 (config 모듈의
+     *               optional 파라미터). 빈 문자열은 설정 실수로 보고 기동을 세운다 ({@code TrainingConfig}).
+     * @param region 그 버킷의 리전. 비우면 SDK 기본 체인(태스크의 {@code AWS_REGION})이다 - 배포 프로파일은
+     *               CloudWatch 레지스트리와 같은 값을 명시한다 (application-deploy.yml).
+     */
+    public record Training(@Nullable String bucket, @Nullable String region) {
     }
 
     /**

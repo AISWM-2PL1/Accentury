@@ -1,12 +1,15 @@
 #!/bin/bash
-# ai 컨테이너 기동 (KAN-124, 전용 호스트 KAN-36). systemd accentury.service의 ExecStart와 ExecReload가 부른다.
+# ai 컨테이너 기동 (KAN-124, 전용 호스트 KAN-36, ALB 뒤 KAN-201). systemd accentury.service의 ExecStart와 ExecReload가 부른다.
 #
-#   1. IMDSv2로 자기 인스턴스 ID와 사설 IP를 읽는다 - 로그 스트림 이름과 A 레코드에 쓴다.
+#   1. IMDSv2로 자기 인스턴스 ID를 읽는다 - 컨테이너 로그 스트림 이름에 쓴다.
 #   2. SSM Parameter Store에서 이 호스트 몫을 읽어 /run/accentury/*.env를 만든다.
 #        /accentury/{env}/ai/* 와 /accentury/{env}/IMAGE_TAG (IAM도 그 둘만 허용한다)
-#   3. 프라이빗 영역에 자기 사설 IP로 A 레코드를 UPSERT한다 - backend가 부르는 고정 이름.
-#   4. ECR에 로그인한다 (토큰은 12시간짜리라 매 기동마다 새로 받는다).
-#   5. docker compose up -d
+#   3. ECR에 로그인한다 (토큰은 12시간짜리라 매 기동마다 새로 받는다).
+#   4. docker compose up -d
+#
+# KAN-36에서는 3번 앞에 프라이빗 영역에 자기 사설 IP로 A 레코드를 UPSERT하는 단계가 있었다 - backend가 부르는
+# 고정 이름(ai.accentury.internal)이 인스턴스 하나를 가리키던 시절이다. KAN-201부터 그 이름은 앞단 내부 ALB의
+# alias(Terraform 소유)이고 대상 등록은 ASG가 하므로, 이 스크립트는 자기 주소를 어디에도 알리지 않는다.
 #
 # backend는 이 호스트에 없다 - ECS Fargate 서비스(infra/modules/fargate, KAN-165)가 SSM 값을 태스크 정의의
 # secrets로 받는다. 배포 파이프라인(KAN-128)은 SSM의 IMAGE_TAG를 새 SHA로 바꾼 뒤 이 호스트에서
@@ -25,8 +28,7 @@
 # 값에 탭이나 개행이 들어가면 안 된다 (aws --output text가 그 둘로 행을 나눈다).
 set -euo pipefail
 
-# 환경별 값(ACCENTURY_ENV, SSM_PREFIX, ECR_REGISTRY, AWS_REGION, AI_LOG_GROUP, AI_DNS_NAME, AI_ZONE_ID)은
-# Terraform이 써 둔다.
+# 환경별 값(ACCENTURY_ENV, SSM_PREFIX, ECR_REGISTRY, AWS_REGION, AI_LOG_GROUP, VPC_CIDR)은 Terraform이 써 둔다.
 # shellcheck source=/dev/null
 . /etc/accentury/env.conf
 
@@ -52,26 +54,22 @@ retry() {
   done
 }
 
-# 자기 인스턴스 신원 (IMDSv2). 두 곳이 쓴다 - 사설 IP는 아래 A 레코드 UPSERT이고, 인스턴스 ID는 컨테이너
-# 로그 스트림 이름이다 (KAN-203, ai/<인스턴스 ID>). ASG가 교체해도 스트림이 갈리므로 교체 전 인스턴스의
-# 로그가 새 인스턴스의 로그에 섞이지 않는다. IMDS는 호스트에서만 닿는다 (시작 템플릿의 hop limit 1 -
-# 컨테이너는 못 본다). 재시도까지 다 실패하면 기동이 실패한다 - 이름 없는 스트림이나 이름 없는 A 레코드로
-# 뜨는 것보다 낫다.
+# 자기 인스턴스 신원 (IMDSv2) - 컨테이너 로그 스트림 이름이다 (KAN-203, ai/<인스턴스 ID>). ASG가 교체해도
+# 스트림이 갈리므로 교체 전 인스턴스의 로그가 새 인스턴스의 로그에 섞이지 않고, 여러 대가 함께 돌 때도
+# (KAN-201) 어느 대상이 처리했는지 스트림으로 가른다. IMDS는 호스트에서만 닿는다 (시작 템플릿의 hop limit 1 -
+# 컨테이너는 못 본다). 재시도까지 다 실패하면 기동이 실패한다 - 이름 없는 스트림으로 뜨는 것보다 낫다.
 read_identity() {
   local token
-  # -f를 붙인다 - 없으면 IMDS가 내는 4xx/5xx 본문이 종료 코드 0과 함께 값으로 잡힌다. 옛 코드에서는 그
-  # 쓰레기 값을 Route 53이 거절해 드러났지만, 이제는 compose.env를 거쳐 로그 스트림 이름이 되므로
-  # 조용히 흘러간다 (Codex 리뷰). --max-time은 링크 로컬 주소가 응답을 멈췄을 때 매달리지 않게 한다.
+  # -f를 붙인다 - 없으면 IMDS가 내는 4xx/5xx 본문이 종료 코드 0과 함께 값으로 잡힌다. 그 쓰레기 값은
+  # compose.env를 거쳐 로그 스트림 이름이 되므로 조용히 흘러간다 (Codex 리뷰). --max-time은 링크 로컬
+  # 주소가 응답을 멈췄을 때 매달리지 않게 한다.
   token=$(curl -fsS --max-time 5 -X PUT "http://169.254.169.254/latest/api/token" \
     -H "X-aws-ec2-metadata-token-ttl-seconds: 60") || return 1
   INSTANCE_ID=$(curl -fsS --max-time 5 -H "X-aws-ec2-metadata-token: $token" \
     "http://169.254.169.254/latest/meta-data/instance-id") || return 1
-  PRIVATE_IP=$(curl -fsS --max-time 5 -H "X-aws-ec2-metadata-token: $token" \
-    "http://169.254.169.254/latest/meta-data/local-ipv4") || return 1
-  # 형태까지 본다. 두 값 다 compose.env의 KEY=VALUE 한 줄이 되고 하나는 로그 스트림 이름이 되므로,
-  # 개행이나 엉뚱한 문자열이 들어오면 파일 규약과 스트림 이름이 함께 깨진다.
+  # 형태까지 본다. compose.env의 KEY=VALUE 한 줄이 되고 로그 스트림 이름이 되므로, 개행이나 엉뚱한
+  # 문자열이 들어오면 파일 규약과 스트림 이름이 함께 깨진다.
   [[ "$INSTANCE_ID" =~ ^i-[0-9a-f]+$ ]] || return 1
-  [[ "$PRIVATE_IP" =~ ^[0-9]+(\.[0-9]+){3}$ ]] || return 1
 }
 retry read_identity
 
@@ -142,19 +140,6 @@ mv "$tmp_ai" "$ai_env"
 trap - EXIT
 
 echo "ai.env $(wc -l < "$ai_env")개 변수. $(grep '^IMAGE_TAG=' "$compose_env")"
-
-# backend가 부르는 고정 이름 -> 이 인스턴스의 사설 IP (KAN-36). ASG 교체로 IP가 바뀌어도 이름은
-# 그대로다. TTL 10초라 backend(JDK DNS 캐시 기본 30초)가 새 인스턴스를 보는 데 1분이 안 걸린다.
-# IP는 위 read_identity가 이미 읽어 뒀다 - 재시도가 IMDS 토큰을 매번 새로 받지 않는다.
-upsert_record() {
-  aws route53 change-resource-record-sets \
-    --region "$AWS_REGION" \
-    --hosted-zone-id "$AI_ZONE_ID" \
-    --change-batch "{\"Comment\":\"accentury ai host boot\",\"Changes\":[{\"Action\":\"UPSERT\",\"ResourceRecordSet\":{\"Name\":\"$AI_DNS_NAME\",\"Type\":\"A\",\"TTL\":10,\"ResourceRecords\":[{\"Value\":\"$PRIVATE_IP\"}]}}]}" \
-    > /dev/null || return 1
-  echo "Route 53 $AI_DNS_NAME -> $PRIVATE_IP (영역 $AI_ZONE_ID)"
-}
-retry upsert_record
 
 # 인스턴스 프로파일(AmazonEC2ContainerRegistryReadOnly)로 ECR 로그인. 자격 증명은
 # /root/.docker/config.json에 남지만 12시간 뒤 만료되는 토큰이고 root 전용이다.

@@ -19,6 +19,7 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
 import java.io.InputStream;
+import java.util.Locale;
 import java.net.SocketTimeoutException;
 import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpTimeoutException;
@@ -89,7 +90,8 @@ class RestAiAnalysisClient implements AiAnalysisClient {
                     .contentType(MediaType.MULTIPART_FORM_DATA)
                     .body(body)
                     .exchange((httpRequest, httpResponse) ->
-                            map(request, httpResponse.getStatusCode().value(), httpResponse.getBody()));
+                            map(request, httpResponse.getStatusCode().value(), httpResponse.getHeaders(),
+                                    httpResponse.getBody()));
         } catch (ResourceAccessException e) {
             throw new AiUnavailableException("AI 호출 실패: " + e.getMessage(),
                     isTimeout(e) ? AiUnavailableException.Kind.TIMED_OUT
@@ -138,9 +140,24 @@ class RestAiAnalysisClient implements AiAnalysisClient {
         return new HttpEntity<>(content, headers);
     }
 
-    private Outcome map(AnalysisDispatcher.AnalysisRequest request, int statusCode,
+    /**
+     * AI 앞의 내부 ALB(KAN-201)가 대상 없이 스스로 만든 오류 응답의 표식. ALB가 프록시한 AI 응답은 uvicorn의
+     * Server 헤더를 그대로 실어 오고, 대상 그룹에 healthy 대상이 없거나(인스턴스 교체, reload 중) 대상이 연결을
+     * 거부한 502, 503, 504만 ALB 자신의 서명(awselb/2.0)으로 온다.
+     */
+    static final String ALB_SERVER_PREFIX = "awselb";
+
+    private Outcome map(AnalysisDispatcher.AnalysisRequest request, int statusCode, HttpHeaders headers,
                         InputStream responseBody) {
         if (statusCode >= 500) {
+            if (fromLoadBalancer(headers)) {
+                // ALB가 대신 답한 5xx는 AI에 닿지 못한 것이다 (KAN-201, Claude 검증자 리뷰 P2). KAN-36까지는 같은
+                // 구간(인스턴스 교체, reload)에서 연결 거부가 미도달로 접혔는데, ALB 뒤에서는 502/503으로 바뀌어
+                // 도달한 장애로 오인되면 재전송 예산 소진 뒤 INTERNAL_ERROR로 종결되고 사용자의 시도 상한(§2.5)이
+                // 서버 사정으로 깎인다. 회로에는 어느 쪽이든 실패로 센다.
+                throw new AiUnavailableException("AI 앞 ALB의 5xx 응답 (대상 없음 또는 연결 거부): " + statusCode,
+                        AiUnavailableException.Kind.UNREACHED, null);
+            }
             // 요청이 AI까지 갔다 - 미도달(UNREACHED)과 구분해야 시도 예산이 정확하다.
             throw new AiUnavailableException("AI 5xx 응답: " + statusCode,
                     AiUnavailableException.Kind.SERVER_ERROR, null);
@@ -238,6 +255,11 @@ class RestAiAnalysisClient implements AiAnalysisClient {
      * 타임아웃은 재전송하지 않고 시도 예산에 넣는 사유로 접으므로, 연결 타임아웃까지 같이 접으면
      * AI 교체 구간의 실패가 재전송 없이 사용자 시도 상한(§2.5)을 깎는다.
      */
+    private static boolean fromLoadBalancer(HttpHeaders headers) {
+        String server = headers.getFirst("Server");
+        return server != null && server.toLowerCase(Locale.ROOT).startsWith(ALB_SERVER_PREFIX);
+    }
+
     private static boolean isTimeout(ResourceAccessException e) {
         // JDK HttpClient는 HttpTimeoutException, 고전 커넥터는 SocketTimeoutException을 던진다.
         for (Throwable cause = e.getCause(); cause != null; cause = cause.getCause()) {

@@ -60,12 +60,22 @@ output "ai_asg_name" {
 
 output "ai_dns_name" {
   value       = module.network.ai_dns_name
-  description = "backend가 AI를 부르는 프라이빗 이름 (KAN-36). VPC 안에서만 풀린다."
+  description = "backend가 AI를 부르는 프라이빗 이름 (KAN-36). VPC 안에서만 풀리고, KAN-201부터 내부 ALB의 alias다."
+}
+
+output "ai_alb_dns_name" {
+  value       = module.ai_host.alb_dns_name
+  description = "AI 호스트 앞 내부 ALB의 DNS 이름 (KAN-201). ai_dns_name의 alias 대상 - 실증 시 대조용."
+}
+
+output "ai_target_group_name" {
+  value       = module.ai_host.target_group_name
+  description = "AI 대상 그룹 이름 (KAN-201). 대상별 healthy: aws elbv2 describe-target-health --target-group-arn $(aws elbv2 describe-target-groups --names <이 값> --query 'TargetGroups[0].TargetGroupArn' --output text)"
 }
 
 output "private_zone_id" {
   value       = module.network.private_zone_id
-  description = "내부 호출용 프라이빗 호스팅 영역 (KAN-36). A 레코드는 AI 인스턴스가 부팅 시 UPSERT한다."
+  description = "내부 호출용 프라이빗 호스팅 영역 (KAN-36). A 레코드는 ai-host 모듈이 ALB alias로 만든다 (KAN-201)."
 }
 
 output "rds_endpoint" {
@@ -105,4 +115,9 @@ output "dashboard_name" {
 output "dashboard_url" {
   value       = module.monitoring.dashboard_url
   description = "운영 대시보드 바로가기 (KAN-38) - README '관측성 지표와 대시보드'의 확인 절차가 이 출력을 쓴다."
+}
+
+output "training_bucket" {
+  value       = one(aws_s3_bucket.training[*].bucket)
+  description = "staging 전용 학습 데이터 S3 버킷 (KAN-201). prod는 null이다. 샘플 확인: aws s3 ls s3://<이 값>/ --recursive"
 }

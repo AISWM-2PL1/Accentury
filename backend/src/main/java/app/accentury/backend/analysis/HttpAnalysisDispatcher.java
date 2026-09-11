@@ -2,6 +2,9 @@ package app.accentury.backend.analysis;
 
 import app.accentury.backend.common.CorrelationIdFilter;
 import app.accentury.backend.common.ErrorCode;
+import app.accentury.backend.session.Region;
+import app.accentury.backend.training.TrainingSample;
+import app.accentury.backend.training.TrainingSampleStore;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,6 +47,10 @@ import java.util.concurrent.atomic.AtomicReference;
  * 작업은 {@link #failQueued()}로 즉시 종결하며, 실행 중인 작업만 종료 예산 안에서 끝나기를
  * 기다린다 - 순서는 {@link AnalysisDrainLifecycle}이 잡는다. 그래서 제출한 작업을 큐 안에서도
  * 알아볼 수 있게 {@link Task}로 감싸 추적한다.
+ * <p>
+ * staging에서는 종결 뒤, 버퍼를 지우기 전에 학습 샘플을 남긴다 (KAN-201, {@link TrainingSampleStore}) -
+ * AI가 계약대로 답한 건(성공과 판정 실패)만이고, 계약 위반과 AI 불가는 원점수도 판정도 없어 남기지
+ * 않는다. 저장 실패는 분석 결과에 영향을 주지 않는다.
  */
 class HttpAnalysisDispatcher implements AnalysisDispatcher {
 
@@ -58,6 +65,7 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
     private final AnalysisBacklog backlog;
     private final AiCircuitBreaker circuitBreaker;
     private final AnalysisMetrics metrics;
+    private final TrainingSampleStore trainingSamples;
     private final int retries;
     private final long retryBackoffMs;
 
@@ -70,19 +78,29 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
     HttpAnalysisDispatcher(AiAnalysisClient client, TaskExecutor executor,
                            AnalysisJobTransitions transitions, AnalysisBacklog backlog,
                            AiCircuitBreaker circuitBreaker, AnalysisMetrics metrics, int retries) {
-        this(client, executor, transitions, backlog, circuitBreaker, metrics, retries, RETRY_BACKOFF_MS);
+        this(client, executor, transitions, backlog, circuitBreaker, metrics, TrainingSampleStore.NONE, retries,
+                RETRY_BACKOFF_MS);
     }
 
     HttpAnalysisDispatcher(AiAnalysisClient client, TaskExecutor executor,
                            AnalysisJobTransitions transitions, AnalysisBacklog backlog,
                            AiCircuitBreaker circuitBreaker, AnalysisMetrics metrics, int retries,
                            long retryBackoffMs) {
+        this(client, executor, transitions, backlog, circuitBreaker, metrics, TrainingSampleStore.NONE, retries,
+                retryBackoffMs);
+    }
+
+    HttpAnalysisDispatcher(AiAnalysisClient client, TaskExecutor executor,
+                           AnalysisJobTransitions transitions, AnalysisBacklog backlog,
+                           AiCircuitBreaker circuitBreaker, AnalysisMetrics metrics,
+                           TrainingSampleStore trainingSamples, int retries, long retryBackoffMs) {
         this.client = client;
         this.executor = executor;
         this.transitions = transitions;
         this.backlog = backlog;
         this.circuitBreaker = circuitBreaker;
         this.metrics = metrics;
+        this.trainingSamples = trainingSamples;
         this.retries = retries;
         this.retryBackoffMs = retryBackoffMs;
     }
@@ -233,7 +251,11 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
                 log.info("이미 종결된 작업이라 AI 호출을 건너뛴다 jobId={}", request.analysisJobId());
                 return;
             }
-            apply(request.analysisJobId(), analyzeWithRetry(request, correlationId), acceptedNanos);
+            AiAnalysisClient.Outcome outcome = analyzeWithRetry(request, correlationId);
+            apply(request.analysisJobId(), outcome, acceptedNanos);
+            // 상태 전이가 끝난 뒤, 아래 finally의 wipeAudio() 전이다 (KAN-201). 사용자는 이미 종결을 볼 수
+            // 있고, 워커 점유 시간만 저장 왕복만큼 늘어난다 (staging 한정 - 그 밖은 NONE이라 즉시 돌아온다).
+            keepTrainingSample(request, outcome, correlationId);
         } catch (RuntimeException e) {
             // 종결을 놓치면 사용자는 타임아웃 스위퍼까지 대기 화면에 묶인다 - 어떤 예외도 종결로 바꾼다.
             log.error("분석 전달 워커 실패 jobId={}", request.analysisJobId(), e);
@@ -379,6 +401,46 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
             case null -> {
                 // analyzeWithRetry가 이미 종결했다.
             }
+        }
+    }
+
+    /**
+     * 학습 샘플로 남길 건이면 저장소에 넘긴다 (KAN-201). AI가 계약대로 답한 건 전부다 - 성공
+     * ({@link AiAnalysisClient.Completed})과 판정 실패({@link AiAnalysisClient.Rejected}의 JUDGED, 부정 샘플도
+     * 학습에 쓴다). 계약 위반은 원점수도 판정도 없고, null(재전송 예산 소진, 타임아웃, 회로 열림, 종료 중)은
+     * AI에 닿지 못했거나 답을 못 받은 것이라 남기지 않는다.
+     * <p>
+     * 저장소가 예외를 삼키기로 되어 있지만 한 번 더 감싼다 - 여기서 새면 바깥 catch가 이미 종결된 작업을
+     * INTERNAL_ERROR로 다시 종결하려 들고(조건부 UPDATE 0행이라 무해하지만 ERROR 로그가 남는다), 저장
+     * 구현의 실수가 분석 경로의 오류로 보인다.
+     */
+    private void keepTrainingSample(AnalysisRequest request, AiAnalysisClient.@Nullable Outcome outcome,
+                                    String correlationId) {
+        TrainingSample sample = switch (outcome) {
+            case AiAnalysisClient.Completed completed -> new TrainingSample(
+                    request.analysisJobId(), request.sessionId(), request.itemId(),
+                    Region.forStorage(request.region()).name(), request.scriptKey(),
+                    request.testVersion(), request.scoreVersion(), request.durationMs(),
+                    TrainingSample.Outcome.COMPLETED, completed.intonationScore(), completed.qualityCode(),
+                    completed.modelVersion(), completed.scoreVersion(), null, correlationId, request.audio());
+            case AiAnalysisClient.Rejected rejected when rejected.cause() == AiAnalysisClient.Rejected.Cause.JUDGED ->
+                    new TrainingSample(
+                            request.analysisJobId(), request.sessionId(), request.itemId(),
+                            Region.forStorage(request.region()).name(), request.scriptKey(),
+                            request.testVersion(), request.scoreVersion(), request.durationMs(),
+                            rejected.retryable() ? TrainingSample.Outcome.RETRYABLE_FAILED
+                                    : TrainingSample.Outcome.FAILED,
+                            null, null, null, null, rejected.errorCode(), correlationId, request.audio());
+            case AiAnalysisClient.Rejected ignored -> null;   // CONTRACT_VIOLATION
+            case null -> null;
+        };
+        if (sample == null) {
+            return;
+        }
+        try {
+            trainingSamples.save(sample);
+        } catch (RuntimeException e) {
+            log.warn("학습 샘플 저장소가 예외를 냈다 - 분석 결과에는 영향 없음 jobId={}", request.analysisJobId(), e);
         }
     }
 
