@@ -24,6 +24,7 @@ import { readErrorEnvelope, readJson } from '../analysis/errorEnvelope'
 import { newIdempotencyKey } from '../net/idempotencyKey'
 import { isRetryableStatus } from '../net/retryableStatus'
 import type { FetchLike } from '../progress/fetchTestDefinition'
+import { isRegionCode, type RegionCode } from '../region/regions'
 import { sanitizeCampaignToken } from './campaign'
 
 const browserFetch: FetchLike = (input, init) => globalThis.fetch(input, init)
@@ -79,12 +80,17 @@ export interface WebSession {
   userCurveCenterHz?: number
 }
 
-/** 세션 생성 하나에 필요한 선택 입력. 둘 다 없으면 평범한 첫 응시다 */
+/** 세션 생성 하나에 필요한 선택 입력. 아무것도 없으면 평범한 첫 응시다 */
 export interface CreateWebSessionOptions {
   /** 공유 링크가 실어 온 유입 코드 (`?c=`). 형태가 어긋나면 싣지 않는다 */
   campaignToken?: string | null
   /** 재응시라면 폐기할 이전 세션의 토큰 (§3.1) */
   previousToken?: string | null
+  /**
+   * 출신(모어 사투리) 지역 코드 (KAN-202, §3.1 `region`). staging 빌드의 선택 화면에서만 값이
+   * 들어오고, 그 외에는 필드째 뺀다 — prod 번들이 보내는 본문은 이 티켓 전과 같아야 한다.
+   */
+  region?: RegionCode | null
 }
 
 /** 봉투의 code·retryable·retryAfterMs를 실은 세션 생성 실패 (`UploadError`와 같은 모양이다) */
@@ -116,6 +122,12 @@ export async function createWebSession(
 ): Promise<WebSession> {
   const campaignToken = sanitizeCampaignToken(options.campaignToken)
   const previousToken = options.previousToken?.trim() ?? ''
+  /*
+   * 타입이 코드 열 개로 좁히지만 한 번 더 거른다 — 저장값이나 `as` 캐스팅으로 형태가 어긋난 값이
+   * 들어오면 서버가 400을 돌려주고, 그러면 학습 라벨 하나 때문에 응시 자체가 막힌다 (campaignToken과
+   * 같은 판단: 라벨은 빠져도 되지만 응시는 아니다).
+   */
+  const region = isRegionCode(options.region) ? options.region : null
 
   let response: Response
   try {
@@ -131,6 +143,8 @@ export async function createWebSession(
       body: JSON.stringify({
         // 형태가 어긋난 코드는 필드째 빼고 보낸다 (campaign.ts 참고).
         ...(campaignToken === null ? {} : { campaignToken }),
+        // staging의 선택 화면이 준 값만 싣는다 (KAN-202). 없으면 키 자체가 없어 prod 본문은 그대로다.
+        ...(region === null ? {} : { region }),
         client: { platform: 'WEB', appVersion: APP_VERSION },
       }),
     })
