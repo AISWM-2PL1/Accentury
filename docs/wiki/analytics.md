@@ -151,17 +151,18 @@ web track(event)
 | 사용자 ID | `setUserId`/`setUserID`를 부르는 코드가 세 런타임 어디에도 없다 |
 | 웹 광고 신호 | `gtag('config', …, { allow_google_signals: false, allow_ad_personalization_signals: false })` |
 | Android 광고 ID | 매니페스트 `google_analytics_adid_collection_enabled=false` — **Analytics 한정**. AdMob(KAN-196)은 광고 요청에 쓸 GAID를 자기 경로로 읽고 그 개인화는 사용자 동의(npa)가 정한다 (`ads-admob.md` §6). 계측은 계속 익명이다 |
-| iOS 광고 ID(IDFA) | **SwiftPM product를 `FirebaseAnalyticsCore`로 고른다** (`ios/project.yml`) |
+| iOS 광고 ID(IDFA) | **SwiftPM product를 `FirebaseAnalyticsCore`로 고른다** (`ios/project.yml`) — **Analytics 한정**. AdMob(KAN-196)은 AdSupport·ATT를 자기 경로로 링크해 IDFA를 읽고 그 개인화는 사용자 동의(시트 → ATT)가 정한다 (`ads-admob.md` §7.5). 계측은 계속 익명이다 |
 
-iOS만 방식이 다른 이유: IDFA 수집은 설정 플래그가 아니라 **무엇을 링크했는가**로 갈린다. 기본
-`FirebaseAnalytics` product는 IDFA를 수집하는 `GoogleAppMeasurement`를 물고 오고, `…Core`는
-`GoogleAppMeasurementCore`를 물어 AdSupport·AppTrackingTransparency가 바이너리에 아예 들어오지
-않는다. 켤 수 있는 코드가 없는 편이 플래그보다 강하다. 확인은 빌드 산출물에 직접 물으면 된다:
+iOS만 방식이 다른 이유: 계측 SDK의 IDFA 수집은 설정 플래그가 아니라 **무엇을 링크했는가**로 갈린다.
+기본 `FirebaseAnalytics` product는 IDFA를 수집하는 `GoogleAppMeasurement`를 물고 오고, `…Core`는
+`GoogleAppMeasurementCore`를 물어 **측정 라이브러리 안에** IDFA를 읽는 코드가 없다. 확인은 그 프레임워크에
+직접 물으면 된다 — 앱 바이너리 전체가 아니라 `GoogleAppMeasurement.framework`다. KAN-196부터 앱 바이너리
+자체는 AdMob SDK 때문에 AdSupport·AppTrackingTransparency를 링크한다:
 
 ```bash
 otool -L Accentury.app/Frameworks/GoogleAppMeasurement.framework/GoogleAppMeasurement | grep -i adsupport
 nm -u Accentury.app/Frameworks/GoogleAppMeasurement.framework/GoogleAppMeasurement | grep -c ASIdentifierManager
-# 둘 다 0건이어야 한다 (2026-09-05 확인)
+# 둘 다 0건이어야 한다 (2026-09-05 확인, KAN-196 뒤에도 측정 라이브러리 기준으로는 그대로)
 ```
 
 `Info-{Debug,Release}.plist`의 `GOOGLE_ANALYTICS_DEFAULT_ALLOW_AD_*` 세 줄은 이미 꺼진 것을 한 번

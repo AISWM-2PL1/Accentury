@@ -157,6 +157,11 @@ struct WebViewHost: View {
     /// 그래서 클로저가 아니라 값이다. 값이 바뀌면 이 뷰가 다시 그려지고, 그때 현재 문서로 다시 민다.
     let sessionToken: String
 
+    /// 브리지 `getAdConsent`가 웹에 건넬 동의 값 (KAN-196) — `granted`·`denied`·`unknown` 중 하나.
+    /// 토큰과 같은 이유로 클로저가 아니라 값이다: 문서에 매인 JS 변수라 미는 쪽이 변화를 봐야
+    /// 하고, 저장값이 바뀌면(`AdsController.consent`) 이 뷰가 다시 그려져 현재 문서로 다시 민다.
+    let adConsent: String
+
     let onRequestMicPermission: () -> Void
     let onStartVoiceItem: (VoiceItemStart) -> Void
     let onStartRetest: () -> Void
@@ -167,6 +172,12 @@ struct WebViewHost: View {
 
     /// 인트로의 개인정보처리방침 링크 (KAN-177). 검증을 통과한 URL만 오고, 여는 것은 Safari 시트다.
     let onOpenExternalUrl: (String) -> Void
+
+    /// 시트에서 고른 광고 동의 (KAN-196). `granted`·`denied`만 온다 — 브리지가 이미 걸렀다.
+    let onSetAdConsent: (AdConsent) -> Void
+
+    /// 분석 대기 화면의 전면 광고 (KAN-196). 인자도 회신도 없다.
+    let onShowInterstitialAd: () -> Void
 
     /// 결과를 웹으로 주입하려면(`evaluateJavaScript`) 상위가 인스턴스를 알아야 한다.
     var onWebViewCreated: (WKWebView) -> Void = { _ in }
@@ -188,6 +199,7 @@ struct WebViewHost: View {
                     url: url,
                     allowedOrigins: allowedOrigins,
                     sessionToken: sessionToken,
+                    adConsent: adConsent,
                     model: model,
                     onRequestMicPermission: onRequestMicPermission,
                     onStartVoiceItem: onStartVoiceItem,
@@ -195,6 +207,8 @@ struct WebViewHost: View {
                     onShareResult: onShareResult,
                     onLogEvent: onLogEvent,
                     onOpenExternalUrl: onOpenExternalUrl,
+                    onSetAdConsent: onSetAdConsent,
+                    onShowInterstitialAd: onShowInterstitialAd,
                     onWebViewCreated: onWebViewCreated,
                     onWebViewReleased: onWebViewReleased
                 )
@@ -236,6 +250,7 @@ private struct WebViewRepresentable: UIViewRepresentable {
     let url: String
     let allowedOrigins: Set<String>
     let sessionToken: String
+    let adConsent: String
     let model: WebLoadModel
     let onRequestMicPermission: () -> Void
     let onStartVoiceItem: (VoiceItemStart) -> Void
@@ -243,6 +258,8 @@ private struct WebViewRepresentable: UIViewRepresentable {
     let onShareResult: (SharePayload) -> Void
     let onLogEvent: (String, [String: EventParam]) -> Void
     let onOpenExternalUrl: (String) -> Void
+    let onSetAdConsent: (AdConsent) -> Void
+    let onShowInterstitialAd: () -> Void
     let onWebViewCreated: (WKWebView) -> Void
     let onWebViewReleased: (WKWebView) -> Void
 
@@ -255,7 +272,9 @@ private struct WebViewRepresentable: UIViewRepresentable {
             onStartRetest: onStartRetest,
             onShareResult: onShareResult,
             onLogEvent: onLogEvent,
-            onOpenExternalUrl: onOpenExternalUrl
+            onOpenExternalUrl: onOpenExternalUrl,
+            onSetAdConsent: onSetAdConsent,
+            onShowInterstitialAd: onShowInterstitialAd
         )
         // 해제 콜백은 `dismantleUIView`가 static이라 Coordinator를 거쳐야 한다.
         coordinator.onReleased = onWebViewReleased
@@ -326,6 +345,7 @@ private struct WebViewRepresentable: UIViewRepresentable {
     func updateUIView(_ webView: WKWebView, context: Context) {
         context.coordinator.allowedOrigins = allowedOrigins
         context.coordinator.sessionToken = sessionToken
+        context.coordinator.adConsent = adConsent
 
         // 실제로 로드를 건 URL. update는 갱신마다 도는데 매번 load하면 로드가 끝나지 않으므로,
         // 값이 달라졌을 때만 다시 건다 (안드로이드 `loadedUrl`). 뷰가 attempt로 새로 만들어지면
@@ -348,6 +368,8 @@ private struct WebViewRepresentable: UIViewRepresentable {
         // 토큰이 바뀌었으면 지금 문서에 다시 민다 (세션이 뒤늦게 생기는 경로 — 인트로에서
         // 시작을 누르고 세션을 받는 사이 문서는 그대로다).
         context.coordinator.pushSessionToken()
+        // 광고 동의도 같은 자리에서 (KAN-196) — 시트에서 고른 직후 저장값이 바뀌는데 문서는 인트로 그대로다.
+        context.coordinator.pushAdConsent()
     }
 
     static func dismantleUIView(_ webView: WKWebView, coordinator: WebViewCoordinator) {
@@ -392,6 +414,8 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate {
 
     var allowedOrigins: Set<String>
     var sessionToken: String = ""
+    /// 지금 네이티브가 든 광고 동의 (KAN-196). 토큰과 같은 규칙으로 문서에 민다.
+    var adConsent: String = ""
     var loadedUrl: String?
     weak var webView: WKWebView?
     weak var userContentController: WKUserContentController?
@@ -401,6 +425,9 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate {
     /// 새 문서가 커밋될 때마다 그리로 되돌아간다 — 문서가 바뀌면 JS 쪽 `token`도 `""`로
     /// 초기화되므로(``BridgeUserScript``) 네이티브가 든 기억도 함께 비워야 둘이 어긋나지 않는다.
     private var pushedToken: String?
+
+    /// 이 문서에 마지막으로 밀어 넣은 광고 동의 (KAN-196). ``pushedToken``과 같은 수명·같은 규칙.
+    private var pushedAdConsent: String?
 
     /// 지금 화면에 **커밋된** 문서가 있는가. 시작값 false는 첫 문서가 커밋되기 전(아직 아무
     /// 페이지도 없는 순간)을 뜻한다.
@@ -431,6 +458,8 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate {
     private let onShareResult: (SharePayload) -> Void
     private let onLogEvent: (String, [String: EventParam]) -> Void
     private let onOpenExternalUrl: (String) -> Void
+    private let onSetAdConsent: (AdConsent) -> Void
+    private let onShowInterstitialAd: () -> Void
 
     /// 브리지 메시지 수신기. `lazy`인 이유는 dispatcher의 origin 판정 클로저가 `self`(현재 URL과
     /// 최신 allowlist)를 읽어야 하기 때문이다 — 초기화 중에는 잡을 수 없다.
@@ -446,7 +475,9 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate {
             onStartRetest: { [weak self] in self?.onStartRetest() },
             onShareResult: { [weak self] in self?.onShareResult($0) },
             onLogEvent: { [weak self] name, params in self?.onLogEvent(name, params) },
-            onOpenExternalUrl: { [weak self] url in self?.onOpenExternalUrl(url) }
+            onOpenExternalUrl: { [weak self] url in self?.onOpenExternalUrl(url) },
+            onSetAdConsent: { [weak self] consent in self?.onSetAdConsent(consent) },
+            onShowInterstitialAd: { [weak self] in self?.onShowInterstitialAd() }
         )
     )
 
@@ -458,7 +489,9 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate {
         onStartRetest: @escaping () -> Void,
         onShareResult: @escaping (SharePayload) -> Void,
         onLogEvent: @escaping (String, [String: EventParam]) -> Void,
-        onOpenExternalUrl: @escaping (String) -> Void
+        onOpenExternalUrl: @escaping (String) -> Void,
+        onSetAdConsent: @escaping (AdConsent) -> Void,
+        onShowInterstitialAd: @escaping () -> Void
     ) {
         self.allowedOrigins = allowedOrigins
         self.model = model
@@ -468,6 +501,8 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate {
         self.onShareResult = onShareResult
         self.onLogEvent = onLogEvent
         self.onOpenExternalUrl = onOpenExternalUrl
+        self.onSetAdConsent = onSetAdConsent
+        self.onShowInterstitialAd = onShowInterstitialAd
         super.init()
     }
 
@@ -497,6 +532,30 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate {
             "TOKEN: pushed origin=\(webOrigin(current ?? "") ?? "?")"
                 + " empty=\(sessionToken.isEmpty) forced=\(force)"
         )
+        #endif
+    }
+
+    /// 광고 동의를 지금 문서에 민다 (KAN-196). 판정·시점·`force`의 뜻이 ``pushSessionToken(force:)``와
+    /// **한 글자도 다르지 않다** — 같은 순수 함수를 같은 인자 자리로 부른다(`pushedToken`·`sessionToken`
+    /// 자리에 동의 값을 넣는다). origin 판정이 보안 경계인 것도 같다: allowlist 밖 문서에는 동의 값이
+    /// 가지 않고, 그 문서의 `getAdConsent()`는 영영 `""`다 — 안드로이드가 origin 거부에 빈 문자열을
+    /// 돌려주는 규칙의 iOS 판이다.
+    ///
+    /// 동의 값은 찍어도 된다 — 토큰과 달리 비밀이 아니고 세 단어 중 하나다.
+    func pushAdConsent(force: Bool = false) {
+        guard let webView else { return }
+        let current = webView.url?.absoluteString
+        guard shouldPushToken(
+            hasCommitted: hasCommittedDocument,
+            forced: force,
+            pushedToken: pushedAdConsent,
+            sessionToken: adConsent,
+            urlAllowed: isAllowedWebUrl(current, allowedOrigins: allowedOrigins)
+        ) else { return }
+        pushedAdConsent = adConsent
+        webView.evaluateJavaScript(BridgeUserScript.adConsentPushJs(adConsent), completionHandler: nil)
+        #if DEBUG
+        smokeLog("ADCONSENT: pushed origin=\(webOrigin(current ?? "") ?? "?") value=\(adConsent) forced=\(force)")
         #endif
     }
 
@@ -541,6 +600,7 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate {
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         hasCommittedDocument = false
         pushedToken = nil
+        pushedAdConsent = nil
         // 이 로드가 지금부터 "기다리는 메인 프레임 로드"다. 앞 로드가 밀려났다면 그 신원은
         // 여기서 버려지고, 뒤늦게 도착할 앞 로드의 실패는 아래 판정이 걸러낸다.
         currentMainFrameNavigation = identity(navigation)
@@ -551,7 +611,9 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate {
         // 네이티브가 든 기억도 여기서 비워야 다음 push가 실제로 나간다.
         hasCommittedDocument = true
         pushedToken = nil
+        pushedAdConsent = nil
         pushSessionToken()
+        pushAdConsent()
         #if DEBUG
         smokeLog("NAV: committed \(webView.url?.absoluteString ?? "(nil)")")
         #endif
@@ -569,6 +631,7 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate {
          * origin 판정은 `force`가 열지 못한다(``shouldPushToken``).
          */
         pushSessionToken(force: true)
+        pushAdConsent(force: true)
         currentMainFrameNavigation = nil
         model.onPageFinished()
         #if DEBUG

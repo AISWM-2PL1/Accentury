@@ -23,8 +23,9 @@ final class BridgeUserScriptTests: XCTestCase {
         XCTAssertTrue(bumped.contains("return \(bridgeContractVersion + 1);"))
     }
 
-    /// `bridge.ts`가 `typeof bridge?.foo === 'function'`으로 찾는 일곱 이름. 하나라도 빠지면
-    /// 웹 래퍼가 false로 내려가 그 경로가 조용히 죽는다.
+    /// `bridge.ts`가 `typeof bridge?.foo === 'function'`으로 찾는 열한 이름. 하나라도 빠지면
+    /// 웹 래퍼가 false로 내려가 그 경로가 조용히 죽는다 — 광고 셋(KAN-196)은 `readAdConsent()`가
+    /// null이 되어 시트도 링크도 광고도 없는 "웹 단독" 모양으로 떨어진다.
     func testAllContractMethodsAreDefined() {
         for method in [
             "getContractVersion",
@@ -33,7 +34,11 @@ final class BridgeUserScriptTests: XCTestCase {
             "startVoiceItem",
             "startRetest",
             "shareResult",
+            "logEvent",
             "openExternalUrl",
+            "getAdConsent",
+            "setAdConsent",
+            "showInterstitialAd",
         ] {
             XCTAssertTrue(source.contains("\(method):"), "브리지 객체에 \(method)이(가) 없다")
         }
@@ -93,6 +98,55 @@ final class BridgeUserScriptTests: XCTestCase {
         }
         // 인자 이름만 다르다 (KAN-177) — 웹이 넘기는 것은 URL 문자열 하나다
         XCTAssertTrue(source.contains(#"post("openExternalUrl", String(url))"#))
+        // 광고 (KAN-196): 동의는 문자열 하나, 전면 광고는 인자 없음. `getAdConsent`는 JS 안에서 끝난다.
+        XCTAssertTrue(source.contains(#"post("setAdConsent", String(s))"#))
+        XCTAssertTrue(source.contains(#"post("showInterstitialAd")"#))
+        XCTAssertTrue(source.contains("getAdConsent: function(){ return adConsent; }"))
+    }
+
+    // MARK: 광고 동의 심기 (KAN-196)
+
+    /// 토큰과 같은 구조다 — 시작값 `""`, 심보다 먼저 온 값은 대기 자리에서, setter는 가로챌 수 없다.
+    func testAdConsentIsShimmedLikeTheToken() {
+        XCTAssertTrue(source.contains(#"typeof window.\#(BridgeUserScript.pendingAdConsentSlotName) === "string""#))
+        XCTAssertTrue(source.contains("delete window.\(BridgeUserScript.pendingAdConsentSlotName);"))
+        XCTAssertTrue(source.contains(#"Object.defineProperty(window, "\#(BridgeUserScript.adConsentSetterName)""#))
+        XCTAssertTrue(source.contains(#"adConsent = (typeof c === "string") ? c : "";"#))
+    }
+
+    private func expectedConsentPush(_ literal: String) -> String {
+        "(function(){ var c = \(literal);"
+            + " if (typeof window.__accenturySetAdConsent === \"function\")"
+            + " { window.__accenturySetAdConsent(c); }"
+            + " else { window.__accenturyPendingAdConsent = c; } })();"
+    }
+
+    func testAdConsentPushCarriesAJsonLiteral() {
+        XCTAssertEqual(expectedConsentPush(#""denied""#), BridgeUserScript.adConsentPushJs("denied"))
+        // origin 거부 문서에 남는 값 — 안드로이드의 빈 문자열과 같다.
+        XCTAssertEqual(expectedConsentPush(#""""#), BridgeUserScript.adConsentPushJs(""))
+    }
+
+    /// 실행까지 본다: 심이 먼저든 push가 먼저든 `getAdConsent()`가 민 값을 돌려주고, 밀기 전에는 `""`다.
+    func testAdConsentReachesTheDocumentInEitherOrder() {
+        let first = makeContext()
+        first.evaluateScript(BridgeUserScript.source)
+        XCTAssertEqual("", first.evaluateScript("window.AccenturyBridge.getAdConsent()")?.toString())
+        first.evaluateScript(BridgeUserScript.adConsentPushJs("granted"))
+        XCTAssertEqual("granted", first.evaluateScript("window.AccenturyBridge.getAdConsent()")?.toString())
+        // 동의가 바뀌면 다시 민다 — setter는 멱등이고 마지막 값이 남는다.
+        first.evaluateScript(BridgeUserScript.adConsentPushJs("denied"))
+        XCTAssertEqual("denied", first.evaluateScript("window.AccenturyBridge.getAdConsent()")?.toString())
+
+        let second = makeContext()
+        second.evaluateScript(BridgeUserScript.adConsentPushJs("denied"))
+        second.evaluateScript(BridgeUserScript.source)
+        XCTAssertEqual("denied", second.evaluateScript("window.AccenturyBridge.getAdConsent()")?.toString())
+        XCTAssertTrue(
+            second.evaluateScript("typeof window.__accenturyPendingAdConsent === 'undefined'").toBool()
+        )
+        // 토큰 자리는 건드리지 않는다.
+        XCTAssertEqual("", token(in: second))
     }
 
     // MARK: 토큰 주입 JS

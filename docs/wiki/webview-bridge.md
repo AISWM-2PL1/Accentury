@@ -278,24 +278,25 @@ StrictMode 이중 실행·재녹음 뒤 리렌더·재마운트로 여러 번 �
 일반). null인 실행(웹 단독·구버전 앱)에서는 광고가 뜨지 않으니 "광고 보고"라고 적으면
 거짓말이 된다.
 
-### 8.5 네이티브 구현 (Android 완료 — 3단계 / iOS — 4단계)
+### 8.5 네이티브 구현 (3·4단계 완료 — Android / iOS)
 
-| 항목 | 내용 | Android (3단계) |
-|---|---|---|
-| `getAdConsent()` | 저장소 값을 `'granted' \| 'denied' \| 'unknown'` 문자열로. 저장된 적 없으면 `'unknown'`. origin 거부는 빈 문자열(§2) | `AccenturyBridge.getAdConsent` → `SharedPreferencesAdConsentStore` (파일 `ad_consent`, 키 `state`) |
-| `setAdConsent(state)` | `'granted' \| 'denied'`만 받는다. 그 밖의 값(`'unknown'` 포함)은 §5 규칙대로 조용히 버리고 Crashlytics 흔적 | `AccenturyBridge.setAdConsent` → `AdsController.setConsent` (저장 + 프리로드 시작) |
-| `showInterstitialAd()` | 전면 광고 표시. 받아 둔 것이 없으면 아무 일 없음. 회신 없음 | `InterstitialGate.show` |
-| `startRetest()` | 보상형 광고 완주 후에만 기존 재응시 흐름. 중도 닫힘 → `onRetestFailed` `AD_DISMISSED` (`retryable:true`, `retryAfterMs:null`). 로드·표시 실패 → 광고 없이 통과 | `MainActivity.startRetest` → `RewardedRetestAd.run` (상태기계 `RewardedRetestGate`) → `proceedRetest`. 회신 payload는 `adDismissedRetestFailure()` |
-| 동의 → SDK | `granted`만 맞춤형. `denied`·`unknown`은 npa 요청(`AdRequest` extras `npa=1`). **`unknown`이면 요청을 아예 내지 않는다** — 첫 `setAdConsent`가 프리로드의 시작점 | `AdRequests.kt` `personalizationAllowed`·`buildAdRequest`, 프리로드 조건은 `AdsController.preloadIfConsented` |
-| SDK 초기화 | 앱 시작에 한 번, 백그라운드 스레드. 아동 대상 아님·동의 연령 미만 아님 명시 | `AccenturyApplication` → `AdsController.initialize` |
-| iOS ATT | 시트 동의와 ATT 프롬프트의 순서·관계는 **4단계에서 정한다** — 웹 계약에는 들어 있지 않다. ATT 결과를 `setAdConsent`로 접어 넣지는 말 것: 그 값은 사용자가 시트에서 고른 것이어야 「맞춤형 광고 설정」이 보여 주는 상태와 맞는다 | — |
+| 항목 | 내용 | Android (3단계) | iOS (4단계) |
+|---|---|---|---|
+| `getAdConsent()` | 저장소 값을 `'granted' \| 'denied' \| 'unknown'` 문자열로. 저장된 적 없으면 `'unknown'`. origin 거부는 빈 문자열(§2) | `AccenturyBridge.getAdConsent` → `SharedPreferencesAdConsentStore` (파일 `ad_consent`, 키 `state`) | 토큰과 같은 심 — 문서 변수 `adConsent`, `WebViewHost.pushAdConsent`가 origin 통과 문서에만 민다. 저장소 `UserDefaultsAdConsentStore` (키 `ad_consent.state`) |
+| `setAdConsent(state)` | `'granted' \| 'denied'`만 받는다. 그 밖의 값(`'unknown'` 포함)은 §5 규칙대로 조용히 버리고 Crashlytics 흔적 | `AccenturyBridge.setAdConsent` → `AdsController.setConsent` (저장 + 프리로드 시작) | `BridgeDispatcher` `"setAdConsent"` → `AdsController.shared.setConsent` (저장 + `granted`면 ATT → 프리로드) |
+| `showInterstitialAd()` | 전면 광고 표시. 받아 둔 것이 없으면 아무 일 없음. 회신 없음 | `InterstitialGate.show` | `AdsController.showInterstitial` → `InterstitialGate.show` (`present(from:)` 최상단 VC) |
+| `startRetest()` | 보상형 광고 완주 후에만 기존 재응시 흐름. 중도 닫힘 → `onRetestFailed` `AD_DISMISSED` (`retryable:true`, `retryAfterMs:null`). 로드·표시 실패 → 광고 없이 통과 | `MainActivity.startRetest` → `RewardedRetestAd.run` (상태기계 `RewardedRetestGate`) → `proceedRetest`. 회신 payload는 `adDismissedRetestFailure()` | `TestFlowView.handleRetest` → `AdsController.runRewardedRetest` → `RewardedRetestAd.run` (Core `RewardedRetestGate`, 같은 표) → `proceedRetest` → `TestFlowModel.startRetest`. payload는 Core `adDismissedRetestFailure()` |
+| 동의 → SDK | `granted`만 맞춤형. `denied`·`unknown`은 npa 요청(`AdRequest` extras `npa=1`). **`unknown`이면 요청을 아예 내지 않는다** — 첫 `setAdConsent`가 프리로드의 시작점 | `AdRequests.kt` `personalizationAllowed`·`buildAdRequest`, 프리로드 조건은 `AdsController.preloadIfConsented` | Core `personalizationAllowed`, `AdRequests.make` (`Extras.additionalParameters["npa"]="1"`), `AdsController.preloadIfConsented` |
+| SDK 초기화 | 앱 시작에 한 번. 아동 대상 아님·동의 연령 미만 아님 명시 | `AccenturyApplication` → `AdsController.initialize` (백그라운드 스레드) | `AccenturyApp.init` → `AdsController.shared.start` (`MobileAds.shared.start`, SDK가 비동기) |
+| iOS ATT | ATT 결과를 `setAdConsent`로 접어 넣지 않는다: 그 값은 사용자가 시트에서 고른 것이어야 「맞춤형 광고 설정」이 보여 주는 상태와 맞는다 | — | **`setAdConsent('granted')` 직후** `requestTrackingAuthorization`. `denied`면 부르지 않는다. 결과는 저장하지 않는다. 근거·앱 시작 경로는 `ads-admob.md` §7.5 |
 
 Android 쪽 결정의 근거(ID 주입, 전면 광고 중 폴링, 프리로드 시점, 릴리스 빗장)는 `ads-admob.md`에
-있다. iOS 4단계가 맞춰야 하는 것도 그 문서 §7이다.
+있고, iOS가 갈리는 지점(SwiftPM·Info.plist·ATT·심)은 그 문서 §7이다.
 
 **스모크 구동기는 동의를 미리 심어야 한다.** `WebAutoDriver.swift`는 인트로에서 [시작하기]를
 JS `.click()`으로 누르므로 시트의 막에 걸리지는 않지만, 동의가 `unknown`인 채 진행되고
-전면·보상형 광고가 실제 SDK를 부르면 자동 진행이 광고 위에서 멈춘다. 3·4단계에서
-`-AutoFlowDrive`(iOS)·안드로이드 스모크 진입 시 저장소에 `denied`를 미리 쓰고, 광고 단위는
-테스트 단위 id를 쓰거나 스모크 플래그로 광고 호출을 no-op으로 둔다. 웹 쪽
+전면·보상형 광고가 실제 SDK를 부르면 자동 진행이 광고 위에서 멈춘다. iOS(4단계)는
+`-AutoFlowDrive 1`·`-AutoStartSmoke 1`이면 `AdsController.start`가 저장소에 `denied`를 미리 쓰고
+`adsSuppressed`로 전면은 no-op, 보상형은 광고 없이 통과(proceed)시킨다 — Debug 한정, 로그
+`ADS: smoke consent=denied suppressed=true`. Android 스모크에는 아직 같은 사전 세팅이 없다. 웹 쪽
 `nativeSmokeSelectors.test.ts`는 구동기가 보는 클래스만 지키므로 이 조건을 잡지 못한다.

@@ -6,10 +6,10 @@ import WebKit
 /// 안드로이드 `AccenturyBridge.kt`의 이식본이고, JS 쪽 절반은 ``BridgeUserScript``다.
 ///
 /// 최소 표면 원칙 — 화면 전환(KAN-100)·답안 제출 인증(KAN-13)·재응시(KAN-34)·결과 공유(KAN-30)·
-/// 계측(KAN-33)·외부 링크(KAN-177)까지 필요한 여덟 메서드만 둔다. 늘리기 전에 웹에서 해결
-/// 가능한지 먼저 볼 것.
-/// 그중 값을 돌려주는 둘(`getContractVersion`·`getSessionToken`)은 여기로 오지 않는다 —
-/// JS 안에서 끝난다 (``BridgeUserScript`` 참고).
+/// 계측(KAN-33)·외부 링크(KAN-177)·광고 동의(KAN-196)까지 필요한 열한 메서드만 둔다. 늘리기 전에
+/// 웹에서 해결 가능한지 먼저 볼 것.
+/// 그중 값을 돌려주는 셋(`getContractVersion`·`getSessionToken`·`getAdConsent`)은 여기로 오지
+/// 않는다 — JS 안에서 끝난다 (``BridgeUserScript`` 참고).
 ///
 /// ## `postToMain`이 없는 이유
 ///
@@ -45,6 +45,13 @@ struct BridgeDispatcher {
     /// 앱 밖으로 열 링크 (KAN-177). ``AccenturyCore/externalUrlToOpen(_:allowedHosts:)``을
     /// 통과한 URL만 온다 — 어떻게 열지는 창구 너머가 정한다 (``ExternalBrowser``의 Safari 시트).
     let onOpenExternalUrl: (String) -> Void
+
+    /// 시트에서 고른 광고 동의 (KAN-196). `granted`·`denied`만 온다 — 저장과 광고 프리로드는
+    /// 받는 쪽(``AdsController/setConsent(_:)``)이 한다.
+    let onSetAdConsent: (AdConsent) -> Void
+
+    /// 분석 대기 화면의 전면 광고 (KAN-196). 인자도 회신도 없다 (``InterstitialGate``).
+    let onShowInterstitialAd: () -> Void
 
     /// 메시지 한 건을 처리한다. 조건에 맞지 않으면 **조용히** 아무 일도 하지 않는다.
     ///
@@ -127,6 +134,30 @@ struct BridgeDispatcher {
                 return
             }
             onOpenExternalUrl(target)
+
+        case "setAdConsent":
+            /*
+             * 시트에서 고른 동의를 적는다 (KAN-196, §8.5). `granted`·`denied`만 받는다.
+             *
+             * `unknown`을 거르는 이유: 그 값은 "고른 적 없음"이라 사용자가 고를 수 있는 것이 아니다.
+             * 웹이 보낸다면 계약을 다르게 알고 있는 것이고, 받아 적으면 이미 고른 동의를 되돌리는
+             * 통로가 된다. 계약 밖 값과 함께 조용히 버리고 흔적만 남긴다 (`startVoiceItem`과 같은 규칙).
+             *
+             * 저장이 곧 광고 프리로드의 시작이다 — `unknown`인 동안은 광고 요청이 없다가 이 호출로
+             * 처음 나간다 (`AdsController`). 회신은 없다: 웹 훅은 되읽지 않는다 (`ads/adConsent.ts`),
+             * 다만 문서의 `getAdConsent` 값은 `WebViewHost`가 저장값 변경을 보고 다시 민다.
+             */
+            guard let raw = payload as? String else { return }
+            guard let consent = AdConsent(bridgeValue: raw), consent != .unknown else {
+                CrashReports.recordBridgeParseFailure("setAdConsent")
+                return
+            }
+            onSetAdConsent(consent)
+
+        case "showInterstitialAd":
+            // 인자도 회신도 없다 (§8.3) — 광고가 떴는지·닫혔는지·실패했는지에 따라 대기 화면이
+            // 달라질 것이 없다. 세션당 한 번은 웹이 센다. 받아 둔 광고가 없으면 아무 일도 없다.
+            onShowInterstitialAd()
 
         default:
             // 모르는 메서드. 신버전 웹이 구버전 앱에 보낸 호출일 수도 있고(메서드 추가는

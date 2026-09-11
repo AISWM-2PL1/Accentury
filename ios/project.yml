@@ -43,6 +43,20 @@ packages:
   Firebase:
     url: https://github.com/firebase/firebase-ios-sdk
     exactVersion: 12.18.0
+  # 광고 (KAN-196). 안드로이드 `play-services-ads`(25.4.0) 자리다 — 두 플랫폼의 버전 계열이 따로
+  # 굴러 번호는 맞지 않는다. 13.0.0(2026-02-04)이 최소 iOS 13·Xcode 26.2(13.4.0)를 요구하는데
+  # 우리는 iOS 16·Xcode 26.6이라 걸리는 것이 없다. 태그는 GitHub `swift-package-manager-google-mobile-ads`
+  # 릴리스 목록에서 확정했다 (2026-09-11 기준 최신 13.9.0, 릴리스 노트 2026-08-26).
+  #
+  # 태그를 못 박는 이유는 KakaoOpenSDK·Firebase와 같다: 문서는 «Up to Next Major»를 권하지만
+  # 그러면 같은 커밋에서 어제와 오늘의 빌드가 달라져, 광고가 안 뜰 때 우리 변경인지 SDK 변경인지
+  # 가릴 수 없다. 올릴 때는 이 한 줄을 고치고 시뮬레이터 빌드·테스트까지 확인한다.
+  #
+  # 이 패키지가 `GoogleUserMessagingPlatform`(UMP)을 전이 의존으로 끌고 온다. 우리는 UMP의 동의
+  # 폼을 쓰지 않는다(동의는 웹 시트가 묻는다, ads-admob.md §4) — 링크만 되고 호출하는 코드가 없다.
+  GoogleMobileAds:
+    url: https://github.com/googleads/swift-package-manager-google-mobile-ads
+    exactVersion: 13.9.0
 
 targets:
   Accentury:
@@ -124,14 +138,53 @@ targets:
       #
       # **`FirebaseAnalytics`가 아니라 `FirebaseAnalyticsCore`다.** 기본 product는 IDFA를
       # 수집하는 `GoogleAppMeasurement`를 물고 오고, Core는 `GoogleAppMeasurementCore`를 물어
-      # 광고 식별자 수집 코드가 바이너리에 들어오지 않는다. 안드로이드가 매니페스트 플래그로 끄는
-      # 자리를 iOS는 이 선택으로 대신한다 — 켤 수 있는 코드가 없는 편이 플래그보다 강하고,
-      # App Store 개인정보 라벨(KAN-175)에 적을 항목도 그만큼 줄어든다. import 이름은 그대로
-      # `FirebaseAnalytics`다(같은 모듈을 물고 측정 라이브러리만 갈린다).
+      # **계측(GA4)이** 광고 식별자를 읽는 코드가 바이너리에 들어오지 않는다. 안드로이드가 매니페스트
+      # `google_analytics_adid_collection_enabled=false`로 끄는 자리를 iOS는 이 선택으로 대신한다.
+      # import 이름은 그대로 `FirebaseAnalytics`다(같은 모듈을 물고 측정 라이브러리만 갈린다).
+      #
+      # KAN-196부터 AdMob SDK가 AdSupport·AppTrackingTransparency를 자기 경로로 링크하므로
+      # "바이너리에 IDFA 코드가 없다"는 더는 사실이 아니다. 그래도 Core product를 **유지한다** —
+      # 이 선택이 지키는 것은 "계측 SDK가 IDFA를 안 읽는다"이고, 그건 광고 SDK가 들어와도
+      # 그대로다. 계측은 계속 익명(FR-AN-09)이고 광고만 동의를 따른다 (ads-admob.md §6·§7,
+      # analytics.md 「사용자 식별자와 광고 식별자를 붙이지 않는다」).
       - package: Firebase
         product: FirebaseAnalyticsCore
       - package: Firebase
         product: FirebaseCrashlytics
+      # 광고 (KAN-196). 안드로이드 `libs.play.services.ads` 자리. **AccenturyCore에는 넣지 않는다** —
+      # 카카오와 같은 이유로, 동의 enum·저장소·보상형 상태기계는 Core에 두고(`swift test`) SDK
+      # 호출만 앱 타깃 `Ads/`에 남긴다.
+      - package: GoogleMobileAds
+        product: GoogleMobileAds
+    # 릴리스 빗장 (KAN-196). 안드로이드 `-PrequireAdMobIds=true`(`app/build.gradle.kts`
+    # `requireAdMobIds`)의 자리다 — 테스트 광고 ID가 박힌 바이너리가 스토어로 나가면 AdMob 정책
+    # 위반이라, 명령줄에 `REQUIRE_ADMOB_IDS=YES`를 준 아카이브에서 세 값 중 하나라도 Google
+    # 테스트 ID면 빌드를 **여기서** 실패시킨다.
+    #
+    # 기본은 꺼져 있다. 시크릿이 없는 기계·CI가 아카이브부터 못 하게 되면 안 되고, 카카오 키처럼
+    # "없는 것이 정상"인 값이라 빗장은 스토어 제출 빌드가 명시로 건다 (ads-admob.md §3.1).
+    # Release 구성에서만 판정한다 — Debug는 테스트 ID가 정확히 맞는 상태다.
+    #
+    # `preBuildScripts`인 이유: 컴파일에 몇 분을 쓰고 나서 실패할 이유가 없다. inputFiles가 없는
+    # 것은 이 스크립트가 파일을 읽지 않기 때문이다 — 빌드 설정은 환경 변수로 들어온다.
+    preBuildScripts:
+      - name: AdMob 테스트 ID 빗장 (Release)
+        script: |
+          set -euo pipefail
+          if [ "${CONFIGURATION:-}" != "Release" ] || [ "${REQUIRE_ADMOB_IDS:-NO}" != "YES" ]; then
+            exit 0
+          fi
+          bad=""
+          case "${ADMOB_APP_ID:-}" in *"ca-app-pub-3940256099942544"*) bad="$bad ADMOB_APP_ID";; esac
+          case "${ADMOB_INTERSTITIAL_ID:-}" in *"ca-app-pub-3940256099942544"*) bad="$bad ADMOB_INTERSTITIAL_ID";; esac
+          case "${ADMOB_REWARDED_ID:-}" in *"ca-app-pub-3940256099942544"*) bad="$bad ADMOB_REWARDED_ID";; esac
+          if [ -n "$bad" ]; then
+            echo "error: AdMob ID가 주입되지 않아 Google 테스트 ID로 떨어졌다 (KAN-196, REQUIRE_ADMOB_IDS=YES):$bad"
+            echo "error:   릴리스 산출물은 테스트 광고 단위로 나갈 수 없다 - 스토어에 올라가면 AdMob 정책 위반이다."
+            echo "error:   xcodebuild ... ADMOB_APP_ID=... ADMOB_INTERSTITIAL_ID=... ADMOB_REWARDED_ID=... 로 넘긴다 (ads-admob.md §3)."
+            exit 1
+          fi
+        basedOnDependencyAnalysis: false
     # dSYM 업로드 (KAN-33). 심볼화되지 않은 스택은 프레임이 전부 16진수 주소라 읽을 수 없고,
     # 티켓 AC("iOS 스택이 심볼화돼 있다")가 정확히 이 단계에 걸린다.
     #

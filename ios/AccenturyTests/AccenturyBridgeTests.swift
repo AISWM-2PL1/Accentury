@@ -24,6 +24,8 @@ final class AccenturyBridgeTests: XCTestCase {
         var shares: [SharePayload] = []
         var events: [(name: String, params: [String: EventParam])] = []
         var externalUrls: [String] = []
+        var consents: [AdConsent] = []
+        var interstitialCalls = 0
     }
 
     private func makeDispatcher(
@@ -37,7 +39,9 @@ final class AccenturyBridgeTests: XCTestCase {
             onStartRetest: { sink.retestCalls += 1 },
             onShareResult: { sink.shares.append($0) },
             onLogEvent: { sink.events.append((name: $0, params: $1)) },
-            onOpenExternalUrl: { sink.externalUrls.append($0) }
+            onOpenExternalUrl: { sink.externalUrls.append($0) },
+            onSetAdConsent: { sink.consents.append($0) },
+            onShowInterstitialAd: { sink.interstitialCalls += 1 }
         )
     }
 
@@ -330,12 +334,15 @@ final class AccenturyBridgeTests: XCTestCase {
         dispatcher.handle(method: "", payload: nil)
         dispatcher.handle(method: "getSessionToken", payload: nil)
         dispatcher.handle(method: "evaluate", payload: "anything")
+        dispatcher.handle(method: "getAdConsent", payload: nil)
 
         XCTAssertEqual(0, sink.micPermissionCalls)
         XCTAssertEqual(0, sink.retestCalls)
         XCTAssertTrue(sink.starts.isEmpty)
         XCTAssertTrue(sink.shares.isEmpty)
         XCTAssertTrue(sink.events.isEmpty)
+        XCTAssertTrue(sink.consents.isEmpty)
+        XCTAssertEqual(0, sink.interstitialCalls)
     }
 
     /// 각 메서드가 자기 콜백으로만 간다 — 라우팅이 어긋나면 공유 payload로 녹음 화면이 뜬다.
@@ -350,12 +357,16 @@ final class AccenturyBridgeTests: XCTestCase {
             method: "logEvent",
             payload: eventPayload(name: "item_shown", params: #"{"item_seq":1}"#)
         )
+        dispatcher.handle(method: "setAdConsent", payload: "denied")
+        dispatcher.handle(method: "showInterstitialAd", payload: nil)
 
         XCTAssertEqual(1, sink.micPermissionCalls)
         XCTAssertEqual(1, sink.retestCalls)
         XCTAssertEqual(1, sink.starts.count)
         XCTAssertEqual(1, sink.shares.count)
         XCTAssertEqual(1, sink.events.count)
+        XCTAssertEqual([.denied], sink.consents)
+        XCTAssertEqual(1, sink.interstitialCalls)
     }
 
     // MARK: openExternalUrl (KAN-177)
@@ -401,4 +412,63 @@ final class AccenturyBridgeTests: XCTestCase {
         XCTAssertTrue(sink.externalUrls.isEmpty)
     }
 
+
+    // MARK: setAdConsent · showInterstitialAd (KAN-196)
+
+    /// 안드로이드 `AccenturyBridgeTest`의 광고 동의 케이스와 같은 판정이다 — 저장은 받는 쪽이 하고
+    /// 브리지는 계약 안의 두 값만 넘긴다.
+    func testGrantedAndDeniedReachTheStoreCallback() {
+        let sink = Sink()
+        let dispatcher = makeDispatcher(sink: sink, isCurrentUrlAllowed: { true })
+        dispatcher.handle(method: "setAdConsent", payload: "granted")
+        dispatcher.handle(method: "setAdConsent", payload: "denied")
+        XCTAssertEqual([.granted, .denied], sink.consents)
+    }
+
+    /// `unknown`은 "고른 적 없음"이라 사용자가 고를 수 있는 값이 아니다 — 받아 적으면 이미 고른
+    /// 동의를 되돌리는 통로가 된다. 계약 밖 값도 같이 버린다 (대소문자·공백까지 계약이다).
+    func testUnknownAndValuesOutsideTheContractAreDropped() {
+        let sink = Sink()
+        let dispatcher = makeDispatcher(sink: sink, isCurrentUrlAllowed: { true })
+        for raw in ["unknown", "", "Granted", " granted", "true", "null"] {
+            dispatcher.handle(method: "setAdConsent", payload: raw)
+        }
+        dispatcher.handle(method: "setAdConsent", payload: nil)
+        dispatcher.handle(method: "setAdConsent", payload: 1)
+        dispatcher.handle(method: "setAdConsent", payload: ["state": "granted"])
+        XCTAssertTrue(sink.consents.isEmpty)
+    }
+
+    /// 동의 값은 광고 요청의 맞춤형 여부를 정한다 — allowlist 밖 페이지가 사용자 대신 "허용"을
+    /// 적어 넣는 통로가 되면 안 된다.
+    func testConsentIsIgnoredOutsideTheAllowlist() {
+        let sink = Sink()
+        makeDispatcher(sink: sink, isCurrentUrlAllowed: { false })
+            .handle(method: "setAdConsent", payload: "granted")
+        XCTAssertTrue(sink.consents.isEmpty)
+    }
+
+    func testTheInterstitialCallReachesItsCallbackFromAnAllowedOrigin() {
+        let sink = Sink()
+        makeDispatcher(sink: sink, isCurrentUrlAllowed: { true })
+            .handle(method: "showInterstitialAd", payload: nil)
+        XCTAssertEqual(1, sink.interstitialCalls)
+    }
+
+    /// 전면 광고는 우리 창 위에 뜨는 화면이다 — 임의 페이지가 띄우게 두지 않는다.
+    func testTheInterstitialIsIgnoredOutsideTheAllowlist() {
+        let sink = Sink()
+        makeDispatcher(sink: sink, isCurrentUrlAllowed: { false })
+            .handle(method: "showInterstitialAd", payload: nil)
+        XCTAssertEqual(0, sink.interstitialCalls)
+    }
+
+    /// 인자가 없는 계약이라 payload가 무엇이든 무시하고 띄운다 — 횟수(세션당 한 번)는 웹이 센다 (§8.3).
+    func testTheInterstitialIgnoresAnyPayloadAndIsNotCountedHere() {
+        let sink = Sink()
+        let dispatcher = makeDispatcher(sink: sink, isCurrentUrlAllowed: { true })
+        dispatcher.handle(method: "showInterstitialAd", payload: "s_1")
+        dispatcher.handle(method: "showInterstitialAd", payload: nil)
+        XCTAssertEqual(2, sink.interstitialCalls)
+    }
 }

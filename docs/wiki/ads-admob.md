@@ -3,7 +3,7 @@
 1차 배포의 광고는 Google AdMob이다. 형식은 둘 — 분석 대기 화면의 **전면(interstitial) 1회**와
 결과 화면 [다시 테스트하기]의 **보상형(rewarded)**. 맞춤형 여부는 사용자가 인트로 시트에서 고른
 동의가 정한다. 브리지 계약과 웹 쪽 화면은 `webview-bridge.md` §8이 정본이고, 이 문서는 **네이티브
-구현의 결정과 근거**다. Android(3단계)는 끝났고 iOS(4단계)는 §7에 맞춰야 할 것만 적어 두었다.
+구현의 결정과 근거**다. Android(3단계)·iOS(4단계) 둘 다 끝났고, iOS가 Android와 갈리는 지점은 §7이다.
 
 ## 1. 결정 근거
 
@@ -67,6 +67,10 @@ admobRewardedId=ca-app-pub-XXXX/2222
 생성 뒤), (2) 시크릿 존재 검사 목록과 빌드 step `env:`에 세 이름 추가, (3) gradle 호출에
 `-PrequireAdMobIds=true` 추가. 시크릿이 없는 채 (3)만 하면 릴리스가 실패하므로 순서는 (1) → (2)·(3)이다.
 그때까지 릴리스 산출물은 테스트 ID로 나간다 — 스토어 제출 전 반드시 잠글 것.
+
+iOS의 같은 빗장은 `REQUIRE_ADMOB_IDS=YES`(명령줄 빌드 설정)이고 `ios/project.yml`의 Release 전용 preBuild
+스크립트가 판정한다 — §7.2. 아카이브 명령에 `ADMOB_APP_ID=… ADMOB_INTERSTITIAL_ID=… ADMOB_REWARDED_ID=…
+REQUIRE_ADMOB_IDS=YES`를 함께 준다.
 
 ## 4. 동의 → 요청
 
@@ -154,20 +158,94 @@ Analytics(GA4) 계측에 광고 ID를 붙일지를 정할 뿐이고 AdMob SDK는
 읽는다. 계측은 계속 익명(FR-AN-09)이고 광고만 동의를 따른다 — `analytics.md` 「사용자 식별자와 광고
 식별자를 붙이지 않는다」.
 
-## 7. iOS (4단계) — 맞춰야 할 것
+## 7. iOS 구현 (4단계)
 
-| 항목 | Android 값 | iOS |
+Android 3단계를 거울처럼 옮겼다 — 동의 저장 형식·npa·프리로드 규칙·보상형 상태기계·`AD_DISMISSED` payload가
+전부 같다. 갈리는 것은 플랫폼이 강제하는 셋(ATT, SwiftPM, Info.plist)뿐이다.
+
+### 7.1 SDK
+
+| 항목 | 값 | 근거 |
 |---|---|---|
-| 동의 저장 | SharedPreferences 파일 `ad_consent`, 키 `state`, 값 `granted`/`denied` 문자열, 없으면 `unknown` | UserDefaults 키 `ad_consent.state` 권장 — 값·의미 같게. `getAdConsent`가 두 플랫폼에서 같은 저장 형식을 말해야 한다 |
-| origin 거부 시 `getAdConsent` | 빈 문자열 (`getSessionToken`과 같은 규칙) | 같게 |
-| `setAdConsent` 거름 | `granted`/`denied`만. `unknown`·계약 밖은 버리고 Crashlytics `bridge_parse_failed: setAdConsent` | 같게 |
-| `AD_DISMISSED` payload | `{"code":"AD_DISMISSED","message":"광고를 끝까지 보시면 다시 테스트할 수 있어요","retryable":true,"retryAfterMs":null}` — `bridge/RetestFailure.kt` `adDismissedRetestFailure()` | 문구·필드 그대로. 문구 정본은 네이티브라 두 플랫폼이 같은 문장이어야 한다 |
-| 프리로드 규칙 | `unknown`이면 요청 없음. 첫 `setAdConsent`가 시작. 동의 변경 시 받아 둔 것 폐기·재로드 | 같게 |
-| npa | `GADExtras.additionalParameters = ["npa": "1"]` (iOS 대응) | `denied`·`unknown`에 npa |
-| 상태기계 | `RewardedRetestGate` 네 갈래 + 표시 중 중복 무시 | 같은 표로 Swift 테스트 |
-| `retestInFlight` | 광고 완주 뒤에 건다 | 같게 |
-| ATT | 해당 없음 | 시트 동의와 ATT 프롬프트의 순서를 4단계에서 정한다. ATT 결과를 `setAdConsent`로 접지 말 것 (§8.5) |
-| 스모크 구동기 | Android 스모크는 아직 광고 사전 세팅 없음 (§8.5 하단) | `-AutoFlowDrive` 진입 시 `denied`를 미리 쓰고 테스트 단위 사용 |
+| 패키지 | `googleads/swift-package-manager-google-mobile-ads` **13.9.0** (exactVersion) | GitHub 태그 목록 2026-09-11 확인, 릴리스 노트 2026-08-26. 카카오·Firebase와 같은 "태그를 못 박는다" 규칙 (`ios/project.yml`) |
+| 요구 사항 | iOS 13+ (13.0.0), Xcode 26.2+ (13.4.0) — 우리는 iOS 16 / Xcode 26.6 | rel-notes 13.0.0·13.4.0 |
+| 초기화 | `MobileAds.shared.start { }` — SDK가 내부에서 비동기로 돌고 완료를 메인으로 준다. Android가 별도 스레드를 만든 자리가 없다 | developers.google.com/admob/ios/quick-start |
+| 전면 | `InterstitialAd.load(with:request:completionHandler:)` → `fullScreenContentDelegate` → `present(from:)` | developers.google.com/admob/ios/interstitial (v12 API 이름) |
+| 보상형 | `RewardedAd.load(with:request:completionHandler:)` → `present(from:userDidEarnRewardHandler:)`. 보상 핸들러가 닫힘 delegate보다 먼저 온다 | developers.google.com/admob/ios/rewarded |
+| 비맞춤 | `Extras().additionalParameters = ["npa": "1"]` + `Request.register(_:)` | developers.google.com/admob/ios/targeting (network extras), Android와 같은 아카이브 근거 |
+| 연령 태그 | `requestConfiguration.tagForChildDirectedTreatment = false`·`tagForUnderAgeOfConsent = false` — **13.3.0(2026-04-27)에서 deprecated**, 대체 `ageRestrictedTreatment`는 `.unspecified/.child/.teen`뿐이라 Android §6과 같은 판단으로 옛 태그를 쓴다. Swift에는 `@Suppress`가 없어 **deprecated 경고 2줄이 빌드에 남는다(의도)** | rel-notes 13.3.0, developers.google.com/admob/ios/targeting |
+| 전이 의존 | `GoogleUserMessagingPlatform`(UMP)이 따라 들어온다. 링크만 되고 호출 코드 없음 (§4) | 패키지 `Package.swift` |
+| 최상단 VC | 광고 `present(from:)`에 `TopViewController.current()`를 넘긴다 — `ExternalBrowser`(Safari 시트)가 쓰던 탐색을 `ios/Accentury/UI/TopViewController.swift`로 빼서 둘이 같은 규칙 | 이미 떠 있는 시트 위에 얹어야 iOS가 무시하지 않는다 |
+
+Android와 달리 **광고 SDK가 AdSupport·AppTrackingTransparency를 링크한다.** KAN-33 때 `FirebaseAnalyticsCore`를
+골라 "IDFA 코드가 바이너리에 없다"고 적어 둔 서술(`FirebaseEventSink.swift`, `project.yml`, `analytics.md`)은
+그래서 더는 사실이 아니다. Core product는 **유지한다** — 그 선택이 지키는 것은 "계측 SDK가 IDFA를 안 읽는다"이고,
+광고 SDK가 자기 경로로 IDFA를 읽는 것과는 별개다. 계측은 익명(FR-AN-09), 광고만 동의를 따른다 (§6과 같은 구도).
+
+### 7.2 ID 주입 · 릴리스 빗장
+
+| xcconfig / 명령줄 | 기본값 (Google 테스트 ID) | 어디로 가나 |
+|---|---|---|
+| `ADMOB_APP_ID` | `ca-app-pub-3940256099942544~1458002511` | `Info-*.plist` `GADApplicationIdentifier` (SDK가 읽는다) |
+| `ADMOB_INTERSTITIAL_ID` | `ca-app-pub-3940256099942544/4411468910` | `Info-*.plist` → `AppConfig.admobInterstitialId` |
+| `ADMOB_REWARDED_ID` | `ca-app-pub-3940256099942544/1712485313` | `Info-*.plist` → `AppConfig.admobRewardedId` |
+
+기본값은 `ios/Accentury/Config/Base.xcconfig`에 있고 `Local.xcconfig`(gitignore)나 명령줄
+`xcodebuild ... ADMOB_APP_ID=...`가 덮는다 — 카카오 `KAKAO_NATIVE_APP_KEY`와 같은 사슬. Android처럼 **없으면
+테스트 ID로 켜 둔다**(§3). AdMob 콘솔의 iOS 앱은 Android 앱과 별개라 ID도 별개다.
+
+**빗장**: `project.yml`의 preBuild 스크립트 «AdMob 테스트 ID 빗장 (Release)». `CONFIGURATION=Release`이고
+`REQUIRE_ADMOB_IDS=YES`일 때 세 값 중 하나라도 `ca-app-pub-3940256099942544`이면 컴파일 전에 실패한다
+(2026-09-11 확인: 세 값 모두 걸려 `BUILD FAILED`). 기본은 꺼짐 — 시크릿 없는 기계·CI가 아카이브부터 못 하면 안 된다.
+릴리스 워크플로에 걸 순서는 §3.1과 같다: 시크릿 등록 → 명령줄 인자 → `REQUIRE_ADMOB_IDS=YES`.
+
+### 7.3 Info.plist
+
+- `GADApplicationIdentifier = $(ADMOB_APP_ID)`
+- `NSUserTrackingUsageDescription` — "허용하시면 관심사에 맞는 광고를 보여 드려요. 허용하지 않으셔도 광고는 나오지만
+  맞춤형이 아닌 일반 광고만 나와요." (웹 시트 `AD_CONSENT_EFFECT`와 같은 취지)
+- `SKAdNetworkItems` — quick-start 「Update your Info.plist」의 전체 목록 **50개**(2026-09-11) 그대로. Debug·Release 두
+  plist에 같은 배열. **갱신 방법**: 문서 목록을 다시 받아 배열을 통째로 바꾼다. 한 항목이 빠져도 빌드·실행은 멀쩡하고 그
+  네트워크의 전환 집계만 조용히 빠진다
+
+### 7.4 동의 저장 · 브리지
+
+| 항목 | Android | iOS |
+|---|---|---|
+| 동의 저장 | SharedPreferences `ad_consent`/`state` | `UserDefaults.standard` 키 **`ad_consent.state`**, 값 문자열 같음. 깨진 값은 `unknown` (`UserDefaultsAdConsentStore`, Core) |
+| `getAdConsent` | JS 스레드가 저장소를 동기로 읽음 | 토큰과 같은 심 — 문서 변수 `adConsent`, setter `__accenturySetAdConsent`, 대기 자리 `__accenturyPendingAdConsent`. 저장값이 바뀌면(`AdsController.consent`) `WebViewHost`가 `didCommit`·`didFinish`·갱신마다 다시 민다. origin 거부 문서는 `""` |
+| `setAdConsent` 거름 | `granted`/`denied`만, 그 외 Crashlytics | 같음 (`BridgeDispatcher`) |
+| `AD_DISMISSED` | `adDismissedRetestFailure()` | Core `adDismissedRetestFailure()` — JSON까지 테스트로 대조 |
+| 재응시 | `MainActivity.startRetest` → `RewardedRetestAd.run` → `proceedRetest` | `TestFlowView.handleRetest` → `AdsController.runRewardedRetest` → `proceedRetest` → `TestFlowModel.startRetest`(여기서 `beginRetest`) |
+
+### 7.5 ATT — 시트 동의와 프롬프트의 순서 (4단계 결정)
+
+**`setAdConsent("granted")`가 들어온 직후 `ATTrackingManager.requestTrackingAuthorization`을 부른다.**
+`AdsController.setConsent` → `preloadAfterTrackingSettled` → `TrackingAuthorization.requestIfUndetermined`.
+
+- 시트가 먼저여야 ATT 프롬프트가 맥락을 가진다 — 사용자가 방금 「맞춤형 광고 허용」을 골랐고, iOS는 그 허용을 실행하려면
+  기기 식별자 접근을 한 번 더 확인한다. `NSUserTrackingUsageDescription` 문구가 그 맥락으로 적혀 있다
+- **`denied`면 ATT를 부르지 않는다.** 추적 자체가 없는데 추적 허용을 묻는 것은 사용자에게도 심사에도 설명이 안 된다.
+  npa 요청은 IDFA가 필요 없다
+- **ATT 결과는 저장하지 않고 `setAdConsent`로 접지도 않는다** (`webview-bridge.md` §8.5). 시트 값은 사용자가 고른 것이어야
+  「맞춤형 광고 설정」이 보여 주는 상태와 맞는다. ATT 거부로 SDK가 IDFA를 못 읽으면 맞춤형이 사실상 비맞춤이 되는데 그건 SDK 몫이다
+- 앱 시작에 이미 `granted`면 ATT가 `notDetermined`일 때만 한 번 더 묻는다(설정에서 추적을 초기화한 경우). 이미 답이 있으면
+  iOS가 다시 띄우지 않으므로 부르지 않는다
+- 맞춤형 프리로드는 ATT 답이 난 **뒤**에 건다 — 프롬프트 중에 나간 요청은 IDFA 없이 나가 첫 광고가 비맞춤이 된다
+- 프롬프트는 앱이 active일 때만 뜬다. 앱 시작 경로는 `didBecomeActive`를 한 번 기다린다 (`TrackingAuthorization.whenActive`).
+  프롬프트가 떠 있는 동안 두 번째 요청(SDK 초기화 완료와 시트 선택이 겹침)은 시스템에 다시 묻지 않고 같은 답을 기다린다
+
+App Store 개인정보 라벨·«추적» 항목(`analytics.md` KAN-175 표)은 이 티켓으로 바뀐다 — 맞춤형 광고를 허용한 사용자에
+한해 IDFA가 광고 목적으로 쓰이므로 «추적: 광고 식별자» 신고가 필요하다. KAN-175에서 갱신.
+
+### 7.6 스모크
+
+`-AutoFlowDrive 1`·`-AutoStartSmoke 1`이면 `AdsController.start`가 저장소에 `denied`를 미리 쓰고
+`adsSuppressed = true`로 전면·보상형 호출을 광고 없이 통과시킨다 (`ADS: smoke consent=denied suppressed=true`).
+Debug 빌드 한정, 릴리스에는 그 블록이 없다. `webview-bridge.md` §8.5 하단 참고.
+
+**실기기 미확인 항목** (시뮬레이터에서 테스트 광고는 뜨지만 ATT 프롬프트·IDFA는 시뮬레이터 값이 다르다):
+ATT 시트가 시트 허용 직후 뜨는지, 허용/거부 뒤 첫 맞춤형 광고 요청, 보상형 완주 → 인트로 리로드, 중도 닫힘 → `AD_DISMISSED`.
 
 ## 8. 파일 지도
 
@@ -186,3 +264,25 @@ Analytics(GA4) 계측에 광고 ID를 붙일지를 정할 뿐이고 AdMob SDK는
 | `bridge/RetestFailure.kt` | `adDismissedRetestFailure()` |
 | `app/build.gradle.kts` | ID 주입·릴리스 빗장, `AndroidManifest.xml` APPLICATION_ID |
 | 테스트 | `app/src/test/…/ads/{AdConsentTest,AdRequestsTest,RewardedRetestGateTest}.kt`, `web/AccenturyBridgeTest.kt` |
+
+### 8.1 iOS
+
+| 파일 | 역할 |
+|---|---|
+| `ios/AccenturyCore/Sources/AccenturyCore/Ads/AdConsent.swift` | 동의 enum·브리지 문자열, `personalizationAllowed` |
+| `…/Ads/AdConsentStore.swift` | 저장소 프로토콜 + `UserDefaultsAdConsentStore`(키 `ad_consent.state`) |
+| `…/Ads/RewardedRetestGate.swift` | 보상형 → 재응시 순수 상태기계 (Android와 같은 표) |
+| `…/Bridge/RetestFailure.swift` | `adDismissedRetestFailure()`·`codeAdDismissed` |
+| `ios/Accentury/Ads/AdRequests.swift` | `AdRequests.make(consent:)` — npa extras |
+| `ios/Accentury/Ads/InterstitialGate.swift` | 전면 광고 로드·표시 (`FullScreenContentDelegate`) |
+| `ios/Accentury/Ads/RewardedRetestAd.swift` | 보상형 SDK 결선 |
+| `ios/Accentury/Ads/TrackingAuthorization.swift` | ATT 프롬프트 — active 대기, 중복 요청 합치기 |
+| `ios/Accentury/Ads/AdsController.swift` | 프로세스 허브 `shared` — 초기화·연령 태그·동의 저장·ATT 순서·프리로드·스모크 스위치 |
+| `ios/Accentury/UI/TopViewController.swift` | 광고·Safari 시트가 present할 최상단 VC |
+| `ios/Accentury/AccenturyApp.swift` | `AdsController.shared.start()` (Firebase 뒤) |
+| `ios/Accentury/TestFlow/TestFlowView.swift` `handleRetest`/`proceedRetest` | 광고 게이트 → 기존 재응시 |
+| `ios/Accentury/Web/BridgeUserScript.swift` | `getAdConsent`·`setAdConsent`·`showInterstitialAd` 심, `adConsentPushJs` |
+| `ios/Accentury/Web/AccenturyBridge.swift` | `setAdConsent` 거름·`showInterstitialAd` 라우팅 |
+| `ios/Accentury/Web/WebViewHost.swift` | `adConsent` 값 push (`pushAdConsent`) |
+| `ios/Accentury/AppConfig.swift`, `Config/Base.xcconfig`, `Info-*.plist`, `project.yml` | ID 주입·plist 키·SwiftPM·릴리스 빗장 |
+| 테스트 | Core `Tests/AccenturyCoreTests/Ads/{AdConsentTests,UserDefaultsAdConsentStoreTests,AdRequestsTests,RewardedRetestGateTests}.swift`, `Bridge/RetestFailedDeliveryTests.swift`(`AdDismissedRetestFailureTests`); 앱 `AccenturyTests/{AccenturyBridgeTests,BridgeUserScriptTests}.swift` |
