@@ -33,7 +33,7 @@ backend의 Fargate 전환(KAN-165)을 더한 것이다. 요청은 위에서 아�
 
 ```
 사용자 (Android 앱 WebView / 스탠드얼론 웹)
-  │  https://accentury.app  (staging: staging.accentury.app)
+  │  https://accentury.app  (staging: 추측 불가 서브도메인, KAN-206. 이름은 envs/staging/terraform.tfvars의 domain)
   ▼
 Route 53 호스팅 영역 ── Porkbun에서 NS 위임 ── ACM 인증서 2장 (us-east-1, 서울)   KAN-119
   │
@@ -338,7 +338,7 @@ done
 
 ```
 cd infra/envs/staging   # 또는 prod
-env=$(terraform output -raw domain | grep -q '^staging' && echo staging || echo prod)
+env=$(basename "$PWD")   # envs/<env> 디렉터리 이름. 도메인으로 환경을 구분하지 않는다 (staging 이름은 랜덤, KAN-206)
 gh variable set AWS_DEPLOY_ROLE_ARN        -e "$env" --body "$(terraform output -raw github_deploy_role_arn)"
 gh variable set WEB_BUCKET                 -e "$env" --body "$(terraform output -raw web_bucket)"
 gh variable set CLOUDFRONT_DISTRIBUTION_ID -e "$env" --body "$(terraform output -raw cloudfront_distribution_id)"
@@ -994,15 +994,15 @@ SSM `ACCENTURY_SHARE_KAKAOADMINKEY`와 같을 때만 받는다. 이 키는 카�
 
    ```
    KEY=$(aws ssm get-parameter --with-decryption --name /accentury/staging/ACCENTURY_SHARE_KAKAOADMINKEY --query Parameter.Value --output text)
-   curl -sS -o /dev/null -w '%{http_code}\n' -X POST https://staging.accentury.app/v0/share/kakao/webhook \
+   curl -sS -o /dev/null -w '%{http_code}\n' -X POST https://<staging 도메인>/v0/share/kakao/webhook \
      -H "Authorization: KakaoAK $KEY" -H 'X-Kakao-Resource-ID: manual-check-1' \
      -H 'Content-Type: application/json' -d '{"CHAT_TYPE":"MemoChat","HASH_CHAT_ID":"x","campaign":"kko_share"}'
    # 폼 인코딩도 같은 결과여야 한다. 카카오가 어느 쪽으로 보내든 받는다.
-   curl -sS -o /dev/null -w '%{http_code}\n' -X POST https://staging.accentury.app/v0/share/kakao/webhook \
+   curl -sS -o /dev/null -w '%{http_code}\n' -X POST https://<staging 도메인>/v0/share/kakao/webhook \
      -H "Authorization: KakaoAK $KEY" -H 'X-Kakao-Resource-ID: manual-check-2' \
      -H 'Content-Type: application/x-www-form-urlencoded' -d 'CHAT_TYPE=MemoChat&HASH_CHAT_ID=x&campaign=kko_share'
    ADMIN=$(aws ssm get-parameter --with-decryption --name /accentury/staging/ACCENTURY_ADMIN_TOKEN --query Parameter.Value --output text)
-   curl -sS "https://staging.accentury.app/admin/v0/analytics" -H "X-Admin-Token: $ADMIN" | jq .shares
+   curl -sS "https://<staging 도메인>/admin/v0/analytics" -H "X-Admin-Token: $ADMIN" | jq .shares
    ```
 
 키를 재발급하면(콘솔에서 Admin 키 재발급) 2번을 다시 한다. 웹훅은 앱이 `serverCallbackArgs`에
@@ -1358,7 +1358,7 @@ end=$(( $(date +%s) + 180 ))
 while [ "$(date +%s)" -lt "$end" ]; do
   for i in $(seq 1 6); do
     curl -s -o /dev/null -w '%{http_code} ' \
-      "https://staging.accentury.app/v0/tests/gn-2026.08.1"
+      "https://<staging 도메인>/v0/tests/gn-2026.08.1"
   done
   echo " @ $(date +%H:%M:%S)"
   sleep 10
@@ -1706,7 +1706,7 @@ Terraform 입력의 차이는 `diff -r infra/envs/staging infra/envs/prod`가 �
 
 | 항목 | staging | prod | 흘러가는 곳 |
 | --- | --- | --- | --- |
-| 도메인 | `staging.accentury.app` | `accentury.app` | CloudFront 대체 도메인, Route 53, `ACCENTURY_RESULT_WEBTESTURL`, `ACCENTURY_RESULT_ASSETBASEURL` |
+| 도메인 | `<랜덤>.accentury.app` (KAN-206, 이름은 tfvars에만) | `accentury.app` | CloudFront 대체 도메인, Route 53, `ACCENTURY_RESULT_WEBTESTURL`, `ACCENTURY_RESULT_ASSETBASEURL` |
 | VPC CIDR | `10.1.0.0/16` | `10.0.0.0/16` | 서브넷 4개, `ACCENTURY_TRUSTEDPROXIES` |
 | RDS 엔드포인트 | `accentury-staging.<id>.ap-northeast-2.rds.amazonaws.com` | `accentury-prod.<id>...` | `SPRING_DATASOURCE_URL` (apply 후 output `rds_endpoint`) |
 | RDS 마스터 시크릿 | `rds!db-<staging uuid>` | `rds!db-<prod uuid>` | `SPRING_DATASOURCE_URL`의 `secretsManagerSecretId`, backend 태스크 역할 정책 |

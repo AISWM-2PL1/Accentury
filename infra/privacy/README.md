@@ -13,7 +13,7 @@ infra/privacy/privacy.html    각 환경의 웹 S3 버킷 루트에 privacy.html
 | 환경 | URL |
 | --- | --- |
 | prod | `https://accentury.app/privacy.html` |
-| staging | `https://staging.accentury.app/privacy.html` |
+| staging | `https://<staging 도메인>/privacy.html` (도메인은 `infra/envs/staging/terraform.tfvars`, KAN-206) |
 
 스토어 등록 정보(KAN-174 Play, KAN-175 App Store)와 앱 내 링크(KAN-177), 출시 검증(KAN-39)이
 참조하는 주소는 prod 쪽이다. **이 주소는 바뀌지 않는다.** 본문이 바뀌어도 URL은 그대로다.
