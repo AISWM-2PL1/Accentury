@@ -4,8 +4,9 @@
 [`ads-admob.md`](ads-admob.md) — 이 문서는 **웹 몫**을 맡는다. 사업자가 갈린 이유가 하나뿐이라
 말이 짧다: **AdMob은 웹을 지원하지 않는다.**
 
-1단계(2026-09-13)에서 정한 것은 방침·동의 문안·이 문서까지다. 태그 설치·동의 저장·요청 플래그는
-2~4단계에 배선한다. 아래 표에 「예정」이라 적힌 자리가 그것이다.
+1단계(2026-09-13)에서 정한 것은 방침·동의 문안·이 문서까지이고, 2단계(2026-09-13)에서 웹 동의를
+묻고 저장하는 자리를 배선했다 (§3). 태그 설치·요청 플래그는 3~4단계다. 아래 표에 「예정」이라
+적힌 자리가 그것이다.
 
 ## 1. 결정 근거
 
@@ -44,7 +45,7 @@ AdSense 광고 태그를 앱 WebView 안에서 돌리는 것은 허용되지 않
 | 실행 | 묻는 자리 | 저장 | 단계 |
 |---|---|---|---|
 | 앱 | 인트로 위 동의 시트 | 네이티브 (SharedPreferences / UserDefaults) — 정본 | 완료 (KAN-196) |
-| 브라우저 웹 | 같은 시트 | **브라우저 저장소** | **2단계 예정** |
+| 브라우저 웹 | 같은 시트 | **브라우저 저장소** (`localStorage`) | 완료 (2단계, 2026-09-13) |
 
 시트는 같은 컴포넌트(`web/src/ads/AdConsentSheet.tsx`)이고 문안만 갈린다. 고지 4요소 중 갈리는
 것은 ①사업자와 ②수집 항목 둘 — 앱은 「Google AdMob / 기기의 광고 식별자」, 웹은
@@ -56,11 +57,43 @@ export const AD_CONSENT_WHY: Record<AdVendor, string>
 export const AD_CONSENT_EFFECT: Record<AdVendor, string>
 ```
 
-이고 시트는 `vendor?: AdVendor` prop으로 고른다 (기본값 `'admob'` — 지금 호출처가 앱 경로뿐이라
-그렇다). 2단계가 웹 경로에서 `vendor="adsense"`를 넘긴다.
+이고 시트는 `vendor?: AdVendor` prop으로 고른다 (기본값 `'admob'`). 인트로가 훅이 고른 값을
+그대로 넘긴다.
 
 저장이 웹에서만 브라우저 저장소인 이유는 [`webview-bridge.md` §8.1](webview-bridge.md)에 있다 —
 브리지가 없는 실행이라 네이티브 저장소에 닿을 길이 없다. 앱 쪽 정본이 네이티브인 것은 그대로다.
+
+### 3.1 갈래는 `resolveAdConsentSource` 한 곳에서 정한다 (2단계)
+
+`web/src/ads/adConsent.ts`의 순수 함수다. 훅 밖에 둔 것은 세 갈래가 각각 어떤 실행을 뜻하는지가
+렌더링과 무관한 판정이라 렌더 없이 그대로 확인할 수 있어야 하기 때문이다.
+
+| 실행 | 판정 | 저장소 | `vendor` | `consent` |
+|---|---|---|---|---|
+| 브리지에 `getAdConsent`가 있다 | `'bridge'` | 네이티브 | `admob` | `readAdConsent()` |
+| 객체도 `?bridge=`도 없다 (`isStandaloneWeb`) | `'web'` | `localStorage` | `adsense` | `readWebAdConsent()` |
+| 그 밖 — 구버전 앱, `?bridge=`만 있는 WebView | `'none'` | 없음 | (`admob`, 의미 없음) | `null` |
+
+**메서드의 유무를 객체의 유무보다 먼저 본다.** 그다음이 `isStandaloneWeb`이고, 나머지 조합은
+전부 `'none'`이다 — 그 둘을 웹으로 보내면 앱 안에서 브라우저 저장소에 동의를 적게 되고 정작
+SDK를 세우는 네이티브는 그 값을 모른다.
+
+`consent === null`의 뜻이 좁아졌다. 이제 부재는 `'none'`뿐이고, 브라우저 단독 실행은 부재가
+아니라 웹 저장소에 묻는 경로다.
+
+### 3.2 웹 저장소 규칙 (`webAdConsentStore.ts`)
+
+| 항목 | 값·규칙 | 이유 |
+|---|---|---|
+| 키 | `accentury:adConsent` | 진행 스냅샷(`accentury:progress`)과 같은 접두어 — 오리진 안에서 키가 섞이지 않게 하는 규칙이 하나뿐이어야 한다 |
+| 저장 값 | `'granted'` \| `'denied'` | `unknown`은 고를 수 없다 (`AdConsentChoice`) |
+| 계약 밖 문자열 | **`unknown`으로 접는다** | 브리지 `readAdConsent`가 null로 접는 것과 다르다. 웹 저장소의 깨진 값은 우리 자신의 옛 값이거나 사용자가 만진 것이고 쓰기 경로는 멀쩡하다 — 다시 물으면 제대로 된 값이 들어간다. 브리지 쪽은 계약이 어긋난 앱이라 쓰기도 어긋났을 가능성이 커 조용히 없는 셈 친다 |
+| 접근이 던질 때 | 읽기는 `unknown`, 쓰기는 무시 | 쿠키 차단 브라우저는 `window.localStorage` 프로퍼티 접근 자체가 던진다. `progressSnapshot.ts`의 `defaultSnapshotStorage`와 같은 guard를 **복사해서** 둔다 — 광고가 진행 상태 모듈에 묶일 이유가 없다 |
+| 메모리 사본 | 쓰기는 항상 사본에 먼저, 읽기는 사본이 있으면 사본 | 저장소가 없는 환경(사생활 모드·쿼터 초과)에서도 이번 방문 안에서는 선택이 지켜져야 시트가 닫히고 링크가 생긴다. 다음 방문에 다시 묻는 것은 「브라우저 저장소에 둡니다」가 약속한 범위 그대로다 |
+| `writeWebAdConsent`의 반환 | **항상 `true`** | 앱 쪽 `writeAdConsent`의 true가 「네이티브에 닿았다」인 것과 대칭이 아니다 — 이쪽은 「메모리에는 반드시 닿는다」다 |
+
+테스트 사이에 사본이 새지 않게 `resetWebAdConsentMemory()`를 export한다 (테스트 전용).
+`IntroScreen.test.tsx`·`adConsent.test.ts`·`webAdConsentStore.test.ts`의 `afterEach`가 부른다.
 
 ## 4. 요청 규칙 (3단계 예정)
 
@@ -153,12 +186,25 @@ GA4와 같은 규칙이다 — `VITE_GA4_MEASUREMENT_ID`가 없으면 `installGa
 | `web/src/ads/AdConsentSheet.test.tsx` | 사업자별 문안 2건 |
 | `docs/wiki/ads-web-adsense.md` | 이 문서 |
 
-2~4단계에서 손댈 것.
+2단계(2026-09-13)에서 바뀐 것.
+
+| 파일 | 무엇이 바뀌었나 |
+|---|---|
+| `web/src/ads/webAdConsentStore.ts` | **신설.** 키·메모리 사본·`unknown` 접기·저장소 guard (§3.2) |
+| `web/src/ads/webAdConsentStore.test.ts` | **신설.** 7건 — 없음·왕복·계약 밖 값·읽기 예외·쓰기 예외·사본 초기화 |
+| `web/src/ads/adConsent.ts` | `resolveAdConsentSource` 3갈래 + `AdConsentControl.vendor` (§3.1) |
+| `web/src/ads/adConsent.test.ts` | **신설.** 7건 — 갈래 4건 + 훅 3건 |
+| `web/src/ads/AdConsentSheet.tsx` | 주석만. Escape를 안 듣는 근거가 「앱 안에서만 뜬다」에서 「선택 없이 닫히면 또 뜬다」로 좁혀졌다 |
+| `web/src/intro/IntroScreen.tsx` | `vendor`를 시트에 넘긴다. 나머지 로직 불변 |
+| `web/src/intro/IntroScreen.test.tsx` | 「브리지 없음에는 시트도 링크도 없다」를 뒤집고 `?bridge=`만 있는 갈래 1건 추가 |
+| `web/e2e/helpers/testFlow.ts` | `passAdConsentIfShown` + `startTest`에서 호출 |
+| `web/e2e/smoke.spec.ts` · `mic-blocked.spec.ts` | 같은 헬퍼 호출 (3곳) |
+| `docs/wiki/browser-e2e.md` · `webview-bridge.md` · `privacy-policy.md` | 2단계 사실 반영 |
+
+3~4단계에서 손댈 것.
 
 | 단계 | 파일 | 할 일 |
 |---|---|---|
-| 2 | `web/src/ads/adConsent.ts` (`useAdConsent`) | 브리지가 없으면 브라우저 저장소로 갈린다 |
-| 2 | `web/src/intro/IntroScreen.tsx` | 웹 경로에서 `vendor="adsense"` |
 | 3 | 새 `web/src/ads/adsense.ts` | 태그 설치 + `requestNonPersonalizedAds`·`pauseAdRequests` (§4) |
 | 3 | `web/src/main.tsx` | `isStandaloneWeb` 게이트 (§2) |
 | 4 | 분석 대기 화면 | 배너 슬롯 1개 (§5) |
