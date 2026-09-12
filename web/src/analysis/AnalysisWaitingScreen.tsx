@@ -41,9 +41,18 @@
  * 재녹음 뒤 리렌더·재마운트로 여러 번 마운트될 수 있어, 화면 안의 ref로는 마지막 경우를 못
  * 막는다. 회신은 없다 — 광고가 떴든 닫혔든 실패했든 이 화면이 달라질 것이 없고, 폴링은 광고
  * 아래에서 그대로 돈다.
+ *
+ * ## 브라우저 단독 실행의 배너도 이 화면이다 (KAN-197)
+ *
+ * 같은 자리를 웹은 배너로 쓴다 ([AdSlot], `docs/wiki/ads-web-adsense.md` §5). 앱과 웹이
+ * 겹치지 않는 이유는 둘의 게이트가 정반대라서다 — 전면 광고는 브리지가 있어야 나가고 배너는
+ * 브리지가 없어야 그려지므로, 한 실행에서 둘이 같이 보이는 경로가 없다. 슬롯은 단계 표시 아래,
+ * 기다리는 중(`waiting`)에만 선다: 오류·행동 요구 상태에서는 히어로 블록째 그리지 않으므로
+ * 사용자가 무엇을 해야 하는지를 광고가 밀어내지 않는다.
  */
 
 import { Fragment, useEffect, useRef } from 'react'
+import { AdSlot } from '../ads/AdSlot'
 import { showInterstitialAdOnce } from '../ads/interstitial'
 import type { RetakeReason } from '../analytics/events'
 import { track } from '../analytics/track'
@@ -340,6 +349,13 @@ export function AnalysisWaitingScreen({
                 )
               })}
             </div>
+            {/*
+              브라우저 단독 실행의 배너 (KAN-197). 단계 표시 **아래**인 것이 요점이다 — 위에
+              두면 "분석 중입니다" 히어로와 진행 상태 사이를 광고가 가른다. 앱 WebView와 ID가
+              없는 빌드에서는 이 컴포넌트가 아무것도 그리지 않으므로 (`AdSlot`) 여기 있는 것만
+              으로 기존 화면이 달라지지 않는다.
+            */}
+            <AdSlot />
           </div>
         )}
 

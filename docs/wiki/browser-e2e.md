@@ -177,6 +177,15 @@ import한다 (셀렉터 규칙 「화면의 상수를 import한다」).
 `startTest`를 거치지 않고 인트로에서 직접 클릭하는 스펙도 같은 줄이 필요하다. 지금은
 `smoke.spec.ts`(숫자 카드 확인 전)와 `mic-blocked.spec.ts`(두 테스트의 `goto` 직후)가 그렇다.
 
+**실측 (3단계, 2026-09-13).** 백엔드 없이 도는 `mic-blocked.spec.ts`로 확인했다 — 2 passed.
+헬퍼가 `isVisible()`로 조용히 지나쳤을 가능성을 가르려고 같은 판에서 일회용 스펙을 하나 더
+띄워 시트가 **실제로 떠 있는지**까지 단언했고(`isVisible()`이 true, 「일반 광고만 보기」 클릭
+뒤 `toBeHidden()`), 통과했다. 시트가 안 떴는데 헬퍼가 통과한 것이 아니라 떠 있는 시트를 걷고
+지나간 것이다. 같은 스펙을 `VITE_ADSENSE_CLIENT_ID`·`VITE_ADSENSE_SLOT_ID`를 셸에 준 채로 한
+번 더 돌려도 2 passed다 — 태그 변수가 있는 빌드가 시작 게이트를 깨지 않는다(KAN-197 AC 6).
+Playwright가 `webServer.env`를 부모 환경 **위에** 얹으므로 셸의 값이 개발 서버까지 그대로
+간다 (`playwright.config.ts`의 `VITE_REGION_SELECT` 주석과 같은 경로).
+
 ## 발견: 브라우저 단독에는 재녹음 복구가 없다
 
 처음 겨눈 것은 "분석이 실패한 문항을 재녹음해 복구하고 완주한다"였는데, **그 길은 브라우저에

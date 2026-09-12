@@ -39,6 +39,7 @@ import {
   type AdConsentChoice,
 } from '../bridge/bridge'
 import type { AdVendor } from './adConsentText'
+import { applyAdConsentToAdSense } from './adsense'
 import { readWebAdConsent, writeWebAdConsent } from './webAdConsentStore'
 
 /**
@@ -92,6 +93,13 @@ export function useAdConsent(): AdConsentControl {
   const choose = useCallback(
     (state: AdConsentChoice) => {
       const stored = source === 'web' ? writeWebAdConsent(state) : writeAdConsent(state)
+      /*
+       * 웹은 저장 말고 할 일이 하나 더 있다 (KAN-197 3단계). 앱은 네이티브가 `setAdConsent`를
+       * 받아 SDK를 다시 세우지만, 웹에서 SDK에 해당하는 것은 이 문서에 이미 선 adsbygoogle 큐다 —
+       * 그쪽 플래그를 갈아 끼우지 않으면 저장 값과 다음 광고 요청이 어긋난다. 태그가 아직 안
+       * 선 인트로에서는 아무 일도 없다 (`applyAdConsentToAdSense`가 큐 없으면 no-op).
+       */
+      if (source === 'web') applyAdConsentToAdSense(state)
       if (stored) setConsent(state)
     },
     [source],
