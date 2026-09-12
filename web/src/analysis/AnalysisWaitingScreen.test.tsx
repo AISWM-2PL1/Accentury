@@ -9,6 +9,7 @@ import {
 } from './AnalysisWaitingScreen'
 import type { RetestControl } from '../result/useRetest'
 import { REQUIRED_BRIDGE_VERSION } from '../bridge/bridge'
+import { resetAdSenseForTests } from '../ads/adsense'
 
 /**
  * 재응시 상태 대역 (KAN-191). 기본값은 "누를 수 있고 아직 아무 일도 없었다" — 실제 브리지
@@ -115,6 +116,12 @@ afterEach(() => {
   vi.useRealTimers()
   delete window.gtag
   delete window.AccenturyBridge
+  // 웹 배너 자리 (KAN-197). 빌드 변수·태그 설치 표식·큐가 테스트 사이에 새면 다음 케이스가
+  // 광고가 이미 선 판에서 시작한다
+  vi.unstubAllEnvs()
+  resetAdSenseForTests()
+  delete window.adsbygoogle
+  document.head.querySelectorAll('script[src*="adsbygoogle"]').forEach((el) => el.remove())
 })
 
 /** GA4 태그 자리의 대역 (KAN-33). 도착한 이벤트를 순서대로 모은다 */
@@ -759,5 +766,48 @@ describe('전면 광고 — 세션당 한 번 (KAN-196)', () => {
     await renderScreen({ sessionId: 'ad-none' })
 
     expect(screen.getByRole('heading', { name: '결과를 만들고 있어요' })).toBeInTheDocument()
+  })
+})
+
+describe('웹 배너 — 브라우저 단독 실행에만 (KAN-197 3단계)', () => {
+  /** 두 빌드 변수가 다 있는 빌드. 값이 하나라도 없으면 `AdSlot`이 아무것도 그리지 않는다 */
+  function stubAdSenseIds(): void {
+    vi.stubEnv('VITE_ADSENSE_CLIENT_ID', 'ca-pub-1234567890123456')
+    vi.stubEnv('VITE_ADSENSE_SLOT_ID', '9876543210')
+  }
+
+  it('브라우저 단독 실행에서는 단계 표시 아래에 배너 자리가 선다', async () => {
+    stubAdSenseIds()
+
+    await renderScreen({ sessionId: 'web-ad-shown' })
+
+    expect(screen.getByRole('complementary', { name: '광고' })).toBeInTheDocument()
+  })
+
+  it('앱 WebView 안에서는 웹 광고 태그가 설치되지 않는다 (KAN-197 AC)', async () => {
+    stubAdSenseIds()
+    /*
+     * 같은 빌드, 같은 화면인데 브리지가 있다. AdSense 태그를 앱 WebView에서 돌리는 것은 정책
+     * 위반이고 앱의 광고는 AdMob SDK가 띄우므로(`docs/wiki/ads-web-adsense.md` §2), 슬롯도
+     * 스크립트도 나타나지 않아야 한다.
+     */
+    window.AccenturyBridge = {
+      requestMicPermission: vi.fn(),
+      startVoiceItem: vi.fn(),
+      getContractVersion: () => REQUIRED_BRIDGE_VERSION,
+    }
+
+    await renderScreen({ sessionId: 'web-ad-webview' })
+
+    expect(screen.queryByRole('complementary')).toBeNull()
+    expect(window.adsbygoogle).toBeUndefined()
+    expect(document.head.querySelector('script[src*="adsbygoogle"]')).toBeNull()
+  })
+
+  it('ID가 없는 빌드(로컬·CI)에서는 빈 자리도 남기지 않는다', async () => {
+    await renderScreen({ sessionId: 'web-ad-no-ids' })
+
+    expect(screen.queryByRole('complementary')).toBeNull()
+    expect(window.adsbygoogle).toBeUndefined()
   })
 })

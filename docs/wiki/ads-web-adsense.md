@@ -5,8 +5,9 @@
 말이 짧다: **AdMob은 웹을 지원하지 않는다.**
 
 1단계(2026-09-13)에서 정한 것은 방침·동의 문안·이 문서까지이고, 2단계(2026-09-13)에서 웹 동의를
-묻고 저장하는 자리를 배선했다 (§3). 태그 설치·요청 플래그는 3~4단계다. 아래 표에 「예정」이라
-적힌 자리가 그것이다.
+묻고 저장하는 자리를 배선했다 (§3). 3단계(2026-09-13)에서 태그·요청 플래그·배너 슬롯이 코드로
+들어왔다 (§4·§5). 남은 것은 4단계 — 배포 빌드에 ID를 주입하고(§6) `ads.txt`를 올리고 완주
+E2E로 슬롯을 눈으로 보는 일이다.
 
 ## 1. 결정 근거
 
@@ -39,6 +40,25 @@ AdSense 광고 태그를 앱 WebView 안에서 돌리는 것은 허용되지 않
 여기서 따라 나오는 결과가 하나 있다. **WebView allowlist에 광고 도메인을 추가하지 않는다.**
 태그가 WebView에서 아예 설치되지 않으므로 열어 줄 것이 없다 —
 [`webview-bridge.md`](webview-bridge.md)의 allowlist는 KAN-197로 바뀌지 않는다.
+
+### 2.1 설치 시점은 `main.tsx`가 아니라 슬롯 마운트다 (3단계 판단)
+
+지라는 "GA4와 같은 규칙, `main.tsx`"라고 적었다. 규칙의 본질은 **게이트**(`isStandaloneWeb`)이지
+호출 위치가 아니어서, 3단계는 위치만 옮겼다 — 태그는 분석 대기 화면의 슬롯이 마운트될 때
+선다 (`web/src/ads/AdSlot.tsx`의 이펙트). `main.tsx`는 이 티켓으로 바뀌지 않는다.
+
+근거가 둘이다.
+
+- **첫 렌더에 외부 스크립트가 끼지 않는다.** 인트로의 체감 속도는 KAN-179가 손본 자리이고,
+  광고 스크립트는 그 화면에서 아무것도 그리지 않으면서 네트워크만 먹는다
+- **묻기 전에 광고 서버에 접속하는 경로가 구조적으로 없다.** 동의 시트는 인트로 위에 뜨므로
+  (§3), 대기 화면까지 온 사용자는 이미 고른 뒤다. 아래 `pauseAdRequests`는 그래서 방어용으로만
+  남는다 — 없어도 되는 값이 아니라, **있어도 실제로는 걸릴 일이 없는** 값이다
+
+시트는 선택 없이 닫히지 않고(§3) 저장이 막힌 브라우저에서도 메모리 사본이 이번 방문을 이어
+주므로(§3.2), 인트로를 거쳐 온 방문이 `unknown`으로 대기 화면에 서는 일은 사실상 없다. 그래도
+플래그를 두는 것은 인트로를 거치지 않고 대기 화면 주소로 바로 들어오는 경우 때문이다 — 그
+경로에서 물어보지도 않고 맞춤 광고를 요청하지 않는다.
 
 ## 3. 동의
 
@@ -95,7 +115,7 @@ SDK를 세우는 네이티브는 그 값을 모른다.
 테스트 사이에 사본이 새지 않게 `resetWebAdConsentMemory()`를 export한다 (테스트 전용).
 `IntroScreen.test.tsx`·`adConsent.test.ts`·`webAdConsentStore.test.ts`의 `afterEach`가 부른다.
 
-## 4. 요청 규칙 (3단계 예정)
+## 4. 요청 규칙 (3단계 구현)
 
 전부 문서로 확인한 것이다. 기억으로 쓰지 않는다 — 아래 근거 열의 페이지를 읽고 적었다.
 
@@ -116,8 +136,8 @@ SDK를 세우는 네이티브는 그 값을 모른다.
 
 - **`pauseAdRequests=0`을 부르지 않으면 광고가 하나도 안 나온다.** 동의를 묻는 동안 멈춰 두는
   것이 이 플래그의 쓰임인데, 선택 뒤에 푸는 호출을 빠뜨리면 증상이 「빈 슬롯」이라 §1의
-  「승인 전이라 빈 것」과 구분되지 않는다. 3단계에서 두 경로(허용·거부) 모두 `=0`을 거치는지
-  테스트로 붙든다
+  「승인 전이라 빈 것」과 구분되지 않는다. 3단계가 두 경로(허용·거부) 모두 `=0`을 거치는지
+  테스트로 붙들었다 (`adsense.test.ts`의 「허용도 거부도 요청을 재개한다」)
 - **`pauseAdRequests`는 요청만 막는다.** 문서가 명시한다 — "This technique blocks ad requests
   from being sent, but various scripts are still loaded." 스크립트 자체를 안 붙이려면 §2의
   게이트여야 한다
@@ -132,6 +152,38 @@ SDK를 세우는 네이티브는 그 값을 모른다.
 ([adsense/answer/9007336](https://support.google.com/adsense/answer/9007336)). 방침 8·10항이
 「관심사 추정에는 쓰지 않고 …에만 쓴다」라고 적은 것이 이 사실이다 — 「대신」이라고 쓰면 거짓
 고지가 된다 (KAN-196 리뷰 P1-4, `privacy.test.mjs`가 막는다).
+
+### 4.1 코드가 된 표 (`web/src/ads/adsense.ts`)
+
+위 규칙이 함수 넷으로 들어왔다. 전부 boolean만 돌려주고 **예외를 밖으로 내보내지 않는다** —
+광고 로드 실패·DOM 예외·중복 push가 응시 흐름을 막으면 안 되기 때문이고, 공유 모듈과 같은
+규칙이다.
+
+| 함수 | 하는 일 | false·no-op이 되는 때 |
+|---|---|---|
+| `adSenseIdsFromEnv()` | 두 빌드 변수를 읽어 `{clientId, slotId}` | 하나라도 비면 `null` (§6) |
+| `adSenseRequestFlags(consent)` | 동의 → 플래그 두 개 (아래 표) | — (순수 함수) |
+| `installAdSenseTag(consent, ids?, doc?)` | 큐를 세우고 플래그를 얹고 스크립트를 붙인다 | ID 없음 · 이미 설치 · DOM 예외 |
+| `applyAdConsentToAdSense(consent)` | 이미 선 큐의 플래그만 갱신 | 큐가 없으면 아무 일 없음 |
+| `pushAdSlot()` | `(adsbygoogle ||= []).push({})` | push가 던지면 삼키고 false |
+
+| 동의 | `requestNonPersonalizedAds` | `pauseAdRequests` | 뜻 |
+|---|---|---|---|
+| `granted` | 0 | 0 | 맞춤 광고를 요청한다 |
+| `denied` | 1 | 0 | 요청하되 비맞춤 — 요청 URL에 `npa=1` |
+| `unknown` | 1 | 1 | 요청 자체를 내보내지 않는다 |
+
+`unknown`에도 npa를 1로 두는 이유는 두 플래그가 서로를 보장하지 않아서다. 어떤 경로로든
+일시정지가 먼저 풀리면 그 순간 나가는 요청은 남아 있는 npa 값을 따른다.
+
+**순서**는 설치 함수 안에서 지켜진다 — 큐와 플래그를 세운 **뒤에** 스크립트를 붙이고, `<ins>`
+슬롯은 렌더 결과라 이펙트보다 먼저 DOM에 있고, `push({})`가 마지막이다.
+
+**선택을 바꾸는 경로.** 시트에서 다시 고르면 `useAdConsent.choose`가 웹 갈래에서
+`applyAdConsentToAdSense`를 부른다 (`web/src/ads/adConsent.ts`). 앱에서 네이티브가
+`setAdConsent`를 받아 SDK를 다시 세우는 것과 같은 자리다 — 웹에서 SDK에 해당하는 것이 이미 선
+adsbygoogle 큐다. 이미 나간 요청은 되돌릴 수 없고 **다음 요청부터** 새 값을 따른다. 시트는
+인트로에 뜨고 태그는 대기 화면에서 서므로 실제로는 대부분의 호출이 아무 일도 하지 않는다.
 
 ## 5. 슬롯
 
@@ -148,7 +200,40 @@ SDK를 세우는 네이티브는 그 값을 모른다.
 `브라우저 웹의 광고 사업자 Google AdSense가 2·4·8·10항에 적혀 있다`, assert
 `웹의 재응시에는 광고가 없`).
 
-## 6. ID 주입 계획 (4단계)
+### 5.1 배너가 서는 자리 (3단계)
+
+컴포넌트는 `web/src/ads/AdSlot.tsx`이고 `AnalysisWaitingScreen`의 `.analysis-waiting` 안,
+**단계 표시(`.analysis-steps`) 바로 아래**에 있다. 위에 두면 「분석 중입니다」 히어로와 진행
+상태 사이를 광고가 가른다. 자리를 대기 화면으로 정한 근거는 앱의 전면 광고와 같다 — 이 화면
+에는 눌러야 할 CTA가 없고(시작·공유·앱 다운로드는 전부 다른 화면이다) 폴링이 도는 동안 화면이
+머문다. 시작·공유·재응시 CTA는 이 티켓으로 **하나도 바뀌지 않는다.**
+
+```html
+<div class="ad-slot" role="complementary" aria-label="광고">
+  <ins class="adsbygoogle" style="display:block"
+       data-ad-client="ca-pub-…" data-ad-slot="…"
+       data-ad-format="auto" data-full-width-responsive="true"></ins>
+</div>
+```
+
+`role="complementary"`와 이름 「광고」는 고지이기도 하다 — 스크린 리더 사용자가 이 영역을
+건너뛸지 스스로 정할 수 있어야 한다.
+
+**그리지 않는 경우가 둘이다.** 앱 WebView(§2)와 ID가 없는 빌드(§6). 둘 다 `null`을 돌려주므로
+`<ins>`도 감싼 상자도 없다 — 채워질 일이 없는 자리를 100px 비워 두면 단계 표시만 아래로 밀린다.
+
+CSS는 `ui/components.css`의 `.ad-slot`이고 규칙이 셋뿐이다.
+
+| 선언 | 이유 |
+|---|---|
+| `min-height: 100px` | **CLS 방지.** 광고는 늦게 채워지는데 자리를 미리 잡지 않으면 도착하는 순간 위 단계 표시가 튄다. 더 큰 광고가 오면 상자가 따라 늘어난다(상한 없음) |
+| `align-self: stretch` | `.analysis-waiting`이 `align-items: center`라 그대로 두면 내용 폭(0)으로 쪼그라든다. 폭 상한은 부모의 `--content-max-width`(320)를 그대로 받는다 |
+| `margin-top: var(--space-2)` | 부모 gap(24) 위에 8을 더한다 — 광고가 단계 표시와 같은 덩어리가 아니라는 것이 간격으로 읽혀야 한다 |
+
+`waiting`이 거짓인 분기(오류·행동 요구)에서는 히어로 블록째 그리지 않으므로 슬롯도 없다.
+사용자가 무엇을 해야 하는지를 광고가 밀어내지 않는다.
+
+## 6. ID 주입 (읽는 쪽은 3단계, 넣는 쪽은 4단계)
 
 | 빌드 변수 | 없을 때 | 어디로 |
 |---|---|---|
@@ -164,7 +249,45 @@ GA4와 같은 규칙이다 — `VITE_GA4_MEASUREMENT_ID`가 없으면 `installGa
 때문이다. 웹은 그 문제가 약하다(슬롯이 하나이고 흐름을 막지 않는다). 대신 AdSense는 승인된
 사이트에서만 광고가 내려오므로, 테스트 ID를 넣어도 얻는 것이 없다.
 
-## 7. 범위 밖
+**둘 다 있어야 한다.** 하나만 준 빌드는 값이 없는 빌드와 같다 (`adSenseIdsFromEnv`가 `null`).
+게시자 ID만 알면 그릴 자리가 없고, 슬롯 ID만 알면 붙일 태그가 없다 — 반쪽짜리 설정이 「태그는
+떴는데 빈 칸」으로 나타나면 §1의 승인 전 상태와 구분되지 않는다.
+
+4단계가 맞춰야 할 것 셋이다.
+
+| 할 일 | 값 | 자리 |
+|---|---|---|
+| 빌드 변수 주입 | `VITE_ADSENSE_CLIENT_ID`(`ca-pub-` + 숫자 16자리) · `VITE_ADSENSE_SLOT_ID` | `.github/workflows/web-deploy.yml`의 빌드 스텝 env (`VITE_GA4_MEASUREMENT_ID`·`VITE_REGION_SELECT` 옆) |
+| `ads.txt` | `google.com, pub-0000000000000000, DIRECT, f08c47fec0942fa0` | `web/public/ads.txt` → 배포되면 `https://accentury.app/ads.txt` |
+| 완주 E2E | 대기 화면에서 슬롯이 실제로 서는지 | `smoke`·`full-run` (백엔드·AI 스텁 필요) |
+
+`ads.txt`는 두 가지를 주의한다 (확인:
+[adsense/answer/7532444](https://support.google.com/adsense/answer/7532444)). 접두어가
+**`pub-`이지 `ca-pub-`이 아니다** — 빌드 변수에 넣는 값에서 `ca-`를 떼야 한다. 그리고 파일이
+루트에 있어야 한다: 브라우저로 `https://accentury.app/ads.txt`를 열어 내용이 보이면 된다.
+`f08c47fec0942fa0`은 Google이 정한 고정 값이라 그대로 쓴다.
+
+## 7. 검증 절차 — 눈이 아니라 요청으로 본다
+
+빈 슬롯은 증상이 하나인데 원인이 둘이라(승인 전 / 배선이 깨짐) 화면만 보고는 못 가른다.
+판정은 개발자 도구 Network에서 한다.
+
+1. 브라우저로 분석 대기 화면까지 간다. 인트로의 동의 시트에서 **「일반 광고만 보기」**를 고른다
+2. Network를 열고 `googleads` 또는 `pagead`로 거른다
+3. 광고 요청 URL의 쿼리에 **`npa=1`**이 있으면 거부가 제대로 실렸다. `ppt`를 찾으면 영영 못
+   찾는다 — 우리 플래그의 확인 값이 아니다 (§4)
+4. 다시 「맞춤형 광고 허용」으로 바꾸고 새로 고치면 같은 자리에 `npa`가 **없다**
+
+응답이 200인데 슬롯이 비어 있으면 그것은 승인 전 상태다 (§1). 요청 자체가 아예 안 나가면 셋을
+순서대로 본다 — `window.adsbygoogle`이 있는가(없으면 태그가 안 섰다: ID 또는 §2 게이트),
+`pauseAdRequests`가 0인가(1이면 동의가 `unknown`으로 읽혔다), `<ins class="adsbygoogle">`가
+DOM에 있는가.
+
+앱 WebView에서는 셋 다 없는 것이 정답이다. 이 판정은 자동 테스트가 붙든다 —
+`AnalysisWaitingScreen.test.tsx`의 「앱 WebView 안에서는 웹 광고 태그가 설치되지 않는다
+(KAN-197 AC)」가 슬롯·`window.adsbygoogle`·스크립트 태그 셋의 부재를 함께 단언한다.
+
+## 8. 범위 밖
 
 - **CSP 헤더** — CloudFront에 응답 헤더 정책 자체가 없어 이번에 손댈 자리가 없다. 나중에 정책을
   세우면 AdSense 도메인을 그때 함께 넣는다. 기록만 남긴다
@@ -173,7 +296,7 @@ GA4와 같은 규칙이다 — `VITE_GA4_MEASUREMENT_ID`가 없으면 `installGa
   `allow_ad_personalization_signals: false`다
 - **앱 WebView allowlist** — §2. 태그를 안 까니 열 것이 없다
 
-## 8. 파일 지도
+## 9. 파일 지도
 
 1단계(2026-09-13)에서 바뀐 것.
 
@@ -201,11 +324,27 @@ GA4와 같은 규칙이다 — `VITE_GA4_MEASUREMENT_ID`가 없으면 `installGa
 | `web/e2e/smoke.spec.ts` · `mic-blocked.spec.ts` | 같은 헬퍼 호출 (3곳) |
 | `docs/wiki/browser-e2e.md` · `webview-bridge.md` · `privacy-policy.md` | 2단계 사실 반영 |
 
-3~4단계에서 손댈 것.
+3단계(2026-09-13)에서 바뀐 것.
 
-| 단계 | 파일 | 할 일 |
-|---|---|---|
-| 3 | 새 `web/src/ads/adsense.ts` | 태그 설치 + `requestNonPersonalizedAds`·`pauseAdRequests` (§4) |
-| 3 | `web/src/main.tsx` | `isStandaloneWeb` 게이트 (§2) |
-| 4 | 분석 대기 화면 | 배너 슬롯 1개 (§5) |
-| 4 | `web/.env` 계열·배포 워크플로 | `VITE_ADSENSE_*` 주입 (§6) |
+| 파일 | 무엇이 바뀌었나 |
+|---|---|
+| `web/src/ads/adsense.ts` | **신설.** 태그 설치·요청 플래그·슬롯 push (§4.1). `ga4.ts`의 거울이다 |
+| `web/src/ads/adsense.test.ts` | **신설.** 20건 — ID 읽기 4, 플래그 표 4, 설치 7, 갱신 2, push 3 |
+| `web/src/ads/AdSlot.tsx` | **신설.** 배너 컴포넌트. 게이트 둘(§2·§6)에 걸리면 `null` (§5.1) |
+| `web/src/ads/AdSlot.test.tsx` | **신설.** 5건 — 웹 단독·WebView 2갈래·ID 결손 2갈래 |
+| `web/src/ads/adConsent.ts` | 웹 갈래의 `choose`가 `applyAdConsentToAdSense`를 부른다 (§4.1 마지막 절) |
+| `web/src/analysis/AnalysisWaitingScreen.tsx` | `.analysis-steps` 아래에 `<AdSlot />` 한 줄 + 헤더에 KAN-197 단락 |
+| `web/src/analysis/AnalysisWaitingScreen.test.tsx` | 3건 — 슬롯 노출·**앱 WebView 부재(AC)**·ID 없는 빌드 |
+| `web/src/ui/components.css` | `.ad-slot` (§5.1의 표) |
+| `docs/wiki/ads-web-adsense.md` · `browser-e2e.md` | 이 문서의 §2.1·§4.1·§5.1·§7, E2E 실측 한 절 |
+
+**`web/src/main.tsx`는 바뀌지 않았다.** 게이트는 같지만 설치 자리가 슬롯 마운트로 옮겨 갔다 —
+근거는 §2.1이다.
+
+4단계에서 손댈 것.
+
+| 파일 | 할 일 |
+|---|---|
+| `.github/workflows/web-deploy.yml` | `VITE_ADSENSE_CLIENT_ID`·`VITE_ADSENSE_SLOT_ID` 주입 (§6) |
+| 새 `web/public/ads.txt` | `google.com, pub-…, DIRECT, f08c47fec0942fa0` (§6) |
+| `web/e2e/smoke.spec.ts` 등 | 대기 화면까지 완주해 슬롯 실측 (백엔드·AI 스텁 필요) |

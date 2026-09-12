@@ -79,7 +79,7 @@
 | 7. 만 14세 미만 | 아동 대상 아님, 마켓에도 그렇게 등록 | `docs/wiki/play-store-listing.md` §6 (타겟 연령 13세 이상) — **KAN-174 브랜치에만 있는 파일** | — |
 | 7. 만 14세 미만 | 아동에게 맞춤형 광고 미표시 | 2026-09-07 팀 결정. 아동 대상 아님을 유지하고 AdMob SDK의 아동 대상 플래그는 off — KAN-196 3단계(Android `AdsController.initialize`, `TAG_FOR_CHILD_DIRECTED_TREATMENT_FALSE`)·4단계(iOS `AdsController.start`, `tagForChildDirectedTreatment = false`)에서 완료, `docs/wiki/ads-admob.md` §6·§7.1 | — |
 | 8. 자동 수집 장치 | 웹에는 GA4 태그가 쿠키를 저장 | `web/src/analytics/ga4.ts:75-81` — `config`에 쿠키를 끄는 옵션이 없다(기본 동작이 쿠키 설정) | — |
-| 8. 자동 수집 장치 | 앱 WebView에는 웹 태그(GA4·AdSense)를 깔지 않음 | `web/src/main.tsx:28` — `isStandaloneWeb`일 때만 `installGa4Tag()`. 광고 태그도 같은 게이트를 쓴다 (KAN-197 3단계 예정) — GA4는 이중 계측 때문이고 AdSense는 앱 WebView 내 웹 광고 태그가 정책상 허용되지 않기 때문이다 (`docs/wiki/ads-web-adsense.md` §2). 그래서 WebView allowlist에 광고 도메인을 넣지 않는다 | — |
+| 8. 자동 수집 장치 | 앱 WebView에는 웹 태그(GA4·AdSense)를 깔지 않음 | `web/src/main.tsx:28` — `isStandaloneWeb`일 때만 `installGa4Tag()`. 광고 태그도 **같은 게이트**를 쓰되 자리가 다르다 (KAN-197 3단계, 2026-09-13): `web/src/ads/AdSlot.tsx`가 슬롯을 마운트할 때 판정한다 (근거는 `docs/wiki/ads-web-adsense.md` §2.1). GA4는 이중 계측 때문이고 AdSense는 앱 WebView 내 웹 광고 태그가 정책상 허용되지 않기 때문이다 (같은 문서 §2). 그래서 WebView allowlist에 광고 도메인을 넣지 않는다 | `AnalysisWaitingScreen.test.tsx`의 `앱 WebView 안에서는 웹 광고 태그가 설치되지 않는다 (KAN-197 AC)` |
 | 8. 자동 수집 장치 | 진행 기록은 브라우저 저장소에 두되 결과 화면 진입에서 지우고, 끊긴 응시의 기록은 다음 인트로 진입에서 걷는다 | `web/src/progress/progressSnapshot.ts` (키 `accentury:progress:<sessionId>`, `defaultSnapshotStorage`가 `window.localStorage`), `web/src/App.tsx` `ResultRoute`의 `clearSnapshot`·`IntroRoute`의 `sweepSnapshots`. 복원에 실패한 스냅샷(형태 손상·버전 불일치·재생 거부)도 `restoreProgress`가 그 자리에서 버린다 (KAN-198) | `진행 기록의 삭제 시점이 적혀 있다` |
 | 8. 자동 수집 장치 | 세션 토큰·응시 키는 탭 저장소 | `web/src/session/webSession.ts`, `web/src/analytics/testId.ts:21-23` (`sessionStorage`) | — |
 | 8. 자동 수집 장치 | 앱의 광고 SDK가 광고 식별자를 사용 | 2026-09-07 팀 결정, 사업자는 Google AdMob (2026-09-11). 코드 배선은 KAN-196 2~4단계에서 완료 (`docs/wiki/ads-admob.md` §4) | — |
@@ -150,7 +150,7 @@ prod 게시(`scripts/publish-privacy.sh prod`) 전에는 아래를 전부 닫는
 | 5 | 10항 「4항과 이 항, 2항의 제3자 제공 표를 함께 채웁니다 (확정 후 기재)」 | 539~541 | **완료 (2026-09-11)** — 확정 문장으로 교체 |
 | 6 | 시행일 「정식 게시일에 기재합니다」 | 102, 636 | 게시 당일 날짜로 교체 (두 자리 모두) |
 | 7 | 스토어 답안 일치 | — | KAN-174 §5·§6과 KAN-175 라벨이 2절 「확정 답안」대로 갱신됐는지 확인 |
-| 8 | 10항의 웹 광고 고지와 실제 배선 일치 | 10항 (배너 1개·웹 재응시 광고 없음) | **KAN-197 4단계** — AdSense 사이트 승인과 `ads.txt` 게시, 대기 화면 배너 배선까지 끝나야 고지가 사실이 된다. 지금은 방침이 앞서 있다 (`docs/wiki/ads-web-adsense.md` §6·§8) |
+| 8 | 10항의 웹 광고 고지와 실제 배선 일치 | 10항 (배너 1개·웹 재응시 광고 없음) | 대기 화면 배너 배선은 **3단계에서 끝났다** (2026-09-13, `web/src/ads/AdSlot.tsx`). 남은 것은 **KAN-197 4단계** — AdSense 사이트 승인, `ads.txt` 게시, 배포 빌드의 ID 주입까지 끝나야 고지가 사실이 된다. 그때까지는 방침이 앞서 있다 (`docs/wiki/ads-web-adsense.md` §6·§9) |
 
 1~5의 자리표시자는 확정 전에는 계약 테스트로 막지 않았다 — 막으면 확정 전 단계의 본문을 커밋할
 수 없어 문서가 코드보다 뒤처지기 때문이다. 2026-09-11 확정 뒤로는 반대로 되살아나는 쪽을
