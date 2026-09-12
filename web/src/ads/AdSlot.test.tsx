@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react'
+import { StrictMode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { REQUIRED_BRIDGE_VERSION } from '../bridge/bridge'
 import { AdSlot } from './AdSlot'
@@ -42,6 +43,29 @@ describe('AdSlot — 브라우저 단독 실행의 배너 (KAN-197 3단계)', ()
     // 저장된 선택이 그대로 요청 플래그가 된다
     expect(window.adsbygoogle?.requestNonPersonalizedAds).toBe(1)
     expect(window.adsbygoogle?.pauseAdRequests).toBe(0)
+  })
+
+  /*
+   * StrictMode 이중 마운트에서도 요청은 한 번이다 (리뷰 P1-2, 2026-09-13).
+   *
+   * 제품의 트리가 `main.tsx`에서 `<StrictMode>`로 감싸여 있으므로 개발 빌드의 실제 모양이
+   * 이것이다. 표식이 없던 3단계에서는 여기가 2가 된다 — 큐에 아직 스크립트가 안 붙은 동안에는
+   * 두 번째 push가 던지지 않고 조용히 성공하기 때문이다 (`AdSlot.tsx`의 이펙트 주석).
+   */
+  it('StrictMode로 감싸도 슬롯 요청은 한 번뿐이다', () => {
+    stubIds()
+    writeWebAdConsent('denied')
+
+    render(
+      <StrictMode>
+        <AdSlot />
+      </StrictMode>,
+    )
+
+    expect(window.adsbygoogle?.length).toBe(1)
+    // 건너뛴 근거가 DOM에 남는다
+    const ins = screen.getByRole('complementary', { name: '광고' }).querySelector('ins.adsbygoogle')
+    expect(ins?.getAttribute('data-accentury-pushed')).toBe('1')
   })
 
   it('앱 WebView에서는 슬롯도 태그도 없다 — AdSense를 앱 안에서 돌리지 않는다', () => {

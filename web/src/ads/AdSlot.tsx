@@ -27,10 +27,18 @@
  * 죽든 이 화면은 폴링을 그대로 돌린다.
  */
 
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { isStandaloneWeb } from '../bridge/bridge'
 import { adSenseIdsFromEnv, installAdSenseTag, pushAdSlot } from './adsense'
 import { readWebAdConsent } from './webAdConsentStore'
+
+/**
+ * 슬롯을 이미 요청했다는 표식. `<ins>` 자체에 단다 (리뷰 P1-2, 2026-09-13).
+ *
+ * 쓰는 자리가 우리 컴포넌트뿐이라 이름에 `accentury`를 박아 AdSense가 붙이는 `data-ad-*`·
+ * `data-adsbygoogle-status`와 섞이지 않게 한다.
+ */
+const PUSHED_MARK = 'accenturyPushed'
 
 export function AdSlot() {
   /*
@@ -40,6 +48,7 @@ export function AdSlot() {
    */
   const ids = adSenseIdsFromEnv()
   const enabled = ids !== null && isStandaloneWeb(window.location.search)
+  const insRef = useRef<HTMLModElement>(null)
 
   useEffect(() => {
     if (!enabled) return
@@ -48,12 +57,30 @@ export function AdSlot() {
      * 선택을 바꾸지도 않기 때문이다 — 필요한 것은 마운트 시점의 값 하나이고, 그 뒤에 사용자가
      * 시트에서 바꾸면 `applyAdConsentToAdSense`가 이미 선 큐를 갱신한다.
      *
-     * 마운트 1회. StrictMode가 이펙트를 두 번 돌려도 설치는 두 번째에 false로 떨어지고
-     * (`installAdSenseTag`의 설치 표식), 두 번째 push는 태그가 던지는 중복 예외를
-     * `pushAdSlot`이 삼킨다.
+     * 설치는 두 번째 호출이 false로 떨어진다 (`installAdSenseTag`의 설치 표식).
      */
     installAdSenseTag(readWebAdConsent())
-    pushAdSlot()
+
+    /*
+     * 슬롯 요청은 `<ins>`에 남긴 표식으로 한 번만 나간다 (리뷰 P1-2, 2026-09-13).
+     *
+     * 3단계는 "두 번째 push는 태그가 던지는 중복 예외를 `pushAdSlot`이 삼킨다"에 기댔는데,
+     * 그 예외는 **태그가 로드된 뒤에만** 나온다. StrictMode의 두 이펙트는 같은 틱에 연달아
+     * 도므로 그때 큐는 아직 스크립트가 안 붙은 맨 배열이고, 두 번째 push도 조용히 성공해
+     * 슬롯 하나에 요청이 둘 쌓인다. 늦게 도착한 태그가 그 둘을 처리하면서 두 번째에
+     * "All ins elements … already have ads in them"을 콘솔에 올린다.
+     *
+     * 표식을 React ref 대신 DOM 속성으로 두는 이유는 근거가 눈에 보이게 하기 위해서다 —
+     * 건너뛴 판단의 출처가 개발자 도구의 `<ins data-accentury-pushed="1">` 한 줄이 된다.
+     * (ref도 이 재마운트에서는 살아남지만 화면에서는 확인할 길이 없다.)
+     *
+     * 실패한 push는 표식을 남기지 않는다. 큐에 들어가지 못한 슬롯이라 다음 기회에 한 번 더
+     * 시도하는 편이 맞고, 이미 광고가 찬 `<ins>` 때문에 던진 경우라면 다음 시도도 같은 자리에서
+     * 조용히 false가 된다.
+     */
+    const ins = insRef.current
+    if (ins === null || ins.dataset[PUSHED_MARK] === '1') return
+    if (pushAdSlot()) ins.dataset[PUSHED_MARK] = '1'
   }, [enabled])
 
   if (!enabled || ids === null) return null
@@ -66,6 +93,7 @@ export function AdSlot() {
      */
     <div className="ad-slot" role="complementary" aria-label="광고">
       <ins
+        ref={insRef}
         className="adsbygoogle"
         style={{ display: 'block' }}
         data-ad-client={ids.clientId}

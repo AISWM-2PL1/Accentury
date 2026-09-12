@@ -189,11 +189,32 @@ export function installAdSenseTag(
  * 화면에서 서므로, 실제로는 대부분의 호출이 아무 일도 하지 않는다. 그래도 부르는 이유는 "동의가
  * 바뀌면 SDK에 알린다"는 규칙이 앱(브리지 `setAdConsent`)과 웹에 같은 모양으로 서 있어야 하기
  * 때문이다.
+ *
+ * **쓰기가 던져도 삼킨다** (리뷰 P1-3, 2026-09-13). 이 파일 머리의 「절대 던지지 않는다」가
+ * 이 함수에만 빠져 있었다. 큐는 남이 만들었을 수도 있는 배열이라 — 차단 확장이 동결해 두거나
+ * 대역으로 갈아끼운 경우가 실제로 있다 — 프로퍼티 대입 한 줄이 TypeError를 낼 수 있다. 이
+ * 함수를 부르는 자리가 시트의 `choose`라(`adConsent.ts`), 거기서 예외가 오르면 사용자가 선택을
+ * 바꾼 순간 인트로가 통째로 날아간다. 동의를 저장하는 일과 큐에 알리는 일은 따로여야 한다.
+ *
+ * @returns 큐의 플래그를 실제로 갈아 끼웠으면 true. 큐가 없거나 쓰기가 막혔으면 false —
+ *   호출자가 할 일은 없고(저장은 이미 끝났다) 보고 값에 가깝다.
  */
-export function applyAdConsentToAdSense(consent: AdConsent): void {
+export function applyAdConsentToAdSense(consent: AdConsent): boolean {
   const queue = window.adsbygoogle
-  if (queue === undefined) return
-  writeFlags(queue, consent)
+  if (queue === undefined) return false
+
+  try {
+    writeFlags(queue, consent)
+  } catch {
+    /*
+     * 한쪽만 써지고 던졌을 수 있다. 되돌리지 않는 이유는 [installAdSenseTag]의 catch와 같다 —
+     * 쓰기가 막힌 큐에 되돌리는 쓰기도 막히고, 어느 쪽이든 이 실행의 광고 요청은 우리가
+     * 통제하지 못하는 상태다.
+     */
+    return false
+  }
+
+  return true
 }
 
 /**

@@ -115,6 +115,12 @@ jobs:
       # `ca-pub-`이 아니라서** 빌드 변수의 값에서 `ca-`를 뗀다. 모양을 여기서 검사하고 어긋나면
       # 실패시키는 이유가 그 한 글자다 - 틀린 게시자 ID가 적힌 파일이 조용히 올라가면 소유권 확인이
       # 되지 않는데, 증상이 「심사가 아직 안 끝났다」와 구분되지 않아 몇 주를 잃는다.
+      #
+      # 검사를 `ca-pub-` 접두어에서 `^ca-pub-[0-9]+$`로 좁혔다 (리뷰 P1-4, 2026-09-13). 접두어만
+      # 보면 `ca-pub-` 자체나 `ca-pub-12ab` 같은 값이 통과해 「pub-」 한 줄짜리 쓸모없는 ads.txt가
+      # 올라간다. **자릿수는 고정하지 않는다** - 리뷰 제안은 `[0-9]{16}`이었지만 16이라는 수는
+      # Google 문서가 보장한 계약이 아니라 지금 발급되는 값의 관찰일 뿐이라, 언젠가 자릿수가
+      # 늘면 멀쩡한 게시자 ID로 배포가 죽는다. 막아야 할 것은 「숫자가 아닌 값」이지 「긴 값」이 아니다.
       - name: ads.txt 생성 (KAN-197)
         id: adstxt
         env:
@@ -125,13 +131,10 @@ jobs:
             echo "generated=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          case "$ADSENSE_CLIENT_ID" in
-            ca-pub-*) ;;
-            *)
-              echo "environment 변수 ADSENSE_CLIENT_ID는 ca-pub- 으로 시작해야 합니다. AdSense 콘솔의 게시자 ID를 그대로 넣으세요 - ads.txt에 적히는 pub- 는 이 단계가 ca-를 떼어 만듭니다 (docs/wiki/ads-web-adsense.md §6)." >&2
-              exit 1
-              ;;
-          esac
+          if ! printf '%s' "$ADSENSE_CLIENT_ID" | grep -qE '^ca-pub-[0-9]+$'; then
+            echo "environment 변수 ADSENSE_CLIENT_ID는 ca-pub- 다음에 숫자만 오는 값이어야 합니다 (예: ca-pub-1234567890123456). AdSense 콘솔의 게시자 ID를 그대로 넣으세요 - ads.txt에 적히는 pub- 는 이 단계가 ca-를 떼어 만듭니다 (docs/wiki/ads-web-adsense.md §6)." >&2
+            exit 1
+          fi
           printf 'google.com, %s, DIRECT, f08c47fec0942fa0\n' "${ADSENSE_CLIENT_ID#ca-}" > dist/ads.txt
           echo "generated=true" >> "$GITHUB_OUTPUT"
           cat dist/ads.txt
