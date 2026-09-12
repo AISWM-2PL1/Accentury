@@ -147,6 +147,25 @@ test('KAN-197 - 대기 화면 광고 슬롯은 태그 있는 빌드에만 서고
   const tagged = Boolean(process.env.VITE_ADSENSE_CLIENT_ID && process.env.VITE_ADSENSE_SLOT_ID)
   const knowsBuild = process.env.E2E_BASE_URL === undefined || process.env.E2E_BASE_URL === ''
 
+  /*
+   * 광고 요청 URL을 모은다 (리뷰 P1-1, 2026-09-13).
+   *
+   * 단위 테스트가 보는 것은 큐 프로퍼티 `requestNonPersonalizedAds=1`까지다. 그 값이 실제로
+   * **요청 URL의 `npa=1`이 되는지**는 진짜 브라우저에서 진짜 스크립트가 돌아야 알 수 있고,
+   * 그 자리가 여기다 — 위키 §7이 사람에게 시키는 개발자 도구 절차를 그대로 자동화한 것이다.
+   *
+   * 슬롯 요청만 거른다. `adsbygoogle.js?client=`는 태그 스크립트를 내려받는 요청이지 광고를
+   * 달라는 요청이 아니라 npa가 붙을 자리가 없고, 같은 호스트의 설정·측정 엔드포인트도 마찬가지다.
+   * 문서가 `npa=1`을 확인하라고 가리키는 것은 광고 요청(`/pagead/ads?…`)이다
+   * (https://support.google.com/adsense/answer/7670312).
+   */
+  const slotRequests: string[] = []
+  page.on('request', (request) => {
+    const url = request.url()
+    const adHost = url.includes('googlesyndication.com') || url.includes('doubleclick.net')
+    if (adHost && url.includes('/pagead/ads?')) slotRequests.push(url)
+  })
+
   await startTest(page)
   const seen = await answerAllItems(page)
   expect(seen).toHaveLength(TOTAL_ITEMS)
@@ -195,4 +214,32 @@ test('KAN-197 - 대기 화면 광고 슬롯은 태그 있는 빌드에만 서고
 
   // 슬롯은 대기 화면에만 있다 — 결과 화면에는 어느 빌드에서도 광고가 없다 (위키 §5의 표)
   await expect(adSlot).toHaveCount(0)
+
+  /*
+   * 나간 광고 요청은 전부 비맞춤이어야 한다 (AC 3, 리뷰 P1-1).
+   *
+   * 이 판의 헬퍼가 동의 시트에서 「일반 광고만 보기」를 고른다 (`testFlow.ts`의
+   * `passAdConsentIfShown`). 그러면 `denied`라 `requestNonPersonalizedAds=1`이고, 나가는 광고
+   * 요청 URL에 `npa=1`이 붙어야 한다.
+   *
+   * **더미 ID로도 요청은 나간다.** 2026-09-13 실측에서 `ca-pub-0000…`짜리 판이
+   * `https://googleads.g.doubleclick.net/pagead/ads?npa=1&client=ca-pub-0000…` 두 건을 냈다 —
+   * 승인 전이라 광고가 **안 채워지는 것**과 요청이 **안 나가는 것**은 다른 사건이고(위키 §1),
+   * 채워지지 않는 요청에도 npa는 실린다. 그래서 이 단언은 지금 이 순간 도는 검증이다.
+   *
+   * **그래도 0건을 통과로 두는 이유.** 요청이 나가는지는 우리가 통제하지 못하는 조건에 달려
+   * 있다 — 네트워크가 막힌 자리, 차단 확장, Google 쪽 응답 변화다. 광고 요청이 없는 것 자체는
+   * 이 스펙이 잡아야 할 실패가 아니다(그 판정은 위 슬롯 가시성이 맡는다). 여기서 잡는 회귀는
+   * 「거부했는데 맞춤 요청이 나갔다」 하나이고, 관찰된 요청이 없으면 그 회귀도 성립하지 않는다.
+   * 몇 건이 관찰됐는지는 아래 로그로 남겨 0건 통과와 실제 검증을 가른다.
+   *
+   * 이 스펙은 CI에서 돌지 않는다 (`test.yml`의 KAN-22 주석 — 로컬 풀스택이 필요하다). 승인 뒤
+   * 실 ID를 셸에 주고 돌리면(`VITE_ADSENSE_CLIENT_ID=ca-pub-… npx playwright test full-run`)
+   * 위키 §7의 수동 개발자 도구 절차를 그대로 대신한다.
+   */
+  // 0건 통과와 실제 검증을 로그로 가른다 — 단언만 보면 둘이 똑같이 초록이다
+  console.log(`[KAN-197] 관찰된 슬롯 요청 ${slotRequests.length}건`)
+  for (const url of slotRequests) {
+    expect(url, `비맞춤 동의인데 npa=1이 없는 광고 요청: ${url}`).toContain('npa=1')
+  }
 })

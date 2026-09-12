@@ -355,7 +355,9 @@ gh variable set GA4_MEASUREMENT_ID -e prod --body G-XXXXXXXXXX
 ```
 
 광고 변수 `ADSENSE_CLIENT_ID`·`ADSENSE_SLOT_ID`(KAN-197)는 AdSense 콘솔에서 나온다 -
-앞쪽이 게시자 ID(`ca-pub-` + 숫자 16자리), 뒤쪽이 광고 단위를 만들면 생기는 슬롯 ID다.
+앞쪽이 게시자 ID(`ca-pub-` + 숫자. 지금 발급되는 값은 16자리인데 `web-deploy.yml`의 ads.txt
+스텝은 자릿수를 고정하지 않고 `^ca-pub-[0-9]+$`로 숫자 여부만 본다 - 리뷰 P1-4),
+뒤쪽이 광고 단위를 만들면 생기는 슬롯 ID다.
 **prod에만 둔다.** GA4처럼 집계가 섞여서가 아니라 승인 대상이 prod 하나이기 때문이다 -
 AdSense는 심사를 통과한 사이트에만 광고를 내려주므로 staging에 값을 넣어도 빈 슬롯만 선다.
 등록 시점도 그래서 늦다: 사이트 승인이 나고 광고 단위를 만든 **뒤에** 둘을 함께 넣는다.
