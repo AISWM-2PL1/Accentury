@@ -55,8 +55,14 @@ export interface IntroScreenProps {
  * 웹 → 네이티브 동기 읽기·쓰기뿐이라 그 규칙이 걸리지 않는다.
  *
  * 앱의 첫 실행에 묻는다는 것은 곧 인트로에서 묻는다는 뜻이다 — 앱에 인트로보다 먼저 서는
- * 웹 화면이 없다. 권한 차단 화면(`MicBlockedScreen`)으로 갈아치운 뒤에는 시트를 그리지
- * 않는다: 그 화면은 웹 단독 실행에만 서고, 그 실행에는 광고 동의가 없다.
+ * 웹 화면이 없다. 브라우저 단독 실행의 첫 방문도 같은 자리에서 같은 시트로 묻는다
+ * (KAN-197 2단계) — 갈리는 것은 저장소와 문안의 사업자뿐이다 (`ads/adConsent.ts`).
+ *
+ * 권한 차단 화면(`MicBlockedScreen`)으로 갈아치운 뒤에는 시트를 그리지 않는다. 그 화면은 할
+ * 일이 하나뿐이고(마이크를 되찾는 것) 그 위에 동의 시트를 겹치면 무엇을 먼저 하라는 말인지
+ * 알 수 없다. 잃는 것도 없다 — [다시 시도]로 인트로에 돌아오면 아직 `unknown`이라 시트가
+ * 그대로 다시 뜬다. 애초에 시트가 떠 있는 동안에는 막이 [시작하기]를 덮어 이 화면까지 오기도
+ * 어렵다 (`AdConsentSheet`의 「닫는 길이 선택뿐이다」).
  */
 export function IntroScreen({
   onWebStart = warnWebStartUnwired,
@@ -70,11 +76,16 @@ export function IntroScreen({
   /** 권한은 통과했는데 시작이 막혔다 (세션 생성 실패). 값이 곧 사용자에게 보일 문구다 */
   const [startFailure, setStartFailure] = useState<string | null>(null)
   /*
-   * 맞춤형 광고 동의 (KAN-196). `unknown`이면 아직 묻지 않은 것이라 시트를 띄운 채 시작한다.
-   * null이면 이 실행에 광고 동의라는 개념이 없어(웹 단독·광고를 모르는 앱) 시트도 링크도
+   * 맞춤형 광고 동의 (KAN-196, 웹 갈래는 KAN-197 2단계). `unknown`이면 아직 묻지 않은 것이라
+   * 시트를 띄운 채 시작한다 — 앱의 첫 실행과 브라우저의 첫 방문이 여기서 같아졌다. null이면
+   * 이 실행에 광고 동의라는 개념이 없어(광고 동의 메서드를 모르는 구버전 앱) 시트도 링크도
    * 없다 — `granted`·`denied`와 같이 시트는 닫혀 있지만, 링크의 유무가 다르다.
+   *
+   * [vendor]는 훅이 고른 저장소를 그대로 따라온다 (`useAdConsent`) — 네이티브에 묻는 실행은
+   * AdMob, 브라우저 저장소에 묻는 실행은 AdSense다. 시트 문안 중 사업자와 수집 항목이 이 값에서
+   * 갈린다 (`ads/adConsentText.ts`).
    */
-  const { consent, choose: chooseConsent } = useAdConsent()
+  const { consent, choose: chooseConsent, vendor: adVendor } = useAdConsent()
   const [consentSheetOpen, setConsentSheetOpen] = useState(consent === 'unknown')
 
   async function startWebGate() {
@@ -223,6 +234,7 @@ export function IntroScreen({
       {consentSheetOpen && consent !== null && (
         <AdConsentSheet
           current={consent}
+          vendor={adVendor}
           onChoose={(state) => {
             chooseConsent(state)
             setConsentSheetOpen(false)

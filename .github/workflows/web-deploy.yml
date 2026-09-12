@@ -72,8 +72,8 @@ jobs:
       - run: npm ci
       # tsc --noEmit + vite build.
       #
-      # 환경을 아는 값이 둘이다. 나머지는 그대로 - 산출물이 환경을 몰라야 한다는 원칙(KAN-127)에서
-      # 이 둘만 빼는 이유가 각각 있다.
+      # 환경을 아는 값이 넷이다. 나머지는 그대로 - 산출물이 환경을 몰라야 한다는 원칙(KAN-127)에서
+      # 이것들만 빼는 이유가 각각 있다.
       #
       # GA4 측정 ID (KAN-33): 계측이 환경별로 갈려야 한다. staging과 prod가 같은 ID를 쓰면
       # 우리가 확인하느라 도는 트래픽이 실사용 집계에 섞이고, 그러면 KAN-24(대기 시간)·KAN-21
@@ -86,12 +86,58 @@ jobs:
       # 않는다.** 코드는 문자열 `true`일 때만 켠다 (web/src/region/regions.ts) - `1`이나 `TRUE`는
       # 꺼진 것과 같다.
       #
+      # 광고 ID 둘 (KAN-197): AdSense 게시자 ID와 광고 단위 슬롯 ID다. 환경별인 이유가 계측과
+      # 다르다 - 섞이면 곤란해서가 아니라 **승인 대상이 prod 하나**이기 때문이다. AdSense는 심사를
+      # 통과한 사이트에만 광고를 내려주므로 staging에는 변수를 두지 않는다. 그 환경은 태그도 슬롯도
+      # 없는 빌드가 나오고 그것이 정상 상태다 (web/src/ads/adsense.ts의 `adSenseIdsFromEnv`가 null,
+      # docs/wiki/ads-web-adsense.md §6). **둘 다 있어야 켜진다** - 하나만 준 빌드는 값이 없는 빌드와
+      # 같다. 반쪽 설정이 「태그는 떴는데 빈 칸」으로 나타나면 승인 전 상태와 구분이 안 되기 때문이다.
+      #
       # **비어 있는 것이 정상 상태다.** 변수를 두지 않은 환경은 계측 없이(web/src/analytics/ga4.ts),
-      # 지역 화면 없이 빌드된다. 둘 다 페이지 소스에 박히는 공개 값이라 시크릿이 아니라 변수로 둔다.
+      # 지역 화면 없이, 광고 없이 빌드된다. 넷 다 페이지 소스에 박히는 공개 값이라 시크릿이 아니라
+      # 변수로 둔다.
       - run: npm run build
         env:
           VITE_GA4_MEASUREMENT_ID: ${{ vars.GA4_MEASUREMENT_ID }}
           VITE_REGION_SELECT: ${{ vars.REGION_SELECT }}
+          VITE_ADSENSE_CLIENT_ID: ${{ vars.ADSENSE_CLIENT_ID }}
+          VITE_ADSENSE_SLOT_ID: ${{ vars.ADSENSE_SLOT_ID }}
+
+      # ads.txt는 빌드 산출물이 아니라 배포 값이라 여기서 만든다 (KAN-197).
+      #
+      # web/public/에 정적 파일로 두지 않는 근거가 둘이다. 파일에 적히는 게시자 ID가 environment
+      # 변수라 레포에 박으면 staging에도 같은 값이 실리고, 무엇보다 **가짜 ID가 적힌 ads.txt는
+      # 해롭다** - AdSense가 그 도메인을 「승인되지 않은 판매자」로 읽는다. 값이 없으면 파일을 아예
+      # 만들지 않는 쪽이 안전하다.
+      #
+      # 형식은 네 칸짜리 한 줄이고 인증 기관 ID `f08c47fec0942fa0`은 Google이 정한 고정 값이다
+      # (https://support.google.com/adsense/answer/7532444, 2026-09-13 재확인). **접두어가 `pub-`이지
+      # `ca-pub-`이 아니라서** 빌드 변수의 값에서 `ca-`를 뗀다. 모양을 여기서 검사하고 어긋나면
+      # 실패시키는 이유가 그 한 글자다 - 틀린 게시자 ID가 적힌 파일이 조용히 올라가면 소유권 확인이
+      # 되지 않는데, 증상이 「심사가 아직 안 끝났다」와 구분되지 않아 몇 주를 잃는다.
+      #
+      # 검사를 `ca-pub-` 접두어에서 `^ca-pub-[0-9]+$`로 좁혔다 (리뷰 P1-4, 2026-09-13). 접두어만
+      # 보면 `ca-pub-` 자체나 `ca-pub-12ab` 같은 값이 통과해 「pub-」 한 줄짜리 쓸모없는 ads.txt가
+      # 올라간다. **자릿수는 고정하지 않는다** - 리뷰 제안은 `[0-9]{16}`이었지만 16이라는 수는
+      # Google 문서가 보장한 계약이 아니라 지금 발급되는 값의 관찰일 뿐이라, 언젠가 자릿수가
+      # 늘면 멀쩡한 게시자 ID로 배포가 죽는다. 막아야 할 것은 「숫자가 아닌 값」이지 「긴 값」이 아니다.
+      - name: ads.txt 생성 (KAN-197)
+        id: adstxt
+        env:
+          ADSENSE_CLIENT_ID: ${{ vars.ADSENSE_CLIENT_ID }}
+        run: |
+          if [ -z "$ADSENSE_CLIENT_ID" ]; then
+            echo "::notice title=ads.txt 없음::ADSENSE_CLIENT_ID가 비어 있어 ads.txt를 만들지 않습니다. 광고 없는 빌드의 정상 상태입니다 (docs/wiki/ads-web-adsense.md §6)."
+            echo "generated=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! printf '%s' "$ADSENSE_CLIENT_ID" | grep -qE '^ca-pub-[0-9]+$'; then
+            echo "environment 변수 ADSENSE_CLIENT_ID는 ca-pub- 다음에 숫자만 오는 값이어야 합니다 (예: ca-pub-1234567890123456). AdSense 콘솔의 게시자 ID를 그대로 넣으세요 - ads.txt에 적히는 pub- 는 이 단계가 ca-를 떼어 만듭니다 (docs/wiki/ads-web-adsense.md §6)." >&2
+            exit 1
+          fi
+          printf 'google.com, %s, DIRECT, f08c47fec0942fa0\n' "${ADSENSE_CLIENT_ID#ca-}" > dist/ads.txt
+          echo "generated=true" >> "$GITHUB_OUTPUT"
+          cat dist/ads.txt
 
       - name: 환경 철거 상태 확인
         id: gate
@@ -138,8 +184,10 @@ jobs:
         env:
           WEB_BUCKET: ${{ vars.WEB_BUCKET }}
         run: |
+          # ads.txt도 뺀다 - index.html과 같은 부류라 아래에서 따로 올린다 (KAN-197)
           aws s3 sync dist/ "s3://$WEB_BUCKET/" \
             --exclude index.html \
+            --exclude ads.txt \
             --cache-control 'public, max-age=31536000, immutable' \
             --no-progress
 
@@ -152,17 +200,42 @@ jobs:
             --cache-control 'no-cache' \
             --content-type 'text/html; charset=utf-8'
 
+      # ads.txt가 index.html과 같은 부류인 이유는 이름이다 - 해시가 붙지 않아 내용이 바뀌어도
+      # 주소가 그대로라, 장기 캐시를 걸면 게시자 ID를 갈아 끼운 뒤에도 옛 파일이 나간다. 위
+      # sync에서 빼고 여기서 no-cache로 올린다. 순서는 index.html 뒤여도 된다 - 소유권 확인
+      # 파일이라 번들의 원자성(자산 → index.html)과 얽히지 않는다.
+      #
+      # 값이 없어 파일을 만들지 않은 환경에서는 이 단계를 건너뛴다. 버킷에 이미 있던 ads.txt를
+      # 지우지는 않는다 - sync에 --delete가 없는 것과 같고 역할에 DeleteObject 권한도 없다.
+      # 광고를 내리려면 변수를 지우는 것으로 부족하고 객체를 따로 지워야 한다.
+      - name: ads.txt 교체 (no-cache)
+        if: steps.gate.outputs.paused != 'true' && steps.adstxt.outputs.generated == 'true'
+        env:
+          WEB_BUCKET: ${{ vars.WEB_BUCKET }}
+        run: |
+          aws s3 cp dist/ads.txt "s3://$WEB_BUCKET/ads.txt" \
+            --cache-control 'no-cache' \
+            --content-type 'text/plain; charset=utf-8'
+
       - name: CloudFront 무효화
         if: steps.gate.outputs.paused != 'true'
         env:
           CLOUDFRONT_DISTRIBUTION_ID: ${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}
+          ADS_TXT_GENERATED: ${{ steps.adstxt.outputs.generated }}
         run: |
           # /는 default_root_object로 index.html을 받지만 캐시 키는 /다. 확장자 없는 경로는
           # SPA 재작성 Function이 /index.html로 바꿔 그 키를 쓴다 (KAN-126). 둘 다 지운다.
           # 해시 자산은 이름이 바뀌므로 무효화 대상이 아니다.
+          paths=('/' '/index.html')
+          # ads.txt는 방금 올렸을 때만 더한다 (KAN-197). 이름에 해시가 없어 무효화하지 않으면
+          # 엣지가 옛 내용을 계속 내주고, AdSense는 그 옛 내용으로 소유권을 판정한다. 확장자가
+          # 있어 SPA 재작성 Function을 타지 않으므로 캐시 키도 경로 그대로다.
+          if [ "$ADS_TXT_GENERATED" = "true" ]; then
+            paths+=('/ads.txt')
+          fi
           id=$(aws cloudfront create-invalidation \
             --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" \
-            --paths '/' '/index.html' \
+            --paths "${paths[@]}" \
             --query Invalidation.Id --output text)
           echo "무효화 $id 완료 대기"
           aws cloudfront wait invalidation-completed \

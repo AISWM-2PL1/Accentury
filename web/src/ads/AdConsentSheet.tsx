@@ -8,8 +8,14 @@
  * 사용자에게 고장으로 읽힌다. 고르는 것 자체가 두 탭 중 하나라 부담이 크지 않고, 어느 쪽을
  * 골라도 나중에 인트로 하단 「맞춤형 광고 설정」에서 바꿀 수 있다.
  *
- * 그래서 Escape도 듣지 않는다. 키보드가 있는 환경(데스크톱 브라우저)은 이 시트가 뜨는 실행이
- * 아니다 — 시트는 광고를 아는 앱 안에서만 뜬다 (`useAdConsent` null 규칙).
+ * 그래서 Escape도 듣지 않는다 — 브라우저 단독 실행에서도 그렇다 (KAN-197 2단계). 시트가 앱
+ * 안에서만 뜨던 시절에는 "키보드가 있는 환경은 이 시트를 보지 않는다"가 근거였는데, 이제
+ * 데스크톱 브라우저에서도 뜨므로 그 근거는 없어졌다. 판단은 그대로 둔다: 닫는 길이 선택뿐이라는
+ * 것이 이 시트의 요점이고, Escape를 열어 주면 웹에서도 선택 없이 닫힌 채 다음 방문에 또 뜬다 —
+ * 「닫을 수 있는 시트가 매번 다시 뜨는 것은 고장으로 읽힌다」는 위의 이유가 그대로 걸린다.
+ *
+ * 대신 초점은 시트 안에서 시작한다(아래 접근성) — 키보드만 쓰는 사람이 탭으로 시트를 찾아
+ * 들어올 필요는 없다.
  *
  * ## 접근성
  *
@@ -34,6 +40,7 @@ import { PrivacyPolicyLink } from '../legal/PrivacyPolicyLink'
 import { Button } from '../ui'
 import type { AdConsent, AdConsentChoice } from '../bridge/bridge'
 import {
+  type AdVendor,
   AD_CONSENT_ALLOW,
   AD_CONSENT_CHANGE_HINT,
   AD_CONSENT_CURRENT,
@@ -54,11 +61,21 @@ export interface AdConsentSheetProps {
   current: AdConsent
   /** 사용자가 골랐다. 저장과 닫기는 호출자 몫이다 (`useAdConsent.choose`) */
   onChoose: (state: AdConsentChoice) => void
+  /**
+   * 광고 사업자 (KAN-197). 문안 중 사업자 이름과 수집 항목이 여기서 갈린다 —
+   * 앱은 AdMob·기기 광고 식별자, 브라우저 단독 실행은 AdSense·브라우저 쿠키.
+   *
+   * 인트로가 훅이 고른 값을 그대로 넘긴다 (`useAdConsent`의 `vendor` — 네이티브 저장소에 묻는
+   * 실행이면 `admob`, 브라우저 저장소면 `adsense`). 기본값을 `admob`으로 남겨 두는 것은 이
+   * 컴포넌트만 따로 세우는 자리(테스트·앞으로의 호출처)가 앱 문안을 기본으로 보게 하기
+   * 위해서다 — 고지 문안은 빠뜨린 쪽이 기본이 되면 안 된다.
+   */
+  vendor?: AdVendor
 }
 
 const TITLE_ID = 'ad-consent-title'
 
-export function AdConsentSheet({ current, onChoose }: AdConsentSheetProps) {
+export function AdConsentSheet({ current, onChoose, vendor = 'admob' }: AdConsentSheetProps) {
   return (
     <div className="ad-consent-sheet">
       <div className="ad-consent-panel" role="dialog" aria-modal="true" aria-labelledby={TITLE_ID}>
@@ -68,7 +85,7 @@ export function AdConsentSheet({ current, onChoose }: AdConsentSheetProps) {
         <div className="type-body-sm ad-consent-body">
           {current !== 'unknown' && <p className="ad-consent-current">{AD_CONSENT_CURRENT[current]}</p>}
           <p>
-            {AD_CONSENT_WHY} {AD_CONSENT_EFFECT}
+            {AD_CONSENT_WHY[vendor]} {AD_CONSENT_EFFECT[vendor]}
           </p>
           <p>
             {AD_CONSENT_CHANGE_HINT} {AD_CONSENT_DETAIL_LEAD} <PrivacyPolicyLink />

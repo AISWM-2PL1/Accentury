@@ -10,6 +10,7 @@
  */
 
 import { expect, type Locator, type Page } from '@playwright/test'
+import { AD_CONSENT_DENY, AD_CONSENT_TITLE } from '../../src/ads/adConsentText'
 import { itemCaption } from '../../src/progress/itemBadge'
 
 /** 정의가 내려주는 문항 수 (음성 5 + 어휘 5). 진행 캡션의 분모이기도 하다 */
@@ -34,6 +35,42 @@ const VOICE_CHECK_TIMEOUT_MS = 25_000
  * 같은 코드를 봐야 하므로 라벨과 코드를 한 자리에 묶어 둔다 (`regions.ts`의 표와 같은 짝).
  */
 const E2E_REGION = { label: '경남', code: 'GYEONGNAM' } as const
+
+/**
+ * 맞춤형 광고 동의 시트가 떠 있으면 「일반 광고만 보기」로 지나간다 (KAN-197 2단계).
+ *
+ * 브라우저 단독 실행의 첫 방문에는 인트로 위에 이 시트가 덮인다. 막이 화면 전체를 가리므로
+ * (`.ad-consent-sheet`가 `position: fixed; inset: 0`) 지나치지 않으면 [내 억양 테스트하기]가
+ * 다른 요소에 가려진 상태로 남고, Playwright의 actionability 검사가 클릭을 기다리다 시간
+ * 초과로 죽는다 — vitest의 `fireEvent`는 hit-testing이 없어 막을 뚫고 닿지만 실브라우저는 아니다.
+ *
+ * ## 왜 거부를 고르는가
+ *
+ * 3단계 AC가 「동의 거부 시 비맞춤 광고만」이라, E2E가 도는 동안 맞춤형 광고 요청이 나가면
+ * 안 된다. 고른 값은 브라우저 저장소에 남지만(`ads/webAdConsentStore.ts`) Playwright는 테스트마다
+ * 새 컨텍스트라 저장소가 비어 있고, 그래서 매번 다시 뜬다 — 한 번 고르면 그만인 헬퍼가 아니다.
+ *
+ * ## 왜 유무를 보고 가는가
+ *
+ * 지역 화면과 같은 원칙이다(아래 [startTest]의 「지역 화면은…」 절, `docs/wiki/browser-e2e.md`) —
+ * 스펙은 자기가 어떤 판을 열었는지 모른다. 앱 WebView로 열리거나 이미 고른 컨텍스트에서는
+ * 시트가 없으므로, 빌드 변수가 아니라 **화면에 뜬 것**을 보고 지나간다.
+ *
+ * 지역 화면과 달리 `.or()`로 먼저 기다리지 않아도 되는 것은 호출 자리 덕이다. 부르는 쪽이
+ * 이미 인트로의 h1을 기다린 뒤이고, 시트는 그 h1과 같은 렌더에서 함께 그려진다
+ * (`IntroScreen`이 둘을 한 번에 반환한다) — 기다릴 빈 순간이 없다.
+ *
+ * 셀렉터는 화면의 상수를 import한다 (셀렉터 규칙). 문안이 바뀌면 헬퍼가 조용히 못 찾는 대신
+ * 컴파일이 따라온다.
+ */
+export async function passAdConsentIfShown(page: Page): Promise<void> {
+  const sheet = page.getByRole('dialog', { name: AD_CONSENT_TITLE })
+  if (!(await sheet.isVisible())) return
+
+  await sheet.getByRole('button', { name: AD_CONSENT_DENY, exact: true }).click()
+  // 닫힘까지 확인한다 — 막이 걷히기 전에 다음 클릭으로 넘어가면 같은 시간 초과를 다시 만난다
+  await expect(sheet).toBeHidden()
+}
 
 /**
  * 웹 단독 진입 → 시작 게이트 통과 → 문항 진행 화면.
@@ -65,6 +102,9 @@ export async function startTest(page: Page): Promise<void> {
   await page.goto('/')
 
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+
+  // 첫 방문이면 인트로 위에 동의 시트가 덮여 있다 — 걷어내야 [시작하기]에 손이 닿는다
+  await passAdConsentIfShown(page)
 
   /*
    * [시작하기]가 곧 마이크 권한 요청이다. `--use-fake-ui-for-media-stream`이 대화상자를

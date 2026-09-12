@@ -354,6 +354,26 @@ gh variable set APP_DOMAIN                 -e "$env" --body "$(terraform output 
 gh variable set GA4_MEASUREMENT_ID -e prod --body G-XXXXXXXXXX
 ```
 
+광고 변수 `ADSENSE_CLIENT_ID`·`ADSENSE_SLOT_ID`(KAN-197)는 AdSense 콘솔에서 나온다 -
+앞쪽이 게시자 ID(`ca-pub-` + 숫자. 지금 발급되는 값은 16자리인데 `web-deploy.yml`의 ads.txt
+스텝은 자릿수를 고정하지 않고 `^ca-pub-[0-9]+$`로 숫자 여부만 본다 - 리뷰 P1-4),
+뒤쪽이 광고 단위를 만들면 생기는 슬롯 ID다.
+**prod에만 둔다.** GA4처럼 집계가 섞여서가 아니라 승인 대상이 prod 하나이기 때문이다 -
+AdSense는 심사를 통과한 사이트에만 광고를 내려주므로 staging에 값을 넣어도 빈 슬롯만 선다.
+등록 시점도 그래서 늦다: 사이트 승인이 나고 광고 단위를 만든 **뒤에** 둘을 함께 넣는다.
+하나만 넣은 환경은 아예 안 넣은 환경과 똑같이 광고 없는 번들이 된다
+(`web/src/ads/adsense.ts`의 `adSenseIdsFromEnv`).
+
+```
+gh variable set ADSENSE_CLIENT_ID -e prod --body ca-pub-XXXXXXXXXXXXXXXX
+gh variable set ADSENSE_SLOT_ID   -e prod --body XXXXXXXXXX
+```
+
+`ads.txt`는 손으로 올리지 않는다 - `web-deploy.yml`이 배포할 때마다 `ADSENSE_CLIENT_ID`에서
+`ca-`를 떼어 `dist/ads.txt`에 한 줄로 적고 버킷 루트에 올린다. 값이 없으면 파일을 만들지 않고,
+`ca-pub-`으로 시작하지 않으면 그 단계에서 실패한다. 게시 확인은
+`curl https://accentury.app/ads.txt`이고 절차 전체는 `docs/wiki/ads-web-adsense.md` §6·§10에 있다.
+
 환경을 철거해 둔 동안에는 변수 `DEPLOY_PAUSED=true`를 추가로 둔다 ("teardown
 절차"). 있으면 워크플로가 배포 단계를 건너뛰고, 재구축 뒤 지우면 다시 배포한다.
 
