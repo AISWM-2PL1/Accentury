@@ -201,6 +201,7 @@ iOS의 캡처 실패를 `AudioRecorder`의 시작 실패 catch가 아니라 `Rec
 | Android | `app/google-services.json` | 두 플러그인(google-services·crashlytics)을 **적용하지 않는다** — 없으면 설정 단계에서 빌드를 죽이기 때문. 의존성은 조건 없이 붙는다 |
 | iOS | `ios/Accentury/GoogleService-Info.plist` | `FirebaseApp.configure()`를 부르지 않는다 — 파일이 없으면 그 호출이 앱을 죽인다. 의존성은 조건 없이 붙는다 |
 | 웹 | `VITE_GA4_MEASUREMENT_ID` | 태그를 설치하지 않는다 |
+| 웹 | `VITE_ADSENSE_CLIENT_ID`·`VITE_ADSENSE_SLOT_ID` | 광고 태그도 슬롯도 없다 (KAN-197). 둘 다 있어야 켜지고 하나만 있으면 없는 것과 같다. **계측이 아니라 광고라** 이 문서의 나머지와 이어지지 않는다 - 규칙이 같아서 같은 표에 있을 뿐이고 정본은 [`ads-web-adsense.md`](ads-web-adsense.md) §6이다 |
 
 **의존성까지 조건부로 하지 않는 이유가 같다**: 설정 유무에 따라 컴파일·링크되는 것이 갈리면,
 설정 없는 CI가 검증한 코드와 스토어로 나가는 코드가 달라진다.

@@ -114,3 +114,85 @@ test('웹 단독 완주 - 10문항을 풀고 분석을 기다려 결과 등급·
     `완주 ${finishedAt - startedAt}ms (문항 ${submittedAt - startedAt}ms + 분석 대기 ${finishedAt - submittedAt}ms)`,
   )
 })
+
+/**
+ * 광고 슬롯과 결과 화면 CTA (KAN-197 4단계).
+ *
+ * 위 완주 스펙이 「흐름이 끝까지 간다」를 보는 자리라면, 여기는 **광고가 그 흐름을 바꾸지
+ * 않는다**를 본다. 티켓의 수용 기준 셋이 한 판에 다 들어온다 — 재응시 CTA가 그대로인가(AC 4),
+ * 광고가 실패해도 결과까지 가는가(AC 5), 태그 유무와 무관하게 완주하는가(AC 6).
+ *
+ * ## 왜 한 판을 또 도는가
+ *
+ * 위 스펙에 단언 몇 줄을 얹으면 판을 아낄 수 있지만, 그러면 광고가 깨졌을 때 「완주가 깨졌다」로
+ * 읽힌다. 둘은 고쳐야 할 자리가 다르다. `fullyParallel`이 켜져 있어 두 판은 동시에 돈다.
+ *
+ * ## 여기서만 빌드 변수를 읽는 이유
+ *
+ * 지역 화면은 **화면에 뜬 것을 보고** 간다 (`testFlow.ts`의 `startTest`). 스펙이 자기가 어떤
+ * 번들을 열었는지 모른다는 것이 그 원칙이고, 여기서도 원칙 자체는 같다. 다만 광고는 **없는 것을
+ * 단언해야** 하는 쪽이라 화면만 봐서는 「태그 없는 빌드라 없다」와 「태그 있는 빌드인데 안 섰다」가
+ * 구분되지 않는다 — 후자가 바로 이 스펙이 잡아야 할 실패다.
+ *
+ * 그래서 기대를 가르는 값이 필요한데, 로컬 판에서는 그 값을 스펙이 알 수 있다. Playwright가
+ * `webServer.env`를 부모 환경 **위에** 얹으므로(`playwright.config.ts`의 `VITE_REGION_SELECT`
+ * 주석, 1.62 실측) 셸에 준 `VITE_ADSENSE_*`가 개발 서버에 그대로 닿고, 같은 값이 이 프로세스에도
+ * 있다. `E2E_BASE_URL`로 배포 환경을 겨눌 때는 이야기가 다르다 — 번들이 이미 굳어 있고 그 안의
+ * 값을 셸이 알 길이 없으므로, 그때는 슬롯 판정을 하지 않고 CTA만 본다.
+ */
+test('KAN-197 - 대기 화면 광고 슬롯은 태그 있는 빌드에만 서고, 결과 화면 CTA는 태그 유무와 같다', async ({
+  page,
+}) => {
+  /** 두 변수가 다 있어야 태그가 선다 (`ads/adsense.ts`의 `adSenseIdsFromEnv`) */
+  const tagged = Boolean(process.env.VITE_ADSENSE_CLIENT_ID && process.env.VITE_ADSENSE_SLOT_ID)
+  const knowsBuild = process.env.E2E_BASE_URL === undefined || process.env.E2E_BASE_URL === ''
+
+  await startTest(page)
+  const seen = await answerAllItems(page)
+  expect(seen).toHaveLength(TOTAL_ITEMS)
+
+  /*
+   * 대기 화면. 슬롯은 진행률 막대와 같은 렌더에서 함께 그려지므로(`AnalysisWaitingScreen`이
+   * `.analysis-steps` 아래에 `<AdSlot />`을 둔다) 막대를 본 직후가 슬롯을 볼 자리다.
+   *
+   * 이름 「광고」를 단 `complementary`가 계약이다 — 스크린 리더 사용자가 건너뛸 수 있어야 해서
+   * 붙인 것이고(위키 §5.1), 그래서 클래스 이름이 아니라 역할로 잡는다.
+   */
+  const adSlot = page.getByRole('complementary', { name: '광고' })
+  await expect(page.getByRole('progressbar', { name: '분석 진행률' })).toBeVisible()
+  if (knowsBuild) {
+    if (tagged) {
+      /*
+       * 더미 ID(ca-pub-0000…)로 도는 판에서는 Google이 400이나 빈 응답을 준다. 그래도 상자는
+       * 서 있어야 한다 — `<ins>`를 스크립트가 숨겨도 감싼 상자의 min-height 100px는 남는다
+       * (`.ad-slot`). 광고가 안 채워지는 것과 슬롯이 안 서는 것은 다른 사건이다
+       */
+      await expect(adSlot).toBeVisible()
+    } else {
+      // 태그 없는 빌드에는 상자째 없다 (`AdSlot`이 null) — 빈 자리를 남기지 않는다
+      await expect(adSlot).toHaveCount(0)
+    }
+  }
+
+  /*
+   * 광고가 어떻게 되든 결과까지 간다 (AC 5). 더미 ID의 실패 응답이 폴링이나 화면 전환을 막으면
+   * 이 대기에서 걸린다.
+   */
+  await expect(page).toHaveURL(/screen=result/, { timeout: 60_000 })
+
+  /*
+   * 결과 화면의 출구는 광고와 무관하다 (AC 4). 웹에는 보상형이 없어 재응시가 광고를 거치지
+   * 않으므로 라벨도 예전 그대로여야 한다 — 앱의 「광고 보고 다시 테스트하기」는 브리지가 있는
+   * 실행의 것이다 (`result/RetestAction.tsx`의 `retestLabel`, 위키 §5).
+   *
+   * 개수까지 세는 이유는 「라벨은 맞는데 광고 버튼이 하나 늘었다」를 잡기 위해서다. 앱 다운로드는
+   * 버튼이 아니라 링크라 이 셋에 들지 않고 따로 확인한다.
+   */
+  await expect(page.getByRole('button')).toHaveCount(2)
+  await expect(page.getByRole('button', { name: '친구에게 공유하기', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '다시 테스트하기', exact: true })).toBeVisible()
+  await expect(page.getByRole('link', { name: '앱 다운로드', exact: true })).toBeVisible()
+
+  // 슬롯은 대기 화면에만 있다 — 결과 화면에는 어느 빌드에서도 광고가 없다 (위키 §5의 표)
+  await expect(adSlot).toHaveCount(0)
+})
