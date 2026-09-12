@@ -16,6 +16,10 @@
 // 채웠고, 이제는 되살아나는 쪽을 테스트로 막는다. 확정 전에 막지 않았던 것은 막으면 확정 전
 // 단계의 본문을 커밋할 수 없어서 오히려 문서가 코드보다 뒤처졌기 때문이다.
 //
+// 브라우저 웹의 광고 사업자는 2026-09-13에 Google AdSense로 확정됐다 (KAN-197 1단계). AdMob이
+// 웹을 지원하지 않아 사업자가 앱·웹으로 갈렸고, 그에 따라 수집 항목도 갈렸다 - 앱은 기기 광고
+// 식별자, 웹은 브라우저 쿠키. 그래서 8항(자동 수집 장치)이 광고 몫을 함께 지게 됐다.
+//
 // `node --test 'infra/privacy/*.test.mjs'` 로 돈다. 디렉터리 경로를 그냥 넘기면 안 된다 -
 // node 22.6부터 --test의 위치 인자는 glob 패턴으로 해석돼서, 디렉터리를 주면 그 이름의 모듈을
 // 찾다가 MODULE_NOT_FOUND로 죽는다.
@@ -231,7 +235,10 @@ test('2항 제3자 제공 표와 10항 광고 절에 Google AdMob이 적혀 있�
   // 「Google」은 3항·4항의 Firebase 행에도 나오므로 문서 전체 includes로는 광고 사업자가 적혔는지
   // 알 수 없다. 광고 사업자를 적어야 하는 절 둘을 각각 본다.
   const thirdParty = section('<h2>2. 개인정보의 제3자 제공', '<h2>3. 개인정보 처리의 위탁');
-  assert.ok(thirdParty.includes('Google LLC (Google AdMob)'), '2항 제3자 제공 표에 Google AdMob이 없다');
+  // 정확 일치로 보지 않는다 - KAN-197에서 웹 사업자 Google AdSense를 같은 행에 합쳐
+  // 「Google LLC (Google AdMob, Google AdSense)」가 됐다. 별도 행을 만들지 않은 이유는 4항과
+  // 같다: AdMob도 AdSense도 Google LLC라, 행을 나누면 같은 사업자를 두 번 고지하게 된다.
+  assert.ok(thirdParty.includes('Google AdMob'), '2항 제3자 제공 표에 Google AdMob이 없다');
   const ads = section('<h2>10. 광고</h2>', '<h2>11. 개인정보의 안전성 확보 조치');
   assert.ok(ads.includes('Google AdMob'), '10항 광고 절에 Google AdMob이 없다');
   // 사업자가 정해졌으니 광고가 어디서 나오는지도 적어야 한다 (전면 광고는 분석 대기, 보상형은 재응시).
@@ -247,6 +254,37 @@ test('4항 국외 이전에 광고 항목이 들어 있다 (KAN-196, Google LLC 
   assert.ok(abroad.includes('Google AdMob'), '4항 이전받는 자에 Google AdMob이 없다');
   assert.ok(abroad.includes('광고 식별자'), '4항 이전되는 항목에 광고 식별자가 없다');
   assert.ok(abroad.includes('맞춤형 광고 표시'), '4항 이용 목적에 맞춤형 광고 표시가 없다');
+});
+
+test('브라우저 웹의 광고 사업자 Google AdSense가 2·4·8·10항에 적혀 있다 (KAN-197 2026-09-13 웹 사업자 확정)', () => {
+  // 앱은 AdMob, 브라우저 웹은 AdSense다 - AdMob은 웹을 지원하지 않는다. 사업자가 갈리면서 수집
+  // 항목도 갈렸고(앱=기기 광고 식별자, 웹=브라우저 쿠키), 그래서 웹 몫을 적어야 하는 절이 넷이다.
+  // 하나라도 빠지면 브라우저로 오신 분에게는 고지가 아닌 문서가 된다.
+  const thirdParty = section('<h2>2. 개인정보의 제3자 제공', '<h2>3. 개인정보 처리의 위탁');
+  assert.ok(thirdParty.includes('Google AdSense'), '2항 제3자 제공 표에 Google AdSense가 없다');
+
+  const abroad = section('<h2>4. 개인정보의 국외 이전', '<h3>이용 통계 이벤트');
+  assert.ok(abroad.includes('Google AdSense'), '4항 이전받는 자에 Google AdSense가 없다');
+  assert.ok(abroad.includes('광고 쿠키'), '4항 이전되는 항목에 광고 쿠키가 없다');
+
+  // 8항은 자동 수집 장치(쿠키) 절이다. 웹 광고 태그가 쿠키를 심는 것은 GA4 태그와 같은 종류의
+  // 사실이라 같은 자리에서 고지해야 한다 - 10항에만 적으면 「쿠키를 심는 장치」를 묻는 절이 웹
+  // 광고를 빠뜨린 채로 남는다.
+  const autoCollect = section('<h2>8. 개인정보 자동 수집 장치', '<h2>9.');
+  assert.ok(autoCollect.includes('AdSense'), '8항에 AdSense 광고 태그 고지가 없다');
+  assert.ok(autoCollect.includes('쿠키'), '8항에 광고 쿠키 고지가 없다');
+
+  const ads = section('<h2>10. 광고</h2>', '<h2>11. 개인정보의 안전성 확보 조치');
+  assert.ok(ads.includes('Google AdSense'), '10항 광고 절에 Google AdSense가 없다');
+  assert.ok(ads.includes('배너 광고'), '10항에 웹 배너 광고 자리가 없다');
+  // 웹에는 보상형(재응시) 광고가 없다. 한 절이 앱·웹을 함께 말하므로, 이 문장이 빠지면 앞의
+  // 「보상형 광고를 끝까지 보신 뒤에 재응시」가 웹에도 걸리는 것처럼 읽힌다 - 실제로는 웹의
+  // 재응시는 광고 없이 통과한다. 이 문장만 공백을 눌러서 보는 이유는 본문이 80자에서 접혀
+  // 낱말 사이에 줄바꿈과 들여쓰기가 들어가기 때문이다 (1항 표의 `retentionRows`와 같은 처리).
+  const adsFlat = ads.replace(/\s+/g, ' ');
+  assert.ok(adsFlat.includes('웹의 재응시에는 광고가 없'), '10항에 웹 재응시 광고 없음이 적혀 있지 않다');
+  // 웹의 철회 경로. 앱의 OS 설정(Android 광고 ID 재설정·iOS ATT)에 대응하는 자리다.
+  assert.ok(ads.includes('adssettings.google.com'), '10항에 Google 광고 설정 링크가 없다');
 });
 
 test('데이터 소재지가 서울 리전이라고 적혀 있다 (infra, AWS ap-northeast-2)', () => {

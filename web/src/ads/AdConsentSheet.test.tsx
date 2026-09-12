@@ -39,6 +39,26 @@ describe('AdConsentSheet — 맞춤형 광고 동의 시트 (KAN-196)', () => {
     expect(screen.getByText(/「맞춤형 광고 설정」/)).toBeInTheDocument()
   })
 
+  // 사업자가 앱(AdMob)과 브라우저 웹(AdSense)으로 갈렸다 (KAN-197). 고지 4요소 중 ①사업자와
+  // ②수집 항목이 함께 갈리므로, 한쪽 문안이 다른 쪽에 새는 것까지 본다 — 브라우저로 오신 분에게
+  // 「기기의 광고 식별자」라고 말하면 쓰지 않는 것을 수집한다고 고지하는 셈이다.
+  it('기본값은 앱 문안이다 — Google AdMob과 기기 광고 식별자 (KAN-197)', () => {
+    render(<AdConsentSheet current="unknown" onChoose={vi.fn()} />)
+
+    expect(screen.getByText(/Google AdMob/)).toBeInTheDocument()
+    expect(screen.getByText(/기기의 광고 식별자/)).toBeInTheDocument()
+    expect(screen.queryByText(/Google AdSense/)).not.toBeInTheDocument()
+  })
+
+  it('vendor="adsense"면 웹 문안이다 — Google AdSense와 브라우저 쿠키 (KAN-197)', () => {
+    render(<AdConsentSheet current="unknown" onChoose={vi.fn()} vendor="adsense" />)
+
+    expect(screen.getByText(/Google AdSense/)).toBeInTheDocument()
+    expect(screen.getByText(/브라우저 쿠키/)).toBeInTheDocument()
+    expect(screen.queryByText(/Google AdMob/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/광고 식별자/)).not.toBeInTheDocument()
+  })
+
   it('[맞춤형 광고 허용]은 granted를 고른다', () => {
     const onChoose = vi.fn()
     render(<AdConsentSheet current="unknown" onChoose={onChoose} />)
