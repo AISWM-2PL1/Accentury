@@ -27,6 +27,7 @@
  */
 
 import { expect, test, type Page } from '@playwright/test'
+import { passAdConsentIfShown } from './helpers/testFlow'
 
 /**
  * `getUserMedia`가 주어진 이름으로 거절하게 만든다.
@@ -63,6 +64,8 @@ test('마이크 거부 - 권한 안내 화면으로 갈리고 세션은 만들�
   const sessionRequests = countSessionRequests(page)
 
   await page.goto('/')
+  // 동의 시트가 덮고 있으면 [시작하기]가 가려져 클릭이 시간 초과로 죽는다 (KAN-197 2단계)
+  await passAdConsentIfShown(page)
   await page.getByRole('button', { name: '내 억양 테스트하기', exact: true }).click()
 
   // 인트로가 통째로 갈렸다. 문구는 `MicBlockedScreen`의 COPY.denied다.
@@ -115,6 +118,8 @@ test('마이크 점유 - 거부와 다른 안내로 갈린다', async ({ page })
   await rejectMicrophoneWith(page, 'NotReadableError')
 
   await page.goto('/')
+  // 동의 시트가 덮고 있으면 [시작하기]가 가려져 클릭이 시간 초과로 죽는다 (KAN-197 2단계)
+  await passAdConsentIfShown(page)
   await page.getByRole('button', { name: '내 억양 테스트하기', exact: true }).click()
 
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('마이크를 사용할 수 없어요')

@@ -1,6 +1,13 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { AD_CONSENT_ALLOW, AD_CONSENT_DENY, AD_CONSENT_SETTINGS_LINK, AD_CONSENT_TITLE } from '../ads/adConsentText'
+import {
+  AD_CONSENT_ALLOW,
+  AD_CONSENT_CURRENT,
+  AD_CONSENT_DENY,
+  AD_CONSENT_SETTINGS_LINK,
+  AD_CONSENT_TITLE,
+} from '../ads/adConsentText'
+import { resetWebAdConsentMemory } from '../ads/webAdConsentStore'
 import type { MicPermission } from '../audio/microphone'
 import { REQUIRED_BRIDGE_VERSION, type AccenturyBridge } from '../bridge/bridge'
 import { IntroScreen } from './IntroScreen'
@@ -34,8 +41,19 @@ function clickStart() {
   fireEvent.click(screen.getByRole('button', { name: '내 억양 테스트하기' }))
 }
 
+/** 진입 쿼리를 갈아 끼운다 (`App.test.tsx`와 같은 방법). 실행 환경 판정이 이 값을 본다 */
+function setSearch(search: string) {
+  window.history.replaceState(null, '', `/${search}`)
+}
+
 afterEach(() => {
   delete window.AccenturyBridge
+  setSearch('')
+  /*
+   * 웹 동의의 사본은 모듈 변수라(`ads/webAdConsentStore.ts`) 테스트 사이에 그대로 남는다.
+   * 비우지 않으면 앞 테스트가 고른 값 때문에 다음 테스트의 인트로가 시트 없이 시작한다.
+   */
+  resetWebAdConsentMemory()
 })
 
 describe('IntroScreen — 마이크 게이트 (KAN-56)', () => {
@@ -175,14 +193,46 @@ describe('IntroScreen — 맞춤형 광고 동의 (KAN-196)', () => {
     expect(settingsLink()).toBeInTheDocument()
   })
 
-  it('광고 동의를 모르는 실행(브리지 없음)에는 시트도 링크도 없다 — 웹 단독은 KAN-197 범위다', () => {
+  it('브라우저 단독 실행도 같은 시트로 묻되 문안이 웹 것이다 (KAN-197 2단계)', () => {
+    // 브리지 객체도 `?bridge=`도 없으면 브라우저 단독 실행이다 (`bridge.ts`의 `isStandaloneWeb`)
+    render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
+
+    expect(dialog()).toBeInTheDocument()
+    /*
+     * 사업자와 수집 항목이 앱과 갈린다. 브라우저로 오신 분에게 「기기의 광고 식별자」라고
+     * 말하면 쓰지 않는 것을 수집한다고 고지하는 셈이다 (`adConsentText.ts`).
+     */
+    expect(screen.getByText(/Google AdSense/)).toBeInTheDocument()
+    expect(screen.getByText(/브라우저 쿠키/)).toBeInTheDocument()
+    expect(screen.queryByText(/Google AdMob/)).not.toBeInTheDocument()
+  })
+
+  it('웹에서 고르면 시트가 닫히고 링크로 지금 상태를 다시 볼 수 있다 (KAN-197 2단계)', () => {
+    render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
+
+    fireEvent.click(screen.getByRole('button', { name: AD_CONSENT_DENY }))
+
+    // 방침 10항이 약속한 철회 경로다 — 「첫 화면 아래 맞춤형 광고 링크에서 언제든」
+    expect(dialog()).not.toBeInTheDocument()
+    expect(settingsLink()).toBeInTheDocument()
+
+    fireEvent.click(settingsLink()!)
+
+    expect(dialog()).toBeInTheDocument()
+    expect(screen.getByText(AD_CONSENT_CURRENT.denied)).toBeInTheDocument()
+  })
+
+  it('`?bridge=`는 있는데 객체가 없는 WebView에는 시트도 링크도 없다', () => {
+    // 앱이 연 WebView로 보는 조합이다. 웹 저장소에 적으면 정작 SDK를 세우는 네이티브가 모른다
+    setSearch('?bridge=1')
+
     render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
 
     expect(dialog()).not.toBeInTheDocument()
     expect(settingsLink()).not.toBeInTheDocument()
   })
 
-  it('메서드를 모르는 구버전 앱에도 시트도 링크도 없다', () => {
+  it('메서드를 모르는 구버전 앱에도 시트도 링크도 없다 — 객체가 있으면 쿼리와 무관하다', () => {
     window.AccenturyBridge = {
       requestMicPermission: vi.fn(),
       startVoiceItem: vi.fn(),

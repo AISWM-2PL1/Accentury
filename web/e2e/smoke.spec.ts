@@ -24,7 +24,7 @@ import {
   VOCABULARY_ITEM_COUNT,
   VOICE_ITEM_COUNT,
 } from '../src/intro/introText'
-import { startTest } from './helpers/testFlow'
+import { passAdConsentIfShown, startTest } from './helpers/testFlow'
 
 test('웹 단독 진입 - 인트로에서 가짜 마이크로 목소리 점검을 통과해 문항 화면까지 간다', async ({
   page,
@@ -48,6 +48,11 @@ test('웹 단독 진입 - 인트로에서 가짜 마이크로 목소리 점검�
    * 갈라진다.
    */
   await page.goto('/')
+  /*
+   * 첫 방문에는 동의 시트가 인트로를 덮는다 (KAN-197 2단계). 숫자 카드는 가려져도 보이는
+   * 것으로 잡히지만, 시트를 걷어낸 뒤에 재는 편이 사람이 실제로 읽는 화면과 같다.
+   */
+  await passAdConsentIfShown(page)
   await expect(
     page.getByText(`${VOICE_ITEM_COUNT + VOCABULARY_ITEM_COUNT}문항`),
   ).toBeVisible()

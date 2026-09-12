@@ -214,9 +214,11 @@ https://accentury.app/privacy.html
 테스트도 같은 수만큼 늘어난다: `bridge.test.ts`, `AccenturyBridgeTest.kt`,
 `AccenturyBridgeTests.swift`, `BridgeUserScriptTests.swift`(메서드 목록).
 
-웹 쪽에서 메서드의 **유무**를 보고 화면을 가르는 자리도 있다 — `readAdConsent() !== null`이
-동의 시트·「맞춤형 광고 설정」 링크·[광고 보고 다시 테스트하기] 라벨의 공통 판정이다 (§8).
-메서드를 지우거나 이름을 바꾸면 이 셋이 한꺼번에 사라진다.
+웹 쪽에서 메서드의 **유무**를 보고 화면을 가르는 자리도 있다 — 동의 시트·「맞춤형 광고 설정」
+링크·[광고 보고 다시 테스트하기] 라벨이 그렇다 (§8). 앱 실행에서 `getAdConsent`를 지우거나
+이름을 바꾸면 이 셋이 한꺼번에 사라진다. 다만 앞의 둘은 브라우저 단독 실행에서 브리지 없이도
+뜬다 (KAN-197 2단계) — 판정이 `readAdConsent() !== null` 하나에서 `resolveAdConsentSource`의
+세 갈래로 갈렸다 (`ads/adConsent.ts`).
 
 ## 8. 광고·동의 (KAN-196)
 
@@ -226,10 +228,15 @@ https://accentury.app/privacy.html
 인트로 하단 방침 링크(§4) 옆 「맞춤형 광고 설정」이다.
 
 웹 단독 실행은 **KAN-197**이 맡는다 — 브라우저 저장소에 동의를 두고 Google AdSense 태그로
-광고를 띄운다. 정본은 [`ads-web-adsense.md`](ads-web-adsense.md)다. 다만 그 2단계 전까지
-이 문단의 사실은 그대로다: `readAdConsent()`가 null이라 시트도 링크도 광고 호출도 없고,
-**브리지 부재가 곧 "광고 없음"**이다. 이 판정 자체는 바뀌지 않는다 — 웹이 자기 저장소로
-갈리는 자리는 `useAdConsent` 안이고, 브리지 메서드의 유무를 보는 규칙은 앱 경로의 것이다.
+광고를 띄운다. 정본은 [`ads-web-adsense.md`](ads-web-adsense.md)다. 그 2단계(2026-09-13)로
+**브리지 부재가 곧 "광고 없음"이던 것은 끝났다**: 브리지가 없으면서 `isStandaloneWeb`이 참이면
+웹이 자기 저장소(`ads/webAdConsentStore.ts`)에 묻고 시트도 링크도 그대로 뜬다. 지금 `null`로
+남는 것은 구버전 앱뿐이다 — 객체나 `?bridge=`는 있는데 `getAdConsent`를 모르는 실행이다
+(`resolveAdConsentSource`의 `'none'`).
+
+이 절의 나머지 사실은 그대로다. 갈리는 자리가 `useAdConsent` 안이라는 것도, 브리지 메서드의
+유무를 보는 규칙이 **앱 경로의 것**이라는 것도 바뀌지 않았다. 웹 광고 호출(AdSense 태그)은
+아직 없다 — KAN-197 3단계다.
 
 ### 8.1 동의 저장이 네이티브인 이유
 
