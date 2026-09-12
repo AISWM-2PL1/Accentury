@@ -5,6 +5,10 @@
 동의가 정한다. 브리지 계약과 웹 쪽 화면은 `webview-bridge.md` §8이 정본이고, 이 문서는 **네이티브
 구현의 결정과 근거**다. Android(3단계)·iOS(4단계) 둘 다 끝났고, iOS가 Android와 갈리는 지점은 §7이다.
 
+**웹(브라우저 단독 실행)의 광고는 여기가 아니라 [`ads-web-adsense.md`](ads-web-adsense.md)다** —
+AdMob이 웹을 지원하지 않아 사업자가 Google AdSense로 갈렸다 (KAN-197, 2026-09-13). 앱 WebView
+안에서는 그 웹 태그를 설치하지 않으므로 이 문서의 내용은 KAN-197로 바뀌지 않는다.
+
 ## 1. 결정 근거
 
 - 사업자 결정: 지라 KAN-196 코멘트 (2026-09-11, 팀장) —
@@ -266,6 +270,11 @@ ATT 시트가 시트 허용 직후 뜨는지, 허용/거부 뒤 첫 맞춤형 �
 `""`가 읽혀 시트가 안 뜰 수 있다 (§7.4, 리뷰 P2-5). 실기기에서 첫 설치 → 인트로 → 시트가 서는지 본다.
 
 ## 8. 파일 지도
+
+동의 시트의 문안은 웹에 있고, KAN-197부터 **사업자별로 갈린다** —
+`web/src/ads/adConsentText.ts`의 `AD_CONSENT_WHY`·`AD_CONSENT_EFFECT`가 `AdVendor`
+(`'admob' | 'adsense'`)를 키로 하는 `Record`이고, `AdConsentSheet`의 `vendor` prop이 고른다
+(기본값 `'admob'` = 앱). 앱 쪽이 보는 값은 `admob` 하나뿐이라 네이티브는 이 변화를 모른다.
 
 | 파일 | 역할 |
 |---|---|

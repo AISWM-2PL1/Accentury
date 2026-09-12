@@ -11,6 +11,10 @@
  * 그래서 Escape도 듣지 않는다. 키보드가 있는 환경(데스크톱 브라우저)은 이 시트가 뜨는 실행이
  * 아니다 — 시트는 광고를 아는 앱 안에서만 뜬다 (`useAdConsent` null 규칙).
  *
+ * 이 전제는 KAN-197 2단계에 깨진다 — 브라우저 단독 실행도 이 시트로 묻게 된다. 그때 데스크톱
+ * 키보드를 다시 봐야 하지만, 「닫는 길이 선택뿐」이라는 판단 자체는 그대로다: 선택 없이 닫히면
+ * 웹에서도 다음 방문에 또 뜬다.
+ *
  * ## 접근성
  *
  * `role="dialog"` + `aria-modal="true"`로 뒤의 인트로를 보조기기에서 떼어 놓고, 제목을
@@ -34,6 +38,7 @@ import { PrivacyPolicyLink } from '../legal/PrivacyPolicyLink'
 import { Button } from '../ui'
 import type { AdConsent, AdConsentChoice } from '../bridge/bridge'
 import {
+  type AdVendor,
   AD_CONSENT_ALLOW,
   AD_CONSENT_CHANGE_HINT,
   AD_CONSENT_CURRENT,
@@ -54,11 +59,20 @@ export interface AdConsentSheetProps {
   current: AdConsent
   /** 사용자가 골랐다. 저장과 닫기는 호출자 몫이다 (`useAdConsent.choose`) */
   onChoose: (state: AdConsentChoice) => void
+  /**
+   * 광고 사업자 (KAN-197). 문안 중 사업자 이름과 수집 항목이 여기서 갈린다 —
+   * 앱은 AdMob·기기 광고 식별자, 브라우저 단독 실행은 AdSense·브라우저 쿠키.
+   *
+   * 기본값이 `admob`인 이유는 지금 이 시트를 여는 곳이 앱 경로뿐이기 때문이다
+   * (`intro/IntroScreen`은 브리지가 있는 실행에서만 연다 — `useAdConsent` null 규칙).
+   * 웹 경로가 `'adsense'`를 넘기는 것은 KAN-197 2단계다.
+   */
+  vendor?: AdVendor
 }
 
 const TITLE_ID = 'ad-consent-title'
 
-export function AdConsentSheet({ current, onChoose }: AdConsentSheetProps) {
+export function AdConsentSheet({ current, onChoose, vendor = 'admob' }: AdConsentSheetProps) {
   return (
     <div className="ad-consent-sheet">
       <div className="ad-consent-panel" role="dialog" aria-modal="true" aria-labelledby={TITLE_ID}>
@@ -68,7 +82,7 @@ export function AdConsentSheet({ current, onChoose }: AdConsentSheetProps) {
         <div className="type-body-sm ad-consent-body">
           {current !== 'unknown' && <p className="ad-consent-current">{AD_CONSENT_CURRENT[current]}</p>}
           <p>
-            {AD_CONSENT_WHY} {AD_CONSENT_EFFECT}
+            {AD_CONSENT_WHY[vendor]} {AD_CONSENT_EFFECT[vendor]}
           </p>
           <p>
             {AD_CONSENT_CHANGE_HINT} {AD_CONSENT_DETAIL_LEAD} <PrivacyPolicyLink />

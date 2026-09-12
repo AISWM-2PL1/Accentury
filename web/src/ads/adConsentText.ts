@@ -13,16 +13,40 @@
  * 말투는 앱의 다른 카피와 같다 (ux-ui.md 비난 없는 카피, "~해요"체). 「허용하지 않으셔도
  * 광고는 나오지만」이 ④인데, 거부의 결과를 숨기지 않으면서도 거부를 나쁜 선택처럼 읽히게
  * 하지 않는 것이 이 문장의 일이다.
+ *
+ * ## 사업자가 둘이라 문안도 둘이다 (KAN-197)
+ *
+ * 앱은 Google AdMob, 브라우저 단독 실행은 Google AdSense다 — AdMob이 웹을 지원하지 않아 갈렸다
+ * (2026-09-13 팀장 결정, `docs/wiki/ads-web-adsense.md`). 갈리는 것은 네 요소 중 둘뿐이다:
+ * ①사업자 이름과 ②수집 항목(기기 광고 식별자 / 브라우저 쿠키). ③목적과 ④거부 시 영향은 같은
+ * 말이라 같은 문장에 둔 채로 둔다 — ②와 한 문장이라 [AD_CONSENT_EFFECT]가 통째로 갈릴 뿐이다.
+ *
+ * 문안을 두 벌 적는 대신 한 벌을 만들어 사업자 이름만 끼우는 방법도 있었지만, 그러면 "식별자"와
+ * "쿠키"를 고르는 자리가 문장 한가운데의 조건식이 된다. 고지 문구를 고치는 사람이 읽어야 하는
+ * 것은 완성된 두 문장이지 조립 규칙이 아니다.
  */
+
+/** 광고 사업자. 실행 환경이 정한다 — 앱은 `admob`, 브라우저 단독 실행은 `adsense` (KAN-197) */
+export type AdVendor = 'admob' | 'adsense'
 
 export const AD_CONSENT_TITLE = '맞춤형 광고 안내'
 
-/** ① 사업자(Google AdMob) + 광고가 나오는 이유 */
-export const AD_CONSENT_WHY = 'Accentury는 무료 서비스라 Google AdMob 광고가 나와요.'
+/** ① 사업자 + 광고가 나오는 이유. 앱(AdMob)과 브라우저 웹(AdSense)이 갈린다 */
+export const AD_CONSENT_WHY: Record<AdVendor, string> = {
+  admob: 'Accentury는 무료 서비스라 Google AdMob 광고가 나와요.',
+  adsense: 'Accentury는 무료 서비스라 Google AdSense 광고가 나와요.',
+}
 
-/** ② 수집 항목(기기 광고 식별자) + ③ 목적(관심사에 맞는 광고) + ④ 거부 시 영향(일반 광고) */
-export const AD_CONSENT_EFFECT =
-  '허용하시면 기기의 광고 식별자로 관심사에 맞는 광고를 보여 드리고, 허용하지 않으셔도 광고는 나오지만 맞춤형이 아닌 일반 광고만 나와요.'
+/**
+ * ② 수집 항목 + ③ 목적(관심사에 맞는 광고) + ④ 거부 시 영향(일반 광고). 갈리는 것은 ②뿐이다 —
+ * 앱은 기기의 광고 식별자, 브라우저 웹은 브라우저 쿠키를 쓴다.
+ */
+export const AD_CONSENT_EFFECT: Record<AdVendor, string> = {
+  admob:
+    '허용하시면 기기의 광고 식별자로 관심사에 맞는 광고를 보여 드리고, 허용하지 않으셔도 광고는 나오지만 맞춤형이 아닌 일반 광고만 나와요.',
+  adsense:
+    '허용하시면 브라우저 쿠키로 관심사에 맞는 광고를 보여 드리고, 허용하지 않으셔도 광고는 나오지만 맞춤형이 아닌 일반 광고만 나와요.',
+}
 
 /** 철회·재동의 경로. 링크 이름([AD_CONSENT_SETTINGS_LINK])을 그대로 적어 찾을 수 있게 한다 */
 export const AD_CONSENT_CHANGE_HINT = '선택은 첫 화면 아래 「맞춤형 광고 설정」에서 언제든 바꿀 수 있어요.'
