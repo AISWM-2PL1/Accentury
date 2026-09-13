@@ -39,7 +39,11 @@ const E2E_REGION = { label: '경남', code: 'GYEONGNAM' } as const
 /**
  * 맞춤형 광고 동의 시트가 떠 있으면 「일반 광고만 보기」로 지나간다 (KAN-197 2단계).
  *
- * 브라우저 단독 실행의 첫 방문에는 인트로 위에 이 시트가 덮인다. 막이 화면 전체를 가리므로
+ * **광고 ID가 들어간 빌드에서만 뜬다** (팀 결정 2026-09-13, PR #109 리뷰). `VITE_ADSENSE_*`가
+ * 빈 판에서는 광고가 나가지 않으므로 동의를 묻지도 않는다 (`ads/adConsent.ts`의
+ * `resolveAdConsentSource`) — 그런 판에서 이 헬퍼가 아무 일도 하지 않고 지나가는 것이 정상이다.
+ *
+ * ID가 있는 빌드의 첫 방문에는 인트로 위에 이 시트가 덮인다. 막이 화면 전체를 가리므로
  * (`.ad-consent-sheet`가 `position: fixed; inset: 0`) 지나치지 않으면 [내 억양 테스트하기]가
  * 다른 요소에 가려진 상태로 남고, Playwright의 actionability 검사가 클릭을 기다리다 시간
  * 초과로 죽는다 — vitest의 `fireEvent`는 hit-testing이 없어 막을 뚫고 닿지만 실브라우저는 아니다.
@@ -53,17 +57,24 @@ const E2E_REGION = { label: '경남', code: 'GYEONGNAM' } as const
  * ## 왜 유무를 보고 가는가
  *
  * 지역 화면과 같은 원칙이다(아래 [startTest]의 「지역 화면은…」 절, `docs/wiki/browser-e2e.md`) —
- * 스펙은 자기가 어떤 판을 열었는지 모른다. 앱 WebView로 열리거나 이미 고른 컨텍스트에서는
- * 시트가 없으므로, 빌드 변수가 아니라 **화면에 뜬 것**을 보고 지나간다.
+ * 스펙은 자기가 어떤 판을 열었는지 모른다. 앱 WebView로 열리거나 ID 없는 빌드이거나 이미 고른
+ * 컨텍스트에서는 시트가 없으므로, 빌드 변수가 아니라 **화면에 뜬 것**을 보고 지나간다.
  *
- * 지역 화면과 달리 `.or()`로 먼저 기다리지 않아도 되는 것은 호출 자리 덕이다. 부르는 쪽이
- * 이미 인트로의 h1을 기다린 뒤이고, 시트는 그 h1과 같은 렌더에서 함께 그려진다
- * (`IntroScreen`이 둘을 한 번에 반환한다) — 기다릴 빈 순간이 없다.
+ * ## 인트로가 그려지기를 여기서 기다린다 (PR #109 리뷰 (2026-09-13))
+ *
+ * `isVisible()`은 기다리지 않는 즉답이라, `page.goto('/')` 직후에 부르면 React가 시트를 그리기
+ * 전의 빈 순간을 「시트 없음」으로 읽는다. 그러면 헬퍼는 그냥 지나가고 다음 클릭이 뒤늦게 덮인
+ * 막 밑에서 actionability를 기다리다 시간 초과로 죽는다 — 호출부 세 곳(`smoke`, `mic-blocked`
+ * 둘) 중 하나라도 빠뜨리면 플레이키가 되므로, 호출자에게 맡기지 않고 이 함수가 인트로의 h1을
+ * 먼저 기다린다. 시트는 그 h1과 같은 렌더에서 함께 그려지므로(`IntroScreen`이 둘을 한 번에
+ * 반환한다) h1이 보인 뒤에는 기다릴 빈 순간이 없다.
  *
  * 셀렉터는 화면의 상수를 import한다 (셀렉터 규칙). 문안이 바뀌면 헬퍼가 조용히 못 찾는 대신
  * 컴파일이 따라온다.
  */
 export async function passAdConsentIfShown(page: Page): Promise<void> {
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+
   const sheet = page.getByRole('dialog', { name: AD_CONSENT_TITLE })
   if (!(await sheet.isVisible())) return
 
@@ -101,9 +112,10 @@ export async function passAdConsentIfShown(page: Page): Promise<void> {
 export async function startTest(page: Page): Promise<void> {
   await page.goto('/')
 
-  await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
-
-  // 첫 방문이면 인트로 위에 동의 시트가 덮여 있다 — 걷어내야 [시작하기]에 손이 닿는다
+  /*
+   * 인트로가 그려지기를 기다리는 일도 헬퍼가 맡는다 (PR #109 리뷰 (2026-09-13)). 첫 방문이면
+   * 인트로 위에 동의 시트가 덮여 있고, 걷어내야 [시작하기]에 손이 닿는다.
+   */
   await passAdConsentIfShown(page)
 
   /*

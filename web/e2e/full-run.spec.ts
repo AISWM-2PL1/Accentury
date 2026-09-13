@@ -222,6 +222,10 @@ test('KAN-197 - 대기 화면 광고 슬롯은 태그 있는 빌드에만 서고
    * `passAdConsentIfShown`). 그러면 `denied`라 `requestNonPersonalizedAds=1`이고, 나가는 광고
    * 요청 URL에 `npa=1`이 붙어야 한다.
    *
+   * 시트가 뜨는 것은 `tagged`인 판뿐이다 (팀 결정 2026-09-13, PR #109 리뷰 — ID 없는 빌드는
+   * 묻지 않는다). 두 판 다 이 단언이 성립한다: ID 없는 판은 태그가 없어 광고 요청 자체가 없고,
+   * ID 있는 판은 헬퍼가 거부를 골라 나가는 요청마다 npa가 실린다.
+   *
    * **더미 ID로도 요청은 나간다.** 2026-09-13 실측에서 `ca-pub-0000…`짜리 판이
    * `https://googleads.g.doubleclick.net/pagead/ads?npa=1&client=ca-pub-0000…` 두 건을 냈다 —
    * 승인 전이라 광고가 **안 채워지는 것**과 요청이 **안 나가는 것**은 다른 사건이고(위키 §1),

@@ -54,6 +54,7 @@ afterEach(() => {
    * 비우지 않으면 앞 테스트가 고른 값 때문에 다음 테스트의 인트로가 시트 없이 시작한다.
    */
   resetWebAdConsentMemory()
+  vi.unstubAllEnvs()
 })
 
 describe('IntroScreen — 마이크 게이트 (KAN-56)', () => {
@@ -173,6 +174,15 @@ describe('IntroScreen — 맞춤형 광고 동의 (KAN-196)', () => {
   const dialog = () => screen.queryByRole('dialog', { name: AD_CONSENT_TITLE })
   const settingsLink = () => screen.queryByRole('button', { name: AD_CONSENT_SETTINGS_LINK })
 
+  /**
+   * 광고 ID가 들어간 빌드로 만든다. 브라우저 갈래는 이 두 값이 있어야 시트가 뜬다 — 없으면
+   * 광고가 나가지 않는 빌드라 묻지 않는다 (PR #109 리뷰 (2026-09-13), `resolveAdConsentSource`).
+   */
+  function stubAdSenseIds() {
+    vi.stubEnv('VITE_ADSENSE_CLIENT_ID', 'ca-pub-0000000000000000')
+    vi.stubEnv('VITE_ADSENSE_SLOT_ID', '0000000000')
+  }
+
   it('아직 묻지 않았으면(unknown) 시트를 띄운 채 시작한다', () => {
     window.AccenturyBridge = adBridge('unknown')
 
@@ -195,6 +205,8 @@ describe('IntroScreen — 맞춤형 광고 동의 (KAN-196)', () => {
 
   it('브라우저 단독 실행도 같은 시트로 묻되 문안이 웹 것이다 (KAN-197 2단계)', () => {
     // 브리지 객체도 `?bridge=`도 없으면 브라우저 단독 실행이다 (`bridge.ts`의 `isStandaloneWeb`)
+    stubAdSenseIds()
+
     render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
 
     expect(dialog()).toBeInTheDocument()
@@ -208,6 +220,8 @@ describe('IntroScreen — 맞춤형 광고 동의 (KAN-196)', () => {
   })
 
   it('웹에서 고르면 시트가 닫히고 링크로 지금 상태를 다시 볼 수 있다 (KAN-197 2단계)', () => {
+    stubAdSenseIds()
+
     render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
 
     fireEvent.click(screen.getByRole('button', { name: AD_CONSENT_DENY }))
@@ -220,6 +234,21 @@ describe('IntroScreen — 맞춤형 광고 동의 (KAN-196)', () => {
 
     expect(dialog()).toBeInTheDocument()
     expect(screen.getByText(AD_CONSENT_CURRENT.denied)).toBeInTheDocument()
+  })
+
+  it('광고 ID가 없는 브라우저 빌드에는 시트도 링크도 없다 (팀 결정 2026-09-13)', () => {
+    /*
+     * staging과 슬롯 등록 전 prod가 이 상태다. 태그도 슬롯도 서지 않는 빌드에서 「AdSense
+     * 광고가 나와요」를 필수 모달로 띄우면 나가지도 않는 광고를 고지하는 셈이고, 테스터는 첫
+     * 화면부터 막힌다 (PR #109 리뷰 (2026-09-13)).
+     */
+    vi.stubEnv('VITE_ADSENSE_CLIENT_ID', undefined)
+    vi.stubEnv('VITE_ADSENSE_SLOT_ID', undefined)
+
+    render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
+
+    expect(dialog()).not.toBeInTheDocument()
+    expect(settingsLink()).not.toBeInTheDocument()
   })
 
   it('`?bridge=`는 있는데 객체가 없는 WebView에는 시트도 링크도 없다', () => {

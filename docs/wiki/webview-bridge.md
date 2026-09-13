@@ -229,10 +229,11 @@ https://accentury.app/privacy.html
 
 웹 단독 실행은 **KAN-197**이 맡는다 — 브라우저 저장소에 동의를 두고 Google AdSense 태그로
 광고를 띄운다. 정본은 [`ads-web-adsense.md`](ads-web-adsense.md)다. 그 2단계(2026-09-13)로
-**브리지 부재가 곧 "광고 없음"이던 것은 끝났다**: 브리지가 없으면서 `isStandaloneWeb`이 참이면
-웹이 자기 저장소(`ads/webAdConsentStore.ts`)에 묻고 시트도 링크도 그대로 뜬다. 지금 `null`로
-남는 것은 구버전 앱뿐이다 — 객체나 `?bridge=`는 있는데 `getAdConsent`를 모르는 실행이다
-(`resolveAdConsentSource`의 `'none'`).
+**브리지 부재가 곧 "광고 없음"이던 것은 끝났다**: 브리지가 없으면서 `isStandaloneWeb`이 참이고
+**광고 ID가 든 빌드**면 웹이 자기 저장소(`ads/webAdConsentStore.ts`)에 묻고 시트도 링크도
+그대로 뜬다. 지금 `null`로 남는 것은 둘이다 — 객체나 `?bridge=`는 있는데 `getAdConsent`를
+모르는 구버전 앱, 그리고 `VITE_ADSENSE_*`가 빈 브라우저 빌드다 (팀 결정 2026-09-13, PR #109
+리뷰 — 동의는 광고가 있을 때 묻는다). 둘 다 `resolveAdConsentSource`의 `'none'`이다.
 
 이 절의 나머지 사실은 그대로다. 갈리는 자리가 `useAdConsent` 안이라는 것도, 브리지 메서드의
 유무를 보는 규칙이 **앱 경로의 것**이라는 것도 바뀌지 않았다. 웹 광고 호출(AdSense 태그)은

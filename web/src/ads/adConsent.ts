@@ -24,9 +24,11 @@
  * `consent === null`이면 이 실행에는 광고 동의라는 개념이 없다 — 화면은 시트도 링크도 그리지
  * 않는다. `unknown`과 다르다: 그쪽은 "물어야 한다"는 뜻이다.
  *
- * 부재의 범위가 KAN-197 2단계에 좁아졌다. 브라우저 단독 실행은 이제 부재가 아니라 웹 저장소에
- * 묻는 경로다. 남은 부재는 [resolveAdConsentSource]의 `'none'`뿐이다 — 앱 WebView로 보이는데
- * (`?bridge=`가 있거나 객체가 있다) 광고 동의 메서드를 모르는 실행, 곧 구버전 앱이다.
+ * 부재의 범위가 KAN-197 2단계에 좁아졌다가 다시 한 겹 넓어졌다. 브라우저 단독 실행이라도
+ * 광고 ID가 들어가지 않은 빌드는 부재다 (PR #109 리뷰 (2026-09-13), 아래
+ * [resolveAdConsentSource]). 남은 부재는 그 `'none'` 두 갈래다 — 앱 WebView로 보이는데
+ * (`?bridge=`가 있거나 객체가 있다) 광고 동의 메서드를 모르는 구버전 앱, 그리고 광고가
+ * 나가지 않는 브라우저 빌드다.
  */
 
 import { useCallback, useState } from 'react'
@@ -39,15 +41,15 @@ import {
   type AdConsentChoice,
 } from '../bridge/bridge'
 import type { AdVendor } from './adConsentText'
-import { applyAdConsentToAdSense } from './adsense'
+import { adSenseIdsFromEnv, applyAdConsentToAdSense } from './adsense'
 import { readWebAdConsent, writeWebAdConsent } from './webAdConsentStore'
 
 /**
  * 동의를 어디에 묻고 어디에 둘 것인가.
  *
  * - `bridge`: 네이티브 저장소. 앱 안이고 광고 동의 메서드를 아는 실행이다
- * - `web`: 브라우저 저장소. 앱이 아닌 실행이다 (KAN-197)
- * - `none`: 물을 곳이 없다. 앱 WebView인데 메서드를 모르는 구버전 앱이다
+ * - `web`: 브라우저 저장소. 앱이 아니고 광고 ID가 들어간 빌드다 (KAN-197)
+ * - `none`: 물을 곳이 없다. 메서드를 모르는 구버전 앱이거나, 광고가 나가지 않는 빌드다
  */
 export type AdConsentSource = 'bridge' | 'web' | 'none'
 
@@ -61,13 +63,24 @@ export type AdConsentSource = 'bridge' | 'web' | 'none'
  * (`bridge.ts` 주석) 나머지 조합은 전부 `'none'`으로 떨어진다: `?bridge=`는 있는데 객체가
  * 없는 WebView, 객체는 있는데 메서드를 모르는 구버전 앱 둘이다. 그 둘을 웹으로 보내면
  * 앱 안에서 브라우저 저장소에 동의를 적게 되고, 정작 SDK를 세우는 네이티브는 그 값을 모른다.
+ *
+ * **동의는 광고가 있을 때 묻는 것이다** (팀 결정 2026-09-13, PR #109 리뷰). 그래서 브라우저
+ * 실행이어도 광고 ID가 빈 빌드는 `'web'`이 아니라 `'none'`이다. ID가 없으면 태그도 슬롯도 서지
+ * 않는데(`adsense.ts`의 `adSenseIdsFromEnv`, `AdSlot`) 첫 방문자에게 「AdSense 광고가 나와요」
+ * 필수 모달을 띄우면, 나가지도 않는 광고를 고지하고 선택까지 강요하는 셈이다 — staging과 슬롯
+ * 등록 전 prod가 정확히 그 상태이고, 테스터는 첫 화면부터 시트에 막힌다. ID가 들어간 배포부터
+ * 첫 방문에 묻는다.
+ *
+ * 방침 10항의 「브라우저 웹에서는 첫 화면의 안내 시트로 동의 여부를 여쭙고」는 그대로 참이다 —
+ * 그 문장은 **광고가 나가는 웹**의 서술이고, 광고가 없는 빌드는 그 절이 말하는 대상이 아니다.
  */
 export function resolveAdConsentSource(
   search: string = window.location.search,
   bridge: AccenturyBridge | undefined = window.AccenturyBridge,
 ): AdConsentSource {
   if (typeof bridge?.getAdConsent === 'function') return 'bridge'
-  return isStandaloneWeb(search, bridge) ? 'web' : 'none'
+  if (!isStandaloneWeb(search, bridge)) return 'none'
+  return adSenseIdsFromEnv() === null ? 'none' : 'web'
 }
 
 export interface AdConsentControl {
