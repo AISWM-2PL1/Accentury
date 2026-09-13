@@ -64,7 +64,11 @@ test('마이크 거부 - 권한 안내 화면으로 갈리고 세션은 만들�
   const sessionRequests = countSessionRequests(page)
 
   await page.goto('/')
-  // 동의 시트가 덮고 있으면 [시작하기]가 가려져 클릭이 시간 초과로 죽는다 (KAN-197 2단계)
+  /*
+   * 동의 시트가 덮고 있으면 [시작하기]가 가려져 클릭이 시간 초과로 죽는다 (KAN-197 2단계).
+   * 시트는 광고 ID가 든 빌드에서만 뜨고, 인트로가 그려지기를 기다리는 것은 헬퍼가 한다
+   * (PR #109 리뷰 (2026-09-13)).
+   */
   await passAdConsentIfShown(page)
   await page.getByRole('button', { name: '내 억양 테스트하기', exact: true }).click()
 
@@ -118,7 +122,11 @@ test('마이크 점유 - 거부와 다른 안내로 갈린다', async ({ page })
   await rejectMicrophoneWith(page, 'NotReadableError')
 
   await page.goto('/')
-  // 동의 시트가 덮고 있으면 [시작하기]가 가려져 클릭이 시간 초과로 죽는다 (KAN-197 2단계)
+  /*
+   * 동의 시트가 덮고 있으면 [시작하기]가 가려져 클릭이 시간 초과로 죽는다 (KAN-197 2단계).
+   * 시트는 광고 ID가 든 빌드에서만 뜨고, 인트로가 그려지기를 기다리는 것은 헬퍼가 한다
+   * (PR #109 리뷰 (2026-09-13)).
+   */
   await passAdConsentIfShown(page)
   await page.getByRole('button', { name: '내 억양 테스트하기', exact: true }).click()
 

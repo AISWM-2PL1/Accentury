@@ -51,8 +51,9 @@ describe('webAdConsentStore — 브라우저 저장소의 광고 동의 (KAN-197
     expect(readWebAdConsent(storage)).toBe('unknown')
   })
 
-  it('쓰기가 던져도 true이고, 이번 방문 안에서는 고른 값이 지켜진다', () => {
+  it('쓰기가 던져도 true이고, 다음 화면으로 넘어가기 전까지는 고른 값이 지켜진다', () => {
     // 사생활 모드·쿼터 초과. 시트가 닫히고 링크가 생기려면 선택이 어디엔가는 남아야 한다
+    // (사본이 사는 범위는 이 문서까지다 — PR #109 리뷰 (2026-09-13))
     const setItem = vi.fn(() => {
       throw new DOMException('quota', 'QuotaExceededError')
     })
