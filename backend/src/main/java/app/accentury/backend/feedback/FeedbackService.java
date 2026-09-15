@@ -157,12 +157,25 @@ public class FeedbackService {
         return body;
     }
 
-    /** 별점은 선택이고, 보냈다면 1~5다. 저장 컬럼이 smallint라 여기서 한 번 좁힌다. */
+    /**
+     * 별점은 선택이고, 보냈다면 1~5의 정수다. 저장 컬럼이 smallint라 여기서 한 번 좁힌다.
+     * <p>
+     * 정수 검사를 여기서 하는 것은 역직렬화가 해 주지 않기 때문이다 (Codex 리뷰 P1) -
+     * {@code rating}이 {@code Integer}였을 때 {@code 2.5}가 400이 아니라 2로 잘려 저장됐다
+     * (2026-09-15 실측). 그래서 {@link FeedbackRequest}가 원본 수를 {@code Number}로 받고,
+     * 잘림이 일어날 수 있는 판정을 전부 이 한 곳에 모았다. 값이 정수이기만 하면 표기는 따지지
+     * 않는다 - {@code 5}든 {@code 5.0}이든 사용자가 고른 칸은 같다.
+     */
     private static @Nullable Short validRating(@Nullable FeedbackRequest request) {
         if (request == null || request.rating() == null) {
             return null;
         }
-        int rating = request.rating();
+        double rating = request.rating().doubleValue();
+        // 유한하지 않은 값(NaN, Infinity)을 먼저 끊는다 - 아래 비교는 NaN에 전부 false라
+        // 그냥 두면 범위 검사를 통과해 (short) 변환에서 0이 된다.
+        if (!Double.isFinite(rating) || rating != Math.rint(rating)) {
+            throw new ApiException(ErrorCode.VALIDATION_FAILED, "별점은 정수여야 합니다.");
+        }
         if (rating < 1 || rating > 5) {
             throw new ApiException(ErrorCode.VALIDATION_FAILED, "별점은 1에서 5 사이여야 합니다.");
         }
