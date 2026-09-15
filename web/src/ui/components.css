@@ -1660,3 +1660,24 @@ a.btn {
 .result-feedback__done {
   color: var(--color-muted-foreground);
 }
+
+/*
+ * 결과 화면 푸터만 아래로 한 칸 띄운다 (사용자 요청 2026-09-15).
+ *
+ * 공용 `.screen__footer`는 아래 여백이 0이라 버튼 덩이가 `.screen`의 아래 여백(32) 끝에 바로
+ * 선다. 다른 화면은 거기 놓이는 것이 주버튼 하나뿐이라 그 간격으로 충분한데, 결과 화면은
+ * 공유·재응시·후기 셋이 쌓여 덩이가 한 덩이 크고, 맨 아래 줄이 테두리 없는 글자 버튼이라
+ * 화면 끝선에 글자가 그대로 붙은 것처럼 읽힌다. 16을 더해 48로 벌린다.
+ *
+ * 안전 영역을 여기서 더하지 않는 이유: index.html의 viewport에 `viewport-fit=cover`가 없어
+ * 웹뷰가 안전 영역 **안쪽**에 페이지를 그린다. 홈 인디케이터에 깔리지는 않고(깔리는 자리인
+ * 시트 두 곳만 `env(safe-area-inset-bottom)`을 더한다), 이 여백은 그 경계선에서 한 번 더
+ * 떼어 놓는 값이다.
+ *
+ * 여백을 푸터 안쪽(`padding`)에 두는 것이 sticky와 맞는다 — 바깥 여백은 sticky가 바닥에
+ * 붙는 지점을 바꾸지 못하고, 안쪽이어야 푸터 배경(`--color-background`)이 그 16까지 함께
+ * 칠해져 스크롤한 본문이 버튼 아래로 비치지 않는다.
+ */
+.screen--result .screen__footer {
+  padding-bottom: var(--space-4);
+}
