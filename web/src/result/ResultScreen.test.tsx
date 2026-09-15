@@ -578,3 +578,119 @@ describe('결과 도착 통지 (KAN-33 계측 자리)', () => {
     expect(onResultLoaded).not.toHaveBeenCalled()
   })
 })
+
+describe('개발팀에 후기 보내기 — KAN-211 3단계', () => {
+  /**
+   * 결과 조회(GET)와 후기 전송(POST)이 같은 `fetchImpl`로 나간다. 메서드로 갈라 주고, 후기
+   * 응답은 호출 순서대로 꺼낸다 — 재시도가 첫 요청과 무엇이 같고 무엇이 다른지를 이 순서로 본다.
+   */
+  function flow(...feedbackResponses: Response[]) {
+    const sent: RequestInit[] = []
+    let nth = 0
+    const fetchImpl: FetchLike = async (_url, init) => {
+      if (init?.method !== 'POST') return { ok: true, status: 200, json: async () => readyBody() } as Response
+      sent.push(init)
+      return feedbackResponses[Math.min(nth++, feedbackResponses.length - 1)]
+    }
+    return { fetchImpl, sent }
+  }
+
+  const ACCEPTED = { ok: true, status: 201, json: async () => ({ accepted: true }) } as Response
+  const SERVER_ERROR = {
+    ok: false,
+    status: 500,
+    json: async () => envelope('INTERNAL', '잠시 후 다시 시도해 주세요.', true),
+  } as Response
+
+  /** 시트를 열고 본문까지 적는다 */
+  async function openAndWrite(text = '화면이 예뻐요') {
+    fireEvent.click(await screen.findByRole('button', { name: '개발팀에 후기 보내기' }))
+    fireEvent.change(screen.getByLabelText(/테스트는 어땠나요/), { target: { value: text } })
+  }
+
+  it('결과가 떴을 때만 진입 자리가 있다', async () => {
+    renderScreen()
+
+    const open = await screen.findByRole('button', { name: '개발팀에 후기 보내기' })
+    // 글자 버튼이다 — 주 출구(공유·재응시)와 같은 무게를 주면 어디로 나가야 하는지가 흐려진다
+    expect(open.className).toContain('btn--text')
+    expect(open.className).not.toContain('btn--primary')
+    expect(open.className).not.toContain('btn--secondary')
+  })
+
+  it('조회 중에는 없다 — 아직 후기를 쓸 결과가 없다', () => {
+    renderScreen({ fetchImpl: () => new Promise(() => {}) })
+
+    expect(screen.queryByRole('button', { name: '개발팀에 후기 보내기' })).not.toBeInTheDocument()
+  })
+
+  it('조회에 실패한 화면에도 없다', async () => {
+    renderScreen({ fetchImpl: jsonFetch(500, envelope('INTERNAL', '문제가 생겼어요', true)) })
+
+    await screen.findByText('결과를 불러오지 못했어요')
+    expect(screen.queryByRole('button', { name: '개발팀에 후기 보내기' })).not.toBeInTheDocument()
+  })
+
+  it('누르면 시트가 뜨고 계측 훅이 불린다', async () => {
+    const onFeedbackOpen = vi.fn()
+    renderScreen({ onFeedbackOpen })
+
+    fireEvent.click(await screen.findByRole('button', { name: '개발팀에 후기 보내기' }))
+
+    expect(screen.getByRole('dialog', { name: '개발팀에 후기 보내기' })).toBeInTheDocument()
+    expect(onFeedbackOpen).toHaveBeenCalledTimes(1)
+  })
+
+  it('보내면 별점만 계측으로 올리고 진입 자리가 인사로 바뀐다', async () => {
+    const onFeedbackSubmitted = vi.fn()
+    const { fetchImpl } = flow(ACCEPTED)
+    renderScreen({ fetchImpl, onFeedbackSubmitted })
+
+    await openAndWrite()
+    fireEvent.click(screen.getByRole('radio', { name: '3점' }))
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }))
+
+    await screen.findByRole('heading', { name: '고마워요, 잘 받았어요' })
+    // 본문도 이메일도 계측에 닿는 길이 없다 — 올라가는 값은 별점 하나뿐이다
+    expect(onFeedbackSubmitted).toHaveBeenCalledWith(3)
+
+    fireEvent.click(screen.getByRole('button', { name: '닫기' }))
+    // 결과당 후기는 1건이고 수정 경로가 없다 — 다시 열 버튼을 남기면 「이미 보냈어요」를 받는다
+    expect(screen.queryByRole('button', { name: '개발팀에 후기 보내기' })).not.toBeInTheDocument()
+    expect(screen.getByText('후기를 보냈어요. 고마워요!')).toBeInTheDocument()
+  })
+
+  it('재시도가 첫 요청과 같은 멱등 키로 나간다', async () => {
+    const { fetchImpl, sent } = flow(SERVER_ERROR, ACCEPTED)
+    renderScreen({ fetchImpl })
+
+    await openAndWrite()
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }))
+    fireEvent.click(await screen.findByRole('button', { name: '다시 보내기' }))
+    await screen.findByRole('heading', { name: '고마워요, 잘 받았어요' })
+
+    expect(sent).toHaveLength(2)
+    const keyOf = (init: RequestInit) => (init.headers as Record<string, string>)['Idempotency-Key']
+    /*
+     * 새 키로 재시도하면 첫 요청이 실제로 저장됐던 경우(응답만 유실) 409를 받아 "이미
+     * 보냈어요"가 되고, 사용자는 방금 쓴 글이 어디로 갔는지 알 수 없게 된다.
+     */
+    expect(keyOf(sent[0])).toBe(keyOf(sent[1]))
+    expect(keyOf(sent[0])).not.toBe('')
+  })
+
+  it('후기 전송이 실패해도 결과 화면은 그대로다', async () => {
+    const { fetchImpl } = flow(SERVER_ERROR)
+    renderScreen({ fetchImpl })
+
+    await openAndWrite()
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }))
+    await screen.findByRole('button', { name: '다시 보내기' })
+
+    // 후기는 부가 행동이다 — 실패가 등급·공유·재응시를 건드리는 길이 없어야 한다
+    expect(screen.getByRole('heading', { name: '명예주민' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '친구에게 공유하기' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '다시 테스트하기' })).toBeEnabled()
+    expect(screen.queryByText('결과를 불러오지 못했어요')).not.toBeInTheDocument()
+  })
+})
