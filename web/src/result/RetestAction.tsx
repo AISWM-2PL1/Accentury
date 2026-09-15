@@ -47,14 +47,20 @@ export interface RetestActionProps {
    * (ux-ui.md Hick's law).
    */
   variant?: ButtonVariant
+  /**
+   * 이 자리에서만 얹을 생김새. 재응시 버튼이 화면마다 다른 무게를 갖기 때문에 둔다 —
+   * 결과 화면의 버튼만 포인트색을 입는 식이라(`.result-retest__button`), 벌 전체가 그 색을
+   * 들고 다니면 실패 복구용인 대기·오류 화면의 재응시까지 같이 눈에 띈다.
+   */
+  className?: string
 }
 
-export function RetestAction({ retest, variant }: RetestActionProps) {
+export function RetestAction({ retest, variant, className }: RetestActionProps) {
   const { onRetest, disabled, pending, message, retryAfterSec } = retest
 
   return (
     <>
-      <Button variant={variant} onClick={onRetest} disabled={disabled}>
+      <Button variant={variant} className={className} onClick={onRetest} disabled={disabled}>
         {/*
           성공하면 회신이 아니라 페이지 교체가 온다. 그 사이 create 왕복 동안 화면은 아무것도
           모르므로, 할 수 있는 말은 "받았고 진행 중"까지다 — 몇 초 걸리는지도 알 수 없다.
