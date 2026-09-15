@@ -157,6 +157,9 @@ test('1항 표의 보유 기간이 행마다 코드와 맞는다', () => {
     ['서버 운영 로그', ['14일'], 'infra/modules/fargate/variables.tf log_retention_days'],
     ['보안 로그', ['7일'], 'infra/modules/waf/variables.tf'],
     ['비정상 종료 로그', ['90일'], 'Crashlytics 콘솔 기본값'],
+    // 후기는 세션·결과의 24시간과 **독립**이다 (session_feedback에 FK가 없다). 표의 이 칸이
+    // 24시간 쪽으로 끌려가면 실제보다 짧은 보유 기간을 고지하게 되므로 행에 묶어 본다.
+    ['이용 후기', ['1년'], 'application.yml feedback.retention: 365d, FeedbackRetention.java'],
   ];
   for (const [label, needles, source] of expected) {
     const cell = rows.get(label);
@@ -285,6 +288,50 @@ test('브라우저 웹의 광고 사업자 Google AdSense가 2·4·8·10항에 �
   assert.ok(adsFlat.includes('웹의 재응시에는 광고가 없'), '10항에 웹 재응시 광고 없음이 적혀 있지 않다');
   // 웹의 철회 경로. 앱의 OS 설정(Android 광고 ID 재설정·iOS ATT)에 대응하는 자리다.
   assert.ok(ads.includes('adssettings.google.com'), '10항에 Google 광고 설정 링크가 없다');
+});
+
+test('이용 후기 절이 있고 이메일이 선택·회신 전용이라고 적혀 있다 (KAN-211)', () => {
+  // 이 서비스가 받는 **유일한 개인 식별 정보**가 후기의 회신 이메일이다 (2026-09-15 결정).
+  // 그래서 이 절 하나가 아니라 네 자리가 함께 서야 고지가 성립한다 — 무엇을 받는지(1항 아래
+  // 산문), 언제 지우는지(5항), 어디로 나가는지(4항), 지워 달라고 어떻게 말하는지(6항).
+  // 「이용 후기」는 1항 표에도 나오는 낱말이라 절 제목 자체를 본다.
+  assert.ok(html.includes('<h3>이용 후기</h3>'), '1항 아래 「이용 후기」 절이 없다');
+
+  const feedback = section('<h3>이용 후기</h3>', '<h3>접속 정보와 서버 로그</h3>');
+  // 이메일이 **선택**이라는 것과 **회신에만 쓴다**는 것 둘이 화면 문구
+  // (`web/src/feedback/feedbackText.ts`의 FEEDBACK_EMAIL_HINT)와 같은 범위를 말해야 한다.
+  // 한쪽만 남으면 "필수인가"나 "다른 데도 쓰나"가 열린 채로 남는다.
+  assert.ok(feedback.includes('선택'), '이용 후기 절에 이메일이 선택 항목이라는 말이 없다');
+  assert.ok(
+    feedback.includes('회신') || feedback.includes('답변'),
+    '이용 후기 절에 이메일을 회신·답변에 쓴다는 말이 없다',
+  );
+
+  // 5항 파기. 1항 표의 「1년」과 짝이고, 파기 절에 없으면 "언제 지우는가"를 묻는 절이 후기를
+  // 빠뜨린 채로 남는다.
+  const disposal = section('<h2>5. 개인정보의 파기', '<h2>6. 정보주체의 권리');
+  assert.ok(disposal.includes('1년'), '5항 파기 목록에 후기의 1년이 없다');
+
+  // 6항 권리. 계정이 없는 서비스에서 이용자를 지목할 수 있는 유일한 경로라, 삭제 요청을 어디로
+  // 보내는지(13항 문의처)까지 적혀 있어야 실제로 행사할 수 있는 권리가 된다.
+  const rights = section('<h2>6. 정보주체의 권리', '<h2>7. 만 14세 미만');
+  assert.ok(rights.includes('삭제'), '6항에 후기 삭제 요청 경로가 없다');
+  assert.ok(rights.includes('13항'), '6항에 삭제 요청을 보낼 문의처(13항)가 없다');
+
+  // 4항 국외 이전. 후기 본문은 이용자가 자유 서술한 내용이라 개인정보가 섞일 수 있고, 그것이
+  // 미국 사업자의 메신저로 나간다 (FeedbackSlackNotifier).
+  const abroad = section('<h2>4. 개인정보의 국외 이전', '<h3>이용 통계 이벤트');
+  assert.ok(abroad.includes('Slack'), '4항 국외 이전에 Slack 행이 없다');
+});
+
+test('후기 이메일이 내부 알림에 실리지 않는다고 적혀 있다 (KAN-211, FeedbackSlackNotifier)', () => {
+  // `FeedbackSlackNotifier.message`가 싣는 것은 연락처의 **유무**뿐이다 — 채널은 개발팀 전원이
+  // 보고 슬랙 무료 플랜은 지난 메시지를 지우지 않아, 한 번 흘리면 되돌릴 방법이 없다. 그 약속이
+  // 4항의 「이메일 주소는 이전하지 않습니다」를 떠받치므로, 코드가 바뀌면 여기가 먼저 깨져야 한다.
+  assert.ok(html.includes('이메일 주소를 싣지 않'), '내부 알림에 이메일을 싣지 않는다는 문구가 없다');
+  // 로그 쪽 약속은 11항이 맡는다 (`LogMasking`의 EMAIL이 마지막 관문이다).
+  const safety = section('<h2>11. 개인정보의 안전성 확보 조치', '<h2>12. 동의를 받는 방식');
+  assert.ok(safety.includes('로그와 내부 알림'), '11항에 후기 이메일의 로그·알림 비적재가 없다');
 });
 
 test('데이터 소재지가 서울 리전이라고 적혀 있다 (infra, AWS ap-northeast-2)', () => {
