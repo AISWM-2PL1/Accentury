@@ -259,7 +259,7 @@ export function ResultScreen({
   const { scores, tier } = result
 
   return (
-    <main className="screen">
+    <main className="screen screen--result">
       <div className="screen__body">
         {/*
           등급 캐릭터 (KAN-162). KAN-29 때는 등급이 무엇이든 깃발 꽂은 사람 한 그림이었다 —
