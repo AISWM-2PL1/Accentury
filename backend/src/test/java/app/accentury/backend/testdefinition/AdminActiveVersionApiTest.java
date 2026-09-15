@@ -232,7 +232,8 @@ class AdminActiveVersionApiTest extends IntegrationTest {
                 .andExpect(jsonPath("$.activeVersion").value(BASELINE))
                 .andExpect(jsonPath("$.previousVersion").value(OLDER))
                 // 구버전(V900) + baseline + 풀 픽스처 둘(V901, KAN-182) + 정본 콘텐츠(V6) + sv-0.4 재발행(V8)
-                .andExpect(jsonPath("$.definitions.length()").value(6))
+                // + 대본 교체 재발행(V10, KAN-210)
+                .andExpect(jsonPath("$.definitions.length()").value(7))
                 // 발행 시각 오름차순 - 구버전이 먼저다.
                 .andExpect(jsonPath("$.definitions[0].testVersion").value(OLDER))
                 .andExpect(jsonPath("$.definitions[0].dialect").value("GYEONGNAM"))
@@ -260,6 +261,12 @@ class AdminActiveVersionApiTest extends IntegrationTest {
                 .andExpect(jsonPath("$.definitions[5].voicePoolSize").value(145))
                 .andExpect(jsonPath("$.definitions[5].voiceSetCount").value(29))
                 .andExpect(jsonPath("$.definitions[5].active").value(false))
+                // 음성 대본만 09-01 인계본으로 바꾼 재발행 (V10, KAN-210) - 풀 크기와 세트 수는 그대로다.
+                .andExpect(jsonPath("$.definitions[6].testVersion").value("gn-2026.09.3"))
+                .andExpect(jsonPath("$.definitions[6].scoreVersion").value("sv-0.4"))
+                .andExpect(jsonPath("$.definitions[6].voicePoolSize").value(145))
+                .andExpect(jsonPath("$.definitions[6].voiceSetCount").value(29))
+                .andExpect(jsonPath("$.definitions[6].active").value(false))
                 // 13KB짜리 본문은 목록에 싣지 않는다 - 문항은 공개 엔드포인트(§3.2)에서 본다.
                 .andExpect(jsonPath("$.definitions[0].body").doesNotExist())
                 .andExpect(header().string("Cache-Control", containsString("no-store")));
@@ -283,14 +290,14 @@ class AdminActiveVersionApiTest extends IntegrationTest {
         try {
             mockMvc.perform(get(DEFINITIONS_URL).header(AdminAuth.TOKEN_HEADER, TOKEN))
                     .andExpect(status().isOk())
-                    // 발행본 6개(V900, baseline, 풀 픽스처 둘, 정본 콘텐츠, sv-0.4 재발행) + 이 행 하나.
-                    .andExpect(jsonPath("$.definitions.length()").value(7))
-                    .andExpect(jsonPath("$.definitions[6].testVersion").value(unknown))
+                    // 발행본 7개(V900, baseline, 풀 픽스처 둘, 정본 콘텐츠, sv-0.4 재발행, 대본 교체 재발행) + 이 행 하나.
+                    .andExpect(jsonPath("$.definitions.length()").value(8))
+                    .andExpect(jsonPath("$.definitions[7].testVersion").value(unknown))
                     // 사본 컬럼에서 오는 값은 그대로 나온다 - 모르는 것은 세트 관련 두 값뿐이다.
-                    .andExpect(jsonPath("$.definitions[6].dialect").value("GYEONGNAM"))
-                    .andExpect(jsonPath("$.definitions[6].active").value(false))
-                    .andExpect(jsonPath("$.definitions[6].voicePoolSize").value(nullValue()))
-                    .andExpect(jsonPath("$.definitions[6].voiceSetCount").value(nullValue()))
+                    .andExpect(jsonPath("$.definitions[7].dialect").value("GYEONGNAM"))
+                    .andExpect(jsonPath("$.definitions[7].active").value(false))
+                    .andExpect(jsonPath("$.definitions[7].voicePoolSize").value(nullValue()))
+                    .andExpect(jsonPath("$.definitions[7].voiceSetCount").value(nullValue()))
                     // 아는 버전은 종전대로 답한다 - 한 행의 공백이 나머지를 비우지 않는다.
                     .andExpect(jsonPath("$.definitions[1].voicePoolSize").value(5))
                     .andExpect(jsonPath("$.definitions[1].voiceSetCount").value(1));
