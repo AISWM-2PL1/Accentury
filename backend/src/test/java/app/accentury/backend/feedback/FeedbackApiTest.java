@@ -22,8 +22,16 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -167,6 +175,33 @@ class FeedbackApiTest extends IntegrationTest {
         assertEquals(1, feedbackRepository.countBySessionId(session.id()));
         assertEquals("처음 보낸 후기",
                 feedbackRepository.findBySessionId(session.id()).orElseThrow().body());
+    }
+
+    @Test
+    void 같은_세션에_다른_키로_동시_제출해도_한_건만_저장된다() throws Exception {
+        // 계약상 409여야 할 요청이 유니크 제약 위반(500)으로 끝나지 않는다는 증거다 (Codex 리뷰 P2).
+        // 순서가 어느 쪽으로 갈리든 결과가 같아야 한다 - 늦게 온 쪽은 세션 행 잠금 뒤에서 기다렸다가
+        // 이미 저장된 후기를 보고 409로 접힌다 (FeedbackService의 잠금 구간).
+        SessionHandle session = completedSession();
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+
+        List<Integer> statuses = new ArrayList<>();
+        try {
+            List<Future<Integer>> pending = List.of(
+                    pool.submit(submitOnSignal(start, session, "fb-race-a")),
+                    pool.submit(submitOnSignal(start, session, "fb-race-b")));
+            start.countDown();
+            for (Future<Integer> future : pending) {
+                statuses.add(future.get(30, TimeUnit.SECONDS));
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+
+        statuses.sort(null);
+        assertEquals(List.of(201, 409), statuses, "정확히 하나만 저장되고 나머지는 409다");
+        assertEquals(1, feedbackRepository.countBySessionId(session.id()));
     }
 
     // === 완료 가드 ===
@@ -344,6 +379,15 @@ class FeedbackApiTest extends IntegrationTest {
         TestSession stored = sessionRepository.findById(session.id()).orElseThrow();
         stored.markCompleted(stored.completedAt(), Instant.now().minusSeconds(1));
         sessionRepository.save(stored);
+    }
+
+    /** 래치가 풀리는 순간 같은 세션에 후기를 보내고 상태 코드만 돌려준다 (동시 제출 검증용). */
+    private Callable<Integer> submitOnSignal(CountDownLatch start, SessionHandle session, String key) {
+        return () -> {
+            start.await(10, TimeUnit.SECONDS);
+            return mockMvc.perform(feedback(session, key, "{\"body\":\"동시에 보낸 후기\"}"))
+                    .andReturn().getResponse().getStatus();
+        };
     }
 
     private static String url(SessionHandle session) {

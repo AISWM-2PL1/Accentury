@@ -3,10 +3,12 @@ package app.accentury.backend.feedback;
 import app.accentury.backend.common.AccenturyProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.util.concurrent.TimeUnit;
 
@@ -26,17 +28,33 @@ public class FeedbackRetention {
 
     private final SessionFeedbackRepository repository;
     private final AccenturyProperties properties;
+    private final Clock clock;
 
+    @Autowired
     public FeedbackRetention(SessionFeedbackRepository repository, AccenturyProperties properties) {
+        this(repository, properties, Clock.systemUTC());
+    }
+
+    /**
+     * 테스트가 시각을 고정하는 자리 (Codex 리뷰 P2, {@code RateLimits}와 같은 모양).
+     * <p>
+     * 경계가 보존 기간의 양 끝에 있어({@code deleteByCreatedAtBefore}는 {@code <}다) 실제 시계로는
+     * "정확히 365일 전"을 만들 수 없다 - 행을 넣고 삭제를 부르는 사이에 시간이 흐르면 그 행은
+     * 경계 위가 아니라 경계 밖이 된다. 고정 시계여야 경계 자체를 단언할 수 있다.
+     */
+    FeedbackRetention(SessionFeedbackRepository repository, AccenturyProperties properties,
+                      Clock clock) {
         this.repository = repository;
         this.properties = properties;
+        this.clock = clock;
     }
 
     /** 다른 정리 잡(분석 15분, 어휘 25분, 결과 35분, 웹훅 45분 지연)과 시작 시점만 어긋나게 둔다 - 같은 순간의 삭제 몰림 방지 */
     @Scheduled(initialDelay = 55, fixedDelay = 60, timeUnit = TimeUnit.MINUTES)
     @Transactional
     public void purgeExpired() {
-        Instant cutoff = Instant.now().minus(properties.feedback().retention());
+        // 경계는 cutoff 미만이다 - 정확히 보존 기간 전에 들어온 행은 아직 남는다.
+        Instant cutoff = clock.instant().minus(properties.feedback().retention());
         int removed = repository.deleteByCreatedAtBefore(cutoff);
         if (removed > 0) {
             log.info("보존 기간이 지난 후기 {}건 삭제", removed);

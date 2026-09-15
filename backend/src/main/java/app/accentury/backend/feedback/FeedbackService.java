@@ -38,7 +38,14 @@ public class FeedbackService {
 
     private static final Logger log = LoggerFactory.getLogger(FeedbackService.class);
 
-    /** 본문 길이 상한 - {@code session_feedback.body} 컬럼 길이와 같다 (넘으면 400이 아니라 500이 된다). */
+    /**
+     * 본문 길이 상한 - {@code session_feedback.body} 컬럼 길이와 같다.
+     * <p>
+     * 선검증이 없으면 DB의 varchar(500) 제약에 걸려 500이 나므로, 같은 경계를 여기서 먼저 보고
+     * 400으로 자른다 (Codex 리뷰 P2 - 고치기 전 주석은 이 인과를 뒤집어 "넘으면 400이 아니라
+     * 500이 된다"고 적고 있었다. 실제 계약은 400 {@code VALIDATION_FAILED}이고,
+     * {@code FeedbackApiTest}가 그것을 고정한다).
+     */
     static final int MAX_BODY_LENGTH = 500;
 
     /** 이메일 길이 상한 - 컬럼 길이이자 주소의 실질 상한(RFC 5321의 forward-path 256에서 꺾쇠 둘을 뺀 값)이다. */
