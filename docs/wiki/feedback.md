@@ -2,7 +2,7 @@
 
 결과 화면에서 응시자가 개발팀에 보내는 서술 후기. 2026-09-15 구현 완료(1~4단계).
 
-- 계약·저장: `backend/src/main/java/app/accentury/backend/feedback/`, `V11__session_feedback.sql`
+- 계약·저장: `backend/src/main/java/app/accentury/backend/feedback/`, `V12__session_feedback.sql`
 - 화면: `web/src/feedback/`, `web/src/result/ResultScreen.tsx`
 - 방침 반영과 그 근거: [`privacy-policy.md`](privacy-policy.md) (1·4·5·6·11·12항)
 - 계측 규칙: [`analytics.md`](analytics.md) · 슬랙 값 주입: `infra/README.md` 「이용 후기 슬랙 알림」
@@ -77,7 +77,7 @@ FeedbackSheet (모달)  ─ 별점/본문/이메일 ─▶ sendFeedback()
 
 ## 4. 저장 모델
 
-`session_feedback` (V11). 컬럼은 입력 셋과 스냅샷 다섯, 그리고 키·시각이다.
+`session_feedback` (V12). 컬럼은 입력 셋과 스냅샷 다섯, 그리고 키·시각이다.
 
 **`test_session`에 FK를 걸지 않는다.** 세션과 결과는 24시간 뒤 정리 잡이 지우는데 후기는 1년
 남아야 하기 때문이다 — FK가 있으면 세션이 사라지는 순간 후기도 함께 지워지거나(CASCADE) 세션
@@ -218,8 +218,9 @@ law). 보낸 뒤에는 버튼을 한 줄 인사로 바꾼다 — 결과당 1건�
 
 ## 9. 트러블슈팅·함정
 
-- **마이그레이션 번호.** V10을 KAN-210이 가져가 후기 테이블은 **V11**이다. 브랜치를 나눠 작업하면
-  같은 번호를 두 티켓이 쓰는 일이 생긴다 — 분기 전에 `ls db/migration`으로 확인한다.
+- **마이그레이션 번호.** V10·V11을 KAN-210이 가져가 후기 테이블은 **V12**다. 브랜치를 나눠 작업하면
+  같은 번호를 두 티켓이 쓰는 일이 생긴다 — 분기 전에도, Dev를 리베이스로 받아올 때도
+  `ls db/migration`으로 확인한다.
 - **`Map.of`는 10쌍이 상한이다.** 11번째 인자부터 컴파일이 안 된다. 스냅샷 필드가 늘면
   `Map.ofEntries`로 바꾼다.
 - **`@TransactionalEventListener`는 트랜잭션 **안**에서 발행해야 한다.** `AFTER_COMMIT` 리스너는
