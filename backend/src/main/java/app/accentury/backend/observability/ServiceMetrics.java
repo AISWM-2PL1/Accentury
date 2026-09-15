@@ -93,6 +93,17 @@ public final class ServiceMetrics {
      */
     public static final String TRAINING_SAMPLES = "accentury.training.samples";
 
+    // ---- 이용 후기 (FeedbackNotifyConfig) ----
+
+    /**
+     * 큐 포화로 버린 후기 슬랙 알림 수 (KAN-211, Codex 리뷰 P1). 태그는 없다 - 폐기 사유가 하나뿐이다.
+     * <p>
+     * 폐기 자체는 설계다 ({@code FeedbackNotifyConfig}) - 알림은 부수 기능이고 후기 원본은 DB에
+     * 그대로 있다. 다만 아무 흔적 없이 버리면 "슬랙이 조용한 날"과 "알림이 통째로 사라진 날"이
+     * 구분되지 않는다. 이 값이 0보다 크면 실행기 용량이나 슬랙 응답 시간을 봐야 한다는 뜻이다.
+     */
+    public static final String FEEDBACK_NOTIFY_DROPPED = "accentury.feedback.notify.dropped";
+
     /** 대시보드와 경보가 읽는 유일한 백분위. 늘리면 지표 수가 그만큼 늘어난다. */
     public static final double PERCENTILE = 0.95;
 

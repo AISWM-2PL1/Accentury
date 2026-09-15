@@ -270,6 +270,32 @@ class FeedbackApiTest extends IntegrationTest {
     }
 
     @Test
+    void 별점이_소수면_400이다() throws Exception {
+        // 계약의 증거다 (Codex 리뷰 P1). 고치기 전에는 2.5가 2로 잘려 201로 저장됐다 - 화면이
+        // Number.isInteger로 거르고 있어 사용자에게 드러나지 않았을 뿐, BE만 놓고 보면 사용자가
+        // 고르지 않은 별점이 남는 경로였다 (2026-09-15 실측).
+        SessionHandle session = completedSession();
+
+        mockMvc.perform(feedback(session, "fb-fraction", "{\"rating\":2.5,\"body\":\"좋아요\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+
+        assertEquals(0, feedbackRepository.countBySessionId(session.id()));
+    }
+
+    @Test
+    void 소수점_표기라도_정수_값이면_201이다() throws Exception {
+        // 따지는 것은 값이지 표기가 아니다 - 5.0은 사용자가 고른 칸이 5라는 뜻이므로 통과한다.
+        SessionHandle session = completedSession();
+
+        mockMvc.perform(feedback(session, "fb-int-as-float", "{\"rating\":5.0,\"body\":\"좋아요\"}"))
+                .andExpect(status().isCreated());
+
+        assertEquals(Short.valueOf((short) 5),
+                feedbackRepository.findBySessionId(session.id()).orElseThrow().rating());
+    }
+
+    @Test
     void 이메일_형식이_틀리거나_254자를_넘으면_400이다() throws Exception {
         SessionHandle session = completedSession();
 

@@ -60,7 +60,7 @@ FeedbackSheet (모달)  ─ 별점/본문/이메일 ─▶ sendFeedback()
 
 | 상태 | code | 언제 |
 |---|---|---|
-| 400 | `VALIDATION_FAILED` | `Idempotency-Key` 누락, 본문 누락·500자 초과, 별점 범위 밖, 이메일 형식 불량 |
+| 400 | `VALIDATION_FAILED` | `Idempotency-Key` 누락, 본문 누락·500자 초과, 별점 범위 밖, **소수 별점**(`2.5`), 이메일 형식 불량 |
 | 401 | `SESSION_EXPIRED` | 토큰 누락이나 만료 |
 | 403 | `SESSION_FORBIDDEN` | 다른 세션의 토큰 |
 | 409 | `RESULT_NOT_READY` | 완료되지 않은 세션 |
@@ -116,6 +116,11 @@ staging과 prod가 채널을 나누지 않는다 — 구분은 메시지 머리�
   한 건이 채널 전체 멘션이 된다.
 - **실패는 WARN 한 줄이다.** 커밋 뒤라 되돌릴 것이 없고 원본은 DB에 있다. 예외 메시지에 웹훅 URL이
   섞여 나올 수 있어 클래스 이름과 메시지만 찍고, 마지막 관문이 `LogMasking`의 `SLACK_WEBHOOK`이다.
+- **큐가 넘치면 버리되 흔적을 남긴다.** 전용 실행기(워커 1~2, 큐 200)가 포화되면 알림을 버린다 —
+  거절 예외를 받을 곳이 없고(커밋 뒤의 비동기 경로다) 무한 큐는 슬랙 장애를 메모리 문제로 옮긴다.
+  `DiscardPolicy`를 쓰지 않는 것은 그것이 로그도 지표도 남기지 않아서다(Codex 리뷰 P1) — 폐기마다
+  WARN 한 줄과 카운터 `accentury.feedback.notify.dropped`가 남는다. 이 값이 0보다 크면 실행기 용량이나
+  슬랙 응답 시간을 본다. 버려진 알림의 후기는 DB에 그대로 있다.
 
 URL 주입 절차(SSM SecureString `ACCENTURY_FEEDBACK_SLACKWEBHOOKURL`, apply 뒤 `put-parameter`)는
 `infra/README.md`의 「이용 후기 슬랙 알림」 절이 정본이다. WAF 경로 규칙도 2단계에서 들어왔다
@@ -221,7 +226,12 @@ law). 보낸 뒤에는 버튼을 한 줄 인사로 바꾼다 — 결과당 1건�
   활성 트랜잭션 안에서 발행된 이벤트만 받고, 밖에서 발행하면 기본값(`fallbackExecution = false`)에서
   **조용히 버려진다** — 예외도 로그도 없다. `FeedbackService`가 트랜잭션 콜백 안에서 발행하는 이유다.
 - **`smallint` ↔ `Short`.** 별점 컬럼이 `smallint`라 엔티티 타입도 `Short`다. `Integer`로 두면
-  매핑에서 걸린다. 화면과 API 경계는 `Integer`이고 변환은 서비스가 한다.
+  매핑에서 걸린다. 변환은 서비스가 한다.
+- **요청 본문의 별점은 `Number`다 — `Integer`가 아니다.** `Integer`로 받았을 때 `{"rating": 2.5}`가
+  400이 아니라 **2로 잘려 201로 저장됐다**(2026-09-15 실측, Codex 리뷰 P1). 화면이 `Number.isInteger`로
+  거르고 있어 드러나지 않았을 뿐 BE 계약에는 구멍이었다. 원본 수를 그대로 받아 `FeedbackService`가
+  정수인지 판정한다 — 값만 보므로 `5.0`은 통과한다. 전역 ObjectMapper 설정은 건드리지 않았다(다른
+  엔드포인트의 역직렬화까지 함께 바뀐다).
 - **`@EnableAsync`가 레포에 처음 들어왔다.** 앞으로 **실행기 이름 없는 `@Async`는 만들지 않는다** —
   이름이 없으면 컨텍스트 기본 실행기로 떨어지는데, 이 앱에는 AI 전달 풀(`analysisExecutor`)처럼
   용량이 좁은 실행기가 있어 알림 하나가 분석 전달을 밀어낼 수 있다.
