@@ -16,9 +16,11 @@
 locals {
   name = "accentury-${var.env}"
 
-  # 세션 생성과 음성 업로드 경로. UploadClient.kt의 PATH_* 상수와 SessionClient.kt가 만드는 경로다.
+  # 세션 생성, 음성 업로드, 이용 후기 경로. UploadClient.kt의 PATH_* 상수와 SessionClient.kt,
+  # 그리고 웹의 후기 바텀시트가 만드는 경로다.
   #   POST /v0/sessions                                             (KAN-9, 재응시 KAN-107)
   #   POST /v0/sessions/{sessionId}/voice-items/{itemId}/recording  (KAN-10, multipart 음성)
+  #   POST /v0/sessions/{sessionId}/feedback                        (KAN-211, 결과 화면 이용 후기)
   # rate 집계는 POST만 센다. GET, HEAD, OPTIONS는 backend가 405로 싸게 끝내는데 집계에 들어가면
   # 같은 공유 IP의 정상 세션 생성과 업로드까지 밀어낸다 (Codex 2차 P2, 2026-08-28). CommonRuleSet
   # 예외는 메서드를 보지 않는다 - 업로드 경로로 오는 요청은 메서드와 무관하게 본문 규칙에 걸릴
@@ -34,6 +36,7 @@ locals {
   # (Codex 1차 P1, 3차 P2, 2026-08-28)
   session_create_path_regex = "^/v0(;[^/]*)?/sessions(;[^/]*)?$"
   recording_path_regex      = "/recording(;[^/]*)?$"
+  feedback_path_regex       = "^/v0(;[^/]*)?/sessions(;[^/]*)?/[^/]+(;[^/]*)?/feedback(;[^/]*)?$"
 
   # 차단 응답 본문. backend GlobalExceptionHandler가 내는 429 봉투(ErrorCode.RATE_LIMITED)와 같은
   # 모양이라 앱(UploadClient.toResult, SessionClient.toResult)과 웹(errorEnvelope.ts)이 backend
@@ -69,10 +72,16 @@ resource "aws_wafv2_web_acl" "this" {
 
   # ---- 10. rate-based rule ----
   #
-  # 세는 대상을 세션 생성과 음성 업로드로 좁힌 이유: 웹이 분석 대기 화면에서 /complete를
+  # 세는 대상을 POST 세 경로로 좁힌 이유: 웹이 분석 대기 화면에서 /complete를
   # pollAfterMs(800ms)마다 POST로 폴링한다 (useAnalysisPolling.ts). POST /v0/* 전체를 세면 정상
   # 사용자 1명이 5분에 POST 375건을 내 임계값 산정이 불가능하다. 반면 세션 생성과 업로드는
   # 실모델이 붙는 순간 요청 1건이 GPU 비용이 되는 유일한 경로다.
+  #
+  # 후기 제출(KAN-211)도 센다. GPU 비용이 걸린 경로는 아니지만, 사용자가 쓴 자유 서술을 DB에
+  # 쓰는 유일한 인증 POST다 - 한 IP가 세션을 계속 새로 만들어 가며 두드리면 본문 500자짜리 행이
+  # 그만큼 쌓이고, 그 테이블은 보존 기간이 1년이라(session_feedback) 24시간 뒤 정리되는 세션과
+  # 달리 흔적이 오래 남는다. backend의 세션당 분당 10건 제한은 세션마다 새 카운터라 이 모양을
+  # 막지 못하므로 IP 홍수는 엣지에서 끊는다. 정상 사용은 세션당 1건이라 임계값 근처에도 가지 않는다.
   #
   # 임계값(var.rate_limit)은 backend의 IP당 제한(세션 생성, 업로드 각각 분당 30 = 5분 150,
   # application.yml)보다 위에 둔다. 보통의 초과는 backend가 먼저 잡아 정식 429 봉투를 내고,
@@ -153,6 +162,26 @@ resource "aws_wafv2_web_acl" "this" {
                 statement {
                   regex_match_statement {
                     regex_string = local.recording_path_regex
+
+                    field_to_match {
+                      uri_path {}
+                    }
+
+                    text_transformation {
+                      priority = 0
+                      type     = "URL_DECODE"
+                    }
+
+                    text_transformation {
+                      priority = 1
+                      type     = "NORMALIZE_PATH"
+                    }
+                  }
+                }
+
+                statement {
+                  regex_match_statement {
+                    regex_string = local.feedback_path_regex
 
                     field_to_match {
                       uri_path {}

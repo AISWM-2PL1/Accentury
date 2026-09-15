@@ -65,7 +65,7 @@ Route 53 호스팅 영역 ── Porkbun에서 NS 위임 ── ACM 인증서 2�
   │   서비스 backend  태스크 1~3개(요청 수 목표 추적, KAN-168), 롤링 배포, 회로 차단기 + 자동 롤백 │
   │   태스크 정의 accentury-{env}-backend  0.5 vCPU / 2 GB, x86_64   │
   │   ┌──────────────┐  awsvpc ENI + 퍼블릭 IP                      │
-  │   │ backend :8080│ Spring Boot, secrets = SSM 12개, 로그 → CloudWatch │
+  │   │ backend :8080│ Spring Boot, secrets = SSM 13개, 로그 → CloudWatch │
   │   └──┬───────┬───┘  stopTimeout 120초 (KAN-166), 회로 상태 지표    │
   └──────┼───────┼───────────────────────────────────────────────┘
          │       │ http://ai.accentury.internal:8000 (= 내부 ALB alias, KAN-201)
@@ -93,7 +93,7 @@ Route 53 호스팅 영역 ── Porkbun에서 NS 위임 ── ACM 인증서 2�
   └──────────────────────────────────────────────────────────┘
 
 밖으로 거는 연결 (퍼블릭 서브넷 + 퍼블릭 IP라 NAT도 VPC 엔드포인트도 없다)
-  ├─ backend 태스크, 실행 역할: ECR pull, CloudWatch Logs, SSM /accentury/{env}/* 12개 → secrets  KAN-165
+  ├─ backend 태스크, 실행 역할: ECR pull, CloudWatch Logs, SSM /accentury/{env}/* 13개 → secrets  KAN-165
   │    (태스크가 시작할 때 ECS 에이전트가 읽어 컨테이너 env로 준다. 정본은 config 모듈 KAN-129)
   ├─ backend 태스크, 태스크 역할: Secrets Manager RDS 마스터 시크릿(연결 시점, 7일 회전 추종)  KAN-129
   │    CloudWatch PutMetricData accentury/backend (Micrometer, 회로 상태)                    KAN-36
@@ -574,9 +574,9 @@ backend는 `modules/fargate`가 만드는 ECS Fargate 서비스다. EC2 위 dock
 | 구성 | 값 | 비고 |
 | --- | --- | --- |
 | 클러스터 | `accentury-{env}`, 용량 공급자 `FARGATE`만 | `FARGATE_SPOT`은 연결하지 않는다 (2026-09-01 결정). Container Insights 끔 |
-| 태스크 정의 | 패밀리 `accentury-{env}-backend`, 0.5 vCPU / 2 GB, `X86_64`, 컨테이너 `backend` 1개 | image = ECR `accentury/backend:<SSM IMAGE_TAG>`, secrets = SSM 파라미터 12개 (아래 표), `stopTimeout` 120초, awslogs `/accentury/{env}/backend`(14일), 컨테이너 healthCheck = compose와 같은 bash `/dev/tcp` 검사 |
+| 태스크 정의 | 패밀리 `accentury-{env}-backend`, 0.5 vCPU / 2 GB, `X86_64`, 컨테이너 `backend` 1개 | image = ECR `accentury/backend:<SSM IMAGE_TAG>`, secrets = SSM 파라미터 13개 (아래 표), `stopTimeout` 120초, awslogs `/accentury/{env}/backend`(14일), 컨테이너 healthCheck = compose와 같은 bash `/dev/tcp` 검사 |
 | 서비스 | `backend`, 처음 desired 1, 용량 공급자 전략 `FARGATE` weight 1 | 롤링 배포(min 100% / max 200%), 회로 차단기 + 자동 롤백, `health_check_grace_period_seconds` 150초(실측 기반, 아래), 퍼블릭 서브넷 + 퍼블릭 IP, `backend-sg`, 대상 그룹 ip:8080. 태스크 수는 그 뒤 오토스케일링이 1~3에서 조절하고 Terraform은 `desired_count`를 다시 보지 않는다 (다음 절, KAN-168) |
-| 실행 역할 | `accentury-{env}-backend-execution` | `AmazonECSTaskExecutionRolePolicy`(ECR pull, 로그) + 이 환경 config 파라미터 12개의 `ssm:GetParameters`. ECS 에이전트 몫이라 컨테이너 안에서는 보이지 않는다 |
+| 실행 역할 | `accentury-{env}-backend-execution` | `AmazonECSTaskExecutionRolePolicy`(ECR pull, 로그) + 이 환경 config 파라미터 13개의 `ssm:GetParameters`. ECS 에이전트 몫이라 컨테이너 안에서는 보이지 않는다 |
 | 태스크 역할 | `accentury-{env}-backend-task` | RDS 마스터 시크릿 `GetSecretValue` + `cloudwatch:PutMetricData`(네임스페이스 `accentury/backend` 조건). 애플리케이션이 SDK 기본 체인으로 받는다 - IMDS hop limit 조정이 없다 |
 
 **이미지 태그의 정본은 SSM `IMAGE_TAG` 하나다.** Terraform은 그 값을 data 소스로 읽어 태스크
@@ -919,7 +919,7 @@ docker compose exec ai python -c "import urllib.request; urllib.request.urlopen(
 | --- | --- | --- |
 | `IMAGE_TAG` | ai 호스트 compose.env, backend 태스크 정의 image (Terraform data 소스) | 두 서비스가 같은 SHA 태그를 쓴다. **없으면 ai 기동 실패, plan 실패.** 파이프라인(KAN-128)이 쓴다 |
 | `ai/*` (하위 경로 전부) | ai.env (ai 호스트만) | ai 컨테이너 환경 변수. 지금은 내부 호출 토큰 하나 (KAN-36). 실모델 설정은 KAN-22가 이 경로 아래 어떤 이름으로든 더한다 - 이 호스트가 읽는 것은 이 경로뿐이라 이름 규칙이 없다 |
-| 그 외 전부 (`modules/config` 출력 12개) | backend 태스크 정의 secrets (KAN-165) | backend 컨테이너 환경 변수. 태스크 시작 시 실행 역할이 읽는다 (아래 표, KAN-129) |
+| 그 외 전부 (`modules/config` 출력 13개 - 13번째가 KAN-211의 슬랙 웹훅 URL이다) | backend 태스크 정의 secrets (KAN-165) | backend 컨테이너 환경 변수. 태스크 시작 시 실행 역할이 읽는다 (아래 표, KAN-129) |
 
 backend 환경 변수는 전부 Terraform `modules/config`가 만든다 - 값이 다른 모듈의
 출력(RDS 주소, 시크릿 ARN, VPC CIDR, 도메인)이라 손으로 넣으면 재구축 때 어긋난다.
@@ -939,6 +939,7 @@ fargate 모듈이 config의 파라미터 이름 목록을 그대로 태스크 �
 | `ACCENTURY_RESULT_ASSETBASEURL` | `https://<도메인>/share` (KAN-132). backend가 등급 code를 붙여 `share.imageUrl`을 만든다. 이미지는 웹 버킷 `share/<code>.png` (`scripts/publish-share-assets.sh`) | String |
 | `ACCENTURY_ADMIN_TOKEN` | `random_password` 48자 영숫자. 관리자 API(§6)와 E2E 스모크(KAN-138)가 쓴다 | SecureString |
 | `ACCENTURY_SHARE_KAKAOADMINKEY` | 카카오디벨로퍼스 콘솔의 앱 Admin 키 (KAN-164). Terraform은 자리 표시 값으로 만들고(write-only `value_wo`라 state에 값이 남지 않는다) apply 뒤 `put-parameter --overwrite`로 넣는다 (아래 "카카오 공유 웹훅" 절). 두 환경 같은 값 | SecureString |
+| `ACCENTURY_FEEDBACK_SLACKWEBHOOKURL` | 이용 후기 알림이 나가는 슬랙 채널(`#feedback`)의 Incoming Webhook URL (KAN-211). 카카오 키와 같이 자리 표시 값으로 만들고 apply 뒤 `put-parameter`로 넣는다 (아래 "이용 후기 슬랙 알림" 절). **선택 값이다 - 없거나 자리 표시 값이면 backend가 알림만 끄고 그대로 기동한다** (`DeploymentConfigGuard` 밖이라 apply와 배포의 순서 제약이 없다). 채널이 하나라 두 환경 같은 값 | SecureString |
 | `ai/ACCENTURY_AI_INTERNAL_TOKEN` | `ACCENTURY_ANALYSIS_AITOKEN`과 같은 난수. ai 서버가 health를 뺀 모든 요청에서 대조한다 (KAN-36). ai 호스트 역할만 읽는다 | SecureString |
 | `ACCENTURY_TRAINING_BUCKET` | **staging에만 있다** (KAN-201). 학습 데이터 버킷 이름(`accentury-staging-training-<계정>`). tfvars `training_bucket_enabled`가 true인 환경에만 파라미터가 생기고, 그래서 prod 태스크 정의에는 이 변수가 없어 backend가 S3 클라이언트를 만들지 않는다 (아래 "staging 전용 학습 데이터 S3" 절) | String |
 
@@ -1032,6 +1033,47 @@ WAF의 AWS 관리 규칙(KAN-149)은 `/recording`만 제외하고 이 경로에�
 봇 UA나 UA 없음으로 분류되면 backend 로그에 아무 흔적 없이 CloudFront가 403을 낸다. us-east-1의 WAF 로그
 그룹(아래 "WAF 웹 ACL" 절)에서 `/v0/share/kakao/webhook`의 BLOCK을 찾고, 있으면 그 규칙에
 `rule_action_override`(Count)나 scope-down 제외를 더한다.
+
+### 이용 후기 슬랙 알림 (KAN-211)
+
+결과 화면에서 받은 이용 후기(`POST /v0/sessions/{sessionId}/feedback`)는 DB에 저장되고, 저장이
+커밋된 뒤 슬랙 채널 `#feedback`으로 한 줄씩 올라간다. 개발팀이 후기를 읽는 곳이 그 채널 하나이고
+무료 플랜이라 수단도 Incoming Webhook 하나다 - 그래서 staging과 prod가 채널을 나누지 않고,
+구분은 메시지 머리의 환경 라벨(결과 URL의 호스트)이 한다. 웹훅 URL은 슬랙 콘솔이 발급하는
+값이라 Terraform이 만들 수 없어 `modules/config`가 자리 표시 값으로 파라미터만 만든다
+(카카오 검증 키와 같은 write-only `value_wo` 방식이다).
+
+**카카오 키와 달리 apply와 배포의 순서 제약이 없다.** 이 파라미터는 `DeploymentConfigGuard`의
+필수 목록 밖이라, 값을 아직 안 넣었거나 자리 표시 값인 채로 뜬 backend는 알림만 끄고 후기는
+그대로 저장한다 (기동 로그에 `후기 슬랙 알림 꺼짐`이 남는다). 코드가 먼저 배포돼도 멈추는 것이
+없으므로 아래 순서는 아무 때나 밟으면 된다.
+
+1. 슬랙 앱을 만들고 웹훅 URL을 받는다. api.slack.com/apps > **Create New App** > **From scratch**
+   (앱 이름과 워크스페이스 선택) > 좌측 **Incoming Webhooks** 켜기 > **Add New Webhook to
+   Workspace** > 채널로 `#feedback` 선택 > 발급된 URL 복사
+   (`https://hooks.slack.com/services/...`).
+2. 환경마다 값을 넣고 backend 태스크를 새로 띄운다 (secrets는 태스크 시작 시 한 번 읽힌다).
+   두 환경이 같은 채널을 쓰므로 같은 값이다.
+
+   ```
+   aws ssm put-parameter --overwrite --type SecureString \
+     --name /accentury/staging/ACCENTURY_FEEDBACK_SLACKWEBHOOKURL --value '<웹훅 URL>'
+   aws ssm put-parameter --overwrite --type SecureString \
+     --name /accentury/prod/ACCENTURY_FEEDBACK_SLACKWEBHOOKURL --value '<웹훅 URL>'
+   aws ecs update-service --cluster accentury-staging --service backend --force-new-deployment
+   aws ecs update-service --cluster accentury-prod    --service backend --force-new-deployment
+   ```
+
+3. 확인 - backend 로그에 `후기 슬랙 알림 켜짐 - 채널 라벨 <도메인>`이 뜨는지 보고, staging 웹에서
+   테스트를 한 번 완주해 후기를 1건 보낸 뒤 채널에 도착하는지 본다. 도착한 메시지에 **회신 이메일
+   값은 없다** - 유무만 적고 답장할 후기는 세션 id 앞자리로 DB에서 찾는다.
+4. 재발급과 끄기 - 슬랙에서 URL을 다시 발급했으면 2번을 그대로 반복한다. 알림을 끄려면 값을 자리
+   표시 리터럴로 되돌린다(`--value 'unset-put-parameter-after-apply'`). 어느 쪽이든 후기 저장에는
+   영향이 없다.
+
+**이 URL은 시크릿이다.** 값을 아는 사람은 누구나 그 채널에 아무 메시지나 쓸 수 있으므로
+(별도 인증이 없다) 레포, 노션, 지라 티켓, 스크린샷 어디에도 적지 않는다. backend 로그도 이 값을
+지운다 (`LogMasking`) - 켜짐 로그는 URL이 아니라 채널 라벨만 찍는다.
 
 ### 원격 스모크 수동 실행 (KAN-138)
 
@@ -1159,7 +1201,7 @@ aws s3 cp "s3://$(terraform output -raw training_bucket)/<키>.json" -          
 따옴표, `#`, 공백)는 그대로 컨테이너에 들어간다 - ai 호스트는 env_file을 `format: raw`로
 읽어 Compose의 보간과 따옴표 처리를 끄고, ECS secrets는 값을 그대로 env로 준다. 시크릿은
 SecureString으로 두면 되고(AWS 관리 키라 별도 kms 권한 불요), 실행 역할은 자기 환경의
-파라미터 12개만, ai 호스트 역할은 자기 하위 경로만 읽는다. ai 호스트의 env 파일은 tmpfs라
+파라미터 13개만, ai 호스트 역할은 자기 하위 경로만 읽는다. ai 호스트의 env 파일은 tmpfs라
 재부팅 시 사라졌다가 다시 만들어진다 (낡은 사본이 쌓이지 않는다). docker 자체는 컨테이너
 환경 변수를 `/var/lib/docker/containers/*/config.v2.json`(암호화된 루트 볼륨, root 전용)에
 기록하므로 호스트 디스크에 평문이 전혀 없는 것은 아니다. Fargate 태스크는 호스트가 없어
@@ -1730,13 +1772,13 @@ Terraform 입력의 차이는 `diff -r infra/envs/staging infra/envs/prod`가 �
 | VPC CIDR | `10.1.0.0/16` | `10.0.0.0/16` | 서브넷 4개, `ACCENTURY_TRUSTEDPROXIES` |
 | RDS 엔드포인트 | `accentury-staging.<id>.ap-northeast-2.rds.amazonaws.com` | `accentury-prod.<id>...` | `SPRING_DATASOURCE_URL` (apply 후 output `rds_endpoint`) |
 | RDS 마스터 시크릿 | `rds!db-<staging uuid>` | `rds!db-<prod uuid>` | `SPRING_DATASOURCE_URL`의 `secretsManagerSecretId`, backend 태스크 역할 정책 |
-| SSM 경로 | `/accentury/staging/*` | `/accentury/prod/*` | backend 실행 역할 정책(secrets 12개), ai 호스트 역할 정책과 기동 스크립트, backend 태스크 정의의 `IMAGE_TAG` 조회 |
+| SSM 경로 | `/accentury/staging/*` | `/accentury/prod/*` | backend 실행 역할 정책(secrets 13개), ai 호스트 역할 정책과 기동 스크립트, backend 태스크 정의의 `IMAGE_TAG` 조회 |
 | backend 태스크 (KAN-165) | 0.5 vCPU / 2 GB, desired 1 | 같은 값 | `modules/fargate` 기본값 (tfvars 아님) |
 | 관리자 토큰 | 환경별 난수 | 환경별 난수 | `ACCENTURY_ADMIN_TOKEN` |
 | 내부 호출 토큰 (KAN-36) | 환경별 난수 | 환경별 난수 | `ACCENTURY_ANALYSIS_AITOKEN`, `ai/ACCENTURY_AI_INTERNAL_TOKEN` |
 | AI 호스트 (KAN-36) | c7i.xlarge, 루트 40GiB | 같은 값 | `ai_instance_type`, `ai_root_volume_size` (B단계 2026-09-10에 20에서 40으로) |
 | AI 호스트 오토스케일링 (KAN-201) | max 3 | 같은 값 | `ai_max_size` - ai-host 모듈 ASG `max_size`. min 1은 모듈 기본값 |
-| 학습 데이터 S3 (KAN-201) | 켬 | 끔 | `training_bucket_enabled` - 버킷, 태스크 역할 PutObject, SSM `ACCENTURY_TRAINING_BUCKET`(secrets 13개째) |
+| 학습 데이터 S3 (KAN-201) | 켬 | 끔 | `training_bucket_enabled` - 버킷, 태스크 역할 PutObject, SSM `ACCENTURY_TRAINING_BUCKET`(secrets 14개째) |
 | RDS 삭제 보호, 최종 스냅샷 | 없음, 생략 | 켬, 남김 | RDS |
 | 배포 역할 ECR push | 허용 | 불가 | `modules/deploy` image-deploy 정책 (KAN-128 승격 모델) |
 
@@ -1882,7 +1924,7 @@ terraform destroy
   롤링 배포와 회로 차단기 판정이 2분 30초씩 늦다).
 - **실행 역할과 태스크 역할 분리 (KAN-165)**: EC2 시절 인스턴스 역할 하나가 ECR pull, SSM,
   Secrets Manager, CloudWatch를 다 가졌다. 실행 역할(ECS 에이전트 몫: ECR pull, awslogs,
-  secrets 주입용 `ssm:GetParameters` 12개)은 컨테이너 안에서 보이지 않고, 태스크 역할
+  secrets 주입용 `ssm:GetParameters` 13개)은 컨테이너 안에서 보이지 않고, 태스크 역할
   (애플리케이션 몫: RDS 시크릿, PutMetricData)만 SDK 기본 체인으로 흘러간다. 신뢰 정책에
   `aws:SourceAccount`, `aws:SourceArn` 조건을 둔다 (AWS 문서의 혼동된 대리인 방지).
   SecureString은 AWS 관리 키라 kms 권한이 따로 없다.

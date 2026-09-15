@@ -148,6 +148,46 @@ class LogMaskingTest extends IntegrationTest {
     }
 
     @Test
+    void 후기_슬랙_웹훅_URL을_이름으로_지운다() {
+        // URL 자체가 시크릿이다 (KAN-211) - 아는 사람은 누구나 그 채널에 글을 쓸 수 있다.
+        // 카카오 키와 같은 네 갈래로 샐 수 있어 전부 본다.
+        // 더미 URL을 실제 웹훅 형식(T·B 8자+토큰 24자)으로 두면 GitHub push protection이
+        // 시크릿으로 잡는다 - 짧은 자리표시로 둔다(2026-09-15).
+        String url = "https://hooks.slack.com/services/T000/B000/not-a-real-webhook";
+        assertEquals("accentury.feedback.slack-webhook-url=***",
+                LogMasking.mask("accentury.feedback.slack-webhook-url=" + url),
+                "설정 키로 찍힌 경우");
+        assertEquals("""
+                {"slackWebhookUrl": "***"}""",
+                LogMasking.mask("""
+                        {"slackWebhookUrl": "%s"}""".formatted(url)),
+                "바인딩된 필드로 찍힌 경우");
+        assertEquals("ACCENTURY_FEEDBACK_SLACKWEBHOOKURL=***",
+                LogMasking.mask("ACCENTURY_FEEDBACK_SLACKWEBHOOKURL=" + url),
+                "환경 변수(대시 제거형)로 찍힌 경우");
+        assertEquals("slack-webhook-url=***",
+                LogMasking.mask("slack-webhook-url=" + url),
+                "설정 키 마지막 마디로 찍힌 경우");
+    }
+
+    @Test
+    void 이름_없이_박힌_슬랙_웹훅_URL도_호스트까지만_남긴다() {
+        // 전송이 실패하면 RestClient의 예외 메시지에 요청 URI가 통째로 들어간다 - 이름이 앞에
+        // 붙지 않으므로 위 규칙에 걸리지 않는다. 호스트는 남겨 "슬랙으로 나가다 실패했다"는
+        // 진단을 살리고, 채널에 글을 쓸 수 있게 하는 경로 부분만 지운다.
+        //
+        // 값의 끝을 따옴표에서 끊는지도 함께 본다 - 공백까지 달려가 닫는 따옴표를 먹으면
+        // 가린 줄이 JSON으로 읽히지 않는다 (sessionToken 규칙과 같은 이유).
+        String masked = LogMasking.mask("""
+                {"message": "I/O error on POST request for https://hooks.slack.com/services/T0/B0/zzzz", "feedbackId": "fb_1"}""");
+
+        assertFalse(masked.contains("zzzz"), masked);
+        assertEquals("""
+                {"message": "I/O error on POST request for https://hooks.slack.com/***", "feedbackId": "fb_1"}""",
+                masked, "가린 뒤에도 JSON으로 읽혀야 한다 - 닫는 따옴표와 뒤 필드가 살아 있다");
+    }
+
+    @Test
     void 값에_공백이_있어도_따옴표_끝까지_지운다() {
         // 공백에서 끊으면 뒷부분이 로그에 그대로 남고, 열린 따옴표만 닫혀 JSON 한 줄이
         // 깨진다 - 마스킹이 유출과 로그 수집 실패를 동시에 만드는 자리다.

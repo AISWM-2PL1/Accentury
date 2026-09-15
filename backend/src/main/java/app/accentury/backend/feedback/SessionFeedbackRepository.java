@@ -19,6 +19,13 @@ public interface SessionFeedbackRepository extends Repository<SessionFeedback, S
     /** 멱등 재전송/재제출 판별의 진입점 - 유니크 제약과 같은 키의 단건 조회 */
     Optional<SessionFeedback> findBySessionId(String sessionId);
 
+    /**
+     * id 단건 조회 - 슬랙 알림이 커밋 뒤에 행을 다시 읽는 자리다 (KAN-211 2단계,
+     * {@link FeedbackSlackNotifier}). 비어 있으면 그 사이 보존 기간 정리가 지웠다는 뜻이라
+     * 알림도 보내지 않는다.
+     */
+    Optional<SessionFeedback> findById(String id);
+
     SessionFeedback save(SessionFeedback feedback);
 
     /**

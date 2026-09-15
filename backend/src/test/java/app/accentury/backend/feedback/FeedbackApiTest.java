@@ -26,6 +26,7 @@ import java.util.HashSet;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -62,11 +63,24 @@ class FeedbackApiTest extends IntegrationTest {
     @Autowired
     private TestSessionRepository sessionRepository;
 
+    @Autowired
+    private FeedbackSlackNotifier slackNotifier;
+
     private SessionTestFlow flow;
 
     @BeforeEach
     void setUp() {
         flow = new SessionTestFlow(mockMvc, objectMapper, analysisJobRepository, transitions);
+    }
+
+    // === 슬랙 알림 (KAN-211 2단계) ===
+
+    @Test
+    void 웹훅_URL이_없는_기본_설정에서는_알림이_꺼진다() {
+        // 로컬, 테스트, 그리고 SSM 값을 아직 안 넣은 배포가 전부 이 상태다. 슬랙은 후기 저장의
+        // 부수 기능이라 꺼져도 위 시나리오가 전부 그대로 통과해야 한다 - 이 클래스가 그 증거다.
+        // 켜졌을 때의 동작은 FeedbackSlackNotifyApiTest가 본다.
+        assertFalse(slackNotifier.enabled());
     }
 
     // === 정상 흐름 ===

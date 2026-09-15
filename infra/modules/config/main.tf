@@ -195,6 +195,24 @@ resource "aws_ssm_parameter" "kakao_admin_key" {
   value_wo_version = 1
 }
 
+# 이용 후기 알림이 나가는 슬랙 채널(#feedback)의 Incoming Webhook URL (KAN-211). 개발팀이 후기를
+# 읽는 곳이 이 채널 하나이고, 무료 플랜이라 수단도 Incoming Webhook 하나다. 값은 슬랙 콘솔이
+# 발급하는 것이라 Terraform이 만들 수 없다 - 카카오 Admin 키와 같은 사정이라 자리만 만들고
+# apply 뒤에 한 번 넣는다 (README "이용 후기 슬랙 알림" 절). write-only(value_wo)를 쓰는 이유도
+# 위 kakao_admin_key 주석과 같다 - value로 두면 refresh가 손으로 넣은 값을 state에 평문으로 읽어 온다.
+#
+# 카카오 키와 다른 점은 하나다: 이 파라미터는 backend의 필수 설정이 아니다(DeploymentConfigGuard
+# 밖이다). 자리 표시 값으로 뜬 backend는 알림만 끄고 후기는 그대로 저장하므로, apply와 이미지
+# 배포의 순서 제약이 없고 값을 아직 안 넣은 채로 배포해도 아무것도 멈추지 않는다
+# (FeedbackSlackNotifier). 채널이 하나라 두 환경이 같은 값을 쓰고, staging과 prod는 메시지
+# 머리의 환경 라벨로 가른다.
+resource "aws_ssm_parameter" "feedback_slack_webhook_url" {
+  name             = "${var.ssm_prefix}/ACCENTURY_FEEDBACK_SLACKWEBHOOKURL"
+  type             = "SecureString"
+  value_wo         = "unset-put-parameter-after-apply"
+  value_wo_version = 1
+}
+
 # ---- staging 전용 학습 데이터 S3 (KAN-201) ----
 
 # 값이 있는 환경에만 파라미터가 생긴다 - prod 태스크 정의에는 이 환경 변수가 아예 없어 backend가 S3 클라이언트도

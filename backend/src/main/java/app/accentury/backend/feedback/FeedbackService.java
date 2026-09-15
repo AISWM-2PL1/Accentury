@@ -12,6 +12,7 @@ import app.accentury.backend.session.TestSessionRepository;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -58,17 +59,20 @@ public class FeedbackService {
     private final TestSessionRepository sessionRepository;
     private final TransactionTemplate transactionTemplate;
     private final RateLimits rateLimits;
+    private final ApplicationEventPublisher publisher;
 
     public FeedbackService(SessionService sessionService, SessionFeedbackRepository repository,
                            TestResultRepository testResultRepository,
                            TestSessionRepository sessionRepository,
-                           TransactionTemplate transactionTemplate, RateLimits rateLimits) {
+                           TransactionTemplate transactionTemplate, RateLimits rateLimits,
+                           ApplicationEventPublisher publisher) {
         this.sessionService = sessionService;
         this.repository = repository;
         this.testResultRepository = testResultRepository;
         this.sessionRepository = sessionRepository;
         this.transactionTemplate = transactionTemplate;
         this.rateLimits = rateLimits;
+        this.publisher = publisher;
     }
 
     /** 제출의 산출물 - 새로 저장했는지 여부다. 컨트롤러가 이것으로 201과 200을 가른다. */
@@ -117,9 +121,15 @@ public class FeedbackService {
             // 완료 전과 같은 409로 돌려보낸다.
             TestResult result = testResultRepository.findBySessionId(session.id())
                     .orElseThrow(() -> new ApiException(ErrorCode.RESULT_NOT_READY));
-            repository.save(new SessionFeedback("fb_" + UUID.randomUUID(), session.id(), key,
-                    rating, body, contactEmail, result.tierCode(), locked.testVersion(),
-                    locked.scoreVersion(), locked.platform(), locked.traffic(), Instant.now()));
+            SessionFeedback saved = repository.save(
+                    new SessionFeedback("fb_" + UUID.randomUUID(), session.id(), key,
+                            rating, body, contactEmail, result.tierCode(), locked.testVersion(),
+                            locked.scoreVersion(), locked.platform(), locked.traffic(), Instant.now()));
+            // 슬랙 알림(KAN-211 2단계)은 이 이벤트를 커밋 뒤에 받는다 (FeedbackSlackNotifier).
+            // 발행이 트랜잭션 콜백 "안"인 것이 핵심이다 - AFTER_COMMIT 리스너는 활성 트랜잭션 안에서
+            // 발행된 이벤트만 받고, 밖에서 발행하면 기본 설정에서 조용히 버려진다. 재전송(200) 경로는
+            // 이 줄에 닿지 않으므로 같은 후기가 채널에 두 번 올라가지 않는다.
+            publisher.publishEvent(new FeedbackSubmitted(saved.id()));
             return new SubmitOutcome(true);
         }));
 
