@@ -43,6 +43,12 @@ public enum ErrorCode {
     RESULT_RETAKE_REQUIRED(HttpStatus.CONFLICT, true, "실패한 문항이 있습니다. 다시 녹음해 주세요."),
     RESULT_EXPIRED(HttpStatus.GONE, false, "결과 보관 기간(24시간)이 지났습니다. 다시 테스트해 주세요."),
 
+    // === FEEDBACK_* : 이용 후기 (KAN-211) ===
+    // 세션당 후기는 하나다 (2026-09-15 결정) - 같은 키의 재전송은 200이고, 새 키의 재제출이
+    // 여기로 온다. 시간이 지나도 풀리지 않는 상태이므로 retryable=false다 - 클라이언트가
+    // 다시 시도해서 될 일이 아니라 "이미 보냈다"를 보여 줘야 한다.
+    FEEDBACK_ALREADY_SUBMITTED(HttpStatus.CONFLICT, false, "이미 후기를 보냈습니다."),
+
     // === RATE_* : 요청 제한 (KAN-23, KAN-28) ===
     RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, true, "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요."),
     // 시간이 지나도 풀리지 않는 상한이므로 retryable=false - RATE_LIMITED와 다르다.

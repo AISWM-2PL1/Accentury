@@ -28,6 +28,7 @@ import java.util.Map;
  * @param analytics      익명 집계 카운터의 일자 경계와 조회 상한 (KAN-106)
  * @param admin          운영자 전용 API(§6)의 공유 시크릿 (KAN-106, KAN-26)
  * @param share          카카오톡 공유 웹훅의 검증 키와 수신 기록 보존 기간 (KAN-164)
+ * @param feedback       결과 화면 이용 후기의 요청 제한과 보존 기간 (KAN-211)
  * @param training       staging 전용 학습 데이터 S3 (KAN-201) - 버킷이 없으면 저장 코드가 호출되지 않는다.
  * @param trustedProxies 요청 제한의 기준 IP를 정할 때 신뢰하는 프록시 대역 (KAN-28, §2.5).
  *                       CIDR 또는 단일 IP 목록이고, 직접 접속한 상대가 이 목록에 들어야만
@@ -43,6 +44,7 @@ public record AccenturyProperties(Session session,
                                   @DefaultValue Completion completion, @DefaultValue Cors cors,
                                   @DefaultValue Result result, @DefaultValue Analytics analytics,
                                   @DefaultValue Admin admin, @DefaultValue Share share,
+                                  @DefaultValue Feedback feedback,
                                   @DefaultValue Training training,
                                   @DefaultValue List<String> trustedProxies) {
 
@@ -264,6 +266,22 @@ public record AccenturyProperties(Session session,
      */
     public record Share(@Nullable String kakaoAdminKey,
                         @DefaultValue("7d") Duration receiptRetention) {
+    }
+
+    /**
+     * 결과 화면의 이용 후기 (KAN-211, {@code feedback} 패키지).
+     *
+     * @param rateLimitPerMinute 세션당 분당 후기 제출 허용 횟수 (§2.5, KAN-28). 인증 뒤에만 닿는
+     *                           경로라 세션이 키다. 세션당 후기는 하나뿐이라 정상 응시는 1건이고,
+     *                           그 이상은 재전송이거나 남용이다 - 오타를 고쳐 다시 보내는 경로가
+     *                           없으므로 어휘 답안(60)만큼 여유를 둘 이유가 없다.
+     * @param retention          후기 보존 기간 - 세션과 결과의 24시간(§5.5)과 독립으로 1년이다.
+     *                           후기는 세션의 부속물이 아니라 제품 개선의 입력이라 세션이 파기된
+     *                           뒤에도 남아야 하고({@code session_feedback}에 FK가 없는 이유),
+     *                           그래도 무한은 아니다 - 회신용 이메일이 개인 식별 정보다.
+     */
+    public record Feedback(@DefaultValue("10") int rateLimitPerMinute,
+                           @DefaultValue("365d") Duration retention) {
     }
 
     /**

@@ -29,6 +29,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
+import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -256,9 +257,20 @@ class SessionRetakeApiTest extends IntegrationTest {
                 .map(EntityType::getName)
                 .collect(Collectors.toSet());
 
-        assertEquals(Set.of("VocabAnswer", "AnalysisJob", "TestResult"), sessionKeyed,
-                "세션 하위 엔티티가 늘었다 - SessionService.purgeForRetake의 삭제와 "
-                        + "seedChildren의 표본에 추가한 뒤 이 목록을 갱신한다");
+        // 재응시 때 즉시 폐기되는 것들 - 이전 응시의 답안, 시도, 결과다.
+        Set<String> purged = Set.of("VocabAnswer", "AnalysisJob", "TestResult");
+        // 세션 id를 들고 있지만 폐기하지 않는 것 - 제외한 이유를 여기 적어 둔다.
+        // SessionFeedback(KAN-211)은 세션의 하위 데이터가 아니라 제품 개선의 입력이라 수명이
+        // 세션과 다르다 (FK 없음, 1년 보존). 재응시로 지우면 "아쉬워서 다시 해 볼게요"라고 쓴
+        // 후기가 바로 그 재응시에 지워진다 - 후기를 받는 목적과 정반대다.
+        Set<String> notPurged = Set.of("SessionFeedback");
+
+        Set<String> expected = new HashSet<>(purged);
+        expected.addAll(notPurged);
+        assertEquals(expected, sessionKeyed,
+                "세션 id를 가진 엔티티가 늘었다 - 재응시에 폐기해야 하면 "
+                        + "SessionService.purgeForRetake의 삭제와 seedChildren의 표본에 추가하고, "
+                        + "폐기하지 않을 것이면 그 이유와 함께 notPurged에 넣는다");
     }
 
     /** 이전 토큰을 실은 재응시 호출 - 응답이 §3.1의 최초 응시와 같은 형태(201, 5개 필드)임을 함께 검증한다. */

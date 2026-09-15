@@ -97,6 +97,18 @@ public final class LogMasking {
                     + "(\"?\\s*[=:]\\s*)(?:\"([^\"\\r\\n]*)\"|([^\\s\",;}]+))");
 
     /**
+     * 이메일 주소 (KAN-211) - 이용 후기의 선택 입력인 회신 주소가 이 서비스가 받는 유일한
+     * 개인 식별 정보다. 코드가 로그에 넣지 않는 것이 1차 방어이고({@code FeedbackService}는
+     * 연락처 유무만 찍는다) 여기는 그 규약이 깨졌을 때의 마지막 관문이다.
+     * <p>
+     * 지역부와 도메인을 통째로 지운다 - 도메인만 남겨도 후기 본문과 묶이면 사람이 좁혀진다.
+     * 점 뒤에 글자 두 개 이상을 요구하므로 객체 식별자({@code Foo@1a2b3c})나 호스트 포트
+     * 표기에는 걸리지 않는다.
+     */
+    private static final Pattern EMAIL = Pattern.compile(
+            "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}");
+
+    /**
      * 오디오처럼 긴 이진 덩어리 - base64나 hex로 찍힌 200자 이상의 연속 블록.
      * 정상 로그에 이만한 길이의 연속 문자열은 없다 (UUID 36자, correlation ID 66자,
      * guideF0 배열은 숫자와 쉼표가 섞여 걸리지 않는다).
@@ -160,6 +172,7 @@ public final class LogMasking {
             return Matcher.quoteReplacement(matchResult.group(1) + matchResult.group(2)
                     + (quoted ? "\"***\"" : "***"));
         });
+        masked = EMAIL.matcher(masked).replaceAll("***@***");
         masked = LONG_BLOB.matcher(masked)
                 .replaceAll(matchResult -> "***(" + matchResult.group().length() + "자 생략)");
         masked = NUMERIC_BLOB.matcher(masked)
