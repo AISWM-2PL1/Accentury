@@ -279,9 +279,19 @@ public record AccenturyProperties(Session session,
      *                           후기는 세션의 부속물이 아니라 제품 개선의 입력이라 세션이 파기된
      *                           뒤에도 남아야 하고({@code session_feedback}에 FK가 없는 이유),
      *                           그래도 무한은 아니다 - 회신용 이메일이 개인 식별 정보다.
+     * @param slackWebhookUrl    개발팀이 후기를 읽는 슬랙 채널({@code #feedback})의 Incoming Webhook URL
+     *                           (KAN-211 2단계). <b>없거나 자리 표시 값({@link SsmPlaceholder#UNSET})이면
+     *                           알림만 꺼지고 저장은 그대로다</b> - 슬랙은 후기 저장의 부수 기능이라
+     *                           {@code admin.token}이나 {@code kakao-admin-key}처럼 경로를 없애는 쪽이
+     *                           아니다. 로컬과 테스트는 이 상태로 뜬다. 운영에서는 SSM SecureString
+     *                           {@code ACCENTURY_FEEDBACK_SLACKWEBHOOKURL}이 넣는다 - 슬랙 콘솔이
+     *                           발급하는 값이라 Terraform은 자리만 만든다. 두 환경이 채널 하나를
+     *                           함께 쓰므로 값도 같고, 구분은 메시지 머리의 환경 라벨이 한다
+     *                           ({@code FeedbackSlackNotifier}).
      */
     public record Feedback(@DefaultValue("10") int rateLimitPerMinute,
-                           @DefaultValue("365d") Duration retention) {
+                           @DefaultValue("365d") Duration retention,
+                           @Nullable String slackWebhookUrl) {
     }
 
     /**

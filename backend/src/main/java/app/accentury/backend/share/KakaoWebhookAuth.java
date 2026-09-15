@@ -3,6 +3,7 @@ package app.accentury.backend.share;
 import app.accentury.backend.common.AccenturyProperties;
 import app.accentury.backend.common.ApiException;
 import app.accentury.backend.common.ErrorCode;
+import app.accentury.backend.common.SsmPlaceholder;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,8 +43,13 @@ public class KakaoWebhookAuth {
     /**
      * Terraform({@code infra/modules/config/main.tf})이 SSM 파라미터를 만들 때 넣는 자리 표시 값. 운영자가
      * 콘솔의 Admin 키로 덮어쓰기 전까지 backend는 이 값으로 뜨고, 그동안은 모든 웹훅이 401이다.
+     * <p>
+     * 리터럴 자체는 {@link SsmPlaceholder#UNSET}로 옮겼다 (KAN-211) - 같은 자리 표시 패턴을 쓰는
+     * 파라미터가 둘이 되면서, 후기 슬랙 알림({@code feedback} 패키지)이 이 값을 보려고 공유 패키지를
+     * import하는 모양이 됐기 때문이다. 이 필드는 그대로 둔다 - 카카오 검증의 문맥에서 읽히는 이름이고,
+     * {@code SsmEnvironmentBindingTest}가 이 이름으로 Terraform과 대조한다.
      */
-    public static final String PLACEHOLDER = "unset-put-parameter-after-apply";
+    public static final String PLACEHOLDER = SsmPlaceholder.UNSET;
 
     private static final Logger log = LoggerFactory.getLogger(KakaoWebhookAuth.class);
 
