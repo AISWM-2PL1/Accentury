@@ -48,7 +48,12 @@ import {
   FEEDBACK_SUBMIT,
   FEEDBACK_TITLE,
 } from '../src/feedback/feedbackText'
-import { answerAllItems, startTest, TOTAL_ITEMS } from './helpers/testFlow'
+import {
+  answerAllItems,
+  expectResultFooterButtons,
+  startTest,
+  TOTAL_ITEMS,
+} from './helpers/testFlow'
 
 /**
  * 완주 한 판 + 후기 왕복 셋. `full-run.spec.ts`의 120초에 후기 몫을 얹어 잡는다 — 후기 요청은
@@ -113,11 +118,14 @@ test('KAN-211 - 결과 화면에서 후기를 실패·재시도로 보내고, �
   /*
    * ── 1. 진입 버튼과 시트 ──
    *
-   * 개수를 먼저 센다. 후기가 붙으면서 이 푸터의 버튼이 둘에서 셋이 됐고(공유·재응시·후기),
-   * 그 사실을 `full-run.spec.ts`의 KAN-197 스펙도 같은 숫자로 붙들고 있다. [앱 다운로드]는
-   * 버튼이 아니라 링크라 이 셋에 들지 않는다 (`AppDownloadAction`이 `<a>`다).
+   * 푸터의 버튼을 먼저 센다. 후기가 붙으면서 공유·재응시에 하나가 더해졌고, 그 사실을
+   * `full-run.spec.ts`의 KAN-197 스펙도 같은 헬퍼로 붙들고 있다.
+   *
+   * 숫자를 박지 않는 이유는 [앱 다운로드] 때문이다 (2026-09-15). 스토어 등록 전에는 그 CTA가
+   * 링크가 아니라 **비활성 버튼**이라 이 개수에 끼고, 등록되면 `<a>`로 돌아가 빠진다 —
+   * 기대치를 `resultFooterButtonNames`가 빌드를 보고 만든다.
    */
-  await expect(page.getByRole('button')).toHaveCount(3)
+  await expectResultFooterButtons(page, [FEEDBACK_OPEN])
   const open = page.getByRole('button', { name: FEEDBACK_OPEN, exact: true })
   await expect(open).toBeVisible()
 
@@ -257,10 +265,11 @@ test('KAN-211 - 결과 화면에서 후기를 실패·재시도로 보내고, �
 
   /*
    * 진입 버튼이 한 줄 인사로 바뀐다. 버튼을 남겨 두면 눌러 본 사람이 「이미 보냈어요」를 받는데
-   * 그건 실패로 읽힌다 (`ResultScreen`의 판단). 그래서 개수가 다시 둘이다.
+   * 그건 실패로 읽힌다 (`ResultScreen`의 판단). 그래서 후기 하나가 목록에서 빠진다 —
+   * `extra` 없이 부르는 것이 곧 그 단언이다.
    */
   await expect(page.getByText(FEEDBACK_DONE_CAPTION, { exact: true })).toBeVisible()
-  await expect(page.getByRole('button')).toHaveCount(2)
+  await expectResultFooterButtons(page)
 
   /*
    * ── 6. 409 ──

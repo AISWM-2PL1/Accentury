@@ -150,6 +150,10 @@ afterEach(() => {
   // 진행 화면 분기 테스트가 fetch·localStorage를 스텁한다. 실패로 중단돼도 다음 테스트에
   // 새지 않게 여기서 되돌린다
   vi.unstubAllGlobals()
+  // 빌드 변수도 같이 되돌린다. 지역 선택(KAN-202)과 스토어 등록 스위치(2026-09-15)를 켜는
+  // 테스트가 여러 블록에 흩어져 있어, 블록마다 따로 치우면 한 곳만 빠뜨렸을 때 다음 테스트가
+  // 켠 빌드로 돈다 — 그 어긋남은 실패 메시지에 원인이 남지 않는다
+  vi.unstubAllEnvs()
   // 진행 스냅샷(`accentury:progress:<sessionId>`)은 실물 localStorage에 남는다. Node 22(CI)의
   // jsdom에는 localStorage가 살아 있어 앞 테스트가 답한 문항이 다음 테스트로 새면 문항 화면을
   // 건너뛰고 대기 화면부터 시작한다. Node 25+는 자체 localStorage 전역이 접근 시점에 던지거나
@@ -433,6 +437,10 @@ describe('App — 웹 단독 실행 (KAN-31)', () => {
    * 세션 생성까지 가지 않고 앱 링크로 끝나는가.
    */
   it('녹음을 지원하지 않는 브라우저에서는 세션을 만들지 않고 앱으로 보낸다 (AC 5)', async () => {
+    // 스토어에 앱이 올라간 뒤의 화면이다 (2026-09-15). 등록 전 빌드가 그 자리에 세우는
+    // 비활성 CTA는 `intro/IntroScreen.test.tsx`가 본다 — 여기서 확인할 것은 그 앞 구간,
+    // 즉 게이트가 막히면 세션을 만들지 않는다는 쪽이고 그것은 어느 빌드에서나 같다
+    vi.stubEnv('VITE_STORE_LISTING_READY', 'true')
     setSearch('?c=kko_share')
     // 마이크 대역을 일부러 심지 않는다 — jsdom에는 `navigator.mediaDevices`가 없어서 실물의
     // "지원 없음"(보안 컨텍스트가 아니거나 API가 아예 없는 환경)과 같은 자리다.
@@ -1103,6 +1111,9 @@ describe('App — 웹 단독 결과 화면 (KAN-31 2단계)', () => {
   })
 
   it('안드로이드 브라우저에서는 [앱 다운로드]가 플레이스토어를 가리킨다', async () => {
+    // 스토어에 앱이 올라간 뒤의 화면이다 (2026-09-15) — 어느 스토어로 보내는지는 켠 빌드에서만
+    // 물을 수 있는 질문이고, 끈 빌드가 그리는 비활성 CTA는 `ResultScreen.test.tsx`가 본다
+    vi.stubEnv('VITE_STORE_LISTING_READY', 'true')
     const restoreUa = withUserAgent(ANDROID_UA)
     setSearch(WEB_RESULT_SEARCH)
     saveWebSession(WEB_SESSION)
@@ -1120,6 +1131,7 @@ describe('App — 웹 단독 결과 화면 (KAN-31 2단계)', () => {
   })
 
   it('아이폰 브라우저에서는 앱스토어를 가리킨다', async () => {
+    vi.stubEnv('VITE_STORE_LISTING_READY', 'true')
     const restoreUa = withUserAgent(IPHONE_UA)
     setSearch(WEB_RESULT_SEARCH)
     saveWebSession(WEB_SESSION)
@@ -1182,6 +1194,7 @@ describe('App — 웹 단독 결과 화면 (KAN-31 2단계)', () => {
   })
 
   it('만료된 결과에서도 다운로드와 재응시를 함께 준다', async () => {
+    vi.stubEnv('VITE_STORE_LISTING_READY', 'true')
     const restoreUa = withUserAgent(ANDROID_UA)
     setSearch(WEB_RESULT_SEARCH)
     saveWebSession(WEB_SESSION)
@@ -1366,6 +1379,8 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
   })
 
   it('[앱 다운로드] 탭은 어느 스토어로 갔는지까지 센다', async () => {
+    // 계측은 눌리는 CTA에만 붙는다 — 등록 전 비활성 버튼에는 이벤트 자체가 없다 (2026-09-15)
+    vi.stubEnv('VITE_STORE_LISTING_READY', 'true')
     setSearch('?c=kko_share&screen=result&sessionId=s_web')
     saveWebSession({
       sessionId: 's_web',

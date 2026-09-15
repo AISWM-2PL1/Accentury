@@ -1,11 +1,17 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_APP_STORE_URL,
   DEFAULT_PLAY_STORE_URL,
   detectStorePlatform,
   storeLabelFor,
+  storeListingReady,
   storeUrlFor,
 } from './storeLink'
+
+// 빌드 변수를 갈아끼우는 테스트가 아래에 있다 — 남기면 다음 파일까지 켠 빌드로 돈다
+afterEach(() => {
+  vi.unstubAllEnvs()
+})
 
 const ANDROID_UA =
   'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36'
@@ -49,6 +55,25 @@ describe('storeUrlFor', () => {
 
   it('플레이스토어 URL에 앱 패키지명이 들어 있다', () => {
     expect(storeUrlFor('android')).toContain('id=com.accentury.app')
+  })
+})
+
+describe('storeListingReady', () => {
+  it('정확히 `true`일 때만 켜진다', () => {
+    vi.stubEnv('VITE_STORE_LISTING_READY', 'true')
+    expect(storeListingReady()).toBe(true)
+  })
+
+  it('빈 값은 꺼짐이다 — 변수를 등록하지 않은 환경이 이렇게 들어온다', () => {
+    // 워크플로가 GitHub vars를 그대로 넘기면 없는 변수는 undefined가 아니라 빈 문자열이다
+    vi.stubEnv('VITE_STORE_LISTING_READY', '')
+    expect(storeListingReady()).toBe(false)
+  })
+
+  it('대소문자가 다른 값도 꺼짐이다', () => {
+    // 'TRUE'도 문자열이라 느슨하게 보면 truthy다 — 오타가 죽은 스토어 링크를 살리면 안 된다
+    vi.stubEnv('VITE_STORE_LISTING_READY', 'TRUE')
+    expect(storeListingReady()).toBe(false)
   })
 })
 

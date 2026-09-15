@@ -142,6 +142,13 @@ export default defineConfig({
         env: {
           VITE_API_BASE: '',
           VITE_REGION_SELECT: process.env.VITE_REGION_SELECT ?? '',
+          /*
+           * `VITE_STORE_LISTING_READY`도 같은 규칙이다 (2026-09-15). 앱이 아직 스토어에 없어
+           * 기본 빌드의 [앱 다운로드]는 링크가 아니라 비활성 버튼이고(`audio/storeLink.ts`),
+           * 스펙이 그 둘을 갈라 단언하므로 **어느 쪽인지가 고정되어야 한다** — 개발자의
+           * `web/.env.local`에 이 값이 켜져 있으면 끈 판이 그 기계에서 영영 돌지 않는다.
+           */
+          VITE_STORE_LISTING_READY: process.env.VITE_STORE_LISTING_READY ?? '',
         },
       },
 })

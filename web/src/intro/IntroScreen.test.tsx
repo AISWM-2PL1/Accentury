@@ -9,6 +9,7 @@ import {
 } from '../ads/adConsentText'
 import { resetWebAdConsentMemory } from '../ads/webAdConsentStore'
 import type { MicPermission } from '../audio/microphone'
+import { STORE_PENDING_CAPTION } from '../audio/storeText'
 import { REQUIRED_BRIDGE_VERSION, type AccenturyBridge } from '../bridge/bridge'
 import { IntroScreen } from './IntroScreen'
 
@@ -90,6 +91,8 @@ describe('IntroScreen — 마이크 게이트 (KAN-56)', () => {
   })
 
   it('권한이 거부되면 안내 화면으로 갈아치우고 스토어 링크를 준다', async () => {
+    // 스토어에 앱이 올라간 뒤의 화면이다 — 등록 전 기본 빌드는 아래 블록이 본다 (2026-09-15)
+    vi.stubEnv('VITE_STORE_LISTING_READY', 'true')
     const restoreUa = withUserAgent(ANDROID_UA)
     const onWebStart = vi.fn()
     render(<IntroScreen requestWebPermission={permissionStub('denied')} onWebStart={onWebStart} />)
@@ -107,6 +110,7 @@ describe('IntroScreen — 마이크 게이트 (KAN-56)', () => {
   })
 
   it('아이폰에서는 앱스토어로 보낸다', async () => {
+    vi.stubEnv('VITE_STORE_LISTING_READY', 'true')
     const restoreUa = withUserAgent(IPHONE_UA)
     render(<IntroScreen requestWebPermission={permissionStub('unavailable')} />)
 
@@ -117,6 +121,27 @@ describe('IntroScreen — 마이크 게이트 (KAN-56)', () => {
       'href',
       expect.stringContaining('apps.apple.com'),
     )
+    restoreUa()
+  })
+
+  /*
+   * 스토어 등록 전 — 지금 배포되는 빌드가 이 상태다 (사용자 요청 2026-09-15). 이 화면에서는
+   * 앱 링크가 유일한 출구인 사유가 둘이라(unsupported·unavailable), 죽은 링크를 남기는 것이
+   * 다른 화면보다 더 나쁘다. 변수를 켜지 않고 그대로 확인한다.
+   */
+  it('스토어 등록 전에는 앱 링크 대신 비활성 버튼과 준비 중 안내가 선다', async () => {
+    const restoreUa = withUserAgent(ANDROID_UA)
+    render(<IntroScreen requestWebPermission={permissionStub('denied')} />)
+
+    clickStart()
+
+    expect(await screen.findByText('마이크 권한이 필요해요')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: '앱으로 테스트하기' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '앱으로 테스트하기' })).toBeDisabled()
+    expect(screen.getByText(STORE_PENDING_CAPTION)).toBeInTheDocument()
+    expect(screen.queryByText(/로 이동해요/)).not.toBeInTheDocument()
+    // 권한 거부는 지금 되돌릴 수 있는 사유라 [다시 시도]는 스토어와 무관하게 남는다
+    expect(screen.getByRole('button', { name: '다시 시도' })).toBeEnabled()
     restoreUa()
   })
 

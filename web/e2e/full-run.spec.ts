@@ -17,7 +17,13 @@
 
 import { expect, test } from '@playwright/test'
 import { FEEDBACK_OPEN } from '../src/feedback/feedbackText'
-import { answerAllItems, startTest, TOTAL_ITEMS } from './helpers/testFlow'
+import {
+  answerAllItems,
+  expectAppDownloadCta,
+  expectResultFooterButtons,
+  startTest,
+  TOTAL_ITEMS,
+} from './helpers/testFlow'
 
 /**
  * 한 판을 도는 데 걸리는 시간의 상한.
@@ -205,19 +211,20 @@ test('KAN-197 - 대기 화면 광고 슬롯은 태그 있는 빌드에만 서고
    * 않으므로 라벨도 예전 그대로여야 한다 — 앱의 「광고 보고 다시 테스트하기」는 브리지가 있는
    * 실행의 것이다 (`result/RetestAction.tsx`의 `retestLabel`, 위키 §5).
    *
-   * 개수까지 세는 이유는 「라벨은 맞는데 광고 버튼이 하나 늘었다」를 잡기 위해서다. 앱 다운로드는
-   * 버튼이 아니라 링크라 이 셋에 들지 않고 따로 확인한다.
+   * 개수까지 세는 이유는 「라벨은 맞는데 광고 버튼이 하나 늘었다」를 잡기 위해서다.
    *
-   * **2에서 3으로 올렸다 (KAN-211 3단계).** 결과 화면 푸터에 글자 버튼 [개발팀에 후기 보내기]가
-   * 하나 붙었다 (`ResultScreen`). 이 스펙이 세는 것은 여전히 「광고가 출구를 늘리지 않았다」이므로
-   * 숫자만 따라 올리고, 늘어난 하나가 광고가 아니라 후기임을 이름으로 못 박는다 — 그래야 다음에
-   * 광고 버튼이 끼어들 때 개수가 넷으로 어긋나 걸린다. 후기의 왕복 자체는 `feedback.spec.ts` 몫이다.
+   * **박아 둔 숫자를 이름 목록으로 바꿨다 (2026-09-15).** 예전에는 `toHaveCount(3)`이었고,
+   * 앱 다운로드는 링크라 그 셋에 들지 않는다는 주석이 붙어 있었다. 스토어 등록 전에는 그
+   * CTA가 링크가 아니라 **비활성 버튼**이라(`src/audio/storeLink.ts`) 같은 스펙이 빌드에 따라
+   * 3도 되고 4도 된다 — 숫자 하나로는 어느 쪽도 지킬 수 없다. `resultFooterButtonNames`가
+   * 빌드를 보고 목록을 만들고 개수는 거기서 나오므로, 광고 버튼이 끼어들면 여전히 개수가
+   * 어긋나 걸린다. 그때 무엇이 늘었는지도 목록과 대조해 바로 드러난다.
+   *
+   * [개발팀에 후기 보내기]는 KAN-211 3단계에서 붙은 글자 버튼이고(`ResultScreen`), 후기의
+   * 왕복 자체는 `feedback.spec.ts` 몫이다.
    */
-  await expect(page.getByRole('button')).toHaveCount(3)
-  await expect(page.getByRole('button', { name: '친구에게 공유하기', exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: '다시 테스트하기', exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: FEEDBACK_OPEN, exact: true })).toBeVisible()
-  await expect(page.getByRole('link', { name: '앱 다운로드', exact: true })).toBeVisible()
+  await expectResultFooterButtons(page, [FEEDBACK_OPEN])
+  await expectAppDownloadCta(page)
 
   // 슬롯은 대기 화면에만 있다 — 결과 화면에는 어느 빌드에서도 광고가 없다 (위키 §5의 표)
   await expect(adSlot).toHaveCount(0)

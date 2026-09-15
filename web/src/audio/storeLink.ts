@@ -51,6 +51,44 @@ export function storeUrlFor(platform: StorePlatform): string {
 }
 
 /**
+ * 이 빌드가 스토어 링크를 살려도 되는가 (사용자 요청 2026-09-15, KAN-211 범위 밖).
+ *
+ * ## 왜 필요한가
+ *
+ * 앱이 아직 Play 스토어에도 App Store에도 등록되지 않았다. 위 두 URL은 **등록된 뒤에야**
+ * 뜻이 있는 주소라, 지금 [앱 다운로드]를 누르면 "앱을 찾을 수 없습니다"가 뜬다 — 설치를
+ * 권해 놓고 없는 페이지로 보내는 것은 아무 출구도 주지 않느니만 못하다. 그래서 등록 전에는
+ * 링크 대신 비활성 버튼과 [STORE_PENDING_CAPTION]을 세운다.
+ *
+ * ## 왜 빌드 변수인가
+ *
+ * 스토어에 올라가는 날 **코드를 고치지 않고** 켤 수 있어야 하기 때문이다. 등록은 배포와
+ * 무관한 날짜에 일어나므로, 그날 필요한 것은 빌드 한 번이지 PR 한 벌이 아니다. 켜는 절차는
+ * GitHub environment 변수 `STORE_LISTING_READY=true`를 prod·staging에 **각각** 등록하고
+ * 재배포하는 것이다 (`.github/workflows/web-deploy.yml`, 두 환경은 변수를 공유하지 않는다).
+ * 로컬에서 켜 보려면 `web/.env.local`에 `VITE_STORE_LISTING_READY=true`.
+ *
+ * ## 왜 `=== 'true'` 엄격 비교이고 기본이 꺼짐인가
+ *
+ * 비교 규칙은 [regions.ts]의 `isRegionSelectEnabled`와 같은 이유다 — 워크플로가 GitHub vars를
+ * 그대로 넘기면 등록하지 않은 환경에서 `undefined`가 아니라 **빈 문자열**이 들어오고, 잘못
+ * 잡은 값(`'1'`, `'false'`, `'TRUE'`)도 문자열이라 전부 truthy다. "정확히 `'true'`일 때만"이라야
+ * 어떤 실수도 죽은 링크를 살리는 쪽으로 기울지 않는다.
+ *
+ * 기본값이 꺼짐인 것도 같은 방향이다. 스토어 등록 전이 지금의 **기본 상태**이고, 켜는 쪽이
+ * 의도적인 행동이어야 한다 — 반대로 두면 변수를 빠뜨린 새 환경이 조용히 죽은 링크를 내보낸다.
+ *
+ * 매번 읽는 함수인 이유도 `regions.ts`와 같다: 모듈 상수로 잡으면 첫 import 시점의 값이 굳어
+ * 테스트가 `vi.stubEnv`로 갈아끼울 자리가 없어진다.
+ *
+ * 꺼진 빌드가 링크 대신 내놓는 안내 문구는 `storeText.ts`에 있다 — 브라우저 E2E가 그 문구를
+ * 단언하는데, 이 파일은 `import.meta.env` 때문에 스펙 쪽 타입 설정에서 검사되지 못한다.
+ */
+export function storeListingReady(): boolean {
+  return (import.meta.env.VITE_STORE_LISTING_READY as string | undefined) === 'true'
+}
+
+/**
  * 스토어 이름 — 링크 아래 "어디로 가는지"를 적는 한 줄에 쓴다.
  *
  * URL과 같은 자리에 두는 이유가 URL을 여기 둔 이유와 같다. 이름과 링크가 갈리면 아이폰에서
