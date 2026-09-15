@@ -56,6 +56,8 @@ class RateLimitsTest {
 
         assertDoesNotThrow(() -> limits.check(RateLimits.Scope.VOCAB_ANSWER, "s_1"));
         assertDoesNotThrow(() -> limits.check(RateLimits.Scope.COMPLETE, "s_1"));
+        // 후기(KAN-211)도 같다 - 결과 화면에서 한 번 보내는 것이라 앞선 축의 소진에 걸리면 안 된다.
+        assertDoesNotThrow(() -> limits.check(RateLimits.Scope.FEEDBACK, "s_1"));
     }
 
     @Test

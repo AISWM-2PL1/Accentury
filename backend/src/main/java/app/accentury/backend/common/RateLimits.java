@@ -67,7 +67,9 @@ public class RateLimits {
         /** 어휘 답안 - 세션당 (§3.5) */
         VOCAB_ANSWER("session"),
         /** 완료 폴링 - 세션당 (§3.6) */
-        COMPLETE("session");
+        COMPLETE("session"),
+        /** 이용 후기 - 세션당 (KAN-211) */
+        FEEDBACK("session");
 
         private final String axis;
 
@@ -124,7 +126,8 @@ public class RateLimits {
                 Scope.VOICE_UPLOAD_IP, properties.upload().rateLimitPerMinute(),
                 Scope.VOICE_UPLOAD_SESSION, properties.upload().sessionRateLimitPerMinute(),
                 Scope.VOCAB_ANSWER, properties.vocab().rateLimitPerMinute(),
-                Scope.COMPLETE, properties.completion().rateLimitPerMinute());
+                Scope.COMPLETE, properties.completion().rateLimitPerMinute(),
+                Scope.FEEDBACK, properties.feedback().rateLimitPerMinute());
     }
 
     /**

@@ -236,6 +236,27 @@ class LogMaskingTest extends IntegrationTest {
     }
 
     @Test
+    void 이메일_주소를_지운다() {
+        // 후기의 선택 입력인 회신 주소(KAN-211)가 이 서비스가 받는 유일한 개인 식별 정보다.
+        // 도메인만 남겨도 후기 본문과 묶이면 사람이 좁혀지므로 통째로 지운다.
+        String line = "후기 저장 sessionId=s_1 contactEmail=tester.name+tag@example.co.kr";
+
+        String masked = LogMasking.mask(line);
+
+        assertFalse(masked.contains("example.co.kr"), masked);
+        assertTrue(masked.contains("***@***"), masked);
+        assertTrue(masked.contains("sessionId=s_1"), "세션 ID는 남아야 한다: " + masked);
+    }
+
+    @Test
+    void 이메일이_아닌_골뱅이_표기는_건드리지_않는다() {
+        // 객체 식별자(Foo@1a2b3c)까지 지우면 디버깅을 못 한다 - 점 뒤 글자 두 개 이상을 요구하는 이유다.
+        String line = "예상치 못한 상태 handler=app.accentury.backend.Foo@1a2b3c attempt=2";
+
+        assertEquals(line, LogMasking.mask(line));
+    }
+
+    @Test
     void 정상_로그는_건드리지_않는다() {
         // 과잉 마스킹은 디버깅을 못 하게 만든다 - 세션 ID(s_), 문항 ID, correlation ID는 남아야 한다.
         String line = "음성 업로드 접수 sessionId=s_2f9c4b1e-77a1-4a8e-9a1f-0a5f2c6d8e31 "

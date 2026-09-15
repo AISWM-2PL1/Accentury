@@ -93,6 +93,15 @@ class SchemaBaselineTest extends IntegrationTest {
         assertEquals(1, applied, "V7 공유 웹훅 마이그레이션이 성공 상태로 기록되어야 한다");
     }
 
+    /** 이용 후기 (KAN-211) - session_feedback 한 테이블이 V11로 들어온다. */
+    @Test
+    void 후기_마이그레이션이_적용되어_있다() {
+        Integer applied = jdbc.queryForObject(
+                "select count(*) from flyway_schema_history where version = '11' and success",
+                Integer.class);
+        assertEquals(1, applied, "V11 후기 마이그레이션이 성공 상태로 기록되어야 한다");
+    }
+
     /**
      * 세트 다중화 (KAN-182) - 세션과 결과의 voice_set은 기본값 1이다. 세트를 모르는 옛 바이너리가
      * 컬럼 없이 INSERT해도 세트 1 세션이 되어야 한다 (롤백 호환).
@@ -255,23 +264,27 @@ class SchemaBaselineTest extends IntegrationTest {
      */
     @Test
     void 인덱스_집합이_baseline과_일치한다() {
-        Map<String, Set<String>> expected = Map.of(
-                "test_session", Set.of("pk_test_session", "ux_test_session_token_hash"),
+        // Map.of가 아니라 ofEntries다 - 테이블이 열한 개가 되면서 Map.of의 쌍 상한(10)을 넘었다 (KAN-211).
+        Map<String, Set<String>> expected = Map.ofEntries(
+                Map.entry("test_session", Set.of("pk_test_session", "ux_test_session_token_hash")),
                 // ix_analysis_job_processing은 KAN-167의 부분 인덱스(V4) - 혼잡 판정의 PROCESSING count가 탄다.
-                "analysis_job", Set.of("pk_analysis_job", "ux_analysis_job_idempotency",
-                        "ix_analysis_job_session_item", "ix_analysis_job_processing"),
-                "vocab_answer", Set.of("pk_vocab_answer", "ux_vocab_answer_session_item"),
-                "test_result", Set.of("pk_test_result", "ux_test_result_session"),
-                "daily_counter", Set.of("pk_daily_counter", "ux_daily_counter_key"),
+                Map.entry("analysis_job", Set.of("pk_analysis_job", "ux_analysis_job_idempotency",
+                        "ix_analysis_job_session_item", "ix_analysis_job_processing")),
+                Map.entry("vocab_answer", Set.of("pk_vocab_answer", "ux_vocab_answer_session_item")),
+                Map.entry("test_result", Set.of("pk_test_result", "ux_test_result_session")),
+                Map.entry("daily_counter", Set.of("pk_daily_counter", "ux_daily_counter_key")),
                 // KAN-26 발행 이관
-                "test_definition", Set.of("pk_test_definition"),
-                "active_test_version", Set.of("pk_active_test_version"),
-                "active_version_audit", Set.of("pk_active_version_audit",
-                        "ix_active_version_audit_recorded_at"),
+                Map.entry("test_definition", Set.of("pk_test_definition")),
+                Map.entry("active_test_version", Set.of("pk_active_test_version")),
+                Map.entry("active_version_audit", Set.of("pk_active_version_audit",
+                        "ix_active_version_audit_recorded_at")),
                 // KAN-164 카카오 공유 웹훅 (V7) - 수신 기록은 보존 기간 삭제가 received_at으로 탄다.
-                "share_daily_counter", Set.of("pk_share_daily_counter", "ux_share_daily_counter_key"),
-                "share_webhook_receipt", Set.of("pk_share_webhook_receipt",
-                        "ix_share_webhook_receipt_received_at"));
+                Map.entry("share_daily_counter", Set.of("pk_share_daily_counter", "ux_share_daily_counter_key")),
+                Map.entry("share_webhook_receipt", Set.of("pk_share_webhook_receipt",
+                        "ix_share_webhook_receipt_received_at")),
+                // KAN-211 이용 후기 (V11) - 세션당 하나(유니크)이고, 보존 기간 삭제가 created_at으로 탄다.
+                Map.entry("session_feedback", Set.of("pk_session_feedback",
+                        "ux_session_feedback_session", "ix_session_feedback_created_at")));
 
         Map<String, Set<String>> actual = new TreeMap<>();
         jdbc.query("select tablename, indexname from pg_indexes"
