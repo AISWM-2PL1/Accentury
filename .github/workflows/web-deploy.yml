@@ -100,6 +100,7 @@ jobs:
         env:
           VITE_GA4_MEASUREMENT_ID: ${{ vars.GA4_MEASUREMENT_ID }}
           VITE_REGION_SELECT: ${{ vars.REGION_SELECT }}
+          VITE_STORE_LISTING_READY: ${{ vars.STORE_LISTING_READY }}
           VITE_ADSENSE_CLIENT_ID: ${{ vars.ADSENSE_CLIENT_ID }}
           VITE_ADSENSE_SLOT_ID: ${{ vars.ADSENSE_SLOT_ID }}
 

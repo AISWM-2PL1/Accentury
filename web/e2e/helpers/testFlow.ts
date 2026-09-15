@@ -11,6 +11,7 @@
 
 import { expect, type Locator, type Page } from '@playwright/test'
 import { AD_CONSENT_DENY, AD_CONSENT_TITLE } from '../../src/ads/adConsentText'
+import { STORE_PENDING_CAPTION } from '../../src/audio/storeText'
 import { itemCaption } from '../../src/progress/itemBadge'
 
 /** 정의가 내려주는 문항 수 (음성 5 + 어휘 5). 진행 캡션의 분모이기도 하다 */
@@ -289,4 +290,97 @@ export async function answerAllItems(page: Page): Promise<Array<'VOICE' | 'VOCAB
     }
   }
   return seen
+}
+
+/**
+ * 이 판이 **스토어 등록을 켠 빌드**를 보는가 (사용자 요청 2026-09-15).
+ *
+ * 앱이 아직 Play 스토어에도 App Store에도 없어, 기본 빌드의 [앱 다운로드]는 링크가 아니라
+ * 비활성 버튼이다 (`src/audio/storeLink.ts`의 `storeListingReady`). 결과 화면을 보는 스펙은
+ * 그 둘을 갈라 단언해야 하므로, 판정을 여기 한 곳에 둔다 — 스펙마다 `process.env`를 읽으면
+ * 켜는 조건이 엇갈렸을 때 한쪽만 통과하고 그 사실이 실패 메시지에 남지 않는다.
+ *
+ * 값은 `playwright.config.ts`가 개발 서버에 넘긴 것과 **같은 환경 변수**를 읽는다. 그 설정이
+ * 셸에 값이 없으면 빈 문자열로 못 박으므로(`.env.local`이 조용히 끼어들지 못한다), 여기서 본
+ * 값과 브라우저가 받은 빌드가 언제나 같다.
+ */
+export const STORE_LISTING_READY = process.env.VITE_STORE_LISTING_READY === 'true'
+
+/**
+ * 결과 화면 푸터에 **있어야 할 버튼 이름 전부**. 후기 완료처럼 버튼이 줄어드는 자리는
+ * `extra`를 비워 부른다.
+ *
+ * 개수를 상수로 적지 않고 이름에서 세는 이유가 이 티켓에서 드러났다. 예전에는 `toHaveCount(3)`
+ * 처럼 숫자를 박아 뒀는데, 등록 전 [앱 다운로드]가 링크에서 **버튼**으로 바뀌면서 그 숫자가
+ * 빌드마다 달라졌다 — 숫자만 고치면 켠 빌드가 깨지고, 조건을 숫자에 심으면 무엇이 늘었는지가
+ * 사라진다. 이름 목록이면 개수와 정체가 같은 자리에서 나온다.
+ */
+export function resultFooterButtonNames(extra: string[] = []): string[] {
+  return [
+    // 등록 전에는 비활성 CTA가 버튼이라 이 목록에 낀다. 켜지면 <a>가 되어 빠진다
+    ...(STORE_LISTING_READY ? [] : ['앱 다운로드']),
+    '친구에게 공유하기',
+    '다시 테스트하기',
+    ...extra,
+  ]
+}
+
+/**
+ * 결과 화면 푸터의 버튼이 정확히 [resultFooterButtonNames] 그대로인지 본다.
+ *
+ * 개수까지 세는 이유는 예전 그대로다 — 「라벨은 맞는데 광고 버튼이 하나 늘었다」를 잡는다
+ * (KAN-197). 다만 기대 개수를 목록에서 뽑으므로 빌드가 갈려도 스펙 한 벌로 돈다.
+ */
+export async function expectResultFooterButtons(page: Page, extra: string[] = []): Promise<void> {
+  const names = resultFooterButtonNames(extra)
+  await expect(page.getByRole('button')).toHaveCount(names.length)
+  for (const name of names) {
+    await expect(page.getByRole('button', { name, exact: true })).toBeVisible()
+  }
+}
+
+/**
+ * [앱 다운로드] CTA 한 벌 — 이 빌드가 내놓아야 할 모양인지 본다 (2026-09-15).
+ *
+ * 양쪽 다 **반대쪽이 없다**는 것까지 본다. 링크와 비활성 버튼이 한 화면에 같이 서면 어느
+ * 쪽을 눌러야 하는지가 사라지고, 무엇보다 등록 전에 링크가 남아 있으면 이 변경이 막으려던
+ * 죽은 스토어 페이지로 가는 길이 그대로라는 뜻이다.
+ */
+export async function expectAppDownloadCta(page: Page): Promise<void> {
+  const link = page.getByRole('link', { name: '앱 다운로드', exact: true })
+  const pending = page.getByRole('button', { name: '앱 다운로드', exact: true })
+
+  if (STORE_LISTING_READY) {
+    await expect(link).toBeVisible()
+    await expect(pending).toHaveCount(0)
+    return
+  }
+
+  await expect(pending).toBeVisible()
+  await expect(pending).toBeDisabled()
+  await expect(page.getByText(STORE_PENDING_CAPTION, { exact: true })).toBeVisible()
+  await expect(link).toHaveCount(0)
+}
+
+/**
+ * 마이크 차단 화면의 [앱으로 테스트하기] 한 벌 (2026-09-15).
+ *
+ * [expectAppDownloadCta]와 같은 규칙이되 이 화면이 더 예민하다 — 사유 셋 중 둘은 브라우저
+ * 안에서 할 수 있는 일이 없어 이 CTA가 **유일한 출구**다 (`src/intro/MicBlockedScreen.tsx`).
+ * 등록 전에 링크가 남아 있으면 그 유일한 출구가 없는 스토어 페이지로 끝난다.
+ */
+export async function expectAppTestCta(page: Page): Promise<void> {
+  const link = page.getByRole('link', { name: '앱으로 테스트하기', exact: true })
+  const pending = page.getByRole('button', { name: '앱으로 테스트하기', exact: true })
+
+  if (STORE_LISTING_READY) {
+    await expect(link).toBeVisible()
+    await expect(pending).toHaveCount(0)
+    return
+  }
+
+  await expect(pending).toBeVisible()
+  await expect(pending).toBeDisabled()
+  await expect(page.getByText(STORE_PENDING_CAPTION, { exact: true })).toBeVisible()
+  await expect(link).toHaveCount(0)
 }

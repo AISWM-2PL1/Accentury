@@ -23,7 +23,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { storeLabelFor, storeUrlFor, type StorePlatform } from '../audio/storeLink'
+import { storeLabelFor, storeListingReady, storeUrlFor, type StorePlatform } from '../audio/storeLink'
+import { STORE_PENDING_CAPTION } from '../audio/storeText'
 import { FeedbackSheet } from '../feedback/FeedbackSheet'
 import { FEEDBACK_DONE_CAPTION, FEEDBACK_OPEN } from '../feedback/feedbackText'
 import { sendFeedback, type FeedbackInput } from '../feedback/sendFeedback'
@@ -458,6 +459,9 @@ function TierCharacter({ code, name }: { code: string; name: string }) {
  *
  * 스토어 URL을 여기서 조립하지 않는다 — 규칙은 [storeUrlFor]가 소유한다. 하드코딩이 두 군데로
  * 갈리면 앱 패키지명이 바뀌는 날 한쪽만 고쳐진다.
+ *
+ * **스토어 등록 전에는 링크가 아니라 비활성 버튼이다** (사용자 요청 2026-09-15). 등록 여부는
+ * 빌드 변수 하나가 쥐고 있어([storeListingReady]) 등록되는 날 코드 수정 없이 켜진다.
  */
 function AppDownloadAction({
   platform,
@@ -467,6 +471,31 @@ function AppDownloadAction({
   onDownloadClick?: () => void
 }) {
   if (platform === undefined) return null
+
+  /*
+   * 아직 스토어에 없는 앱이라 누를 곳을 주지 않는다 — 자세한 사정은 [storeListingReady].
+   *
+   * CTA를 지우지 않고 흐리게 남기는 이유는 두 가지다. 하나는 배치 — 주버튼 자리가 통째로
+   * 비면 아래 버튼들이 위로 올라와 등록 전후의 화면이 서로 다른 모양이 되고, 그 차이를
+   * 검증할 눈이 없다. 다른 하나는 안내 — "앱이 곧 나온다"는 사실 자체가 이 화면에서 줄 수
+   * 있는 정보다. 그래서 `variant`는 주버튼 기본값 그대로 두고 `disabled`만 얹는다
+   * (`.btn:disabled`가 불투명도 0.6을 덮어 크기·색은 유지된다, `ui/components.css`).
+   *
+   * 계측(`onDownloadClick`)은 걸지 않는다. 눌리지 않는 버튼에서는 이벤트가 나갈 수 없으므로
+   * 붙여 봐야 죽은 코드이고, 붙어 있으면 "0건"이 계측 실패인지 비활성인지 구분되지 않는다.
+   */
+  if (!storeListingReady()) {
+    return (
+      <>
+        <Button disabled style={{ width: '100%' }} className="result-download--pending">
+          앱 다운로드
+        </Button>
+        <p className="type-caption" style={{ color: 'var(--color-muted-foreground)' }}>
+          {STORE_PENDING_CAPTION}
+        </p>
+      </>
+    )
+  }
 
   return (
     <>

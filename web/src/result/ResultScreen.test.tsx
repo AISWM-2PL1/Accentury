@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { STORE_PENDING_CAPTION } from '../audio/storeText'
 import type { FetchLike } from '../progress/fetchTestDefinition'
 import { ResultScreen, type ResultScreenProps } from './ResultScreen'
 import { tierImageFor } from './tierAssets'
@@ -448,9 +449,23 @@ describe('[다시 테스트하기] 잠금과 안내 — KAN-34', () => {
   })
 })
 
+/** 만료 화면 대역. 브라우저에서 결과가 사라진 사람도 같은 CTA를 만나야 한다 */
+const EXPIRED = jsonFetch(410, envelope('RESULT_EXPIRED', '결과 보관 기간(24시간)이 지났습니다.', false))
+
 describe('[앱 다운로드] CTA — KAN-31 2단계', () => {
-  /** 만료 화면 대역. 브라우저에서 결과가 사라진 사람도 같은 CTA를 만나야 한다 */
-  const EXPIRED = jsonFetch(410, envelope('RESULT_EXPIRED', '결과 보관 기간(24시간)이 지났습니다.', false))
+  /*
+   * 이 블록은 **스토어에 앱이 올라간 뒤**의 화면을 본다 (사용자 요청 2026-09-15). 기본 빌드는
+   * 등록 전이라 링크가 아니라 비활성 버튼을 그리므로(`audio/storeLink.ts`의 storeListingReady),
+   * 여기 있는 "어느 스토어로 보내는가"는 변수를 켜야 비로소 물을 수 있는 질문이다. 끈 쪽은
+   * 바로 아래 블록이 본다.
+   */
+  beforeEach(() => {
+    vi.stubEnv('VITE_STORE_LISTING_READY', 'true')
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
 
   it('웹 단독 실행에서는 스토어로 가는 링크가 주버튼이고 공유가 보조로 내려간다', async () => {
     renderScreen({ storePlatform: 'android' })
@@ -527,6 +542,61 @@ describe('[앱 다운로드] CTA — KAN-31 2단계', () => {
     fireEvent.click(download)
     // 알 수 없는 플랫폼은 플레이스토어로 보낸다 (storeUrlFor 규칙)
     expect(download).toHaveAttribute('href', expect.stringContaining('play.google.com'))
+  })
+})
+
+/**
+ * 스토어 등록 전 — 기본 빌드가 그리는 화면 (사용자 요청 2026-09-15).
+ *
+ * 변수를 켜지 않는다. 지금 배포되는 빌드가 바로 이 상태라, 여기서 `stubEnv`를 쓰면 테스트가
+ * "실제로 나가는 화면"이 아니라 "시킨 화면"을 보게 된다.
+ */
+describe('[앱 다운로드] CTA — 스토어 등록 전', () => {
+  it('링크가 아니라 비활성 버튼이고 준비 중임을 한 줄로 알린다', async () => {
+    renderScreen({ storePlatform: 'android' })
+
+    // 링크가 아예 없어야 한다 — 있으면 죽은 스토어 페이지로 가는 길이 남아 있다는 뜻이다
+    expect(await screen.findByText(STORE_PENDING_CAPTION)).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: '앱 다운로드' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/로 이동해요/)).not.toBeInTheDocument()
+
+    const download = screen.getByRole('button', { name: '앱 다운로드' })
+    expect(download).toBeDisabled()
+    // 주버튼 자리·크기를 그대로 지킨다 — 등록 전후로 배치가 흔들리면 비교할 화면이 없다
+    expect(download.className).toContain('btn--primary')
+    /*
+     * 표식 클래스. `.btn:disabled`의 불투명도만으로 충분해 지금 CSS에 규칙이 없지만, 등록 전
+     * CTA를 다른 버튼과 구별해 잡을 이름이 마크업에 하나는 있어야 한다 — 디자인이 이 자리에
+     * 손대는 날 선택자를 새로 지어 붙이면 그때 무엇이 대상인지가 다시 모호해진다.
+     */
+    expect(download.className).toContain('result-download--pending')
+  })
+
+  it('눌러도 계측이 나가지 않는다 — 비활성 CTA에는 이벤트가 없다', async () => {
+    const onDownloadClick = vi.fn()
+    renderScreen({ storePlatform: 'android', onDownloadClick })
+
+    const download = await screen.findByRole('button', { name: '앱 다운로드' })
+    fireEvent.click(download)
+
+    expect(onDownloadClick).not.toHaveBeenCalled()
+  })
+
+  it('만료 화면에서도 같은 규칙이다', async () => {
+    renderScreen({ storePlatform: 'android', fetchImpl: EXPIRED })
+
+    await screen.findByText('결과 보관 기간이 지났어요')
+    expect(screen.getByRole('button', { name: '앱 다운로드' })).toBeDisabled()
+    expect(screen.getByText(STORE_PENDING_CAPTION)).toBeInTheDocument()
+  })
+
+  it('앱 안에서는 비활성 버튼조차 없다 — 실행 판정이 먼저다', async () => {
+    // 이미 앱을 쓰고 있는 사람에게 "앱 스토어 등록 준비 중"은 아무 뜻이 없다
+    renderScreen()
+
+    await screen.findByText('명예주민')
+    expect(screen.queryByRole('button', { name: '앱 다운로드' })).not.toBeInTheDocument()
+    expect(screen.queryByText(STORE_PENDING_CAPTION)).not.toBeInTheDocument()
   })
 })
 
