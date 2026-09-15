@@ -45,6 +45,8 @@
 | `poll_abandoned` | `elapsed_ms`, `pending_item_count` | 웹 | 60초 상한에 걸렸다 (GPU 밀림의 조기 신호) |
 | `analysis_item_terminal` | `status`, `error_code` | 웹 | 문항이 종결 상태에 도달했다 |
 | `tier_assigned` | `tier_code`, `score_version`, `overall_bucket` | 웹 | **KAN-21 트리거의 측정값** |
+| `feedback_opened` | 없음 | 웹 (앱 안에서도) | 결과 화면에서 후기 시트를 열었다 (KAN-211) |
+| `feedback_submitted` | `rating` | 웹 (앱 안에서도) | 후기가 **저장됐다**. 별점을 안 고르면 null이고, 409(이미 있음)에는 보내지 않는다 — 그건 이번에 저장된 것이 없다는 뜻이라 세면 한 건이 둘로 쌓인다. 본문과 이메일은 싣는 길 자체가 없다 (§3 익명 규칙, `docs/wiki/feedback.md` §7) |
 
 **클릭은 웹이, 실행은 네이티브가 센다 (`share_clicked` / `share_launched`).** 공유 버튼은 두
 실행 모두에서 웹 결과 화면에 있으므로 «눌렀다»는 웹이 아는 사실이고, 앱 안에서는 그 이벤트가

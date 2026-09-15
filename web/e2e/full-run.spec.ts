@@ -16,6 +16,7 @@
  */
 
 import { expect, test } from '@playwright/test'
+import { FEEDBACK_OPEN } from '../src/feedback/feedbackText'
 import { answerAllItems, startTest, TOTAL_ITEMS } from './helpers/testFlow'
 
 /**
@@ -206,10 +207,16 @@ test('KAN-197 - 대기 화면 광고 슬롯은 태그 있는 빌드에만 서고
    *
    * 개수까지 세는 이유는 「라벨은 맞는데 광고 버튼이 하나 늘었다」를 잡기 위해서다. 앱 다운로드는
    * 버튼이 아니라 링크라 이 셋에 들지 않고 따로 확인한다.
+   *
+   * **2에서 3으로 올렸다 (KAN-211 3단계).** 결과 화면 푸터에 글자 버튼 [개발팀에 후기 보내기]가
+   * 하나 붙었다 (`ResultScreen`). 이 스펙이 세는 것은 여전히 「광고가 출구를 늘리지 않았다」이므로
+   * 숫자만 따라 올리고, 늘어난 하나가 광고가 아니라 후기임을 이름으로 못 박는다 — 그래야 다음에
+   * 광고 버튼이 끼어들 때 개수가 넷으로 어긋나 걸린다. 후기의 왕복 자체는 `feedback.spec.ts` 몫이다.
    */
-  await expect(page.getByRole('button')).toHaveCount(2)
+  await expect(page.getByRole('button')).toHaveCount(3)
   await expect(page.getByRole('button', { name: '친구에게 공유하기', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: '다시 테스트하기', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: FEEDBACK_OPEN, exact: true })).toBeVisible()
   await expect(page.getByRole('link', { name: '앱 다운로드', exact: true })).toBeVisible()
 
   // 슬롯은 대기 화면에만 있다 — 결과 화면에는 어느 빌드에서도 광고가 없다 (위키 §5의 표)

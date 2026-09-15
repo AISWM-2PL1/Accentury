@@ -66,6 +66,7 @@ vitest가 못 보는 것을 실제 Chromium에서 본다 — `getUserMedia`·`Au
 |---|---|---|
 | `e2e/smoke.spec.ts` | 인트로 숫자 카드 → 시작 게이트 통과 → `?screen=test` | 스택 |
 | `e2e/full-run.spec.ts` | 10문항 완주 → 분석 대기 → 결과 등급·점수 | 스택, `E2E_FAIL_ITEM` **없음** |
+| `e2e/feedback.spec.ts` | 완주 → 결과 화면 후기 시트 → 실패·재시도(같은 멱등 키)·저장·리로드 후 409 | 스택, `E2E_FAIL_ITEM` **없음** |
 | `e2e/retake.spec.ts` | 음성 문항 분석 실패 → 막다른 길 안내 | 스택, `E2E_FAIL_ITEM` **있음** |
 | `e2e/mic-blocked.spec.ts` | 마이크 거부·점유 안내, 세션 미생성 | 없음 (BE를 부르지 않는다) |
 
