@@ -6,6 +6,8 @@ backend와 다른 호스트로 갈라진 뒤의 두 보장이다 - 토큰 없는
 
 from __future__ import annotations
 
+import logging
+import re
 import time
 
 import pytest
@@ -20,7 +22,12 @@ TOKEN = "shared-secret-0123456789abcdef0123456789abcdef"
 
 
 def _settings(tmp_path, token: str | None = TOKEN) -> Settings:
-    return Settings(temp_dir=tmp_path / "ai-tmp", stub_delay_ms=0, internal_token=token)
+    return Settings(temp_dir=tmp_path / "ai-tmp", internal_token=token)
+
+
+def _app(settings: Settings):
+    """가짜 엔진을 꽂은 앱 - 인증은 엔진 종류와 무관하다 (KAN-135)."""
+    return create_app(settings, engine=FakeEngine())
 
 
 def _analyze(client: TestClient, headers: dict[str, str]):
@@ -54,7 +61,7 @@ def test_토큰_없는_분석_요청은_401이고_엔진에_닿지_않는다(tmp
 
 
 def test_토큰이_다르면_401이다(tmp_path):
-    with TestClient(create_app(_settings(tmp_path))) as client:
+    with TestClient(_app(_settings(tmp_path))) as client:
         response = _analyze(client, {INTERNAL_TOKEN_HEADER: TOKEN + "x"})
 
         assert response.status_code == 401
@@ -63,7 +70,7 @@ def test_토큰이_다르면_401이다(tmp_path):
 def test_토큰이_맞으면_분석이_돈다(tmp_path):
     settings = _settings(tmp_path)
 
-    with TestClient(create_app(settings)) as client:
+    with TestClient(_app(settings)) as client:
         response = _analyze(client, {INTERNAL_TOKEN_HEADER: TOKEN})
 
         assert response.status_code == 200
@@ -71,15 +78,41 @@ def test_토큰이_맞으면_분석이_돈다(tmp_path):
         assert residue(settings) == []
 
 
+def test_로그에_내부_토큰과_오디오_바이트가_남지_않는다(tmp_path, caplog):
+    """미들웨어의 401 줄과 요청 종료 줄을 대상으로 본다 (KAN-203, 명세서 §2.6).
+
+    ai 컨테이너 로그는 이제 호스트 디스크가 아니라 CloudWatch 로그 그룹에 보존 14일로 남는다
+    (`infra/modules/ai-host`) - 토큰이나 오디오가 한 번 찍히면 그 창 동안 남는다. backend에는 출력
+    직전의 마지막 관문(`LogMasking`, KAN-28)이 있지만 ai에는 그 층이 없고 "코드가 애초에 넣지 않는
+    것"이 유일한 방어라, 그 성질을 이 테스트가 붙잡는다.
+    """
+    settings = _settings(tmp_path)
+
+    with caplog.at_level(logging.INFO):
+        with TestClient(_app(settings)) as client:
+            assert _analyze(client, {INTERNAL_TOKEN_HEADER: TOKEN + "x"}).status_code == 401
+            assert _analyze(client, {INTERNAL_TOKEN_HEADER: TOKEN}).status_code == 200
+
+    # 두 줄이 실제로 찍혔는지 먼저 본다 - 아무것도 안 남았으면 아래 검사가 공짜로 통과한다
+    assert "내부 호출 토큰 불일치" in caplog.text
+    assert "분석 종료" in caplog.text
+
+    assert TOKEN not in caplog.text, "내부 호출 토큰 원문이 로그에 있다"
+    assert TOKEN[:12] not in caplog.text, "토큰 앞부분이 로그에 있다"
+    assert "RIFF" not in caplog.text, "오디오 원문이 로그에 있다"
+    # 십진수 바이트 목록 - docs/wiki/observability.md의 로그 샘플 검사와 같은 규칙이다
+    assert re.search(r"[0-9]{1,3}(?:, ?[0-9]{1,3}){20,}", caplog.text) is None, "오디오 바이트 목록이 로그에 있다"
+
+
 def test_metrics도_토큰을_요구한다(tmp_path):
-    with TestClient(create_app(_settings(tmp_path))) as client:
+    with TestClient(_app(_settings(tmp_path))) as client:
         assert client.get("/internal/v0/metrics").status_code == 401
         assert client.get("/internal/v0/metrics", headers={INTERNAL_TOKEN_HEADER: TOKEN}).status_code == 200
 
 
 def test_health는_토큰_없이_열려_있다(tmp_path):
     # compose healthcheck와 호스트 상태 지표 프로브가 토큰 없이 두드린다
-    with TestClient(create_app(_settings(tmp_path))) as client:
+    with TestClient(_app(_settings(tmp_path))) as client:
         response = client.get("/internal/v0/health")
 
         assert response.status_code == 200
@@ -88,20 +121,20 @@ def test_health는_토큰_없이_열려_있다(tmp_path):
 
 def test_토큰이_설정되지_않은_서버는_검사를_건너뛴다(tmp_path):
     # 로컬 개발 편의 - 배포에서는 Terraform이 언제나 값을 넣는다
-    with TestClient(create_app(_settings(tmp_path, token=None))) as client:
+    with TestClient(_app(_settings(tmp_path, token=None))) as client:
         assert _analyze(client, {}).status_code == 200
 
 
 def test_배포_모드에서_토큰이_없으면_기동이_실패한다(tmp_path):
     # SSM에서 토큰이 빠진 채 뜨면 fail-open인데 health는 UP이라 아무도 모른다 - 기동을 세운다 (리뷰)
-    required = Settings(temp_dir=tmp_path / "ai-tmp", stub_delay_ms=0, internal_token_required=True)
+    required = Settings(temp_dir=tmp_path / "ai-tmp", internal_token_required=True)
 
     with pytest.raises(ValueError, match="ACCENTURY_AI_INTERNAL_TOKEN"):
         create_app(required)
 
     # 토큰이 있으면 그대로 뜬다
-    with TestClient(create_app(Settings(temp_dir=tmp_path / "ai-tmp", stub_delay_ms=0,
-                                        internal_token_required=True, internal_token=TOKEN))) as client:
+    with TestClient(_app(Settings(temp_dir=tmp_path / "ai-tmp",
+                                  internal_token_required=True, internal_token=TOKEN))) as client:
         assert client.get("/internal/v0/health").status_code == 200
 
 
@@ -125,7 +158,7 @@ def _wait_health(client: TestClient, status: int, timeout: float = 3.0) -> bool:
 
 def test_워밍업_전에는_health가_503_STARTING이다(tmp_path):
     # with 블록 없이 만들면 lifespan이 돌지 않는다 - 프로세스는 떴지만 준비 전인 상태다
-    client = TestClient(create_app(_settings(tmp_path)))
+    client = TestClient(_app(_settings(tmp_path)))
 
     response = client.get("/internal/v0/health")
 

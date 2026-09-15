@@ -7,6 +7,29 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+/*
+ * 계측·크래시 플러그인은 google-services.json이 있을 때만 건다 (KAN-33).
+ *
+ * **없는 것이 정상 상태다.** [kakaoNativeAppKey]·[releaseSigning]과 같은 판단이다 - 콘솔 프로젝트가
+ * 생기기 전의 로컬 빌드와 PR CI도 그대로 돌아야 한다. 다만 저 둘과 갈리는 지점이 있다: 카카오 키와
+ * 키스토어는 빈 값을 코드가 받아 넘길 수 있지만, 이 두 플러그인은 설정 파일이 없으면 **설정 단계에서
+ * 빌드를 죽인다.** 값이 아니라 플러그인 적용 자체를 조건에 거는 이유가 그것이다.
+ *
+ * 의존성(BoM·analytics·crashlytics)은 조건 없이 넣는다. 설정이 없으면 FirebaseApp이 초기화되지
+ * 않을 뿐이고, 그 사실은 EventSink.create가 한 곳에서 판정해 Logcat sink로 내려간다
+ * (analytics/FirebaseEventSink.kt). 의존성까지 조건부로 하면 설정 유무에 따라 컴파일되는 소스가
+ * 갈려서, 설정이 없는 CI가 검증한 코드와 스토어로 나가는 코드가 달라진다.
+ *
+ * google-services.json은 커밋 대상이다 - 카카오 키와 갈리는 지점이다. 저 값은 우리 앱 키로 남이
+ * 카카오 API를 두드릴 수 있지만, 이 파일의 앱 id·API 키는 패키지명과 서명 지문에 묶여 있어 다른
+ * 앱이 가져다 쓸 수 없다. 콘솔에서 받아 app/에 넣고 커밋하면 이 분기가 켜진다.
+ */
+val firebaseConfig = file("google-services.json")
+if (firebaseConfig.exists()) {
+    apply(plugin = libs.plugins.google.services.get().pluginId)
+    apply(plugin = libs.plugins.firebase.crashlytics.get().pluginId)
+}
+
 /**
  * 가짜 마이크 asset 이름. `-PfakeMic=` 프로퍼티가 우선이고, 없으면 local.properties(gitignore 대상)의
  * `fakeMic=`을 본다 - Android Studio의 Run 버튼은 gradle 프로퍼티를 넘길 수 없어서다. 둘 다 없으면 "".
@@ -141,6 +164,58 @@ fun requireKakaoNativeAppKey(): Boolean {
     return raw.isEmpty() || raw.toBoolean()
 }
 
+/**
+ * AdMob 앱 ID·광고 단위 ID 세 개 (KAN-196). 우선순위는 [kakaoNativeAppKey]와 같다 -
+ * `-P<키>=` → 환경변수 → local.properties의 `<키>=`. 셋 다 없으면 **Google 테스트 ID**다.
+ *
+ *   gradle/-P · local.properties    환경변수                 없을 때
+ *   admobAppId                      ADMOB_APP_ID             ca-app-pub-3940256099942544~3347511713 (테스트 앱)
+ *   admobInterstitialId             ADMOB_INTERSTITIAL_ID    ca-app-pub-3940256099942544/1033173712 (테스트 전면)
+ *   admobRewardedId                 ADMOB_REWARDED_ID        ca-app-pub-3940256099942544/5224354917 (테스트 보상형)
+ *
+ * 카카오 키와 같은 판단이다 - 값이 없는 로컬·PR CI 빌드도 돌아야 하고, ID는 APK에 박히는 값이라
+ * 비밀은 아니지만 레포에 두면 우리 계정으로 남이 요청을 낼 수 있어 커밋 대상에서 뺀다.
+ * 카카오와 갈리는 지점은 "없을 때"다: 카카오는 빈 값으로 기능을 끄지만 광고는 **테스트 ID로 켜
+ * 둔다** - 광고 없는 빌드는 대기 화면·재응시 흐름의 광고 결선을 한 번도 밟지 않아 검증이 안 되고,
+ * Google이 테스트 ID를 주는 이유가 정확히 그 검증이다 (developers.google.com/admob/android/test-ads).
+ *
+ * 다만 그 폴백이 **스토어로 나가면 정책 위반**이다(테스트 광고 단위로 실광고 요청). 그래서
+ * [requireAdMobIds]가 릴리스 워크플로에서 빈 값을 잡는다.
+ */
+fun admobProperty(key: String, env: String, fallback: String): String {
+    (project.findProperty(key) as String?)?.takeIf { it.isNotBlank() }?.let { return it }
+    System.getenv(env)?.takeIf { it.isNotBlank() }?.let { return it }
+    val local = rootProject.file("local.properties")
+    if (local.exists()) {
+        val props = Properties()
+        local.inputStream().use { props.load(it) }
+        props.getProperty(key)?.takeIf { it.isNotBlank() }?.let { return it }
+    }
+    return fallback
+}
+
+/** Google 테스트 앱 ID (developers.google.com/admob/android/quick-start). */
+val ADMOB_TEST_APP_ID = "ca-app-pub-3940256099942544~3347511713"
+
+/** Google 테스트 광고 단위 - 전면·보상형 (developers.google.com/admob/android/test-ads). */
+val ADMOB_TEST_INTERSTITIAL_ID = "ca-app-pub-3940256099942544/1033173712"
+val ADMOB_TEST_REWARDED_ID = "ca-app-pub-3940256099942544/5224354917"
+
+fun admobAppId(): String = admobProperty("admobAppId", "ADMOB_APP_ID", ADMOB_TEST_APP_ID)
+fun admobInterstitialId(): String =
+    admobProperty("admobInterstitialId", "ADMOB_INTERSTITIAL_ID", ADMOB_TEST_INTERSTITIAL_ID)
+fun admobRewardedId(): String = admobProperty("admobRewardedId", "ADMOB_REWARDED_ID", ADMOB_TEST_REWARDED_ID)
+
+/**
+ * 릴리스 산출물이 테스트 광고 ID로 나가는 것을 막는 빗장 (KAN-196). `-PrequireAdMobIds=true`.
+ * [requireKakaoNativeAppKey]와 같은 꼴의 스위치이고 같은 자리(릴리스 워크플로)에서 켠다 -
+ * 테스트 ID가 박힌 앱이 스토어에 올라가면 광고 수익이 0인 것을 넘어 AdMob 정책 위반이다.
+ */
+fun requireAdMobIds(): Boolean {
+    val raw = project.findProperty("requireAdMobIds") as String? ?: return false
+    return raw.isEmpty() || raw.toBoolean()
+}
+
 android {
     namespace = "com.accentury.app"
     compileSdk {
@@ -178,6 +253,33 @@ android {
             )
         }
         buildConfigField("String", "KAKAO_NATIVE_APP_KEY", "\"$kakaoKey\"")
+
+        /*
+         * AdMob ID 세 개 (KAN-196). 앱 ID는 SDK가 매니페스트 meta-data에서 초기화 시점에 읽으므로
+         * placeholder로 매니페스트에 박고, 광고 단위 둘은 코드가 로드 때 쓰므로 BuildConfig다.
+         * debug/release가 같은 값을 쓴다 - 카카오 키처럼 "주입됐는가"로 갈리는 값이다.
+         */
+        val admobApp = admobAppId()
+        val admobInterstitial = admobInterstitialId()
+        val admobRewarded = admobRewardedId()
+        if (requireAdMobIds()) {
+            val testIds = listOf(
+                "admobAppId" to (admobApp == ADMOB_TEST_APP_ID),
+                "admobInterstitialId" to (admobInterstitial == ADMOB_TEST_INTERSTITIAL_ID),
+                "admobRewardedId" to (admobRewarded == ADMOB_TEST_REWARDED_ID),
+            ).filter { it.second }.map { it.first }
+            if (testIds.isNotEmpty()) {
+                error(
+                    "AdMob ID가 주입되지 않아 Google 테스트 ID로 떨어졌다 (KAN-196, -PrequireAdMobIds=true): $testIds\n" +
+                        "  릴리스 산출물은 테스트 광고 단위로 나갈 수 없다 - 스토어에 올라가면 AdMob 정책 위반이다.\n" +
+                        "  CI라면 ADMOB_APP_ID·ADMOB_INTERSTITIAL_ID·ADMOB_REWARDED_ID 시크릿이 등록됐는지,\n" +
+                        "  로컬이라면 local.properties의 admobAppId=·admobInterstitialId=·admobRewardedId= 값이 있는지 확인해라.",
+                )
+            }
+        }
+        manifestPlaceholders["admobAppId"] = admobApp
+        buildConfigField("String", "ADMOB_INTERSTITIAL_ID", "\"$admobInterstitial\"")
+        buildConfigField("String", "ADMOB_REWARDED_ID", "\"$admobRewarded\"")
     }
 
     // 릴리스 서명 (KAN-163). 재료가 없으면 signingConfigs에 "release"를 아예 만들지 않고,
@@ -249,6 +351,10 @@ dependencies {
     // 스플래시 화면 (KAN-178). minSdk 29라 플랫폼 SplashScreen(API 31)만으로는 29·30에서
     // 스플래시가 아예 없다 - 이 라이브러리가 그 두 버전에 같은 화면을 만들어 준다.
     implementation(libs.androidx.core.splashscreen)
+    // 개인정보처리방침 링크를 Custom Tabs로 연다 (KAN-177). ACTION_VIEW로 시스템 브라우저를
+    // 띄우지 않는 이유는 앱을 떠나기 때문이다 - Custom Tabs는 인트로 위에 시트를 덮으므로
+    // 닫으면 응시하던 화면이 그대로 남는다.
+    implementation(libs.androidx.browser)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
@@ -257,6 +363,15 @@ dependencies {
     // 결과 공유 (KAN-30). 피드 템플릿 공유만 쓰므로 v2-share 하나다 - 카카오 로그인(v2-user)은
     // 우리 인증에 없다.
     implementation(libs.kakao.share)
+    // 익명 계측·크래시 (KAN-33). 위 조건부 apply와 달리 의존성은 늘 붙는다 - 설정이 없으면
+    // FirebaseApp이 초기화되지 않고 sink가 만들어지지 않을 뿐이다 (analytics/FirebaseEventSink.kt).
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.analytics)
+    implementation(libs.firebase.crashlytics)
+    // 광고 (KAN-196). Firebase BoM과 별개 아티팩트라 버전은 카탈로그가 직접 박는다. 조건 없이
+    // 넣는 것은 Firebase와 같은 이유다 - 설정 유무에 따라 컴파일되는 소스가 갈리면 안 된다.
+    // ID가 없는 빌드는 Google 테스트 ID로 돈다 (위 admobProperty 주석).
+    implementation(libs.play.services.ads)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.okhttp.mockwebserver)

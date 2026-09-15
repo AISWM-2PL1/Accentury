@@ -74,6 +74,14 @@ public class TestSession implements Persistable<String> {
     private @Nullable String campaignToken;
 
     /**
+     * 응시자의 출신(모어 사투리) 지역 코드 (KAN-201, {@link Region}) - staging 학습 데이터 객체 키의
+     * 첫 조각이다. 광역 단위 하나라 개인을 좁히지 않는다. 보내지 않은 세션(앱, prod 웹)은 null이고
+     * 저장 쪽이 {@code UNKNOWN}으로 읽는다.
+     */
+    @Column(length = 16)
+    private @Nullable String region;
+
+    /**
      * 이 세션이 실사용자인지 검증용 합성 트래픽인지 (KAN-138).
      * <p>
      * 생성 시점에 한 번 정해지고 이후 바뀌지 않는다. 완주 카운터(KAN-106)가 이 값을 따라가므로
@@ -107,7 +115,7 @@ public class TestSession implements Persistable<String> {
 
     public TestSession(String id, String tokenHash, String testVersion, String scoreVersion, int voiceSet,
                        @Nullable String platform, @Nullable String appVersion, @Nullable String campaignToken,
-                       Traffic traffic, Instant createdAt, Instant expiresAt) {
+                       @Nullable Region region, Traffic traffic, Instant createdAt, Instant expiresAt) {
         this.isNew = true;
         this.id = id;
         this.tokenHash = tokenHash;
@@ -117,6 +125,7 @@ public class TestSession implements Persistable<String> {
         this.platform = platform;
         this.appVersion = appVersion;
         this.campaignToken = campaignToken;
+        this.region = region != null ? region.name() : null;
         this.traffic = traffic;
         this.createdAt = createdAt;
         this.expiresAt = expiresAt;
@@ -202,6 +211,11 @@ public class TestSession implements Persistable<String> {
 
     public @Nullable String campaignToken() {
         return campaignToken;
+    }
+
+    /** 저장된 지역 코드 - 보내지 않은 세션은 null이다. 학습 데이터 키로 쓸 때는 {@link Region#forStorage}. */
+    public @Nullable String region() {
+        return region;
     }
 
     public Traffic traffic() {

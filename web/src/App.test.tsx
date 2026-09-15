@@ -1,10 +1,11 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
+import { clearTestId } from './analytics/testId'
 import { createFakeCapture, sineChunk, type FakeCapture } from './audio/testing/fakeCapture'
 import { REQUIRED_BRIDGE_VERSION } from './bridge/bridge'
 import { snapshotKey } from './progress/progressSnapshot'
-import { clearWebSession, loadWebSession, saveWebSession } from './session/webSession'
+import { clearWebSession, getWebSessionToken, loadWebSession, saveWebSession } from './session/webSession'
 
 function setSearch(search: string) {
   window.history.replaceState(null, '', `/${search}`)
@@ -71,6 +72,12 @@ function stubLocalStorage(): Map<string, string> {
     getItem: (key: string) => map.get(key) ?? null,
     setItem: (key: string, value: string) => void map.set(key, value),
     removeItem: (key: string) => void map.delete(key),
+    // 접두사 훑기(KAN-198)가 쓰는 열거. 실물 저장소가 주는 것을 대역도 줘야 인트로의 삭제가
+    // 테스트에서만 아무 키도 못 찾는 일이 없다
+    key: (index: number) => [...map.keys()][index] ?? null,
+    get length() {
+      return map.size
+    },
   })
   return map
 }
@@ -133,8 +140,12 @@ afterEach(() => {
   setSearch('')
   // 웹 단독 세션은 실물 sessionStorage에 남는다 — 다음 테스트로 토큰이 새지 않게 지운다
   clearWebSession()
-  // 계측 큐도 실물 전역이다 (KAN-31 3단계). 남겨 두면 다음 테스트가 앞 테스트의 이벤트를 센다
+  // 계측 전역도 실물이다 (KAN-33). 남겨 두면 다음 테스트가 앞 테스트의 이벤트를 센다
+  delete window.gtag
   delete window.dataLayer
+  // 응시 상관 키는 실물 sessionStorage에 남는다 — 지우지 않으면 다음 테스트의 이벤트가
+  // 앞 테스트의 응시에 묶인다
+  clearTestId()
   delete (navigator as { mediaDevices?: unknown }).mediaDevices
   // 진행 화면 분기 테스트가 fetch·localStorage를 스텁한다. 실패로 중단돼도 다음 테스트에
   // 새지 않게 여기서 되돌린다
@@ -160,8 +171,8 @@ describe('App — 스큐 판정 분기', () => {
     expect(screen.getByText('10문항')).toBeInTheDocument()
     expect(screen.getByText('~3분')).toBeInTheDocument()
     // 이모지를 뺀 한 줄로 합쳤다 (KAN-161 3단계, 아트보드 `Main.dc.html`)
-    expect(screen.getByText('음성 5 · 단어 5')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '시작하기' })).toBeInTheDocument()
+    expect(screen.getByText('음성 5 + 단어 5')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '내 억양 테스트하기' })).toBeInTheDocument()
   })
 
   /*
@@ -174,21 +185,21 @@ describe('App — 스큐 판정 분기', () => {
     stubBridge()
     render(<App />)
     expect(screen.getByText('앱 업데이트가 필요해요')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '시작하기' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '내 억양 테스트하기' })).not.toBeInTheDocument()
   })
 
   it('브리지 객체도 쿼리도 없으면(웹 단독 실행) 인트로가 뜬다 (KAN-31)', () => {
     // 공유 링크를 앱 없이 그대로 연 사람이 이 경로다
     setSearch('?c=kko_share')
     render(<App />)
-    expect(screen.getByRole('button', { name: '시작하기' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '내 억양 테스트하기' })).toBeInTheDocument()
     expect(screen.queryByText('앱 업데이트가 필요해요')).not.toBeInTheDocument()
   })
 })
 
 describe('App — 문항 진행 화면 진입 쿼리 (KAN-100: 네이티브가 권한 게이트 통과 후 여는 경로)', () => {
   it('?screen=test면 정의를 조회해 문항 진행 화면을 띄운다', async () => {
-    setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0&screen=test&testVersion=gn-2026.08.1`)
+    setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0&screen=test&testVersion=gn-2026.08.1&voiceSet=1`)
     stubDefinitionFetch()
 
     render(<App />)
@@ -199,7 +210,7 @@ describe('App — 문항 진행 화면 진입 쿼리 (KAN-100: 네이티브가 �
 
   it('sessionId 쿼리가 진행 화면까지 전달돼 그 세션 키에 저장된다', async () => {
     setSearch(
-      `?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0&screen=test&testVersion=gn-2026.08.1&sessionId=sess-1`,
+      `?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0&screen=test&testVersion=gn-2026.08.1&voiceSet=1&sessionId=sess-1`,
     )
     stubBridge()
     stubDefinitionFetch(VOCAB_ITEM)
@@ -218,7 +229,7 @@ describe('App — 문항 진행 화면 진입 쿼리 (KAN-100: 네이티브가 �
    * `progressSnapshot.test.ts`가 덮는다.
    */
   it('sessionId가 없으면 답안이 가드에 막혀 진행이 멈춘다', async () => {
-    setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0&screen=test&testVersion=gn-2026.08.1`)
+    setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0&screen=test&testVersion=gn-2026.08.1&voiceSet=1`)
     stubBridge()
     stubDefinitionFetch(VOCAB_ITEM)
     const stored = stubLocalStorage()
@@ -235,7 +246,7 @@ describe('App — 문항 진행 화면 진입 쿼리 (KAN-100: 네이티브가 �
   it('screen 파라미터가 없으면 기존대로 인트로다', () => {
     setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0`)
     render(<App />)
-    expect(screen.getByRole('button', { name: '시작하기' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '내 억양 테스트하기' })).toBeInTheDocument()
   })
 })
 
@@ -250,6 +261,8 @@ describe('App — 웹 단독 실행 (KAN-31)', () => {
         sessionId: 's_web',
         sessionToken: 'st_web',
         testVersion: 'gn-2026.08.1',
+        // 서버가 고른 세트 (KAN-205). 없으면 웹이 세션을 못 읽는 것이 계약이다.
+        voiceSet: 3,
         scoreVersion: 'sv-0.3',
         expiresAt: '2026-08-26T03:30:00Z',
         ...body,
@@ -291,7 +304,7 @@ describe('App — 웹 단독 실행 (KAN-31)', () => {
 
   /** 인트로 [시작하기] — 웹 마이크 게이트가 비동기라 microtask를 비운다 */
   async function tapStart() {
-    fireEvent.click(screen.getByRole('button', { name: '시작하기' }))
+    fireEvent.click(screen.getByRole('button', { name: '내 억양 테스트하기' }))
     await act(async () => {})
     await act(async () => {})
   }
@@ -443,11 +456,12 @@ describe('App — 웹 단독 실행 (KAN-31)', () => {
   })
 
   it('문항 화면은 저장된 웹 세션 토큰으로 답안을 제출한다 — URL에는 토큰이 없다', async () => {
-    setSearch('?c=kko_share&screen=test&testVersion=gn-2026.08.1&sessionId=s_web')
+    setSearch('?c=kko_share&screen=test&testVersion=gn-2026.08.1&voiceSet=1&sessionId=s_web')
     saveWebSession({
       sessionId: 's_web',
       sessionToken: 'st_web',
       testVersion: 'gn-2026.08.1',
+      voiceSet: 1,
       expiresAt: '2026-08-26T03:30:00Z',
     })
     stubDefinitionFetch(VOCAB_ITEM)
@@ -498,15 +512,107 @@ describe('App — 웹 단독 실행 (KAN-31)', () => {
   })
 
   /*
+   * 출신 지역 선택 (KAN-202). 빌드 스위치 `VITE_REGION_SELECT === 'true'`(staging)일 때만 권한과
+   * 점검 사이에 한 칸이 더 선다: [시작하기] → 권한 → **지역** → 점검 → 세션 생성. 스위치가 꺼진
+   * 빌드(prod, 이 파일의 다른 테스트 전부)는 화면도 없고 세션 생성 본문도 이 티켓 전과 같다.
+   */
+  describe('출신 지역 선택 (KAN-202)', () => {
+    const REGION_TITLE = '출신 지역이 어디신가요?'
+
+    /** 세션 생성 요청의 본문. 첫 호출이 `POST /v0/sessions`다 */
+    function sessionBody(fetchStub: ReturnType<typeof vi.fn>): Record<string, unknown> {
+      const [, init] = fetchStub.mock.calls[0] as unknown as [string, RequestInit]
+      return JSON.parse(init.body as string) as Record<string, unknown>
+    }
+
+    afterEach(() => {
+      vi.unstubAllEnvs()
+    })
+
+    it('켜진 빌드는 권한 뒤에 지역부터 묻고, 고른 코드가 세션 생성 본문에 실린다', async () => {
+      vi.stubEnv('VITE_REGION_SELECT', 'true')
+      setSearch('')
+      stubMicrophone()
+      const fetchStub = stubSessionFetch()
+      const navigate = vi.fn()
+      const capture = createFakeCapture()
+
+      render(<App navigate={navigate} voiceCheckCapture={capture.factory} />)
+      await tapStart()
+
+      // 지역이 점검 앞이다 — 네트워크를 안 쓰는 화면을 세션 앞에 모아 고아 세션을 안 만든다
+      expect(screen.getByRole('heading', { level: 1, name: REGION_TITLE })).toBeInTheDocument()
+      expect(screen.queryByText('목소리를 확인할게요')).not.toBeInTheDocument()
+      expect(fetchStub).not.toHaveBeenCalled()
+      // 기본 선택도 건너뛰기도 없다 — 고르기 전에는 [다음]이 잠긴다
+      expect(screen.getByRole('button', { name: '다음' })).toBeDisabled()
+
+      fireEvent.click(screen.getByRole('radio', { name: '경남' }))
+      fireEvent.click(screen.getByRole('button', { name: '다음' }))
+      // 점검 화면은 마운트 즉시 듣기 시작한다(비동기) — `tapStart`와 같은 이유로 microtask를 비운다
+      await act(async () => {})
+      await act(async () => {})
+
+      // 지역을 넘기면 원래 흐름(점검)이 이어진다. 아직 세션은 없다
+      expect(screen.getByText('목소리를 확인할게요')).toBeInTheDocument()
+      expect(screen.queryByRole('heading', { level: 1, name: REGION_TITLE })).not.toBeInTheDocument()
+      expect(fetchStub).not.toHaveBeenCalled()
+
+      await passVoiceCheck(capture)
+
+      expect(fetchStub).toHaveBeenCalledTimes(1)
+      expect(sessionBody(fetchStub)).toMatchObject({ region: 'GYEONGNAM', client: { platform: 'WEB' } })
+      expect(navigate).toHaveBeenCalledTimes(1)
+    })
+
+    it('꺼진 빌드는 지역 화면이 없고 본문에 region 키 자체가 없다 — prod는 이 티켓 전과 같다', async () => {
+      // GitHub vars가 정의되지 않은 환경은 빈 문자열로 들어온다 - 그 값도 꺼짐이어야 한다
+      vi.stubEnv('VITE_REGION_SELECT', '')
+      setSearch('')
+      stubMicrophone()
+      const fetchStub = stubSessionFetch()
+      const capture = createFakeCapture()
+
+      render(<App navigate={vi.fn()} voiceCheckCapture={capture.factory} />)
+      await tapStart()
+
+      expect(screen.getByText('목소리를 확인할게요')).toBeInTheDocument()
+      expect(screen.queryByText(REGION_TITLE)).not.toBeInTheDocument()
+
+      await passVoiceCheck(capture)
+
+      expect(fetchStub).toHaveBeenCalledTimes(1)
+      expect('region' in sessionBody(fetchStub)).toBe(false)
+    })
+
+    it('앱 안 실행에는 스위치를 켜도 지역 화면이 없다 — 세션은 네이티브가 만든다', async () => {
+      vi.stubEnv('VITE_REGION_SELECT', 'true')
+      setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0`)
+      stubBridge()
+      stubMicrophone()
+      const capture = createFakeCapture()
+
+      render(<App navigate={vi.fn()} voiceCheckCapture={capture.factory} />)
+      await tapStart()
+
+      // 인트로의 onWebStart가 비어 있어 micGranted가 오르지 않는다 — 점검이 없는 것과 같은 이유
+      expect(screen.queryByText(REGION_TITLE)).not.toBeInTheDocument()
+      expect(screen.queryByText('목소리를 확인할게요')).not.toBeInTheDocument()
+      expect(screen.getByRole('heading', { level: 1, name: '사투리 좀 치나?' })).toBeInTheDocument()
+    })
+  })
+
+  /*
    * 결과 화면 전환만 히스토리를 덮어쓴다 (KAN-31). 쌓으면 결과에서 뒤로 갔을 때 끝난
    * `?screen=test` 문서가 되살아나 대기 화면이 다시 폴링하고, READY를 보고 결과로 또 넘어온다.
    */
   it('분석이 끝나면 결과 화면으로 히스토리를 덮어쓰며 넘어간다', async () => {
-    setSearch('?c=kko_share&screen=test&testVersion=gn-2026.08.1&sessionId=s_web')
+    setSearch('?c=kko_share&screen=test&testVersion=gn-2026.08.1&voiceSet=1&sessionId=s_web')
     saveWebSession({
       sessionId: 's_web',
       sessionToken: 'st_web',
       testVersion: 'gn-2026.08.1',
+      voiceSet: 1,
       expiresAt: '2026-08-26T03:30:00Z',
     })
     stubCompletedAnalysisFetch()
@@ -752,6 +858,36 @@ describe('App — 결과 화면 진입 쿼리 (KAN-29)', () => {
     expect(next.get('sessionId')).toBeNull()
   })
 
+  /*
+   * 진행 기록 삭제 (KAN-198). KAN-99가 "삭제 시점은 결과 화면"이라 적어 두고 배선하지 않아
+   * 응시마다 키가 하나씩 쌓이던 자리다.
+   */
+  it('결과 화면에 들어가면 그 세션의 진행 기록이 사라진다', async () => {
+    setSearch(RESULT_SEARCH)
+    stubBridgeWithToken()
+    stubResultFetch()
+    const stored = stubLocalStorage()
+    stored.set(snapshotKey('sess-1'), JSON.stringify({ testVersion: 'gn-2026.08.1', submittedItemIds: [] }))
+
+    render(<App />)
+
+    expect(await screen.findByText('명예주민')).toBeInTheDocument()
+    expect(stored.has(snapshotKey('sess-1'))).toBe(false)
+  })
+
+  it('다른 세션의 진행 기록은 결과 화면이 건드리지 않는다', async () => {
+    setSearch(RESULT_SEARCH)
+    stubBridgeWithToken()
+    stubResultFetch()
+    const stored = stubLocalStorage()
+    stored.set(snapshotKey('sess-2'), JSON.stringify({ testVersion: 'gn-2026.08.1', submittedItemIds: [] }))
+
+    render(<App />)
+
+    expect(await screen.findByText('명예주민')).toBeInTheDocument()
+    expect(stored.has(snapshotKey('sess-2'))).toBe(true)
+  })
+
   /**
    * 재응시 결선 (KAN-34 3단계). 여기서 확인하는 것은 왕복 자체가 아니라 **결선**이다 —
    * 결과 화면의 버튼이 브리지에 닿는가, 회신이 화면까지 내려오는가. 상태 전이의 갈래는
@@ -895,7 +1031,7 @@ describe('IntroScreen — [시작하기] 결선', () => {
       getContractVersion: () => 1,
     }
     render(<App />)
-    screen.getByRole('button', { name: '시작하기' }).click()
+    screen.getByRole('button', { name: '내 억양 테스트하기' }).click()
     expect(fn).toHaveBeenCalledTimes(1)
   })
 })
@@ -913,6 +1049,7 @@ describe('App — 웹 단독 결과 화면 (KAN-31 2단계)', () => {
     sessionId: 's_web',
     sessionToken: 'st_web',
     testVersion: 'gn-2026.08.1',
+    voiceSet: 1,
     expiresAt: '2026-08-26T03:30:00Z',
   }
 
@@ -1080,13 +1217,32 @@ describe('App — 웹 단독 결과 화면 (KAN-31 2단계)', () => {
 
 describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
   /**
-   * GA4 태그가 설치된 상태를 흉내 낸다. 큐를 만드는 것은 태그 스니펫이고(KAN-33) 웹 코드가
-   * 아니므로, 테스트가 그 자리를 대신한다 — 큐가 없는 지금 빌드의 동작은 `track.test.ts` 몫이다.
+   * GA4 태그가 설치된 상태를 흉내 낸다 — 웹 단독 실행의 전송 경로다 (KAN-33).
+   *
+   * 실물에서 `window.gtag`를 심는 것은 `analytics/ga4.ts`이고 그 동작은 `ga4.test.ts`가 본다.
+   * 여기서 확인하는 것은 **화면이 어느 지점에서 무엇을 세는가**라, 태그 자리를 대역으로 두고
+   * 도착한 이벤트만 모은다.
    */
-  function stubDataLayer(): Record<string, unknown>[] {
-    const queue: Record<string, unknown>[] = []
-    window.dataLayer = queue
-    return queue
+  function stubGtag(): Record<string, unknown>[] {
+    const events: Record<string, unknown>[] = []
+    window.gtag = (...args: unknown[]) => {
+      if (args[0] !== 'event') return
+      events.push({ event: args[1] as string, ...(args[2] as Record<string, unknown>) })
+    }
+    return events
+  }
+
+  /**
+   * 계측까지 아는 브리지 대역 = 앱 안 실행. 도착한 이벤트를 gtag 대역과 같은 모양으로 모아
+   * 두 경로를 나란히 비교할 수 있게 한다.
+   */
+  function stubBridgeWithEvents(): Record<string, unknown>[] {
+    const events: Record<string, unknown>[] = []
+    stubBridge()
+    window.AccenturyBridge!.logEvent = (name: string, paramsJson: string) => {
+      events.push({ event: name, ...(JSON.parse(paramsJson) as Record<string, unknown>) })
+    }
+    return events
   }
 
   /** §3.1 201 응답 */
@@ -1101,12 +1257,31 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
           sessionId: 's_web',
           sessionToken: 'st_web',
           testVersion: 'gn-2026.08.1',
+          voiceSet: 3,
           scoreVersion: 'sv-0.3',
           expiresAt: '2026-08-26T03:30:00Z',
         }),
       })),
     )
   }
+
+  /**
+   * [stubResultFetch]가 주는 결과의 등급 계측 (KAN-33). 종합 점수 72는 70 버킷으로 뭉개진다 —
+   * 원값이 이벤트에 실리지 않는다는 것이 이 상수가 지키는 사실이다 (FR-AN-09).
+   */
+  const RESULT_TIER_EVENT = {
+    event: 'tier_assigned',
+    tier_code: 'HONORARY',
+    score_version: 'sv-0.3',
+    overall_bucket: 70,
+    test_id: expect.any(String),
+  }
+
+  /**
+   * 응시에 속한 이벤트에는 상관 키가 함께 나간다 (KAN-33 AC 1). 값 자체는 무작위라 존재만
+   * 확인한다 — 같은 응시의 이벤트가 **같은 키**를 쓴다는 사실은 `testId.test.ts`가 못박는다.
+   */
+  const inTest = (event: Record<string, unknown>) => ({ ...event, test_id: expect.any(String) })
 
   /** §3.7 200 응답 — 결과 화면까지 가야 [앱 다운로드]가 있다 */
   function stubResultFetch() {
@@ -1135,7 +1310,7 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
 
   it('공유 링크로 인트로가 뜨면 유입을 센다 — 다시 그려도 한 번뿐이다', () => {
     setSearch('?c=kko_share')
-    const queue = stubDataLayer()
+    const queue = stubGtag()
 
     const { rerender } = render(<App />)
     // 리렌더마다 세면 같은 화면 한 번 노출이 여러 건으로 부풀어 오른다 (KAN-33 AC)
@@ -1144,31 +1319,50 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
     expect(queue).toEqual([{ event: 'referral_opened', campaign: 'kko_share' }])
   })
 
-  it('[시작하기]는 세션이 만들어진 뒤에 시작을 센다', async () => {
+  it('인트로와 목소리 점검은 시작을 세지 않는다 — 문항 화면에 도달해야 시작이다', async () => {
     setSearch('?c=kko_share')
     stubMicrophone()
     stubSessionFetch()
-    const queue = stubDataLayer()
+    const queue = stubGtag()
 
     const capture = createFakeCapture()
 
     render(<App navigate={vi.fn()} voiceCheckCapture={capture.factory} />)
-    fireEvent.click(screen.getByRole('button', { name: '시작하기' }))
+    fireEvent.click(screen.getByRole('button', { name: '내 억양 테스트하기' }))
     // 웹 마이크 게이트가 비동기다
     await act(async () => {})
     await act(async () => {})
-    /*
-     * 목소리 점검은 새 이벤트를 만들지 않는다 — 사용자에게 "테스트 시작"은 여전히 한 번이고,
-     * 그 한 번은 세션이 실제로 만들어진 뒤에 센다.
-     */
     expect(queue).toEqual([{ event: 'referral_opened', campaign: 'kko_share' }])
 
     await passVoiceCheck(capture)
 
-    expect(queue).toEqual([
-      { event: 'referral_opened', campaign: 'kko_share' },
-      { event: 'referral_test_started', campaign: 'kko_share' },
-    ])
+    /*
+     * 세션은 만들어졌지만 아직 시작이 아니다. 이 전환은 문서를 다시 로드하므로 시작 계측은
+     * 다음 문서(문항 화면)가 센다 — 세션을 만드는 주체가 실행마다 다르기 때문이다
+     * (웹 단독은 이 문서가, 앱은 네이티브가 만든다). 아래 테스트가 그 자리를 본다.
+     */
+    expect(queue).toEqual([{ event: 'referral_opened', campaign: 'kko_share' }])
+  })
+
+  it('문항 화면에 처음 도달하면 시작을 센다 — 앱·웹이 같은 자리에서 세어진다', async () => {
+    setSearch('?c=kko_share&screen=test&testVersion=gn-2026.08.1&voiceSet=1&sessionId=s_web')
+    saveWebSession({
+      sessionId: 's_web',
+      sessionToken: 'st_web',
+      testVersion: 'gn-2026.08.1',
+      voiceSet: 1,
+      expiresAt: '2026-08-26T03:30:00Z',
+    })
+    const queue = stubGtag()
+
+    const { rerender } = render(<App />)
+    await act(async () => {})
+    // 같은 세션으로 화면을 다시 열면(리로드·백그라운드 복귀) 다시 세지 않는다
+    rerender(<App />)
+    await act(async () => {})
+
+    const started = queue.filter((event) => event.event === 'referral_test_started')
+    expect(started).toEqual([inTest({ event: 'referral_test_started', campaign: 'kko_share' })])
   })
 
   it('[앱 다운로드] 탭은 어느 스토어로 갔는지까지 센다', async () => {
@@ -1177,10 +1371,11 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
       sessionId: 's_web',
       sessionToken: 'st_web',
       testVersion: 'gn-2026.08.1',
+      voiceSet: 1,
       expiresAt: '2026-08-26T03:30:00Z',
     })
     stubResultFetch()
-    const queue = stubDataLayer()
+    const queue = stubGtag()
 
     render(<App />)
     const download = await screen.findByRole('link', { name: '앱 다운로드' })
@@ -1189,9 +1384,12 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
     download.addEventListener('click', (event) => event.preventDefault())
     fireEvent.click(download)
 
-    // 결과 화면으로 바로 들어온 경로라 유입 이벤트는 없다 (인트로를 거치지 않았다)
+    // 결과 화면으로 바로 들어온 경로라 유입 이벤트는 없다 (인트로를 거치지 않았다).
+    // 앞의 두 건은 결과가 도착하면서 나간다 (KAN-33) — 다운로드 탭은 그 뒤에 붙는다
     expect(queue).toEqual([
-      { event: 'app_download_clicked', campaign: 'kko_share', platform: 'unknown' },
+      inTest({ event: 'result_viewed', campaign: 'kko_share' }),
+      RESULT_TIER_EVENT,
+      inTest({ event: 'app_download_clicked', campaign: 'kko_share', platform: 'unknown' }),
     ])
   })
 
@@ -1201,10 +1399,11 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
       sessionId: 's_web',
       sessionToken: 'st_web',
       testVersion: 'gn-2026.08.1',
+      voiceSet: 1,
       expiresAt: '2026-08-26T03:30:00Z',
     })
     stubResultFetch()
-    const queue = stubDataLayer()
+    const queue = stubGtag()
     // 브리지가 없는 웹 단독 실행의 정식 통로다 — jsdom에는 없어서 심어 준다
     Object.defineProperty(navigator, 'share', {
       configurable: true,
@@ -1218,38 +1417,146 @@ describe('App — 유입 퍼널 계측 (KAN-31 3단계)', () => {
 
       // 결과 화면으로 바로 들어온 경로라 유입 이벤트는 없다 (인트로를 거치지 않았다)
       expect(queue).toEqual([
-        { event: 'share_clicked', campaign: 'kko_share', channel: 'system' },
+        inTest({ event: 'result_viewed', campaign: 'kko_share' }),
+        RESULT_TIER_EVENT,
+        inTest({ event: 'share_clicked', campaign: 'kko_share', channel: 'system' }),
       ])
     } finally {
       delete (navigator as { share?: unknown }).share
     }
   })
 
-  it('앱 안 공유 탭은 웹이 세지 않는다 — 그 한 건은 네이티브가 센다 (AppEvents)', async () => {
+  it('앱 안 공유 탭도 웹이 센다 — 같은 행동이 플랫폼마다 다른 이름으로 갈리지 않는다', async () => {
     setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0&c=kko_share&screen=result&sessionId=s_web`)
-    stubBridge()
+    const native = stubBridgeWithEvents()
     const bridgeShare = vi.fn()
     window.AccenturyBridge!.shareResult = bridgeShare
     stubResultFetch()
-    const queue = stubDataLayer()
+    const queue = stubGtag()
 
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: '친구에게 공유하기' }))
 
     // 공유 자체는 브리지로 정상적으로 나간다 — 세지 않는 것과 보내지 않는 것은 다른 이야기다
     expect(bridgeShare).toHaveBeenCalledTimes(1)
+    /*
+     * 클릭은 웹이 세고 브리지로 넘어간다. 예전에는 이 자리를 네이티브가 `share_tapped`로 따로
+     * 셌는데, 그러면 한 사람의 같은 행동이 플랫폼에 따라 다른 이름으로 쌓여 공유 퍼널이 둘로
+     * 갈렸다 (Codex 검증 지적, AC 8). 지금 네이티브가 세는 것은 통로가 실제로 열린
+     * `share_launched` 하나뿐이다.
+     *
+     * `channel`이 `bridge`인 것이 앱 안이라는 뜻이다 — 어느 통로였는지는 네이티브가 말한다.
+     */
+    expect(native).toEqual([
+      inTest({ event: 'result_viewed', campaign: 'kko_share' }),
+      RESULT_TIER_EVENT,
+      inTest({ event: 'share_clicked', campaign: 'kko_share', channel: 'bridge' }),
+    ])
     expect(queue).toEqual([])
   })
 
-  it('앱 안 실행에서는 웹이 아무것도 세지 않는다 — 앱 이벤트는 네이티브 Firebase 몫이다 (KAN-33)', () => {
+  it('앱 안 실행의 유입은 브리지로 나간다 — GA4 웹 스트림으로는 가지 않는다 (KAN-33)', () => {
     setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0&c=kko_share`)
-    stubBridge()
-    const queue = stubDataLayer()
+    const native = stubBridgeWithEvents()
+    const queue = stubGtag()
 
     render(<App />)
 
-    // 같은 사건이 웹·네이티브 두 경로로 두 번 세어지면 퍼널의 분모가 실제보다 커진다
-    expect(screen.getByRole('button', { name: '시작하기' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '내 억양 테스트하기' })).toBeInTheDocument()
+    // 세는 사건은 하나이고 경로만 갈린다. 둘 다로 가면 퍼널의 분모가 실제보다 커진다
+    expect(native).toEqual([{ event: 'referral_opened', campaign: 'kko_share' }])
     expect(queue).toEqual([])
+  })
+
+  it('계측을 모르는 구버전 앱에서는 이벤트가 조용히 사라진다 — 응시는 그대로 된다', () => {
+    setSearch(`?bridge=${REQUIRED_BRIDGE_VERSION}&app=1.0&c=kko_share`)
+    stubBridge() // logEvent 없음
+    const queue = stubGtag()
+
+    render(<App />)
+
+    /*
+     * 앱 안에서는 GA4 태그를 설치하지 않으므로(`main.tsx`) 실물에는 gtag 자체가 없다. 태그
+     * 대역을 굳이 심어 두고 확인하는 것은 [track]의 판정이 그 사실에 기대지 않는다는 점이다 —
+     * 구버전 앱의 이벤트를 웹 스트림으로 흘려보내면 앱 사용자가 웹 트래픽으로 세어진다.
+     */
+    expect(screen.getByRole('button', { name: '내 억양 테스트하기' })).toBeInTheDocument()
+    expect(queue).toEqual([])
+  })
+})
+
+/**
+ * 끊긴 응시가 남긴 진행 기록 (KAN-198).
+ *
+ * 결과 화면의 삭제는 sessionId를 아는 응시만 덮는다. 앱을 끄거나 탭을 닫아 결과까지 가지 못한
+ * 응시의 키는 그 id를 다시 들고 오는 사람이 없어 영영 남는데, 인트로가 그 자리를 걷는다 —
+ * 계측 상관 키를 같은 자리에서 같은 이유로 버리는 것과 짝이다.
+ */
+describe('App — 인트로 진입의 진행 기록 훑기 (KAN-198)', () => {
+  it('살아 있는 웹 세션의 진행 기록은 남긴다 (뒤로가기로 인트로에 온 응시)', () => {
+    setSearch('?c=kko_share')
+    saveWebSession({
+      sessionId: 's_web',
+      sessionToken: 'st_web',
+      testVersion: 'gn-2026.08.1',
+      voiceSet: 1,
+      expiresAt: '2026-08-26T03:30:00Z',
+    })
+    const stored = stubLocalStorage()
+    stored.set(snapshotKey('s_web'), '{}')
+    stored.set(snapshotKey('sess-old'), '{}')
+
+    render(<App />)
+
+    // 앞으로가기로 문항 화면에 돌아가면 이 스냅샷이 진행을 되살린다
+    expect([...stored.keys()]).toEqual([snapshotKey('s_web')])
+  })
+
+  it('세트 없이 저장된 옛 세션의 진행 기록은 지운다 — 되살아날 문항 화면이 없다', () => {
+    setSearch('?c=kko_share')
+    /*
+     * 세트가 계약에 들어오기 전(KAN-205)에 저장된 세션. 토큰은 살아 있어 결과 조회는 되지만
+     * ([getWebSessionToken]), 앞으로가기로 돌아갈 문항 URL에는 voiceSet이 없어 새 번들이
+     * 정의 조회 전에 끊는다 — 이 진행 기록은 어느 화면도 되살리지 못하는 값이다.
+     */
+    saveWebSession({
+      sessionId: 's_old',
+      sessionToken: 'st_old',
+      testVersion: 'gn-2026.08.1',
+      expiresAt: '2026-08-26T03:30:00Z',
+    } as Parameters<typeof saveWebSession>[0])
+    const stored = stubLocalStorage()
+    stored.set(snapshotKey('s_old'), '{}')
+
+    render(<App />)
+
+    expect([...stored.keys()]).toEqual([])
+    // 진행 기록만 걷는다 — 결과 조회 토큰은 그대로다
+    expect(getWebSessionToken()).toBe('st_old')
+  })
+
+  it('저장된 웹 세션이 없으면 남은 진행 기록을 전부 지운다', () => {
+    setSearch('?c=kko_share')
+    const stored = stubLocalStorage()
+    stored.set(snapshotKey('sess-1'), '{}')
+    stored.set(snapshotKey('sess-2'), '{}')
+    // sessionId가 오지 않던 과도기의 키도 같은 접두사다
+    stored.set(snapshotKey(), '{}')
+
+    render(<App />)
+
+    expect(screen.getByRole('button', { name: '내 억양 테스트하기' })).toBeInTheDocument()
+    expect([...stored.keys()]).toEqual([])
+  })
+
+  it('진행 기록이 아닌 키는 남긴다', () => {
+    setSearch('?c=kko_share')
+    const stored = stubLocalStorage()
+    stored.set(snapshotKey('sess-1'), '{}')
+    stored.set('accentury:something-else', 'keep')
+
+    render(<App />)
+
+    expect([...stored.keys()]).toEqual(['accentury:something-else'])
   })
 })

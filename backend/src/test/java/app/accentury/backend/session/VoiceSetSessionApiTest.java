@@ -23,10 +23,13 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.nio.charset.StandardCharsets;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -35,7 +38,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * 세트 다중화의 세션 경로 실행 명세 (KAN-182 AC - 세션 고정, 세트 밖 제출 거절, 세트 기준
- * 상태 조회와 진행도, 완주 판정과 집계, 재응시).
+ * 상태 조회와 진행도, 완주 판정과 집계, 재응시). 세트를 생략했을 때의 서버 배정도 여기서
+ * 실행한다 (KAN-205) - 세트가 둘 이상인 픽스처가 이 클래스에만 있다.
  * <p>
  * 활성 버전을 N = 7 풀 픽스처 {@code gn-2026.09.t7}(세트 2 = v6, v7 + v1, v2, v3, V901)로 바꿔 놓고
  * 세트 2 세션으로 끝까지 간다. 활성 포인터는 클래스 사이 초기화 대상이 아니라 반드시 되돌린다
@@ -98,11 +102,23 @@ class VoiceSetSessionApiTest extends IntegrationTest {
         assertEquals(2, stored.voiceSet());
     }
 
+    /**
+     * 생략은 서버 배정이다 (KAN-205). 난수라 값을 못 박을 수 없으니 유효 범위, 응답과 세션 행의
+     * 일치, 그리고 세트 1에 고이지 않는다는 것을 본다. 세트 2개짜리 정의에서 40번이면 한쪽만
+     * 나올 확률이 2 x 2^-40 이라 무작위성 때문에 깨지지 않는다.
+     */
     @Test
-    void 생략하면_세트_1이고_세트_수_밖이면_400이다() throws Exception {
-        assertEquals(1, create("{}").get("voiceSet").asInt());
-        assertEquals(1, sessionRepository.findById(create("{}").get("sessionId").asString())
-                .orElseThrow().voiceSet());
+    void 생략하면_서버가_세트를_고르고_세트_수_밖이면_400이다() throws Exception {
+        Set<Integer> picked = new HashSet<>();
+        for (int i = 0; i < 40; i++) {
+            JsonNode created = create("{}");
+            int voiceSet = created.get("voiceSet").asInt();
+            assertTrue(voiceSet >= 1 && voiceSet <= 2, "세트는 1 이상 voiceSetCount 이하다: " + voiceSet);
+            assertEquals(voiceSet, sessionRepository.findById(created.get("sessionId").asString())
+                    .orElseThrow().voiceSet(), "응답과 test_session.voice_set이 같은 값이다");
+            picked.add(voiceSet);
+        }
+        assertEquals(Set.of(1, 2), picked, "세트 1에 고이지 않고 전 세트가 나온다");
 
         mockMvc.perform(post("/v0/sessions").contentType(MediaType.APPLICATION_JSON)
                         .content("{ \"voiceSet\": 3 }"))
@@ -218,28 +234,35 @@ class VoiceSetSessionApiTest extends IntegrationTest {
                 .andExpect(jsonPath("$.missingItems[0]").value("v3"));
     }
 
-    // === AC - 재응시도 같은 규칙: 새 세션의 voiceSet은 요청값이고 이전 세트를 물려받지 않는다 ===
+    // === AC - 재응시도 같은 규칙: 세트를 새로 고르고 이전 세션의 세트를 물려받지 않는다 ===
 
     @Test
-    void 재응시의_세트는_요청값이고_이전_세션의_세트를_물려받지_않는다() throws Exception {
-        JsonNode first = create("{ \"voiceSet\": 2 }");
+    void 재응시의_세트도_서버가_고르고_이전_세션의_세트를_물려받지_않는다() throws Exception {
+        JsonNode session = create("{ \"voiceSet\": 2 }");
 
-        String body = mockMvc.perform(post("/v0/sessions")
-                        .contentType(MediaType.APPLICATION_JSON).content("{}")
-                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + first.get("sessionToken").asString()))
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString();
-        JsonNode retaken = objectMapper.readTree(body);
-
-        assertEquals(1, retaken.get("voiceSet").asInt(), "생략은 1이다 - 이전 세션의 2가 아니다");
-        assertEquals(1, sessionRepository.findById(retaken.get("sessionId").asString()).orElseThrow().voiceSet());
+        // 재응시를 이어 가며 세트를 생략한다 - 물려받는다면 세트 2만 나온다 (KAN-205).
+        Set<Integer> picked = new HashSet<>();
+        for (int i = 0; i < 40; i++) {
+            String body = mockMvc.perform(post("/v0/sessions")
+                            .contentType(MediaType.APPLICATION_JSON).content("{}")
+                            .header(HttpHeaders.AUTHORIZATION,
+                                    "Bearer " + session.get("sessionToken").asString()))
+                    .andExpect(status().isCreated())
+                    .andReturn().getResponse().getContentAsString();
+            session = objectMapper.readTree(body);
+            int voiceSet = session.get("voiceSet").asInt();
+            assertEquals(voiceSet, sessionRepository.findById(session.get("sessionId").asString())
+                    .orElseThrow().voiceSet());
+            picked.add(voiceSet);
+        }
+        assertEquals(Set.of(1, 2), picked, "재응시마다 새로 고른다 - 이전 세션의 세트에 묶이지 않는다");
 
         String again = mockMvc.perform(post("/v0/sessions")
                         .contentType(MediaType.APPLICATION_JSON).content("{ \"voiceSet\": 2 }")
-                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + retaken.get("sessionToken").asString()))
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + session.get("sessionToken").asString()))
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
-        assertEquals(2, objectMapper.readTree(again).get("voiceSet").asInt());
+        assertEquals(2, objectMapper.readTree(again).get("voiceSet").asInt(), "명시하면 그 값 그대로다");
     }
 
     // === 헬퍼 ===

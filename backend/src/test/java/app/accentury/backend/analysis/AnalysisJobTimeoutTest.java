@@ -45,8 +45,10 @@ class AnalysisJobTimeoutTest extends IntegrationTest {
     @Test
     void 실행_잔류만_ANALYSIS_TIMEOUT으로_종결된다() {
         Instant now = Instant.now();
-        AnalysisJob stuck = save("a_to-stuck", "v1", now.minus(Duration.ofMinutes(5)));
-        repository.markStartedIfProcessing(stuck.id(), now.minus(Duration.ofMinutes(2)));
+        AnalysisJob stuck = save("a_to-stuck", "v1", now.minus(Duration.ofMinutes(10)));
+        // 실행 잔류 한도(KAN-172로 300초)를 넘긴 시각 - 값을 고정하지 않고 설정에서 읽어 한도가 바뀌어도 경계가 따라간다.
+        repository.markStartedIfProcessing(stuck.id(),
+                now.minus(properties.analysis().processingTimeout()).minusSeconds(30));
         AnalysisJob running = save("a_to-running", "v2", now.minus(Duration.ofSeconds(50)));
         repository.markStartedIfProcessing(running.id(), now.minus(Duration.ofSeconds(10)));
 
@@ -62,7 +64,7 @@ class AnalysisJobTimeoutTest extends IntegrationTest {
     @Test
     void 큐_대기는_오래돼도_실행_잔류_한도로_폐기되지_않는다() {
         // 큐 유실 한도 직전까지 기다렸지만 실행을 시작하지 않았다 = 큐에서 기다리는 중이라
-        // 정상이다. 한도 바로 아래를 잡아 경계를 고정한다 (실행 잔류 한도 60s보다는 길다).
+        // 정상이다. 한도 바로 아래를 잡아 경계를 고정한다 (실행 잔류 한도는 startedAt이 없어 적용되지 않는다).
         save("a_to-queued", "v1",
                 Instant.now().minus(properties.analysis().queuedTimeout()).plusSeconds(60));
 

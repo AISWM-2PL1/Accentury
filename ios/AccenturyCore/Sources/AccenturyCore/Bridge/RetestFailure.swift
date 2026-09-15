@@ -73,3 +73,24 @@ public func retestFailurePayload(_ failed: RetestOutcome.Failure) -> RetestFailu
         retryAfterMs: failed.retryAfterMs
     )
 }
+
+/// 웹 계약의 코드 문자열 (`bridge.ts`의 `RetestFailure` 주석과 같은 값). 안드로이드
+/// `bridge/RetestFailure.kt`의 `CODE_AD_DISMISSED`와 같은 값이다 (KAN-196).
+public let codeAdDismissed = "AD_DISMISSED"
+
+/// 보상형 광고를 끝까지 보지 않고 닫았을 때의 재응시 실패 (KAN-196, webview-bridge.md §8.2).
+///
+/// 서버 실패와 같은 봉투(``RetestFailure``)로 나간다 — 웹은 `onRetestFailed` 하나로 받고 `message`를
+/// 그대로 그리며 코드로 문구를 고르지 않는다. 그래서 **문구 정본은 네이티브**이고, 두 플랫폼이
+/// 같은 문장이어야 한다 (안드로이드 `adDismissedRetestFailure()`와 한 글자도 다르지 않다).
+///
+/// `retryable: true` — 다시 누르면 새 광고가 뜬다 (`RewardedRetestGate`가 닫힘 뒤 다음 요청을 받는다).
+/// `retryAfterMs: nil` — 서버 제한이 아니라 사용자 행동이라 대기 시간이 없다.
+public func adDismissedRetestFailure() -> RetestFailure {
+    RetestFailure(
+        code: codeAdDismissed,
+        message: "광고를 끝까지 보시면 다시 테스트할 수 있어요",
+        retryable: true,
+        retryAfterMs: nil
+    )
+}

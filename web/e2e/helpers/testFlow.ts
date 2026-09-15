@@ -10,6 +10,7 @@
  */
 
 import { expect, type Locator, type Page } from '@playwright/test'
+import { AD_CONSENT_DENY, AD_CONSENT_TITLE } from '../../src/ads/adConsentText'
 import { itemCaption } from '../../src/progress/itemBadge'
 
 /** 정의가 내려주는 문항 수 (음성 5 + 어휘 5). 진행 캡션의 분모이기도 하다 */
@@ -30,6 +31,59 @@ const RECORD_ELAPSED_MARK = '00:03'
 const VOICE_CHECK_TIMEOUT_MS = 25_000
 
 /**
+ * 지역 화면에서 고르는 지역 (KAN-202). 어느 것이든 상관없지만, 세션 본문에 실린 값을 단언할 때
+ * 같은 코드를 봐야 하므로 라벨과 코드를 한 자리에 묶어 둔다 (`regions.ts`의 표와 같은 짝).
+ */
+const E2E_REGION = { label: '경남', code: 'GYEONGNAM' } as const
+
+/**
+ * 맞춤형 광고 동의 시트가 떠 있으면 「일반 광고만 보기」로 지나간다 (KAN-197 2단계).
+ *
+ * **광고 ID가 들어간 빌드에서만 뜬다** (팀 결정 2026-09-13, PR #109 리뷰). `VITE_ADSENSE_*`가
+ * 빈 판에서는 광고가 나가지 않으므로 동의를 묻지도 않는다 (`ads/adConsent.ts`의
+ * `resolveAdConsentSource`) — 그런 판에서 이 헬퍼가 아무 일도 하지 않고 지나가는 것이 정상이다.
+ *
+ * ID가 있는 빌드의 첫 방문에는 인트로 위에 이 시트가 덮인다. 막이 화면 전체를 가리므로
+ * (`.ad-consent-sheet`가 `position: fixed; inset: 0`) 지나치지 않으면 [내 억양 테스트하기]가
+ * 다른 요소에 가려진 상태로 남고, Playwright의 actionability 검사가 클릭을 기다리다 시간
+ * 초과로 죽는다 — vitest의 `fireEvent`는 hit-testing이 없어 막을 뚫고 닿지만 실브라우저는 아니다.
+ *
+ * ## 왜 거부를 고르는가
+ *
+ * 3단계 AC가 「동의 거부 시 비맞춤 광고만」이라, E2E가 도는 동안 맞춤형 광고 요청이 나가면
+ * 안 된다. 고른 값은 브라우저 저장소에 남지만(`ads/webAdConsentStore.ts`) Playwright는 테스트마다
+ * 새 컨텍스트라 저장소가 비어 있고, 그래서 매번 다시 뜬다 — 한 번 고르면 그만인 헬퍼가 아니다.
+ *
+ * ## 왜 유무를 보고 가는가
+ *
+ * 지역 화면과 같은 원칙이다(아래 [startTest]의 「지역 화면은…」 절, `docs/wiki/browser-e2e.md`) —
+ * 스펙은 자기가 어떤 판을 열었는지 모른다. 앱 WebView로 열리거나 ID 없는 빌드이거나 이미 고른
+ * 컨텍스트에서는 시트가 없으므로, 빌드 변수가 아니라 **화면에 뜬 것**을 보고 지나간다.
+ *
+ * ## 인트로가 그려지기를 여기서 기다린다 (PR #109 리뷰 (2026-09-13))
+ *
+ * `isVisible()`은 기다리지 않는 즉답이라, `page.goto('/')` 직후에 부르면 React가 시트를 그리기
+ * 전의 빈 순간을 「시트 없음」으로 읽는다. 그러면 헬퍼는 그냥 지나가고 다음 클릭이 뒤늦게 덮인
+ * 막 밑에서 actionability를 기다리다 시간 초과로 죽는다 — 호출부 세 곳(`smoke`, `mic-blocked`
+ * 둘) 중 하나라도 빠뜨리면 플레이키가 되므로, 호출자에게 맡기지 않고 이 함수가 인트로의 h1을
+ * 먼저 기다린다. 시트는 그 h1과 같은 렌더에서 함께 그려지므로(`IntroScreen`이 둘을 한 번에
+ * 반환한다) h1이 보인 뒤에는 기다릴 빈 순간이 없다.
+ *
+ * 셀렉터는 화면의 상수를 import한다 (셀렉터 규칙). 문안이 바뀌면 헬퍼가 조용히 못 찾는 대신
+ * 컴파일이 따라온다.
+ */
+export async function passAdConsentIfShown(page: Page): Promise<void> {
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+
+  const sheet = page.getByRole('dialog', { name: AD_CONSENT_TITLE })
+  if (!(await sheet.isVisible())) return
+
+  await sheet.getByRole('button', { name: AD_CONSENT_DENY, exact: true }).click()
+  // 닫힘까지 확인한다 — 막이 걷히기 전에 다음 클릭으로 넘어가면 같은 시간 초과를 다시 만난다
+  await expect(sheet).toBeHidden()
+}
+
+/**
  * 웹 단독 진입 → 시작 게이트 통과 → 문항 진행 화면.
  *
  * `bridge` 파라미터 없이 열면 `window.AccenturyBridge`도 없으므로 웹 단독 실행이 되고
@@ -37,18 +91,63 @@ const VOICE_CHECK_TIMEOUT_MS = 25_000
  *
  * 세션 응답을 URL 확인과 갈라서 보는 이유는 실패를 가르기 위해서다 — 201이 왔는데 URL이 안
  * 바뀌면 이동 쪽 문제이고, 201 자체가 안 오면 백엔드나 `/v0` 프록시 쪽이다.
+ *
+ * ## 지역 화면은 있을 수도, 없을 수도 있다 (KAN-202)
+ *
+ * 출신 지역 선택 화면은 빌드 변수 `VITE_REGION_SELECT`가 정확히 `'true'`인 번들에만 있다
+ * (`regions.ts`의 `isRegionSelectEnabled`) — staging은 켜고 prod는 변수 자체가 없다. 그런데
+ * 스펙은 **어느 빌드를 열었는지 모른다.** `E2E_BASE_URL`로 배포 환경을 겨눌 때는 화면이
+ * 이미 굳은 번들이고, 로컬은 `playwright.config.ts`가 셸의 값을 개발 서버에 넘긴 대로다.
+ * 스펙에 주소가 하나도 없어 같은 스펙이 로컬·staging 양쪽을 도는 것과 같은 원칙으로, 이
+ * 헬퍼도 변수를 읽지 않고 **화면에 뜬 것을 보고** 간다 — 지역 화면이 떴으면 고르고 지나가고,
+ * 점검 화면이 바로 떴으면 그대로 간다. 그래서 스펙 파일을 켠 판·끈 판으로 나누지 않고 한
+ * 벌이 양쪽에서 돈다.
+ *
+ * 다만 "지나갔다"로 끝내지 않고 세션 생성 **요청 본문**까지 본다. 켜진 빌드는 고른 코드가
+ * `region`으로 실려야 하고(AC "지역 선택을 거쳐 결과까지"), 꺼진 빌드는 키 자체가 없어야
+ * 한다(AC "변수 없는 빌드는 본문에 region 없음", `createWebSession`이 null이면 필드째 뺀다).
+ * 201 응답만 보면 서버가 받아 줬다는 것뿐이고 무엇을 보냈는지는 모른다 — 요청은
+ * `waitForRequest`로 따로 잡아야 본문이 보인다.
  */
 export async function startTest(page: Page): Promise<void> {
   await page.goto('/')
 
-  await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+  /*
+   * 인트로가 그려지기를 기다리는 일도 헬퍼가 맡는다 (PR #109 리뷰 (2026-09-13)). 첫 방문이면
+   * 인트로 위에 동의 시트가 덮여 있고, 걷어내야 [시작하기]에 손이 닿는다.
+   */
+  await passAdConsentIfShown(page)
 
   /*
    * [시작하기]가 곧 마이크 권한 요청이다. `--use-fake-ui-for-media-stream`이 대화상자를
-   * 자동 승인하므로 여기서 멈추지 않고, 승인되면 App이 목소리 점검 화면으로 갈아 끼운다.
+   * 자동 승인하므로 여기서 멈추지 않고, 승인되면 App이 지역 화면(켜진 빌드) 또는 목소리
+   * 점검 화면으로 갈아 끼운다.
    */
-  await page.getByRole('button', { name: '시작하기', exact: true }).click()
-  await expect(page.getByRole('heading', { name: '목소리를 확인할게요' })).toBeVisible()
+  await page.getByRole('button', { name: '내 억양 테스트하기', exact: true }).click()
+
+  /*
+   * 둘 중 하나가 뜨기를 먼저 기다린 뒤에 어느 쪽인지 본다. 기다리지 않고 `isVisible()`부터
+   * 부르면 권한 승인이 끝나기 전의 빈 순간을 "지역 화면 없음"으로 읽는다 — `isVisible()`은
+   * 기다리지 않는 즉답이다.
+   */
+  const regionHeading = page.getByRole('heading', {
+    level: 1,
+    name: '출신 지역이 어디신가요?',
+  })
+  const voiceHeading = page.getByRole('heading', { name: '목소리를 확인할게요' })
+  await expect(regionHeading.or(voiceHeading)).toBeVisible()
+
+  const regionShown = await regionHeading.isVisible()
+  if (regionShown) {
+    /*
+     * 라디오는 어휘 문항과 같은 `.choice__radio`라 1px + clip-path로 눈에서만 지워져 있다
+     * (`answerVocabularyItem`의 주석). 같은 이유로 `force`. [다음]은 고르기 전에는 disabled라
+     * 고른 뒤에만 눌린다.
+     */
+    await page.getByRole('radio', { name: E2E_REGION.label }).check({ force: true })
+    await page.getByRole('button', { name: '다음', exact: true }).click()
+  }
+  await expect(voiceHeading).toBeVisible()
 
   /*
    * [다음]은 판정기가 `ready`일 때만 그려진다 — 이 버튼이 보인다는 것은 가짜 마이크의
@@ -57,11 +156,27 @@ export async function startTest(page: Page): Promise<void> {
   const next = page.getByRole('button', { name: '다음', exact: true })
   await expect(next).toBeVisible({ timeout: VOICE_CHECK_TIMEOUT_MS })
 
-  const session = page.waitForResponse(
-    (response) => response.url().includes('/v0/sessions') && response.request().method() === 'POST',
+  const isSessionPost = (url: string, method: string) =>
+    url.includes('/v0/sessions') && method === 'POST'
+  const sessionRequest = page.waitForRequest((request) =>
+    isSessionPost(request.url(), request.method()),
+  )
+  const session = page.waitForResponse((response) =>
+    isSessionPost(response.url(), response.request().method()),
   )
   await next.click()
   expect((await session).status()).toBe(201)
+
+  /*
+   * 본문 단언. 지역 화면을 봤는지는 위에서 화면으로 판정한 값이라, 빌드 변수를 읽지 않고도
+   * 두 빌드에서 각각 맞는 쪽을 검사한다.
+   */
+  const body = (await sessionRequest).postDataJSON() as Record<string, unknown>
+  if (regionShown) {
+    expect(body.region).toBe(E2E_REGION.code)
+  } else {
+    expect('region' in body).toBe(false)
+  }
 
   await expect(page).toHaveURL(/screen=test/)
   await expect(page).toHaveURL(/sessionId=/)

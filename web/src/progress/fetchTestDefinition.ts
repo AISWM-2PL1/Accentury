@@ -1,5 +1,10 @@
 /**
- * 테스트 정의 조회 (KAN-99 Stage 3) — `GET {apiBase}/v0/tests/{testVersion}` (KAN-10, API 명세서 §3.2).
+ * 테스트 정의 조회 (KAN-99 Stage 3) — `GET {apiBase}/v0/tests/{testVersion}?voiceSet={n}`
+ * (KAN-10, KAN-182, KAN-205, API 명세서 §3.2).
+ *
+ * **`voiceSet`은 반드시 실어야 한다 (KAN-205).** 서버가 세션마다 세트를 고르므로, 빼면 세트 1의
+ * 문항이 와서 세션에 고정된 세트와 갈리고 그 문항으로 낸 업로드와 답안이 전부 422
+ * `ITEM_NOT_IN_VERSION`으로 막힌다. 세트가 URL에 들어가므로 브라우저 캐시 키도 세트마다 갈린다.
  *
  * **열린 질문 — `apiBase`와 `testVersion`의 출처는 아직 계약 미확정이다.**
  * `testVersion`은 세션 생성(KAN-9) 응답에 들어 있는데, 그 응답을 누가 받고 웹에 어떻게 넘기는지가
@@ -34,12 +39,14 @@ const browserFetch: FetchLike = (input, init) => globalThis.fetch(input, init)
  *
  * @param apiBase 백엔드 오리진 (끝 슬래시는 있어도 된다)
  * @param testVersion 세션에 고정된 정의 버전 (예: `gn-2026.08.1`)
+ * @param voiceSet 세션에 고정된 음성 문항 세트 (1부터). 진입 쿼리로 오므로 문자열이다
  * @param fetchImpl 주입용 fetch. 기본값은 전역 fetch
- * @throws Error 빈 testVersion / HTTP 오류 / JSON 아님 / 계약과 다른 형태
+ * @throws Error 빈 testVersion / 세트가 1 이상의 정수가 아님 / HTTP 오류 / JSON 아님 / 계약과 다른 형태
  */
 export async function fetchTestDefinition(
   apiBase: string,
   testVersion: string,
+  voiceSet: string,
   fetchImpl: FetchLike = browserFetch,
 ): Promise<TestDefinition> {
   // 빈 값이면 `/v0/tests/`로 요청이 나가 404·405가 돌아온다. 원인이 URL 조립 실패였다는 걸
@@ -47,8 +54,16 @@ export async function fetchTestDefinition(
   if (testVersion.trim() === '') {
     throw new Error('testVersion이 없어 테스트 정의를 조회할 수 없습니다')
   }
+  // 세트도 같은 이유로 여기서 끊는다. 빈 값을 그냥 붙이면 서버가 세트 1을 주는데, 그 문항으로
+  // 응시하면 세션의 세트와 갈려 제출이 422가 된다 — 진행하다 막히는 것보다 여기서 멈추는 편이
+  // 원인이 분명하다 (KAN-205).
+  if (!/^[1-9][0-9]*$/.test(voiceSet.trim())) {
+    throw new Error('voiceSet이 없어 테스트 정의를 조회할 수 없습니다')
+  }
 
-  const url = `${apiBase.replace(/\/+$/, '')}/v0/tests/${encodeURIComponent(testVersion)}`
+  const url =
+    `${apiBase.replace(/\/+$/, '')}/v0/tests/${encodeURIComponent(testVersion)}` +
+    `?voiceSet=${encodeURIComponent(voiceSet.trim())}`
   const response = await fetchImpl(url, { headers: { Accept: 'application/json' } })
 
   if (!response.ok) {

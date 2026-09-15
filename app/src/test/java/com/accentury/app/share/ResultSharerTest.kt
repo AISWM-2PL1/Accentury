@@ -72,6 +72,16 @@ class ResultSharerTest {
     }
 
     @Test
+    fun `웹훅 파라미터는 캠페인 상수 하나뿐이다`() {
+        // 카카오는 이 값을 전송 완료 웹훅에 그대로 실어 서버로 보낸다 (KAN-164). 세션 id나 점수가
+        // 섞이면 서버 집계가 익명이 아니게 되므로, 키가 하나이고 값이 상수라는 것을 못박는다.
+        val args = kakaoServerCallbackArgs()
+
+        assertEquals(mapOf("campaign" to "kko_share"), args)
+        assertTrue(args.values.none { it.contains(payload.webTestUrl) || it.contains(payload.text) })
+    }
+
+    @Test
     fun `공유 시트 본문은 문구와 링크를 함께 싣는다`() {
         // 미리보기 카드가 없는 앱(문자 등)으로도 가므로 링크가 본문 안에 글자로 있어야 한다.
         assertEquals(

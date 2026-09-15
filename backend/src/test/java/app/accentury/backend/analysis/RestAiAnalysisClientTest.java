@@ -9,6 +9,8 @@ import org.springframework.web.client.RestClient;
 import tools.jackson.databind.ObjectMapper;
 
 import java.net.SocketTimeoutException;
+import java.net.http.HttpConnectTimeoutException;
+import java.net.http.HttpTimeoutException;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
@@ -162,10 +164,111 @@ class RestAiAnalysisClientTest {
     }
 
     @Test
+    void ALB가_대신_답한_5xx는_미도달로_구분된다() {
+        // 대상 그룹에 healthy 대상이 없거나(인스턴스 교체, reload 중) 대상이 연결을 거부하면 내부 ALB(KAN-201)가
+        // 자기 서명(Server: awselb/2.0)으로 502/503을 만든다 - AI에 닿지 않았으므로 시도 예산에서 빠져야 한다.
+        server.expect(requestTo("http://ai.test/internal/v0/analyze"))
+                .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE)
+                        .header("Server", "awselb/2.0")
+                        .contentType(MediaType.TEXT_HTML)
+                        .body("<html><body><h1>503 Service Temporarily Unavailable</h1></body></html>"));
+
+        AiAnalysisClient.AiUnavailableException e =
+                assertThrows(AiAnalysisClient.AiUnavailableException.class,
+                        () -> client.analyze(request(), "c_test"));
+        assertEquals(AiAnalysisClient.AiUnavailableException.Kind.UNREACHED, e.kind());
+    }
+
+    @Test
+    void ALB의_502도_미도달이고_서버_헤더는_대소문자를_가리지_않는다() {
+        server.expect(requestTo("http://ai.test/internal/v0/analyze"))
+                .andRespond(withStatus(HttpStatus.BAD_GATEWAY)
+                        .header("server", "AWSELB/2.0")
+                        .contentType(MediaType.TEXT_HTML)
+                        .body("<html><body><h1>502 Bad Gateway</h1></body></html>"));
+
+        AiAnalysisClient.AiUnavailableException e =
+                assertThrows(AiAnalysisClient.AiUnavailableException.class,
+                        () -> client.analyze(request(), "c_test"));
+        assertEquals(AiAnalysisClient.AiUnavailableException.Kind.UNREACHED, e.kind());
+    }
+
+    @Test
+    void ALB의_504는_읽기_타임아웃과_같은_timedOut이다() {
+        // 대상이 idle timeout 안에 답하지 못한 것이라 AI는 아직 그 오디오를 추론 중일 수 있다 - 같은 WAV를
+        // 다시 보내면 안 된다 (KAN-172). 미도달로 접으면 백오프 뒤 재전송된다 (PR #105 리뷰 P2).
+        server.expect(requestTo("http://ai.test/internal/v0/analyze"))
+                .andRespond(withStatus(HttpStatus.GATEWAY_TIMEOUT)
+                        .header("Server", "awselb/2.0")
+                        .contentType(MediaType.TEXT_HTML)
+                        .body("<html><body><h1>504 Gateway Time-out</h1></body></html>"));
+
+        AiAnalysisClient.AiUnavailableException e =
+                assertThrows(AiAnalysisClient.AiUnavailableException.class,
+                        () -> client.analyze(request(), "c_test"));
+        assertEquals(AiAnalysisClient.AiUnavailableException.Kind.TIMED_OUT, e.kind());
+    }
+
+    @Test
+    void 서버_헤더_없는_5xx는_종전대로_도달한_장애다() {
+        server.expect(requestTo("http://ai.test/internal/v0/analyze"))
+                .andRespond(withStatus(HttpStatus.BAD_GATEWAY));
+
+        AiAnalysisClient.AiUnavailableException e =
+                assertThrows(AiAnalysisClient.AiUnavailableException.class,
+                        () -> client.analyze(request(), "c_test"));
+        assertEquals(AiAnalysisClient.AiUnavailableException.Kind.SERVER_ERROR, e.kind());
+    }
+
+    @Test
+    void AI가_직접_낸_5xx는_ALB를_거쳐도_도달한_장애다() {
+        // ALB가 프록시한 AI 응답은 uvicorn의 Server 헤더가 그대로 온다 - 분석 시간 초과 503(§4.1)이 여기다.
+        server.expect(requestTo("http://ai.test/internal/v0/analyze"))
+                .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE)
+                        .header("Server", "uvicorn")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body("{\"status\":\"FAILED\",\"detail\":\"분석 시간 초과\"}"));
+
+        AiAnalysisClient.AiUnavailableException e =
+                assertThrows(AiAnalysisClient.AiUnavailableException.class,
+                        () -> client.analyze(request(), "c_test"));
+        assertEquals(AiAnalysisClient.AiUnavailableException.Kind.SERVER_ERROR, e.kind());
+    }
+
+    @Test
     void 타임아웃은_timedOut으로_구분된다() {
         server.expect(requestTo("http://ai.test/internal/v0/analyze"))
                 .andRespond(mockRequest -> {
                     throw new SocketTimeoutException("read timed out");
+                });
+
+        AiAnalysisClient.AiUnavailableException e =
+                assertThrows(AiAnalysisClient.AiUnavailableException.class,
+                        () -> client.analyze(request(), "c_test"));
+        assertEquals(AiAnalysisClient.AiUnavailableException.Kind.TIMED_OUT, e.kind());
+    }
+
+    @Test
+    void 연결_타임아웃은_미도달이라_timedOut이_아니다() {
+        // HttpConnectTimeoutException은 HttpTimeoutException의 하위지만 요청이 AI에 닿지 않은 것이다.
+        // 읽기 타임아웃은 재전송 없이 시도 예산에 드는 사유로 접으므로(KAN-172) 여기서 갈라야
+        // AI 교체 구간의 연결 실패가 재전송 없이 사용자 시도 상한을 깎지 않는다 (Codex astra 리뷰 P2).
+        server.expect(requestTo("http://ai.test/internal/v0/analyze"))
+                .andRespond(mockRequest -> {
+                    throw new HttpConnectTimeoutException("connect timed out");
+                });
+
+        AiAnalysisClient.AiUnavailableException e =
+                assertThrows(AiAnalysisClient.AiUnavailableException.class,
+                        () -> client.analyze(request(), "c_test"));
+        assertEquals(AiAnalysisClient.AiUnavailableException.Kind.UNREACHED, e.kind());
+    }
+
+    @Test
+    void 읽기_타임아웃은_JDK_HttpTimeoutException으로도_timedOut이다() {
+        server.expect(requestTo("http://ai.test/internal/v0/analyze"))
+                .andRespond(mockRequest -> {
+                    throw new HttpTimeoutException("request timed out");
                 });
 
         AiAnalysisClient.AiUnavailableException e =
@@ -343,6 +446,6 @@ class RestAiAnalysisClientTest {
 
     private static AnalysisDispatcher.AnalysisRequest request(String scriptKey) {
         return new AnalysisDispatcher.AnalysisRequest("a_client-test", "s_client", "v1", scriptKey,
-                "gn-2026.08.1", "sv-0.3", 3000, new byte[] {82, 73, 70, 70});
+                "gn-2026.08.1", "sv-0.3", null, 3000, new byte[] {82, 73, 70, 70});
     }
 }

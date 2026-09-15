@@ -35,8 +35,16 @@ ios/
 `WKScriptMessageHandler`는 단방향·비동기다.
 
 그래서 브리지 객체 자체를 JS로 적어 `WKUserScript`(`.atDocumentStart`, 메인 프레임 전용)로 심는다
-(`Accentury/Web/BridgeUserScript.swift`). 값을 돌려주는 둘은 JS 안의 값을 읽고, 상태를 바꾸는 넷은
-`postMessage`로 네이티브에 넘긴다.
+(`Accentury/Web/BridgeUserScript.swift`). 값을 돌려주는 셋(`getContractVersion`·`getSessionToken`·
+`getAdConsent`)은 JS 안의 값을 읽고, 상태를 바꾸는 여덟은 `postMessage`로 네이티브에 넘긴다. 그중
+`logEvent`(KAN-33)만 인자가 둘이라 봉투가 객체다 — 계측 배선 전체는 `docs/wiki/analytics.md`에 있다.
+광고 동의 `getAdConsent`(KAN-196)는 토큰과 같은 심·같은 push 규칙으로 문서에 미리 밀어 둔다 —
+`docs/wiki/ads-admob.md` §7.4.
+
+**AdSupport·AppTrackingTransparency 링크 (KAN-196부터).** KAN-33에서 `FirebaseAnalyticsCore`를 골라
+"IDFA 코드가 바이너리에 들어오지 않는다"고 적어 둔 것은 AdMob SDK가 들어오면서 사실이 아니게 됐다 — 광고
+SDK가 두 프레임워크를 자기 경로로 링크한다. Core product는 그대로다(계측이 IDFA를 안 읽는다는 보장은
+유지). `ads-admob.md` §7.1.
 
 ### 보안 등가성
 
@@ -271,10 +279,10 @@ nil로 들고, 그러면 문항 결과 주입(`deliverResults`)이 매번 "받�
 
 - **외부 링크** — 여는 길이 아직 없다. 안드로이드가 "생기면 Custom Tabs로"라고 적어 둔 자리이고
   iOS의 대응물은 `SFSafariViewController`다.
-- **CI에 ios 잡** — `.github/workflows/test.yml`은 워크플로 레벨 `paths`가 아니라 job 레벨 `if` +
-  `dorny/paths-filter`로 경로를 가른다(KAN-37). 그래서 필터에 `ios: ['ios/**']` 한 칸을 더하고
-  `runs-on: macos-*` 잡을 붙이면 required check를 잠그지 않고 들어간다 — 스킵된 job이 통과로
-  취급되는 구조라서다.
+- **CI에 ios 잡** — 2026-09-08 완료. `.github/workflows/test.yml`의 `ios-test`(macos-26 러너)가
+  `ios/**` 변경 PR에서 `xcodebuild ... test`를 돌린다. 들어갈 수 있었던 이유는 이 워크플로가
+  워크플로 레벨 `paths`가 아니라 job 레벨 `if` + `dorny/paths-filter`로 경로를 가르기 때문이다
+  (KAN-37) — 스킵된 job이 통과로 취급돼 required check를 잠그지 않는다. 아직 required는 아니다.
 - **실기기·TestFlight** — §7 참고.
 
 ## 참고

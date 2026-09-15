@@ -121,7 +121,9 @@ final class TestFlowModel: ObservableObject {
         buildWebUrl(
             base: AppConfig.webURL,
             appVersionName: AppConfig.appVersionName,
-            testEntry: startRequested ? session.map { TestEntry(testVersion: $0.testVersion, sessionId: $0.sessionId) } : nil,
+            testEntry: startRequested
+                ? session.map { TestEntry(testVersion: $0.testVersion, voiceSet: $0.voiceSet, sessionId: $0.sessionId) }
+                : nil,
             bridgeVersion: Self.urlBridgeVersion,
             /*
              * 링크가 실어 온 계측 코드 (KAN-32). 응시 도중에 새 링크가 들어오면 이 URL 문자열이
@@ -509,7 +511,8 @@ final class TestFlowModel: ObservableObject {
     private static func describe(_ result: SessionResult) -> String {
         switch result {
         case .created(let session):
-            return "created sessionId=\(session.sessionId) testVersion=\(session.testVersion) scoreVersion=\(session.scoreVersion)"
+            return "created sessionId=\(session.sessionId) testVersion=\(session.testVersion)"
+                + " voiceSet=\(session.voiceSet) scoreVersion=\(session.scoreVersion)"
         case .rejected(let code, _, let retryable, let retryAfterMs):
             // message는 사용자용 한국어 문구라 찍지 않는다 — 코드가 진단에 쓰는 값이다.
             return "rejected code=\(code ?? "(none)") retryable=\(retryable) retryAfterMs=\(retryAfterMs.map(String.init) ?? "(none)")"
@@ -548,6 +551,9 @@ struct DebugStubSessionClient: SessionClient {
                 sessionToken: "st_debug_stub",
                 // 웹 테스트가 쓰는 정의 버전 표기와 같은 꼴 (web/src/App.test.tsx).
                 testVersion: "gn-2026.08.1",
+                // 서버가 고르는 값이지만 이 스텁은 서버를 타지 않는다 (KAN-205). 세트 1이면
+                // 진입 URL이 세트를 싣는지까지는 확인된다.
+                voiceSet: 1,
                 scoreVersion: "sv-debug",
                 expiresAt: "2099-01-01T00:00:00Z"
             )

@@ -122,6 +122,32 @@ class LogMaskingTest extends IntegrationTest {
     }
 
     @Test
+    void 카카오_웹훅_검증_키도_지운다() {
+        // 카카오가 웹훅마다 싣는 앱 Admin 키 (KAN-164). 새면 우리 서버만이 아니라 카카오 관리 API까지
+        // 열리는 값이라 헤더, 값만 찍힌 경우, 설정 키, 바인딩 필드, 환경 변수 전부를 본다.
+        String masked = LogMasking.mask("Authorization: KakaoAK 0123456789abcdef0123456789abcdef 로 인증 실패");
+        assertFalse(masked.contains("0123456789abcdef"), masked);
+        assertTrue(masked.contains("***"), masked);
+        assertEquals("KakaoAK ***",
+                LogMasking.mask("KakaoAK 0123456789abcdef0123456789abcdef"),
+                "헤더 이름 없이 값만 찍힌 경우");
+        assertEquals("accentury.share.kakao-admin-key=***",
+                LogMasking.mask("accentury.share.kakao-admin-key=0123456789abcdef0123456789abcdef"),
+                "설정 키로 찍힌 경우");
+        assertEquals("""
+                {"kakaoAdminKey": "***"}""",
+                LogMasking.mask("""
+                        {"kakaoAdminKey": "0123456789abcdef0123456789abcdef"}"""),
+                "바인딩된 필드로 찍힌 경우");
+        assertEquals("ACCENTURY_SHARE_KAKAOADMINKEY=***",
+                LogMasking.mask("ACCENTURY_SHARE_KAKAOADMINKEY=0123456789abcdef0123456789abcdef"),
+                "환경 변수(대시 제거형)로 찍힌 경우");
+        assertEquals("ACCENTURY_SHARE_KAKAO_ADMIN_KEY=***",
+                LogMasking.mask("ACCENTURY_SHARE_KAKAO_ADMIN_KEY=0123456789abcdef0123456789abcdef"),
+                "환경 변수(밑줄 분리형)로 찍힌 경우");
+    }
+
+    @Test
     void 값에_공백이_있어도_따옴표_끝까지_지운다() {
         // 공백에서 끊으면 뒷부분이 로그에 그대로 남고, 열린 따옴표만 닫혀 JSON 한 줄이
         // 깨진다 - 마스킹이 유출과 로그 수집 실패를 동시에 만드는 자리다.
@@ -184,6 +210,29 @@ class LogMaskingTest extends IntegrationTest {
         String line = "완료 판정 missingItems=[v5, w4] pendingItems=[v4] scores=[78, 60, 72]";
 
         assertEquals(line, LogMasking.mask(line));
+    }
+
+    @Test
+    void 임시_디렉터리_아래의_경로를_지운다() {
+        // 정상 경로에서는 임시파일이 생기지 않지만(메모리 전용 불변식, KAN-27), 그 불변식이
+        // 깨졌을 때 프레임워크가 예외 메시지에 스풀 경로를 실어 나른다 (KAN-38 AC).
+        String masked = LogMasking.mask(
+                "스풀 실패 path=/var/folders/T/accentury-voice-tmp/upload_9f1c.tmp");
+
+        assertFalse(masked.contains("upload_9f1c"), masked);
+        assertTrue(masked.contains("/var/folders/T/accentury-voice-tmp/***"), masked);
+    }
+
+    @Test
+    void 임시_디렉터리_밖의_임시파일_이름도_지운다() {
+        // 전용 디렉터리 규칙은 디렉터리 이름을 문자열로 안다 - temp-dir를 옮기거나 공용 임시
+        // 디렉터리로 샌 파일은 그 규칙에 안 걸리므로 파일명 규칙이 한 겹 더 있다.
+        // audio-*.wav는 AI 서버의 임시 오디오라(ai/app/tempstore.py) AI 오류가 backend
+        // 로그로 옮겨 실릴 때 나타난다.
+        assertEquals("스풀 실패 path=/tmp/***",
+                LogMasking.mask("스풀 실패 path=/tmp/upload_3b7e21a0.tmp"));
+        assertEquals("AI 오류 detail=***",
+                LogMasking.mask("AI 오류 detail=audio-7fk2p9.wav"));
     }
 
     @Test

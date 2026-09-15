@@ -3,8 +3,8 @@
 여기서 지키는 것은 둘이다.
 
 1. **라우트는 엔진 구현을 모른다** - 프로토콜만 맞춘 가짜 엔진을 꽂아도 라우트 코드를
-   한 줄도 고치지 않고 응답이 그대로 바뀐다. 실모델(KAN-22)이 들어올 때 고쳐야 할 파일이
-   엔진 하나로 묶인다는 뜻이다.
+   한 줄도 고치지 않고 응답이 그대로 바뀐다. 실모델(KAN-22)이 들어올 때 라우트를 한 줄도
+   고치지 않은 것이 그 증거다.
 2. **보장은 엔진 종류와 무관하다** - 무잔존(KAN-27), 추론 상한, 오디오 상한(413)은
    라우트에 있으므로 어떤 엔진을 꽂아도 같이 걸린다.
 """
@@ -25,13 +25,14 @@ from app.engine import (
     MAX_QUALITY_CODE_LENGTH,
     STATUS_FAILED,
     STATUS_OK,
+    TRACK1_ENGINE,
     AnalysisOutcome,
     AnalysisRequest,
-    StubEngine,
     create_engine,
 )
 from app.main import create_app
-from tests.conftest import FakeEngine, meta, post, residue
+from app.track1 import LOADING_MODEL_VERSION, Track1Engine
+from tests.conftest import FAKE_MODEL_VERSION, FakeEngine, meta, post, residue
 
 
 def app_with(settings: Settings, engine) -> TestClient:
@@ -95,9 +96,9 @@ def test_가짜_엔진을_꽂아도_라우트를_고치지_않는다(settings):
 def test_modelVersion은_설정이_아니라_엔진이_보고한다(client):
     body = post(client).json()
 
-    assert body["modelVersion"] == StubEngine.MODEL_VERSION == "stub-0.1"
+    assert body["modelVersion"] == FAKE_MODEL_VERSION
     # 설정으로 덮어쓸 수 있게 두면 배포가 부른 이름과 실제 도는 것이 어긋나도 아무도 모른다
-    assert not hasattr(Settings(), "stub_model_version")
+    assert not hasattr(Settings(), "model_version")
 
 
 def test_판정_실패_봉투는_엔진이_준_사유를_그대로_싣는다(settings):
@@ -194,39 +195,21 @@ def test_본문_상한은_엔진과_무관하게_걸린다(tmp_path):
     assert engine.calls == 0
 
 
-def test_기본_설정은_스텁_엔진을_만든다():
+def test_기본_설정은_실모델_엔진을_만든다():
+    # 만들기만 한다 - 가중치 적재는 warm_up에서 워커 프로세스가 하므로, 여기서 전달본
+    # 모듈이 없는 개발 기계에서도 이 검사는 돈다 (KAN-22)
     engine = create_engine(Settings())
 
-    assert isinstance(engine, StubEngine)
-    assert engine.model_version == "stub-0.1"
+    assert isinstance(engine, Track1Engine)
+    assert Settings().analysis_engine == TRACK1_ENGINE
+    # 적재 전에도 자리는 비지 않는다 - 앱이 기동 시 이 값을 검사한다
+    assert engine.model_version == LOADING_MODEL_VERSION
 
 
 def test_모르는_엔진_이름은_기동을_세운다():
-    # 스텁으로 조용히 흘러가면 실모델을 띄웠다고 믿는 환경이 고정 점수를 내보낸다
+    # 아무거나 만들어 흘려보내면 무엇을 띄웠다고 믿는 환경이 다른 것을 돌린다
     with pytest.raises(ValueError, match="알 수 없는 분석 엔진"):
-        create_engine(Settings(analysis_engine="real"))
-
-
-def test_고정_모드의_스텁은_설정한_점수와_실패_문항을_따른다(tmp_path):
-    # 모드를 명시한다 - 기본값은 분산이라 점수가 correlationId를 따른다 (KAN-136)
-    settings = Settings(
-        temp_dir=tmp_path / "ai-tmp",
-        stub_delay_ms=0,
-        stub_score_mode=StubEngine.SCORE_MODE_FIXED,
-        stub_intonation_score=61,
-        stub_fail_item="v2",
-    )
-
-    with TestClient(create_app(settings)) as client:
-        정상 = post(client, item_id="v1").json()
-        실패 = post(client, item_id="v2")
-
-    assert 정상["intonationScore"] == 61
-    assert 정상["confidence"] == 1.0
-    assert 정상["quality"]["code"] == "OK"
-    assert 정상["segments"] == []
-    assert 실패.status_code == 422
-    assert 실패.json()["quality"]["code"] == "AUDIO_TOO_QUIET"
+        create_engine(Settings(analysis_engine="stub"))
 
 
 def test_meta의_타입이_어긋나도_엔진_입력이_무너지지_않는다(tmp_path):
@@ -365,7 +348,7 @@ def test_modelVersion을_보고하지_않는_엔진은_기동을_세운다(setti
 def test_엔진_이름을_환경_변수에서_읽는다():
     # create_engine을 Settings로 직접 시험하면 환경 변수 이름 오타가 전부 통과한다
     assert Settings.from_env({"ACCENTURY_AI_ANALYSIS_ENGINE": "real"}).analysis_engine == "real"
-    assert Settings.from_env({}).analysis_engine == "stub"
+    assert Settings.from_env({}).analysis_engine == TRACK1_ENGINE
 
 
 class 직렬화불가:

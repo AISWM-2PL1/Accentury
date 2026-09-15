@@ -57,11 +57,16 @@
   --color-prompt-card-muted: #6b6459;
   --color-prompt-card-badge: #f3ecd9;
   --color-guide-curve: #1c1a17;
-  --color-user-curve: #1c1a17;
+  /* 내 억양 곡선만 포인트 컬러다. 가이드는 잉크 점선 그대로라 선 모양도 함께 가른다 (정본 §7) */
+  --color-user-curve: #a8503a;
   --color-curve-lane-surface: #f3ecd9;
   --color-hero-start: #f3ecd9;
   --color-hero-end: #f3ecd9;
   --color-curve-lane-border: #1c1a17;
+  /* 포인트 컬러 — 종이에 얹은 두 번째 잉크다 (정본 §7). 지금 눌러야 할 것과 지금 여기를
+     짚는 자리에만 쓴다. 정오답·오류에는 쓰지 않는다 */
+  --color-point: #a8503a;
+  --color-point-foreground: #f3ecd9;
 
   /* ── 타이포 (정본 §3) ──
      본문은 시스템 산세리프다. Android 시스템 폰트가 Noto Sans CJK KR이라 네이티브의
@@ -81,6 +86,7 @@
      본문 글꼴로 적으면 "지금 몇 초"가 문단의 한 낱말처럼 읽힌다. 앱은 M3의 titleSmall 슬롯이
      이 값을 든다 (Type.kt) */
   --text-timer: 16px;
+  --text-intro-hero: 56px;
 
   /* 굵기는 둘뿐이다 (KAN-161 2단계). Jua는 굵기 하나짜리 폰트라 700·900을 주면 브라우저가
      합성 볼드를 만들어 획이 뭉갠다 — 제목·대사·등급은 전부 400이다. 본문에서 무게를 주는
@@ -125,6 +131,7 @@
   /* 진행 도트 하나의 두께. 막대와 값은 같지만 뜻이 다르다 — 저쪽은 그릇, 이쪽은 칸 하나다 */
   --progress-dot-height: 8px;
   --hero-icon-size: 112px;
+  --intro-emphasis-line-width: 7px;
   /* F0 곡선 레인 하나. 앱 Dimens.curveLaneHeight와 같은 값이다 (design-tokens.md) —
      시안(72px)보다 키웠다: 실제 기기에서는 아래가 비어 곡선이 납작했다 */
   --curve-lane-height: 120px;
@@ -149,6 +156,33 @@
   --duration-fast: 150ms;
   --duration-base: 300ms;
   --duration-reveal: 600ms;
+}
+
+/*
+ * 브라우저 단독 실행에서만 화면 위쪽 여백을 좌우와 같은 24로 내린다 (KAN-199 #3).
+ *
+ * 64는 **앱 기준값**이다 — 앱은 화면 꼭대기부터가 우리 자리라 첫 요소를 그만큼 내려야 그림과
+ * 제목이 세로 가운데에 앉는다(정본 §4). 브라우저에서는 그 위를 이미 브라우저 크롬이 차지하고
+ * 있어서 같은 값이 크롬 아래에 한 번 더 얹히고, 뷰포트는 그 크롬만큼 짧아진 상태다.
+ *
+ * 실측(2026-09-09, 폭 393px 고정, 문항 화면):
+ *
+ * | 런타임 | 뷰포트 | 문서 높이 | |
+ * |---|---|---|---|
+ * | iOS Safari | 659 | 732 | 넘침 73 |
+ * | Android Chrome | 719 | 732 | 넘침 13 |
+ * | iOS 앱(WKWebView) | 812 | 812 | 들어감 |
+ * | Android 앱(WebView) | 803 | 803 | 들어감 |
+ *
+ * **넘치는 것은 브라우저뿐이다.** 그 화면에서 상단 64는 배치가 아니라 손실이라 24로 내려
+ * 40을 돌려준다. 남는 넘침은 스크롤이 받는다 — 조작부가 `position: sticky`로 바닥에 붙어
+ * 있어(`.item-screen__footer`) 넘쳐도 [녹음]이 화면 밖으로 나가지 않는다.
+ *
+ * 판정은 `ui/runtime.ts`가 렌더 전에 <html data-runtime>으로 심는다. 값이 없으면 앱 쪽
+ * 64가 그대로 선다 — 판정이 실패해도 앱 화면이 먼저 지켜지는 방향이다.
+ */
+:root[data-runtime='browser'] {
+  --screen-padding-top: var(--space-6);
 }
 
 /*

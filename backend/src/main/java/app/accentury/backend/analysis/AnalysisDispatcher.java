@@ -97,6 +97,9 @@ public interface AnalysisDispatcher {
      * @param scriptKey 정의의 실모델 참조 키 ("1|5" 형식, KAN-182) - 실모델이 문장을 찾는 값이다.
      *                  정의에 없는 문항(더미 정의)은 null이고 meta에서 생략된다. 스텁 엔진은
      *                  무시한다. 실모델 어댑터가 이 키로 문장을 찾는 부분은 KAN-22다.
+     * @param region    세션이 받은 출신 지역 코드 (KAN-201, {@code Region}) - AI에는 가지 않고 staging의
+     *                  학습 데이터 저장({@code TrainingSampleStore})만 읽는다. 보내지 않은 세션은 null이고
+     *                  저장 쪽이 UNKNOWN으로 쓴다.
      * @param audio     WAV 원본 - 클라이언트 업로드를 그대로 패스스루한다 (§4.1).
      *                  소유권은 {@code dispatch()}로 넘어간다 (위 계약 참조).
      */
@@ -107,6 +110,7 @@ public interface AnalysisDispatcher {
             @Nullable String scriptKey,
             String testVersion,
             String scoreVersion,
+            @Nullable String region,
             long durationMs,
             byte[] audio) {
 

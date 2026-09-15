@@ -126,3 +126,84 @@ resource "aws_ssm_parameter" "ai_token_ai" {
   type  = "SecureString"
   value = random_password.ai_internal_token.result
 }
+
+# 실모델 기준 분석 시간 예산 (KAN-172 확정, 2026-09-08. KAN-22가 임시로 올렸던 값을 KAN-57의
+# c7i.xlarge 실측으로 다시 정했다 - bf16 + MFA align_one에서 1건 P50 10.1초, P95 11.1초).
+#
+# 값은 코드 기본값(application.yml, ai/app/config.py)과 같다. SSM에 두는 이유는 실측이 바뀌었을 때
+# 이미지 재빌드 없이 환경별로 조정하기 위해서다.
+#
+# 값 사이의 관계는 backend가 기동 시점에 강제한다 (AnalysisDispatchConfig).
+#
+#   processing-timeout > ai-timeout x (재시도 2 + 1) + 백오프 0.9초   -> 300 > 255.9
+#   shutdown-budget(90초, 코드 기본값) > ai-timeout                    -> 90 > 85
+#   ai_analysis_timeout_seconds < ai-timeout                           -> 75 < 85
+#   ai_analysis_timeout_seconds > 배포 중 태스크 6 x 1건 P95 11.1초     -> 75 > 66.6
+#   ai_analysis_timeout_seconds > 워커 재적재 31초 + 1건 P95 11.1초     -> 75 > 42.1
+#
+# dispatch-concurrency 1이 이 조합의 핵심이다. AI는 추론을 한 번에 하나만 돌리므로(단일 lock,
+# 8GB에서 2건이면 OOM - KAN-57) 여럿을 동시에 보내면 뒤의 것은 앞의 추론이 끝나기를 AI 안에서
+# 기다린다. AI 상한은 그 대기와 워커 재적재 대기까지 포함하므로 롤링 배포 중 태스크가 2배(3 x 200%
+# = 6, KAN-168)로 겹친 경우와 워커가 죽은 뒤의 재적재를 덮어야 한다 - 짧으면 이미 추론 중인 요청을
+# 끊어 멀쩡한 워커를 죽이고, 재전송이 재적재를 기다리다 또 끊겨 새 워커를 또 죽인다 (Codex 리뷰 P1).
+# 값은 KAN-22가 staging 검증용으로 올렸던 임시값과 같다 - 근거가 붙어 정식값이 됐다.
+resource "aws_ssm_parameter" "analysis_ai_timeout" {
+  name  = "${var.ssm_prefix}/ACCENTURY_ANALYSIS_AITIMEOUT"
+  type  = "String"
+  value = var.analysis_ai_timeout
+}
+
+resource "aws_ssm_parameter" "analysis_processing_timeout" {
+  name  = "${var.ssm_prefix}/ACCENTURY_ANALYSIS_PROCESSINGTIMEOUT"
+  type  = "String"
+  value = var.analysis_processing_timeout
+}
+
+resource "aws_ssm_parameter" "analysis_dispatch_concurrency" {
+  name  = "${var.ssm_prefix}/ACCENTURY_ANALYSIS_DISPATCHCONCURRENCY"
+  type  = "String"
+  value = tostring(var.analysis_dispatch_concurrency)
+}
+
+# AI 자신의 분석 상한 (초). backend의 읽기 타임아웃보다 짧게 둔다 - 그래야 AI가 스스로 끊고
+# 503을 돌려주고(BE는 일시 장애로 보고 재전송한다) 멈춘 추론이 임시파일을 붙들지 않는다.
+# 반대로 두면 BE가 먼저 포기하는데 AI는 계속 추론해 GPU 슬롯과 임시파일이 그만큼 더 남는다.
+resource "aws_ssm_parameter" "ai_analysis_timeout_seconds" {
+  name  = "${var.ssm_prefix}/ai/ACCENTURY_AI_ANALYSIS_TIMEOUT_SECONDS"
+  type  = "String"
+  value = tostring(var.ai_analysis_timeout_seconds)
+}
+
+# 카카오톡 공유 웹훅의 검증 키 (KAN-164). 카카오가 웹훅마다 Authorization: KakaoAK {앱 Admin 키}로 싣고,
+# backend는 그 값이 이 파라미터와 같을 때만 전송 완료로 센다. 값은 우리가 발급하는 난수가 아니라
+# 카카오디벨로퍼스 콘솔([앱 설정] > [앱 키] > Admin 키)에서 읽어 오는 것이라 Terraform이 만들 수 없다.
+# 그래서 자리만 만들고 값은 밖에서 넣는다 - 첫 apply 뒤에 한 번:
+#   aws ssm put-parameter --overwrite --type SecureString --name /accentury/{env}/ACCENTURY_SHARE_KAKAOADMINKEY --value '<Admin 키>'
+# 그 다음 backend 태스크를 새로 띄운다 (secrets는 태스크 시작 시 한 번 읽힌다, README "카카오 공유 웹훅" 절).
+# 자리 표시 값으로 뜬 backend는 웹훅을 전부 401로 거부한다 - backend가 이 리터럴을 키로 인정하지 않기 때문이고
+# (KakaoWebhookAuth.PLACEHOLDER, SsmEnvironmentBindingTest가 대조), 그래서 카운트가 새지도 부풀지도 않는다.
+# 두 환경이 같은 카카오 앱을 쓰므로 값도 같다.
+#
+# value가 아니라 value_wo(write-only)다 (Codex sol 리뷰 P2). value로 두고 ignore_changes를 걸면 갱신 diff만
+# 억제될 뿐 refresh가 실제 값을 읽어 state에 평문으로 남긴다 - 손으로 넣은 Admin 키가 state 읽는 쪽에
+# 노출되는 자리다. write-only 인자는 provider가 read 때 value를 state에 두지 않고(has_value_wo만 남는다)
+# 밖에서 바꾼 값과의 drift도 보지 않는다. 자리 표시 값을 다시 쓰게 하려면 value_wo_version을 올린다.
+resource "aws_ssm_parameter" "kakao_admin_key" {
+  name             = "${var.ssm_prefix}/ACCENTURY_SHARE_KAKAOADMINKEY"
+  type             = "SecureString"
+  value_wo         = "unset-put-parameter-after-apply"
+  value_wo_version = 1
+}
+
+# ---- staging 전용 학습 데이터 S3 (KAN-201) ----
+
+# 값이 있는 환경에만 파라미터가 생긴다 - prod 태스크 정의에는 이 환경 변수가 아예 없어 backend가 S3 클라이언트도
+# 저장 빈도 만들지 않는다 (TrainingConfig의 조건이 이 프로퍼티다). 두 환경이 같은 deploy 프로파일을 쓰므로
+# 환경별 yml 없이 이 파라미터 하나가 스위치다. 이름은 Spring 프로퍼티 규칙(accentury.training.bucket)이다.
+resource "aws_ssm_parameter" "training_bucket" {
+  count = var.training_bucket_name == null ? 0 : 1
+
+  name  = "${var.ssm_prefix}/ACCENTURY_TRAINING_BUCKET"
+  type  = "String"
+  value = var.training_bucket_name
+}

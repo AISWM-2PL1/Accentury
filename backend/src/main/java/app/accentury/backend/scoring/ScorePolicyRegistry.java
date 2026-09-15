@@ -6,6 +6,7 @@ import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.stereotype.Component;
 import tools.jackson.core.JacksonException;
+import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
@@ -51,6 +52,13 @@ public class ScorePolicyRegistry {
      * 발행 시점에 거른다 (Codex sol 리뷰 P2).
      */
     static final int MAX_WEIGHT = 100;
+
+    /**
+     * 억양 전처리의 단조성을 전수 검사할 원점수 합의 범위 - 음성 문항 수 x 100. 5는 세션의 음성
+     * 문항 수다 ({@code VoiceSets.SET_SIZE}, 문항 구성 확정 2026-07-27). 계수 규칙 자체는
+     * seed에만 있고 이 값은 규칙이 아니라 검사 범위다 (KAN-200 AC - 합 0~500 전 구간).
+     */
+    static final int VOICE_ITEM_COUNT = 5;
 
     private final Map<String, ScorePolicy> published = new HashMap<>();
 
@@ -99,10 +107,16 @@ public class ScorePolicyRegistry {
     /**
      * seed 하나를 읽는다. {@link JacksonException}은 unchecked라 함께 잡지 않으면
      * 파일 정보 없이 지나친다 - TestDefinitionRegistry와 같은 래핑이다.
+     * <p>
+     * 모르는 키는 발행 거부다. 전처리 규칙(KAN-200)처럼 optional인 필드는 키 오타
+     * ({@code intonationPreProcess})가 나면 "규칙 없음"으로 조용히 읽혀 계수 1로 채점되므로,
+     * 기본값(무시) 대신 실패로 만들어 기동 시점에 잡는다 (Claude 검증자 리뷰 P3).
      */
-    private static ScorePolicy read(ObjectMapper objectMapper, Resource seed) {
+    static ScorePolicy read(ObjectMapper objectMapper, Resource seed) {
         try {
-            return objectMapper.readValue(seed.getInputStream(), ScorePolicy.class);
+            return objectMapper.readerFor(ScorePolicy.class)
+                    .with(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                    .readValue(seed.getInputStream());
         } catch (JacksonException | IOException e) {
             throw new IllegalStateException("점수 정책 seed를 읽을 수 없다: " + seed.getDescription(), e);
         }
@@ -119,6 +133,7 @@ public class ScorePolicyRegistry {
      * 발행 전 검증. 실패는 {@link IllegalStateException} - 서버 기동 중단.
      * 등급 표가 0~100 전 구간을 빈틈없이 덮고 경계가 단조 증가함을 강제한다 -
      * 이 검증이 통과한 정책에서는 어떤 종합 점수든 등급이 결정적으로 나온다 (KAN-21 AC).
+     * 억양 전처리 규칙이 있으면(sv-0.4) 계수 범위와 단조성도 함께 강제한다 (KAN-200).
      */
     static void validate(ScorePolicy policy) {
         require(hasText(policy.scoreVersion()), "scoreVersion이 비어 있다");
@@ -148,6 +163,40 @@ public class ScorePolicyRegistry {
                         "minScore는 순증가여야 한다: " + tier.code());
             }
             require(tier.minScore() <= 100, "minScore가 점수 범위(0~100)를 벗어난다: " + tier.code());
+        }
+
+        if (policy.intonationPreprocess() != null) {
+            validate(policy.intonationPreprocess());
+        }
+    }
+
+    /**
+     * 억양 전처리 규칙의 발행 검증 (KAN-200 AC). 계수가 0~1 밖으로 나가거나 전처리 억양 점수가
+     * 원점수 합에 대해 내려가는 규칙은 기동 실패다 - 단조성이 깨지면 "억양이 오르면 종합과
+     * 등급이 내려가지 않는다"(KAN-21 AC)가 seed 하나로 무너진다.
+     */
+    private static void validate(ScorePolicy.IntonationPreprocess rule) {
+        require(rule.bandWidth() > 0 && 100 % rule.bandWidth() == 0,
+                "intonationPreprocess.bandWidth는 100의 약수(양수)여야 한다: " + rule.bandWidth());
+        require(rule.coefficientStepPercent() > 0,
+                "intonationPreprocess.coefficientStepPercent는 양수여야 한다: " + rule.coefficientStepPercent());
+        // 구간 0(합 0)부터 최상위 구간까지 계수가 0~100% 안에 있어야 한다 - 최상위는 정의상 100이고,
+        // 최하위 쪽이 음수로 내려가면 원점수가 있는데 억양 점수가 음수가 된다.
+        for (int band = 0; band <= rule.bandCount(); band++) {
+            int percent = rule.coefficientPercentOfBand(band);
+            require(percent >= 0 && percent <= 100,
+                    "intonationPreprocess 계수가 0~1 밖이다: 구간 " + band + " = " + percent + "%");
+        }
+        // 합 0~500 전 구간 전수 검사 - 분모(문항 수 x 100)가 같으므로 분자 합 x 계수%만 비교한다.
+        // 위 범위 검사를 통과한 (폭, 감소 폭) 규칙은 계수가 구간마다 비감소라 여기서 걸릴 수
+        // 없다 - 이 검사는 티켓 AC의 이중 안전장치이고, 규칙 표현이 늘어나 계수가 내려갈 수
+        // 있게 되는 날 처음으로 일을 한다 (Claude 검증자 리뷰 P3).
+        long previous = 0;
+        for (int sum = 1; sum <= VOICE_ITEM_COUNT * 100; sum++) {
+            long numerator = (long) sum * rule.coefficientPercent(sum, VOICE_ITEM_COUNT);
+            require(numerator >= previous,
+                    "intonationPreprocess가 단조 비감소가 아니다: 합 " + (sum - 1) + " → " + sum);
+            previous = numerator;
         }
     }
 

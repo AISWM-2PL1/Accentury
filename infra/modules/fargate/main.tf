@@ -172,6 +172,19 @@ data "aws_iam_policy_document" "task" {
       values   = [var.metric_namespace]
     }
   }
+
+  # staging 전용 학습 데이터 버킷에 음성 WAV와 메타 JSON을 쓴다 (KAN-201, S3TrainingSampleStore). 버킷 하나의
+  # 객체에 PutObject만이다 - 되읽기(Get), 나열(List), 삭제(Delete)가 없어 이 태스크가 뚫려도 모인 음성을 꺼내거나
+  # 지우지 못한다. 변수가 null인 prod에는 이 문장 자체가 없다.
+  dynamic "statement" {
+    for_each = var.training_bucket_arn == null ? [] : [var.training_bucket_arn]
+
+    content {
+      sid       = "PutTrainingSamples"
+      actions   = ["s3:PutObject"]
+      resources = ["${statement.value}/*"]
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "task" {

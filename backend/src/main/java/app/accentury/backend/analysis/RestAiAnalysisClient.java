@@ -19,7 +19,9 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
 import java.io.InputStream;
+import java.util.Locale;
 import java.net.SocketTimeoutException;
+import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpTimeoutException;
 
 /**
@@ -88,7 +90,8 @@ class RestAiAnalysisClient implements AiAnalysisClient {
                     .contentType(MediaType.MULTIPART_FORM_DATA)
                     .body(body)
                     .exchange((httpRequest, httpResponse) ->
-                            map(request, httpResponse.getStatusCode().value(), httpResponse.getBody()));
+                            map(request, httpResponse.getStatusCode().value(), httpResponse.getHeaders(),
+                                    httpResponse.getBody()));
         } catch (ResourceAccessException e) {
             throw new AiUnavailableException("AI 호출 실패: " + e.getMessage(),
                     isTimeout(e) ? AiUnavailableException.Kind.TIMED_OUT
@@ -137,9 +140,33 @@ class RestAiAnalysisClient implements AiAnalysisClient {
         return new HttpEntity<>(content, headers);
     }
 
-    private Outcome map(AnalysisDispatcher.AnalysisRequest request, int statusCode,
+    /**
+     * AI 앞의 내부 ALB(KAN-201)가 스스로 만든 오류 응답의 표식. ALB가 프록시한 AI 응답은 uvicorn의 Server 헤더를
+     * 그대로 실어 오고, 대상 그룹에 healthy 대상이 없거나(인스턴스 교체, reload 중) 대상이 연결을 거부한 502와
+     * 503, 대상이 idle timeout 안에 답하지 못한 504만 ALB 자신의 서명(awselb/2.0)으로 온다. 헤더 이름은 대소문자를
+     * 가리지 않고 값은 소문자로 비교한다.
+     */
+    static final String ALB_SERVER_PREFIX = "awselb";
+
+    private Outcome map(AnalysisDispatcher.AnalysisRequest request, int statusCode, HttpHeaders headers,
                         InputStream responseBody) {
         if (statusCode >= 500) {
+            if (fromLoadBalancer(headers)) {
+                if (statusCode == HttpStatus.GATEWAY_TIMEOUT.value()) {
+                    // ALB의 504는 대상이 idle timeout 안에 답하지 못한 것이다 - 요청은 AI에 닿았고 추론이 아직 돌고
+                    // 있을 수 있다. backend 읽기 타임아웃과 같은 성격이라 같은 WAV를 다시 보내지 않는다 (KAN-172).
+                    // 정상 설정(ALB idle 90초 > ai-timeout 85초)에서는 backend가 먼저 끊어 여기 오지 않지만,
+                    // ai-timeout은 SSM으로 런타임 조정이 가능해 뒤집힐 수 있다 (PR #105 리뷰 P2).
+                    throw new AiUnavailableException("AI 앞 ALB의 504 (대상이 idle timeout 안에 응답하지 못함)",
+                            AiUnavailableException.Kind.TIMED_OUT, null);
+                }
+                // ALB가 대상 없이 스스로 만든 502/503은 AI에 닿지 못한 것이다 (KAN-201, Claude 검증자 리뷰 P2).
+                // KAN-36까지는 같은 구간(인스턴스 교체, reload)에서 연결 거부가 미도달로 접혔는데, ALB 뒤에서는
+                // 502/503으로 바뀌어 도달한 장애로 오인되면 재전송 예산 소진 뒤 INTERNAL_ERROR로 종결되고 사용자의
+                // 시도 상한(§2.5)이 서버 사정으로 깎인다. 회로에는 어느 쪽이든 실패로 센다.
+                throw new AiUnavailableException("AI 앞 ALB의 5xx 응답 (대상 없음 또는 연결 거부): " + statusCode,
+                        AiUnavailableException.Kind.UNREACHED, null);
+            }
             // 요청이 AI까지 갔다 - 미도달(UNREACHED)과 구분해야 시도 예산이 정확하다.
             throw new AiUnavailableException("AI 5xx 응답: " + statusCode,
                     AiUnavailableException.Kind.SERVER_ERROR, null);
@@ -229,9 +256,25 @@ class RestAiAnalysisClient implements AiAnalysisClient {
         }
     }
 
+    /**
+     * 읽기 타임아웃인가 - 요청이 AI에 닿아 추론이 시작됐을 수 있는 경우만 true다.
+     * <p>
+     * 연결 타임아웃({@link HttpConnectTimeoutException})은 {@link HttpTimeoutException}의 하위지만
+     * 요청이 AI에 닿지 않은 것이라 미도달(UNREACHED)이다 (Codex astra 리뷰 P2, KAN-172). 읽기
+     * 타임아웃은 재전송하지 않고 시도 예산에 넣는 사유로 접으므로, 연결 타임아웃까지 같이 접으면
+     * AI 교체 구간의 실패가 재전송 없이 사용자 시도 상한(§2.5)을 깎는다.
+     */
+    private static boolean fromLoadBalancer(HttpHeaders headers) {
+        String server = headers.getFirst("Server");
+        return server != null && server.toLowerCase(Locale.ROOT).startsWith(ALB_SERVER_PREFIX);
+    }
+
     private static boolean isTimeout(ResourceAccessException e) {
         // JDK HttpClient는 HttpTimeoutException, 고전 커넥터는 SocketTimeoutException을 던진다.
         for (Throwable cause = e.getCause(); cause != null; cause = cause.getCause()) {
+            if (cause instanceof HttpConnectTimeoutException) {
+                return false;
+            }
             if (cause instanceof SocketTimeoutException || cause instanceof HttpTimeoutException) {
                 return true;
             }

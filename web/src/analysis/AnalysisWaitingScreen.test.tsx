@@ -2,7 +2,30 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FetchLike } from '../progress/fetchTestDefinition'
 import type { VoiceItem } from '../progress/testDefinition'
-import { AnalysisWaitingScreen, type AnalysisWaitingScreenProps } from './AnalysisWaitingScreen'
+import {
+  AnalysisWaitingScreen,
+  retakeReason,
+  type AnalysisWaitingScreenProps,
+} from './AnalysisWaitingScreen'
+import type { RetestControl } from '../result/useRetest'
+import { REQUIRED_BRIDGE_VERSION } from '../bridge/bridge'
+import { resetAdSenseForTests } from '../ads/adsense'
+
+/**
+ * 재응시 상태 대역 (KAN-191). 기본값은 "누를 수 있고 아직 아무 일도 없었다" — 실제 브리지
+ * 왕복은 [useRetest]가 소유하므로 이 화면 테스트는 받은 값을 어디에 그리는지만 본다
+ * (결과 화면 테스트의 같은 이름 대역과 같은 판단이다).
+ */
+function retestControl(overrides: Partial<RetestControl> = {}): RetestControl {
+  return {
+    onRetest: vi.fn(),
+    disabled: false,
+    pending: false,
+    message: null,
+    retryAfterSec: 0,
+    ...overrides,
+  }
+}
 
 function voiceItem(seq: number): VoiceItem {
   return {
@@ -91,7 +114,25 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers()
+  delete window.gtag
+  delete window.AccenturyBridge
+  // 웹 배너 자리 (KAN-197). 빌드 변수·태그 설치 표식·큐가 테스트 사이에 새면 다음 케이스가
+  // 광고가 이미 선 판에서 시작한다
+  vi.unstubAllEnvs()
+  resetAdSenseForTests()
+  delete window.adsbygoogle
+  document.head.querySelectorAll('script[src*="adsbygoogle"]').forEach((el) => el.remove())
 })
+
+/** GA4 태그 자리의 대역 (KAN-33). 도착한 이벤트를 순서대로 모은다 */
+function stubGtag(): Record<string, unknown>[] {
+  const events: Record<string, unknown>[] = []
+  window.gtag = (...args: unknown[]) => {
+    if (args[0] !== 'event') return
+    events.push({ event: args[1] as string, ...(args[2] as Record<string, unknown>) })
+  }
+  return events
+}
 
 describe('진행률 — 분모는 10이다', () => {
   it('어휘 5문항을 완료로 세고 음성 완료를 더한다', async () => {
@@ -400,10 +441,12 @@ describe('멈춘 상태의 출구', () => {
     expect(screen.getByRole('button', { name: '다시 녹음' })).toBeInTheDocument()
   })
 
-  it('손댈 문항이 목록에 없으면 앱 재시작으로 안내한다 — 어휘 미제출이 그 경로다', async () => {
+  it('손댈 문항이 목록에 없으면 [다시 테스트하기]로 내보낸다 — 어휘 미제출이 그 경로다 (KAN-191)', async () => {
     const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const retest = retestControl()
     await renderScreen({
       onRetake: vi.fn(),
+      retest,
       // 음성은 전부 끝났는데 서버는 어휘(w5) 미제출로 422를 준다. 이 목록에 w5는 없다
       fetchImpl: fetchFor({
         analyses: () => jsonResponse(200, statusesBody(Array(5).fill('COMPLETED'))),
@@ -418,7 +461,17 @@ describe('멈춘 상태의 출구', () => {
     })
 
     expect(screen.getByText('여기서는 더 진행할 수 없어요')).toBeInTheDocument()
-    expect(screen.getByText('앱을 다시 시작해 테스트를 처음부터 진행해 주세요')).toBeInTheDocument()
+    /*
+     * 앱을 끄라고 하던 자리다 (KAN-191). 이 화면이 재응시 버튼을 들고 있으므로 사용자가
+     * 여기서 바로 처음부터 갈 수 있고, 브라우저 단독 실행에는 끌 앱도 없었다.
+     */
+    expect(screen.getByText('테스트를 처음부터 다시 진행해 주세요')).toBeInTheDocument()
+    expect(screen.queryByText('앱을 다시 시작해 테스트를 처음부터 진행해 주세요')).not.toBeInTheDocument()
+
+    // 안내만 있고 누를 것이 없던 막다른 길에 출구가 생겼다 — 결과 화면과 같은 벌이다
+    fireEvent.click(screen.getByRole('button', { name: '다시 테스트하기' }))
+    expect(retest.onRetest).toHaveBeenCalledTimes(1)
+
     // "다시 녹음해 주세요"라고 말해 놓고 대상이 없는 상태를 만들지 않는다
     expect(screen.queryByText('아래 목록에서 해당 문항을 다시 녹음해 주세요')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '다시 녹음' })).not.toBeInTheDocument()
@@ -430,9 +483,11 @@ describe('멈춘 상태의 출구', () => {
     errorLog.mockRestore()
   })
 
-  it('브리지가 없어 버튼을 못 그리는 경우도 같은 안내로 간다', async () => {
+  it('브리지가 없어 버튼을 못 그리는 경우도 같은 출구로 간다', async () => {
     const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const retest = retestControl()
     await renderScreen({
+      retest,
       // onRetake 없음 = 브라우저 단독 실행
       fetchImpl: fetchFor({
         analyses: () => jsonResponse(200, statusesBody(Array(5).fill('RETRYABLE_FAILED'))),
@@ -447,10 +502,51 @@ describe('멈춘 상태의 출구', () => {
     })
 
     expect(screen.getByText('여기서는 더 진행할 수 없어요')).toBeInTheDocument()
+    // 재녹음이 불가능한 실행이라 더더욱 여기가 유일한 출구다 (KAN-191)
+    expect(screen.getByRole('button', { name: '다시 테스트하기' })).toBeInTheDocument()
     errorLog.mockRestore()
   })
 
-  it('세션이 만료되면 봉투 문구를 그대로 보여 준다', async () => {
+  it('폴백조차 없는 호출자에게는 버튼을 그리지 않는다 — 눌러도 아무 일 없는 버튼은 두지 않는다', async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await renderScreen({
+      // retest 없음 = 재응시를 태울 길이 없는 실행 (`onRetake`와 같은 규칙)
+      fetchImpl: fetchFor({
+        analyses: () => jsonResponse(200, statusesBody(Array(5).fill('COMPLETED'))),
+        complete: () =>
+          jsonResponse(
+            422,
+            envelope('RESULT_INCOMPLETE', '아직 완료하지 않은 문항이 있습니다.', false, {
+              missingItems: ['w5'],
+            }),
+          ),
+      }),
+    })
+
+    expect(screen.getByText('여기서는 더 진행할 수 없어요')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '다시 테스트하기' })).not.toBeInTheDocument()
+    errorLog.mockRestore()
+  })
+
+  it('세션이 만료되면 봉투 문구를 그대로 보여 주고 [다시 테스트하기]로 내보낸다 (KAN-191)', async () => {
+    const retest = retestControl()
+    await renderScreen({
+      retest,
+      fetchImpl: fetchFor({
+        analyses: () =>
+          jsonResponse(401, envelope('SESSION_EXPIRED', '세션이 만료되었습니다. 테스트를 다시 시작해 주세요.', false)),
+      }),
+    })
+
+    // 상태는 제목이, 원인은 서버 문구가 말한다 — 봉투 문구를 웹이 고쳐 쓰지 않는다
+    expect(screen.getByText('분석을 진행할 수 없어요')).toBeInTheDocument()
+    expect(screen.getByText('세션이 만료되었습니다. 테스트를 다시 시작해 주세요.')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '다시 테스트하기' }))
+    expect(retest.onRetest).toHaveBeenCalledTimes(1)
+  })
+
+  it('재시도 불가 실패에서도 retest가 없으면 버튼이 없다 — 이전 호출자가 그대로 돈다', async () => {
     await renderScreen({
       fetchImpl: fetchFor({
         analyses: () =>
@@ -459,6 +555,20 @@ describe('멈춘 상태의 출구', () => {
     })
 
     expect(screen.getByText('세션이 만료되었습니다. 테스트를 다시 시작해 주세요.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '다시 테스트하기' })).not.toBeInTheDocument()
+  })
+
+  it('재응시가 잠겨 있으면 버튼도 잠긴다 — 잠금 규칙은 훅이 소유한다', async () => {
+    const retest = retestControl({ disabled: true, pending: true })
+    await renderScreen({
+      retest,
+      fetchImpl: fetchFor({
+        analyses: () =>
+          jsonResponse(401, envelope('SESSION_EXPIRED', '세션이 만료되었습니다. 테스트를 다시 시작해 주세요.', false)),
+      }),
+    })
+
+    expect(screen.getByRole('button', { name: '준비 중…' })).toBeDisabled()
   })
 
   it('폴링 상한을 넘기면 [다시 시도]가 나오고, 누르면 다시 돈다', async () => {
@@ -493,15 +603,49 @@ describe('멈춘 상태의 출구', () => {
     expect(screen.queryByText('분석이 예상보다 오래 걸리고 있어요')).not.toBeInTheDocument()
   })
 
-  it('[테스트 종료]를 주지 않는다 — KAN-147의 이탈 버튼 제거 결정을 따른다', async () => {
+  /*
+   * KAN-147이 걷어낸 이탈 버튼을 KAN-191이 **막다른 상태에만** 되살렸다. 아래 셋은 그 예외에
+   * 들지 않는 자리라, `retest`를 줘도 출구가 그려지면 안 된다 — 진행 중에 보이는 문은 곧
+   * 이탈률이 된다 (ux-ui.md §3 Goal-Gradient).
+   */
+  it('정상 진행 중에는 출구가 없다 — KAN-147 그대로다', async () => {
+    await renderScreen({ retest: retestControl() })
+
+    expect(screen.getByText('결과를 만들고 있어요')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '다시 테스트하기' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /테스트 종료|나가기|그만/ })).not.toBeInTheDocument()
+  })
+
+  it('EXHAUSTED는 [다시 시도]만 준다 — 분석이 아직 끝나는 중일 수 있어 막다른 길이 아니다', async () => {
     vi.useFakeTimers()
-    render(<AnalysisWaitingScreen {...props()} />)
+    render(<AnalysisWaitingScreen {...props({ retest: retestControl() })} />)
     await act(async () => {})
     await act(async () => {
       await vi.advanceTimersByTimeAsync(70_000)
     })
 
+    expect(screen.getByRole('button', { name: '다시 시도' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '다시 테스트하기' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /테스트 종료|나가기|그만/ })).not.toBeInTheDocument()
+  })
+
+  it('누를 문항이 남아 있으면 출구 대신 [다시 녹음]만 준다', async () => {
+    await renderScreen({
+      onRetake: vi.fn(),
+      retest: retestControl(),
+      fetchImpl: fetchFor({
+        analyses: () =>
+          jsonResponse(200, statusesBody(['COMPLETED', 'COMPLETED', 'FAILED', 'COMPLETED', 'COMPLETED'])),
+        complete: () =>
+          jsonResponse(
+            409,
+            envelope('RESULT_RETAKE_REQUIRED', '실패한 문항이 있습니다.', true, { retakeItems: ['v3'] }),
+          ),
+      }),
+    })
+
+    expect(screen.getByRole('button', { name: '다시 녹음' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '다시 테스트하기' })).not.toBeInTheDocument()
   })
 })
 
@@ -535,5 +679,135 @@ describe('텍스트 히어로 (KAN-178)', () => {
     expect(screen.getByText('분석 중입니다')).toHaveAttribute('aria-hidden', 'true')
     // 히어로는 "분석 중" 한 상태를 붙박이로 말하고, 제목은 그 안에서 무엇이 진행 중인지를 말한다
     expect(screen.getByRole('heading', { level: 1, name: '결과를 만들고 있어요' })).toBeInTheDocument()
+  })
+})
+
+describe('재녹음 계측 (KAN-33)', () => {
+  it('사유를 상태에서 뽑아 문항 번호와 함께 보낸다', () => {
+    // 품질로 되돌아온 문항과 분석이 실패한 문항은 손볼 곳이 다르다 (KAN-28)
+    expect(retakeReason('RETRYABLE_FAILED')).toBe('QUALITY')
+    expect(retakeReason('FAILED')).toBe('FAILED')
+    // 아직 보내지 않은 문항은 서버가 되돌려보낸 것이 아니다
+    expect(retakeReason('NOT_SUBMITTED')).toBe('USER')
+  })
+
+  it('[다시 녹음]을 누르면 그 문항의 번호와 사유가 나간다', async () => {
+    const events = stubGtag()
+    const onRetake = vi.fn()
+    await renderScreen({
+      onRetake,
+      fetchImpl: fetchFor({
+        analyses: () =>
+          jsonResponse(
+            200,
+            statusesBody(['COMPLETED', 'RETRYABLE_FAILED', 'COMPLETED', 'COMPLETED', 'COMPLETED']),
+          ),
+      }),
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '다시 녹음' }))
+
+    // v2는 전체 10문항 기준 3번이다 (VOICE_ITEMS의 itemNumber)
+    expect(events).toContainEqual({
+      event: 'recording_retake',
+      item_seq: 3,
+      reason: 'QUALITY',
+    })
+    // 세는 것과 여는 것은 다른 일이다 — 계측이 붙어도 재녹음은 그대로 열린다
+    expect(onRetake).toHaveBeenCalledWith('v2')
+  })
+})
+
+describe('전면 광고 — 세션당 한 번 (KAN-196)', () => {
+  /** 전면 광고를 아는 브리지 대역. 세션 id는 테스트마다 다르다 (`ads/interstitial.test.ts` 주석) */
+  function adBridge() {
+    const show = vi.fn()
+    window.AccenturyBridge = {
+      requestMicPermission: vi.fn(),
+      startVoiceItem: vi.fn(),
+      getContractVersion: () => REQUIRED_BRIDGE_VERSION,
+      showInterstitialAd: show,
+    }
+    return show
+  }
+
+  it('마운트하면 한 번 요청한다', async () => {
+    const show = adBridge()
+
+    await renderScreen({ sessionId: 'ad-mount' })
+
+    expect(show).toHaveBeenCalledTimes(1)
+  })
+
+  it('폴링이 돌며 다시 그려져도 한 번이다', async () => {
+    const show = adBridge()
+    const view = await renderScreen({ sessionId: 'ad-rerender' })
+
+    view.rerender(<AnalysisWaitingScreen {...props({ sessionId: 'ad-rerender', refreshNonce: 1 })} />)
+    await act(async () => {})
+    view.rerender(<AnalysisWaitingScreen {...props({ sessionId: 'ad-rerender', refreshNonce: 2 })} />)
+    await act(async () => {})
+
+    expect(show).toHaveBeenCalledTimes(1)
+  })
+
+  it('화면이 내려갔다 다시 서도 같은 세션이면 한 번이다 — 재녹음 뒤 돌아오는 경로', async () => {
+    const show = adBridge()
+    const view = await renderScreen({ sessionId: 'ad-remount' })
+    view.unmount()
+
+    await renderScreen({ sessionId: 'ad-remount' })
+
+    expect(show).toHaveBeenCalledTimes(1)
+  })
+
+  it('브라우저 단독 실행(브리지 없음)에서는 아무 일도 없다 — 웹 단독은 KAN-197 범위다', async () => {
+    // 브리지 없이 마운트해도 크래시하지 않고, 폴링은 그대로 돈다
+    await renderScreen({ sessionId: 'ad-none' })
+
+    expect(screen.getByRole('heading', { name: '결과를 만들고 있어요' })).toBeInTheDocument()
+  })
+})
+
+describe('웹 배너 — 브라우저 단독 실행에만 (KAN-197 3단계)', () => {
+  /** 두 빌드 변수가 다 있는 빌드. 값이 하나라도 없으면 `AdSlot`이 아무것도 그리지 않는다 */
+  function stubAdSenseIds(): void {
+    vi.stubEnv('VITE_ADSENSE_CLIENT_ID', 'ca-pub-1234567890123456')
+    vi.stubEnv('VITE_ADSENSE_SLOT_ID', '9876543210')
+  }
+
+  it('브라우저 단독 실행에서는 단계 표시 아래에 배너 자리가 선다', async () => {
+    stubAdSenseIds()
+
+    await renderScreen({ sessionId: 'web-ad-shown' })
+
+    expect(screen.getByRole('complementary', { name: '광고' })).toBeInTheDocument()
+  })
+
+  it('앱 WebView 안에서는 웹 광고 태그가 설치되지 않는다 (KAN-197 AC)', async () => {
+    stubAdSenseIds()
+    /*
+     * 같은 빌드, 같은 화면인데 브리지가 있다. AdSense 태그를 앱 WebView에서 돌리는 것은 정책
+     * 위반이고 앱의 광고는 AdMob SDK가 띄우므로(`docs/wiki/ads-web-adsense.md` §2), 슬롯도
+     * 스크립트도 나타나지 않아야 한다.
+     */
+    window.AccenturyBridge = {
+      requestMicPermission: vi.fn(),
+      startVoiceItem: vi.fn(),
+      getContractVersion: () => REQUIRED_BRIDGE_VERSION,
+    }
+
+    await renderScreen({ sessionId: 'web-ad-webview' })
+
+    expect(screen.queryByRole('complementary')).toBeNull()
+    expect(window.adsbygoogle).toBeUndefined()
+    expect(document.head.querySelector('script[src*="adsbygoogle"]')).toBeNull()
+  })
+
+  it('ID가 없는 빌드(로컬·CI)에서는 빈 자리도 남기지 않는다', async () => {
+    await renderScreen({ sessionId: 'web-ad-no-ids' })
+
+    expect(screen.queryByRole('complementary')).toBeNull()
+    expect(window.adsbygoogle).toBeUndefined()
   })
 })

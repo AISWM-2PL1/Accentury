@@ -3,9 +3,19 @@ package app.accentury.backend.analysis;
 import app.accentury.backend.IntegrationTest;
 import app.accentury.backend.SteppingClock;
 import app.accentury.backend.TestSessions;
+import app.accentury.backend.observability.ServiceMetrics;
 import app.accentury.backend.session.TestSessionRepository;
+import app.accentury.backend.training.TrainingSample;
+import app.accentury.backend.training.TrainingSampleStore;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.task.SyncTaskExecutor;
 
@@ -13,7 +23,9 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -132,15 +144,53 @@ class HttpAnalysisDispatcherTest extends IntegrationTest {
     }
 
     @Test
-    void 타임아웃_소진은_ANALYSIS_TIMEOUT으로_구분된다() {
+    void 읽기_타임아웃은_재전송_없이_ANALYSIS_TIMEOUT으로_즉시_종결된다() {
+        // 실모델은 타임아웃 시점에 아직 그 오디오를 추론 중일 가능성이 높다 - 재전송은 같은 분석을
+        // 하나 더 얹어 뒤 요청까지 밀리게 한다 (KAN-172). 재전송 예산이 남아 있어도 쓰지 않는다.
         AnalysisJob job = saveProcessingJob();
         ScriptedClient client = new ScriptedClient()
                 .then(new AiAnalysisClient.AiUnavailableException("읽기 타임아웃",
+                        AiAnalysisClient.AiUnavailableException.Kind.TIMED_OUT, null))
+                .then(new AiAnalysisClient.Completed(70, "OK", "track1-v3.4", "sv-0.3"));
+
+        dispatcher(client, 2).dispatch(request(job));
+
+        AnalysisJob saved = repository.findById(job.id()).orElseThrow();
+        assertEquals(AnalysisJobStatus.RETRYABLE_FAILED, saved.status());
+        // AI에 닿았으므로 시도 예산(§2.5)에 드는 사유다 - 미도달(ANALYSIS_UNAVAILABLE)과 다르다.
+        assertEquals("ANALYSIS_TIMEOUT", saved.errorCode());
+        assertEquals(1, client.calls);
+    }
+
+    @Test
+    void 읽기_타임아웃도_회로에는_실패로_센다() {
+        // 재전송을 안 할 뿐 장애다 (§4.2 열림 조건) - 연속되면 회로가 열려 업로드를 막아야 한다.
+        AiCircuitBreaker breaker = new AiCircuitBreaker(1, Duration.ofSeconds(5),
+                Duration.ofSeconds(120), Clock.systemUTC());
+        ScriptedClient client = new ScriptedClient()
+                .then(new AiAnalysisClient.AiUnavailableException("읽기 타임아웃",
                         AiAnalysisClient.AiUnavailableException.Kind.TIMED_OUT, null));
+        HttpAnalysisDispatcher dispatcher = dispatcher(client, 2, breaker);
+        assertTrue(dispatcher.accepts("a_probe"));
 
-        dispatcher(client, 0).dispatch(request(job));
+        dispatcher.dispatch(request(saveProcessingJob()));
 
-        assertEquals("ANALYSIS_TIMEOUT", repository.findById(job.id()).orElseThrow().errorCode());
+        assertFalse(dispatcher.accepts("a_probe"));
+    }
+
+    @Test
+    void AI_5xx는_타임아웃과_달리_재전송한다() {
+        // AI가 자체 상한(75초)에서 스스로 접은 503이다 - 이미 워커를 놓았으므로 다시 보내도 중복이 아니다 (KAN-172).
+        AnalysisJob job = saveProcessingJob();
+        ScriptedClient client = new ScriptedClient()
+                .then(new AiAnalysisClient.AiUnavailableException("AI 503",
+                        AiAnalysisClient.AiUnavailableException.Kind.SERVER_ERROR, null))
+                .then(new AiAnalysisClient.Completed(70, "OK", "track1-v3.4", "sv-0.3"));
+
+        dispatcher(client, 2).dispatch(request(job));
+
+        assertEquals(AnalysisJobStatus.COMPLETED, repository.findById(job.id()).orElseThrow().status());
+        assertEquals(2, client.calls);
     }
 
     @Test
@@ -451,6 +501,38 @@ class HttpAnalysisDispatcherTest extends IntegrationTest {
     }
 
     @Test
+    void 버려진_늦은_결과는_지연_분포에_들어가지_않는다() {
+        // 조건부 전이가 0행이면 그 건은 사용자에게 성공이 아니었다 (위 테스트). 그런데 소요
+        // 시간은 정의상 타임아웃보다 길어서, 세면 P95를 위로 밀어 "성공만 잰다"는 취지가 깨진다
+        // (KAN-38).
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        AnalysisMetrics metrics = TestMetrics.analysisMetrics(registry);
+        AnalysisJob job = saveProcessingJob();
+        transitions.fail(job.id(), AnalysisJobStatus.RETRYABLE_FAILED, "ANALYSIS_TIMEOUT");
+        ScriptedClient client = new ScriptedClient()
+                .then(new AiAnalysisClient.Completed(95, "OK", "rmvpe-0.2", "sv-0.3"));
+
+        new HttpAnalysisDispatcher(client, new SyncTaskExecutor(), transitions,
+                new AnalysisBacklog(), openCircuitNever(), metrics, 0, 0).dispatch(request(job));
+
+        assertEquals(0, registry.get(ServiceMetrics.ANALYSIS_DURATION).timer().count());
+    }
+
+    @Test
+    void 성공한_분석은_지연_분포에_들어간다() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        AnalysisMetrics metrics = TestMetrics.analysisMetrics(registry);
+        AnalysisJob job = saveProcessingJob();
+        ScriptedClient client = new ScriptedClient()
+                .then(new AiAnalysisClient.Completed(78, "OK", "rmvpe-0.2", "sv-0.3"));
+
+        new HttpAnalysisDispatcher(client, new SyncTaskExecutor(), transitions,
+                new AnalysisBacklog(), openCircuitNever(), metrics, 0, 0).dispatch(request(job));
+
+        assertEquals(1, registry.get(ServiceMetrics.ANALYSIS_DURATION).timer().count());
+    }
+
+    @Test
     void 종결마다_백로그가_복귀해_혼잡_판정이_남지_않는다() {
         AnalysisBacklog backlog = new AnalysisBacklog();
         AnalysisJob job = saveProcessingJob();
@@ -463,7 +545,7 @@ class HttpAnalysisDispatcherTest extends IntegrationTest {
         new HttpAnalysisDispatcher(client, task -> {
             duringRun.set(backlog.inFlight());
             task.run();
-        }, transitions, backlog, openCircuitNever(), 0, 0).dispatch(request(job));
+        }, transitions, backlog, openCircuitNever(), TestMetrics.analysisMetrics(), 0, 0).dispatch(request(job));
 
         assertEquals(1, duringRun.get());
         assertEquals(0, backlog.inFlight());
@@ -481,7 +563,7 @@ class HttpAnalysisDispatcherTest extends IntegrationTest {
                     atRejection.set(backlog.inFlight());
                     throw new RejectedExecutionException("큐 포화 시뮬레이션");
                 },
-                transitions, backlog, openCircuitNever(), 0, 0);
+                transitions, backlog, openCircuitNever(), TestMetrics.analysisMetrics(), 0, 0);
 
         // 예외는 업로드 요청 스레드로 그대로 올라가야 업로드가 503으로 종결할 수 있다 (§3.3).
         assertThrows(RejectedExecutionException.class, () -> dispatcher.dispatch(request(job)));
@@ -544,11 +626,165 @@ class HttpAnalysisDispatcherTest extends IntegrationTest {
                 task -> {
                     throw new RejectedExecutionException("큐 포화 시뮬레이션");
                 },
-                transitions, new AnalysisBacklog(), openCircuitNever(), 0, 0);
+                transitions, new AnalysisBacklog(), openCircuitNever(), TestMetrics.analysisMetrics(), 0, 0);
 
         assertThrows(RejectedExecutionException.class, () -> dispatcher.dispatch(request));
 
         assertArrayEquals(new byte[] {0, 0, 0}, request.audio());
+    }
+
+    // === 학습 샘플 (KAN-201) - 종결 뒤, 버퍼 파기 전 ===
+
+    @Test
+    void 성공한_분석은_학습_샘플로_남고_점수와_AI_버전이_실린다() {
+        AnalysisJob job = saveProcessingJob();
+        RecordingStore store = new RecordingStore();
+        ScriptedClient client = new ScriptedClient()
+                .then(new AiAnalysisClient.Completed(78, "OK", "rmvpe-0.2", "sv-ai-0.1"));
+
+        dispatcher(client, 0, store).dispatch(request(job, "GYEONGNAM"));
+
+        TrainingSample sample = store.only();
+        assertEquals(job.id(), sample.analysisJobId());
+        assertEquals("GYEONGNAM", sample.region());
+        assertEquals(TrainingSample.Outcome.COMPLETED, sample.outcome());
+        assertEquals(78, sample.intonationScore());
+        assertEquals("OK", sample.qualityCode());
+        assertEquals("rmvpe-0.2", sample.modelVersion());
+        assertEquals("sv-ai-0.1", sample.aiScoreVersion(), "AI 응답의 scoreVersion - 세션의 sv-0.3과 다른 값이다");
+        assertEquals("sv-0.3", sample.scoreVersion());
+        assertNull(sample.errorCode());
+        assertEquals(3000, sample.durationMs());
+        assertArrayEquals(new byte[] {1, 2, 3}, store.audioSeen, "저장 시점에는 원본 음성이 아직 살아 있다");
+    }
+
+    @Test
+    void 지역_없는_세션의_샘플은_UNKNOWN이다() {
+        RecordingStore store = new RecordingStore();
+        ScriptedClient client = new ScriptedClient()
+                .then(new AiAnalysisClient.Completed(78, "OK", "rmvpe-0.2", "sv-0.3"));
+
+        dispatcher(client, 0, store).dispatch(request(saveProcessingJob()));
+
+        assertEquals("UNKNOWN", store.only().region());
+    }
+
+    @Test
+    void 판정_실패도_오류_코드와_함께_학습_샘플로_남는다() {
+        // 부정 샘플도 학습에 쓴다 (2026-09-08 확정) - 점수 자리는 비고 errorCode가 실린다.
+        AnalysisJob job = saveProcessingJob();
+        RecordingStore store = new RecordingStore();
+        ScriptedClient client = new ScriptedClient()
+                .then(AiAnalysisClient.Rejected.judged("AUDIO_TOO_QUIET", true));
+
+        dispatcher(client, 0, store).dispatch(request(job));
+
+        TrainingSample sample = store.only();
+        assertEquals(TrainingSample.Outcome.RETRYABLE_FAILED, sample.outcome());
+        assertEquals("AUDIO_TOO_QUIET", sample.errorCode());
+        assertNull(sample.intonationScore());
+        assertNull(sample.modelVersion());
+    }
+
+    @Test
+    void 비재시도_판정_실패의_샘플은_FAILED다() {
+        RecordingStore store = new RecordingStore();
+        ScriptedClient client = new ScriptedClient()
+                .then(AiAnalysisClient.Rejected.judged("INTERNAL_ERROR", false));
+
+        dispatcher(client, 0, store).dispatch(request(saveProcessingJob()));
+
+        assertEquals(TrainingSample.Outcome.FAILED, store.only().outcome());
+    }
+
+    @Test
+    void 계약_위반과_AI_불가는_학습_샘플로_남지_않는다() {
+        // 원점수도 판정도 없는 건이다 - 타임아웃도 AI 불가의 한 갈래다.
+        RecordingStore store = new RecordingStore();
+        ScriptedClient client = new ScriptedClient()
+                .then(AiAnalysisClient.Rejected.contractViolation())
+                .then(new AiAnalysisClient.AiUnavailableException("연결 실패",
+                        AiAnalysisClient.AiUnavailableException.Kind.UNREACHED, null))
+                .then(new AiAnalysisClient.AiUnavailableException("읽기 타임아웃",
+                        AiAnalysisClient.AiUnavailableException.Kind.TIMED_OUT, null));
+        HttpAnalysisDispatcher dispatcher = dispatcher(client, 0, store);
+
+        dispatcher.dispatch(request(saveProcessingJob()));
+        dispatcher.dispatch(request(saveProcessingJob()));
+        dispatcher.dispatch(request(saveProcessingJob()));
+
+        assertEquals(List.of(), store.samples);
+    }
+
+    @Test
+    void 저장은_상태_전이가_끝난_뒤에_일어난다() {
+        // "상태 전이 뒤, wipeAudio 전"의 앞쪽 절반 - 저장 시점에 DB 행이 이미 종결돼 있어야 한다 (PR #105 리뷰 P3).
+        AnalysisJob job = saveProcessingJob();
+        RecordingStore store = new RecordingStore();
+        ScriptedClient client = new ScriptedClient()
+                .then(new AiAnalysisClient.Completed(78, "OK", "rmvpe-0.2", "sv-0.3"));
+
+        dispatcher(client, 0, store).dispatch(request(job));
+
+        store.only();
+        assertEquals(AnalysisJobStatus.COMPLETED, store.statusAtSave, "저장 시점에 행이 아직 PROCESSING이면 순서가 뒤집힌 것이다");
+    }
+
+    @Test
+    void 저장소가_예외를_내도_종결과_버퍼_파기는_그대로다() {
+        AnalysisJob job = saveProcessingJob();
+        AnalysisDispatcher.AnalysisRequest request = request(job);
+        ScriptedClient client = new ScriptedClient()
+                .then(new AiAnalysisClient.Completed(78, "OK", "rmvpe-0.2", "sv-0.3"));
+        TrainingSampleStore broken = sample -> {
+            throw new IllegalStateException("S3 권한 없음");
+        };
+        ListAppender<ILoggingEvent> logs = captureDispatcherLogs();
+
+        dispatcher(client, 0, broken).dispatch(request);
+
+        AnalysisJob saved = repository.findById(job.id()).orElseThrow();
+        assertEquals(AnalysisJobStatus.COMPLETED, saved.status());
+        assertEquals(78, saved.intonationScore());
+        assertArrayEquals(new byte[] {0, 0, 0}, request.audio());
+        // 저장소 예외는 안쪽 catch가 WARN으로 삼킨다 - 바깥 catch(워커 실패 ERROR + 이중 종결 시도)까지 가면 안 된다
+        // (PR #105 리뷰 P3). 결과만 보면 조건부 UPDATE 0행이라 같아서, 로그로 경로를 가른다.
+        List<ILoggingEvent> events = logs.list;
+        assertTrue(events.stream().anyMatch(e -> e.getLevel() == Level.WARN
+                && e.getFormattedMessage().contains("학습 샘플 저장소가 예외를 냈다")), "안쪽 catch의 WARN이 없다");
+        assertFalse(events.stream().anyMatch(e -> e.getLevel() == Level.ERROR), "바깥 catch의 ERROR가 찍혔다: " + events);
+    }
+
+    private static ListAppender<ILoggingEvent> captureDispatcherLogs() {
+        Logger logger = (Logger) LoggerFactory.getLogger(HttpAnalysisDispatcher.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        return appender;
+    }
+
+    /** 저장 호출을 기록하는 저장소 - 오디오는 호출 시점의 사본을 떠 두고(그 뒤 파기되므로) DB 상태도 그 시점에 읽는다. */
+    private final class RecordingStore implements TrainingSampleStore {
+        final List<TrainingSample> samples = new ArrayList<>();
+        byte @Nullable [] audioSeen;
+        @Nullable AnalysisJobStatus statusAtSave;
+
+        @Override
+        public void save(TrainingSample sample) {
+            samples.add(sample);
+            audioSeen = sample.audio().clone();
+            statusAtSave = repository.findById(sample.analysisJobId()).orElseThrow().status();
+        }
+
+        TrainingSample only() {
+            assertEquals(1, samples.size(), "샘플은 정확히 1건이어야 한다");
+            return samples.getFirst();
+        }
+    }
+
+    private HttpAnalysisDispatcher dispatcher(AiAnalysisClient client, int retries, TrainingSampleStore store) {
+        return new HttpAnalysisDispatcher(client, new SyncTaskExecutor(), transitions,
+                new AnalysisBacklog(), openCircuitNever(), TestMetrics.analysisMetrics(), store, retries, 0);
     }
 
     private HttpAnalysisDispatcher dispatcher(AiAnalysisClient client, int retries) {
@@ -559,7 +795,7 @@ class HttpAnalysisDispatcherTest extends IntegrationTest {
                                               AiCircuitBreaker circuitBreaker) {
         // 백오프 0ms - 테스트가 재전송 대기에 시간을 쓰지 않게 한다.
         return new HttpAnalysisDispatcher(client, new SyncTaskExecutor(), transitions,
-                new AnalysisBacklog(), circuitBreaker, retries, 0);
+                new AnalysisBacklog(), circuitBreaker, TestMetrics.analysisMetrics(), retries, 0);
     }
 
     /** health까지 통과해 시험 1건을 기다리는 회로 */
@@ -596,7 +832,12 @@ class HttpAnalysisDispatcherTest extends IntegrationTest {
     }
 
     private static AnalysisDispatcher.AnalysisRequest request(AnalysisJob job) {
+        return request(job, null);
+    }
+
+    private static AnalysisDispatcher.AnalysisRequest request(AnalysisJob job,
+                                                              @Nullable String region) {
         return new AnalysisDispatcher.AnalysisRequest(job.id(), job.sessionId(), job.itemId(), null,
-                "gn-2026.08.1", "sv-0.3", 3000, new byte[] {1, 2, 3});
+                "gn-2026.08.1", "sv-0.3", region, 3000, new byte[] {1, 2, 3});
     }
 }

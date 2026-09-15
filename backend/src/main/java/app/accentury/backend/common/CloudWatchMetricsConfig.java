@@ -27,8 +27,9 @@ import software.amazon.awssdk.services.cloudwatch.CloudWatchAsyncClient;
  * (application-deploy.yml). 로컬과 테스트는 켜지 않는다 - AWS 자격 증명도, 올릴 곳도 없다.
  * <p>
  * <b>{@code accentury.*} 지표만 내보낸다.</b> JVM, Tomcat, HTTP 요청 지표까지 올리면 이름마다 CloudWatch
- * 커스텀 지표 요금(개당 월 0.30달러)이 붙고 태그 조합만큼 늘어난다. 회로 상태(KAN-36)와 임시파일 잔존
- * (KAN-27)이 지금 필요한 전부이고, 나머지 관측성은 KAN-38이 정한다. 필터는 이 레지스트리에만 건다 -
+ * 커스텀 지표 요금(개당 월 0.30달러)이 붙고 태그 조합만큼 늘어난다. 올리는 이름의 정본은
+ * {@code ServiceMetrics}이고(KAN-38), 회로 상태(KAN-36)와 임시파일 잔존(KAN-27)도 그 접두사 안에 있다.
+ * 이름을 늘릴 때의 요금 계산과 태그 규칙은 그 클래스에 적어 두었다. 필터는 이 레지스트리에만 건다 -
  * {@link MeterFilter} 빈으로 두면 Boot가 모든 레지스트리에 적용해 로컬 simple 레지스트리까지 좁힌다.
  */
 @Configuration(proxyBeanMethods = false)

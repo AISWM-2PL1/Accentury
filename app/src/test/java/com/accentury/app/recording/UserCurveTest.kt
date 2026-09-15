@@ -39,54 +39,127 @@ class UserCurveTest {
 
     @Test
     fun `창 길이는 가이드 길이의 두 배다`() {
-        assertEquals(2000L, userCurveWindowMs(frameIntervalMs = 10, valueCount = 101))
-        assertEquals(640L, userCurveWindowMs(frameIntervalMs = 32, valueCount = 11))
+        assertEquals(2000L, userCurveWindowMs(frameIntervalMs = 10, valueCount = 101, maxDurationMs = MAX_MS))
+        assertEquals(640L, userCurveWindowMs(frameIntervalMs = 32, valueCount = 11, maxDurationMs = MAX_MS))
+    }
+
+    @Test
+    fun `발행본 실문항의 창은 가이드 길이에서 나오고 폴백과 다르다`() {
+        // 16ms 간격 240점 = 239구간 x 16ms = 3824ms, 창은 그 두 배 (KAN-194).
+        // 폴백(1000ms x 2 = 2000ms)과 확실히 갈리는 값이라, 창이 주저앉으면 이 수가 안 나온다.
+        val guide = GuideF0Fixture.REAL
+        assertEquals(3824L, guideDurationMs(guide.frameIntervalMs, guide.values.size))
+        assertEquals(7648L, userCurveWindowMs(guide.frameIntervalMs, guide.values.size, MAX_MS))
+    }
+
+    @Test
+    fun `두 배가 녹음 상한을 넘으면 상한에서 자른다 (KAN-195)`() {
+        // 가이드 5.98초 = 발행본 최장 문항(v63). 두 배면 11.96초라 10초 상한을 넘는다.
+        assertEquals(MAX_MS, userCurveWindowMs(frameIntervalMs = 20, valueCount = 300, maxDurationMs = MAX_MS))
+        // 상한과 정확히 같은 창은 자를 것이 없다.
+        assertEquals(MAX_MS, userCurveWindowMs(frameIntervalMs = 10, valueCount = 501, maxDurationMs = MAX_MS))
+        // 상한에 못 미치는 창은 상한이 있어도 그대로다.
+        assertEquals(9980L, userCurveWindowMs(frameIntervalMs = 10, valueCount = 500, maxDurationMs = MAX_MS))
+    }
+
+    @Test
+    fun `상한을 알 수 없으면 자르지 않는다 - 레인이 사라지는 것보다 넘치는 편이 낫다`() {
+        assertEquals(11960L, userCurveWindowMs(frameIntervalMs = 20, valueCount = 300, maxDurationMs = 0L))
+        assertEquals(11960L, userCurveWindowMs(frameIntervalMs = 20, valueCount = 300, maxDurationMs = -1L))
     }
 
     @Test
     fun `가이드를 쓸 수 없으면 창 길이는 폴백 1초의 두 배다`() {
-        assertEquals(2000L, userCurveWindowMs(frameIntervalMs = null, valueCount = null))
-        assertEquals(2000L, userCurveWindowMs(frameIntervalMs = 10, valueCount = 1))
-        assertEquals(2000L, userCurveWindowMs(frameIntervalMs = 10, valueCount = 0))
-        assertEquals(2000L, userCurveWindowMs(frameIntervalMs = 0, valueCount = 101))
-        assertEquals(2000L, userCurveWindowMs(frameIntervalMs = -5, valueCount = 101))
+        assertEquals(2000L, userCurveWindowMs(frameIntervalMs = null, valueCount = null, maxDurationMs = MAX_MS))
+        assertEquals(2000L, userCurveWindowMs(frameIntervalMs = 10, valueCount = 1, maxDurationMs = MAX_MS))
+        assertEquals(2000L, userCurveWindowMs(frameIntervalMs = 10, valueCount = 0, maxDurationMs = MAX_MS))
+        assertEquals(2000L, userCurveWindowMs(frameIntervalMs = 0, valueCount = 101, maxDurationMs = MAX_MS))
+        assertEquals(2000L, userCurveWindowMs(frameIntervalMs = -5, valueCount = 101, maxDurationMs = MAX_MS))
     }
 
     @Test
-    fun `Review 창은 라이브 창보다 긴 녹음을 통째로 담는다`() {
-        // 3.168초짜리 녹음이면 2초 라이브 창으로는 앞부분이 잘린다
-        val long = List(100) { frame(it * FRAME_MS, CENTER_HZ) }
-        val lastMs = 99 * FRAME_MS
-        assertTrue("전제: 녹음이 라이브 창보다 길다", lastMs > WINDOW_MS)
-        assertEquals(lastMs + FRAME_MS, reviewWindowMs(long, WINDOW_MS))
+    fun `Review 창은 발화 구간과 같고 앞뒤 침묵은 잘려 나간다 (KAN-195)`() {
+        // 앞 10프레임·뒤 10프레임이 침묵인 100프레임 녹음. 발화는 320ms부터 2848ms까지다
+        val (trimmed, windowMs) = reviewWindow(SILENCE_PADDED, GUIDE_INTERVAL, GUIDE_COUNT)
+
+        assertEquals(VOICED_SPAN_MS, windowMs)
+        assertEquals(80, trimmed.size)
+        assertEquals(FIRST_VOICED_MS, trimmed.first().timestampMs)
+        assertEquals(LAST_VOICED_MS, trimmed.last().timestampMs)
     }
 
     @Test
-    fun `라이브 창 안에 들어오는 녹음이면 Review도 라이브 창을 쓴다`() {
-        // 창을 녹음 길이에 맞춰 줄이면 짧은 발화가 레인 폭을 억지로 채워 늘어져 보인다
-        assertEquals(WINDOW_MS, reviewWindowMs(centerFrames(), WINDOW_MS))
+    fun `Review로 그리면 곡선이 레인 양끝에 닿는다 (KAN-195)`() {
+        // 가이드 레인이 `x = i / lastIndex`로 0~1을 쓰는 것과 같은 규칙이다 (GuideCurve)
+        val (trimmed, windowMs) = reviewWindow(SILENCE_PADDED, GUIDE_INTERVAL, GUIDE_COUNT)
+        val points = userCurveDisplayPoints(trimmed, windowMs).single()
+
+        assertEquals(80, points.size)
+        assertEquals(0f, points.first().x, 1e-6f)
+        assertEquals(1f, points.last().x, 1e-6f)
     }
 
     @Test
-    fun `프레임이 없으면 Review 창은 라이브 창 그대로다`() {
-        assertEquals(WINDOW_MS, reviewWindowMs(emptyList(), WINDOW_MS))
+    fun `발화가 가이드보다 짧으면 창은 가이드 길이고 곡선이 레인을 다 쓰지 않는다`() {
+        /*
+         * 세 음절만 웅얼거리고 끝낸 녹음까지 레인을 꽉 채우면, 위 가이드 레인과 나란히 놓였을 때
+         * 비슷한 분량을 말한 것처럼 보인다. 덜 말했다는 사실이 폭으로 남아야 한다.
+         */
+        val short = centerFrames() // 8프레임 = 224ms 발화
+        val (trimmed, windowMs) = reviewWindow(short, GUIDE_INTERVAL, GUIDE_COUNT)
+
+        assertEquals(GUIDE_MS, windowMs)
+        val points = userCurveDisplayPoints(trimmed, windowMs).single()
+        assertEquals(224f / GUIDE_MS, points.last().x - points.first().x, 1e-5f)
     }
 
     @Test
-    fun `Review 창으로 그리면 첫 프레임부터 마지막 프레임까지 다 들어온다`() {
-        val total = 100
-        val long = List(total) { frame(it * FRAME_MS, CENTER_HZ) }
-        val windowMs = reviewWindowMs(long, WINDOW_MS)
-        val points = userCurveDisplayPoints(long, windowMs).single()
+    fun `발화가 바닥보다 짧고 뒤 침묵이 길면 곡선이 레인 오른쪽에 붙는다 (KAN-195)`() {
+        /*
+         * `마지막 유성 >= 바닥`이라 windowStart가 0보다 커지는 경로다. 10초 자동 종료로 뒤에
+         * 6초가 남아 있어도 유성 구간은 창 안에 그대로 들어와야 한다.
+         */
+        val lateShort = List(313) { i -> frame(i * FRAME_MS, if (i in 100..115) CENTER_HZ else null) }
+        val (trimmed, windowMs) = reviewWindow(lateShort, GUIDE_INTERVAL, GUIDE_COUNT)
 
-        assertEquals(total, points.size)
-        assertEquals(
-            "첫 점은 첫 프레임 시각 자리다",
-            long.first().timestampMs.toFloat() / windowMs,
-            points.first().x,
-            1e-5f,
-        )
-        assertTrue("마지막 점은 오른쪽 모서리에 붙지 않는다: ${points.last().x}", points.last().x < 1f)
+        assertEquals(16, trimmed.size)
+        assertEquals(GUIDE_MS, windowMs) // 발화 480ms < 바닥 1000ms
+        val points = userCurveDisplayPoints(trimmed, windowMs).single()
+        assertEquals(0.52f, points.first().x, 1e-5f) // (3200 - (3680-1000)) / 1000
+        assertEquals(1f, points.last().x, 1e-5f)
+    }
+
+    @Test
+    fun `유성이 하나뿐이고 뒤에 침묵이 길어도 그 점이 창 안에 남는다 (KAN-195 리뷰 P2)`() {
+        /*
+         * 기침 한 번처럼 유성이 하나뿐인 녹음이 10초 자동 종료로 끝나면, 자르지 않을 때
+         * 창의 오른쪽 끝이 침묵의 끝(10초)에 붙어 그 점이 x<0으로 밀려 사라졌다.
+         */
+        val oneVoiced = List(313) { i -> frame(i * FRAME_MS, if (i == 6) CENTER_HZ else null) }
+        assertEquals("전제: 10초 자동 종료", 9984L, oneVoiced.last().timestampMs)
+        val (trimmed, windowMs) = reviewWindow(oneVoiced, GUIDE_INTERVAL, GUIDE_COUNT)
+
+        assertEquals(1, trimmed.size)
+        assertEquals(6 * FRAME_MS, trimmed.first().timestampMs)
+        assertEquals(GUIDE_MS, windowMs)
+        // 유성이 하나면 중심을 못 잡아(CENTER_MIN_VOICED_FRAMES 미달) 점은 안 그려지지만,
+        // 창 자체는 그 점을 담고 있어야 한다 - 창 밖으로 밀리면 프레임이 더 와도 못 살린다.
+        assertTrue(trimmed.first().timestampMs >= maxOf(0L, 6 * FRAME_MS - windowMs))
+    }
+
+    @Test
+    fun `유성 프레임이 없으면 창은 가이드 길이고 프레임은 원본 그대로다`() {
+        val silence = frames(null, null, null)
+        val (kept, windowMs) = reviewWindow(silence, GUIDE_INTERVAL, GUIDE_COUNT)
+
+        assertEquals(GUIDE_MS, windowMs)
+        assertEquals(silence, kept)
+        assertEquals(GUIDE_MS, reviewWindow(emptyList(), GUIDE_INTERVAL, GUIDE_COUNT).windowMs)
+    }
+
+    @Test
+    fun `가이드를 쓸 수 없으면 바닥은 폴백 1초다`() {
+        assertEquals(1000L, reviewWindow(centerFrames(), null, null).windowMs)
     }
 
     // --- 그릴 게 없는 경우 ---------------------------------------------------
@@ -419,6 +492,28 @@ class UserCurveTest {
 
     private companion object {
         const val FRAME_MS = 32L
+
+        /**
+         * 창 길이 검사가 쓰는 녹음 상한. 실제로 녹음을 끊는 값과 같아야 검사가 화면과 같은
+         * 것을 본다 (KAN-195). 이 값보다 짧은 창은 상한과 무관하게 그대로다.
+         */
+        const val MAX_MS = RecordingEngine.MAX_DURATION_MS
+
+        /** Review 검사가 쓰는 가이드. 10ms 간격 101값 = 1000ms라 바닥이 딱 떨어진다 */
+        const val GUIDE_INTERVAL = 10
+        const val GUIDE_COUNT = 101
+        const val GUIDE_MS = 1000L
+
+        /**
+         * 앞 10프레임·뒤 10프레임이 침묵인 100프레임 녹음 (KAN-195 Review 검사용).
+         * 실제 녹음이 이 꼴이다 - [녹음]을 누른 뒤 입을 떼기까지, 다 읽고 [정지]를 누르기까지가 비어 있다.
+         */
+        val SILENCE_PADDED: List<RecordingEngine.PitchFrame> = List(100) { i ->
+            RecordingEngine.PitchFrame(i * FRAME_MS, if (i in 10..89) CENTER_HZ else null)
+        }
+        const val FIRST_VOICED_MS = 10 * FRAME_MS
+        const val LAST_VOICED_MS = 89 * FRAME_MS
+        const val VOICED_SPAN_MS = LAST_VOICED_MS - FIRST_VOICED_MS
 
         /**
          * 앞뒤 가장자리가 무성이고, 32ms(200Hz)와 224ms(800Hz) 사이에 192ms짜리 구멍이 있다.

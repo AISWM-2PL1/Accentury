@@ -119,3 +119,22 @@ final class RetestFailedDeliveryTests: XCTestCase {
         XCTAssertEqual(nasty, decodePayload(js)["code"] as? String)
     }
 }
+
+/// 보상형 광고 중도 닫힘 payload (KAN-196). 안드로이드 `adDismissedRetestFailure()`와 필드·문구가
+/// 같아야 한다 — 문구 정본이 네이티브라 두 플랫폼이 같은 문장을 보여야 한다 (ads-admob.md §7).
+final class AdDismissedRetestFailureTests: XCTestCase {
+
+    func testThePayloadMatchesTheAndroidContractVerbatim() {
+        XCTAssertEqual(
+            #"{"code":"AD_DISMISSED","message":"광고를 끝까지 보시면 다시 테스트할 수 있어요","retryAfterMs":null,"retryable":true}"#,
+            adDismissedRetestFailure().toJson()
+        )
+    }
+
+    func testItIsDeliveredThroughTheSameReceiverAsServerFailures() {
+        // 웹은 `onRetestFailed` 하나로 받는다 — 광고 닫힘에 다른 수신 지점을 두지 않는다 (§8.2).
+        let js = retestFailedDeliveryJs(adDismissedRetestFailure())
+        XCTAssertTrue(js.contains("onRetestFailed"))
+        XCTAssertTrue(js.contains("AD_DISMISSED"))
+    }
+}

@@ -1,6 +1,8 @@
 package app.accentury.backend.analytics;
 
 import app.accentury.backend.common.AccenturyProperties;
+import app.accentury.backend.share.ShareDailyCounter;
+import app.accentury.backend.share.ShareDailyCounterRepository;
 import app.accentury.backend.common.ApiException;
 import app.accentury.backend.common.ErrorCode;
 import app.accentury.backend.scoring.ScorePolicyRegistry;
@@ -26,11 +28,14 @@ import java.util.Map;
 public class AnalyticsQueryService {
 
     private final DailyCounterRepository repository;
+    private final ShareDailyCounterRepository shareRepository;
     private final ZoneId zone;
     private final int maxQueryDays;
 
-    public AnalyticsQueryService(DailyCounterRepository repository, AccenturyProperties properties) {
+    public AnalyticsQueryService(DailyCounterRepository repository, ShareDailyCounterRepository shareRepository,
+                                 AccenturyProperties properties) {
         this.repository = repository;
+        this.shareRepository = shareRepository;
         this.zone = properties.analytics().zone();
         this.maxQueryDays = properties.analytics().maxQueryDays();
     }
@@ -81,7 +86,21 @@ public class AnalyticsQueryService {
                 .map(c -> new AnalyticsResponse.Row(c.statDate(), c.testVersion(), c.scoreVersion(),
                         c.traffic(), counts(c)))
                 .toList();
-        return new AnalyticsResponse(start, end, zone.getId(), rows, total(rows));
+        return new AnalyticsResponse(start, end, zone.getId(), rows, total(rows), shares(start, end));
+    }
+
+    /**
+     * 공유 전송 완료 (KAN-164) - 같은 기간, 같은 일자 경계의 별도 표다. 트래픽 필터는 적용하지
+     * 않는다 - 웹훅은 세션과 연결되지 않아 합성인지 알 수 없고, 스모크(KAN-138)는 카톡을 보내지
+     * 않으므로 섞일 것도 없다.
+     */
+    private AnalyticsResponse.Shares shares(LocalDate start, LocalDate end) {
+        List<AnalyticsResponse.ShareRow> rows = shareRepository
+                .findByStatDateBetweenOrderByStatDateAscCampaignAsc(start, end).stream()
+                .map(c -> new AnalyticsResponse.ShareRow(c.statDate(), c.campaign(), c.sent()))
+                .toList();
+        long total = rows.stream().mapToLong(AnalyticsResponse.ShareRow::sent).sum();
+        return new AnalyticsResponse.Shares(rows, total);
     }
 
     /**

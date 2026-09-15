@@ -34,7 +34,79 @@ export interface AccenturyBridge {
    * 웹은 서버가 준 카드 자산을 그대로 건넬 뿐이다. [getSessionToken]과 같은 이유로 optional이다
    */
   shareResult?(payloadJson: string): void
+  /**
+   * 계측 이벤트 하나를 네이티브 Firebase Analytics로 넘긴다 (KAN-33). 인자는 이벤트명과
+   * 파라미터 JSON이다 — @JavascriptInterface는 문자열만 주고받는다.
+   *
+   * 앱 안 이벤트를 웹이 아니라 네이티브가 보내는 것이 KAN-33의 결정이다: SDK가 붙여 주는
+   * 축(기기·OS·앱 버전·앱 인스턴스)은 WebView 안에서 만들 수 없고, 웹 스트림으로 보내면
+   * 앱 사용자가 웹 트래픽으로 세어진다. [getSessionToken]과 같은 이유로 optional이다
+   */
+  logEvent?(name: string, paramsJson: string): void
+  /**
+   * 외부 링크 하나를 앱 **밖** 브라우저로 연다 (KAN-177). 인자는 열어야 할 절대 URL이다.
+   *
+   * 웹이 직접 열 수 없어서 네이티브를 거친다. WebView는 allowlist 밖 URL의 로드를 통째로
+   * 막고(§7), 그 검사가 곧 보안 경계라 정책 문서 하나 때문에 문을 넓힐 수는 없다. 새 창도
+   * 답이 아니다 — 안드로이드는 `setSupportMultipleWindows`가 꺼져 있고 iOS에는 `uiDelegate`가
+   * 없어서 `target="_blank"`가 앱 안에서는 아무 일도 하지 않는다.
+   *
+   * 그래서 **여는 주체를 네이티브로 옮긴다**: 안드로이드는 Custom Tabs, iOS는
+   * `SFSafariViewController`로 인트로 위에 시트를 덮는다. 앱 화면이 사라지지 않으므로 닫으면
+   * 인트로가 그대로 남아 있다 — WebView 안에서 이동시키면 돌아올 길이 없다 (양쪽 다 뒤로가기
+   * 처리가 없다).
+   *
+   * **URL은 네이티브가 다시 검증한다.** 웹이 넘긴 값을 그대로 여는 구조면 WebView에 실린
+   * 임의의 스크립트가 앱더러 아무 주소나 열게 시킬 수 있다. [getSessionToken]과 같은 이유로
+   * optional이다.
+   */
+  openExternalUrl?(url: string): void
+  /**
+   * 맞춤형 광고 동의 상태를 읽는다 (KAN-196). 반환은 `'granted' | 'denied' | 'unknown'` 중
+   * 하나의 문자열이다 — 그 밖의 값은 래퍼([readAdConsent])가 계약 밖으로 보고 null로 접는다.
+   *
+   * **저장소가 네이티브인 이유.** 동의는 광고 SDK 초기화 인자(npa 여부)와 iOS ATT 흐름이
+   * 소비하는 값이고 그 둘은 전부 네이티브에 산다 — 웹이 들고 있으면 SDK를 세우는 쪽이 매번
+   * WebView에 물어야 한다. 웹 localStorage는 WebView 데이터 삭제로 함께 날아가고, 웹 단독
+   * 실행(KAN-197)과는 저장소 자체가 다르다. 그래서 네이티브(SharedPreferences·UserDefaults)가
+   * 정본이고 웹은 이 창구로 읽고 쓸 뿐이다. [getSessionToken]과 같은 이유로 optional이다.
+   */
+  getAdConsent?(): string
+  /**
+   * 맞춤형 광고 동의를 기록한다 (KAN-196). 인자는 `'granted' | 'denied'` — `'unknown'`으로
+   * 되돌리는 길은 없다. 되돌리기는 "아직 묻지 않았다"는 뜻이라 사용자가 고를 수 있는 값이
+   * 아니고, 다음 실행에 시트가 다시 뜨게 만드는 방법이 되어 버린다.
+   * [getSessionToken]과 같은 이유로 optional이다.
+   */
+  setAdConsent?(state: string): void
+  /**
+   * 분석 대기 화면의 전면(interstitial) 광고를 띄운다 (KAN-196). 인자도 회신도 없다.
+   *
+   * 회신이 없는 이유는 [shareResult]와 같다 — 광고가 떴는지, 언제 닫혔는지, 로드에 실패했는지에
+   * 따라 대기 화면이 달라질 것이 하나도 없다. 폴링은 광고 아래에서 그대로 돌고 결과가 나오면
+   * 광고를 닫은 뒤 그 화면이 기다리고 있다. 로드 실패도 네이티브 안에서 끝난다: 광고 없이
+   * 조용히 지나가고, 웹은 그 사실을 알 필요가 없다.
+   *
+   * 보상형(rewarded) 광고는 여기 없다 — [startRetest] 안에서 네이티브가 띄운다 (그쪽 주석).
+   * [getSessionToken]과 같은 이유로 optional이다.
+   */
+  showInterstitialAd?(): void
 }
+
+/**
+ * 맞춤형 광고 동의의 세 상태 (KAN-196). 네이티브 저장소의 값을 그대로 미러한다.
+ *
+ * - `granted`: 맞춤형 광고 허용. 기기 광고 식별자로 관심사 기반 광고를 보여 준다
+ * - `denied`: 비맞춤(npa) 광고만. 광고는 나오지만 식별자를 쓰지 않는다
+ * - `unknown`: 아직 묻지 않았다. 인트로가 동의 시트를 띄우는 조건이다 (`ads/`)
+ *
+ * 네 번째 값은 없다. "이 앱은 광고 동의라는 개념이 없다"(웹 단독 실행·이 메서드를 모르는
+ * 앱)는 상태가 아니라 **부재**라, 래퍼가 null로 돌려주고 화면은 시트도 링크도 그리지 않는다.
+ */
+export type AdConsent = 'granted' | 'denied' | 'unknown'
+
+/** 사용자가 고를 수 있는 값 — `unknown`은 고를 수 없다 ([AccenturyBridge.setAdConsent] 주석) */
+export type AdConsentChoice = Exclude<AdConsent, 'unknown'>
 
 /**
  * 공유 카드 자산 — 브리지를 건너 네이티브 카카오 피드 템플릿에 실릴 값이다 (KAN-30).
@@ -122,8 +194,25 @@ declare global {
  * KAN-100의 `startVoiceItem`·`onItemResult`는 둘 다 추가라서 1을 유지한다.
  * KAN-30의 `shareResult`도 메서드 추가라 마찬가지로 1을 유지한다 — 그래서 이 메서드가 없는
  * 계약 버전 1 앱이 스큐 게이트를 그대로 통과하고, 래퍼가 false로 걸러 폴백으로 내려간다.
+ * KAN-33의 `logEvent`도 같다. 계측이 붙지 않은 구버전 앱에서 이벤트가 조용히 사라지는 것이
+ * 여기서는 맞는 동작이다 — 계측 하나 때문에 응시할 수 있는 앱을 업데이트 안내로 막을 이유가 없다.
+ * KAN-177의 `openExternalUrl`도 추가라 1을 유지한다. 이 메서드가 없는 앱에서는 정책 링크가
+ * 브라우저 기본 동작으로 내려가는데(래퍼가 false를 준다), 그런 앱은 아직 스토어에 없다 —
+ * 스토어 제출(KAN-174·KAN-175) 전에 머지돼 있는 것이 이 티켓의 AC다.
+ *
+ * **KAN-205에서 1 → 2로 올렸다.** 진입 쿼리에 `voiceSet`이 **필수**가 됐기 때문이다 (§3.1 -
+ * 서버가 세션마다 세트를 고르므로 웹이 그 값 없이는 문항을 조회할 수 없다). 필드 추가지만
+ * 웹이 요구하는 쪽이라 구버전 앱에게는 의미 변경이다 - 버전을 그대로 두면 세트를 싣지 않는
+ * 앱이 스큐 게이트를 통과한 뒤 문항 화면에서 [다시 시도]만 반복하는 막다른 길에 갇힌다.
+ * 업데이트 안내로 막는 편이 원인이 보이고 빠져나갈 길도 있다.
+ *
+ * KAN-196의 `getAdConsent`·`setAdConsent`·`showInterstitialAd`는 전부 추가라 2를 유지한다.
+ * 보상형 광고는 기존 `startRetest` 안에서 네이티브가 처리하고 실패 회신은 기존
+ * `onRetestFailed` payload 모양 그대로(`code: 'AD_DISMISSED'`)라 의미 변경도 없다. 이 세
+ * 메서드가 없는 앱에서는 `readAdConsent`가 null을 줘 웹이 동의 시트도 광고 호출도 하지 않는다 —
+ * 광고 하나 때문에 응시할 수 있는 앱을 업데이트 안내로 막을 이유가 없다 (`logEvent`와 같은 판단).
  */
-export const REQUIRED_BRIDGE_VERSION = 1
+export const REQUIRED_BRIDGE_VERSION = 2
 
 /**
  * 앱이 로드 URL에 실어 보낸 브리지 버전(`?bridge=<n>`)을 읽는다.
@@ -217,6 +306,14 @@ export function getSessionToken(): string | null {
  * 연타는 네이티브도 막는다(SessionGateController.retestInFlight). 두 번째 요청이 나가면 첫
  * 요청이 만든 세션이 곧바로 고아가 되기 때문인데, 그 방어는 이 함수가 true를 돌려주는 것과
  * 무관하게 동작한다 — 여기서 true는 브리지 호출이 성사됐다는 사실만 말한다.
+ *
+ * **보상형 광고도 이 호출 안에 있다 (KAN-196).** 광고를 아는 앱에서는 네이티브가 이 요청을
+ * 받으면 먼저 보상형(rewarded) 광고를 띄우고, 끝까지 본 경우에만 새 세션을 만들어 인트로로
+ * 리로드한다. 중도에 닫으면 [installRetestFailedReceiver]로 `code: 'AD_DISMISSED'`,
+ * `retryable: true`가 오고 결과 화면은 그대로 남는다. 광고 로드 실패는 막지 않는다 — 광고
+ * 없이 그대로 재응시로 통과시킨다. 새 메서드를 두지 않은 이유: 광고 완주 → 세션 생성 →
+ * 리로드가 한 트랜잭션이라, 웹이 사이에 끼면 "광고는 봤는데 세션 생성이 실패한" 상태를 웹이
+ * 들고 있어야 하고 그 상태에서 다시 누르면 광고를 두 번 보게 된다.
  */
 export function startRetest(): boolean {
   const bridge = window.AccenturyBridge
@@ -246,6 +343,24 @@ export function shareResult(payload: SharePayload): boolean {
 }
 
 /**
+ * 계측 이벤트를 네이티브로 넘긴다 (KAN-33). 넘겼으면 true, 여기서는 갈 수 없으면 false다.
+ *
+ * false는 브라우저 단독 실행이거나 `logEvent`를 모르는 구버전 앱이라는 뜻인데, 호출자
+ * (`analytics/track.ts`)에게 그 구분은 관심사가 아니다 — 어느 쪽이든 "네이티브로는 못 보낸다"는
+ * 같은 사실이고 대응(gtag 경로로 내려감)도 같다. [shareResult]와 같은 규칙이다.
+ *
+ * 파라미터는 값이 전부 문자열·숫자·null인 평평한 객체다 (`analytics/events.ts`). 중첩을 두지
+ * 않는 이유는 받는 쪽 때문이다: Firebase의 이벤트 파라미터는 평평한 Bundle이라 중첩 객체를
+ * 실을 자리가 없다.
+ */
+export function logAnalyticsEvent(name: string, params: Record<string, unknown>): boolean {
+  const bridge = window.AccenturyBridge
+  if (typeof bridge?.logEvent !== 'function') return false
+  bridge.logEvent(name, JSON.stringify(params))
+  return true
+}
+
+/**
  * 네이티브가 문항 결과를 돌려줄 수신 지점을 설치한다 (KAN-100). 반환값은 해제 함수다.
  *
  * 설치 전에 네이티브가 먼저 부를 수 있다(화면 전환 타이밍상 결과가 빨리 나오는 경우).
@@ -255,6 +370,73 @@ export function shareResult(payload: SharePayload): boolean {
  * 불량 payload는 조용히 버린다 — 여기서 throw하면 예외가 네이티브의 evaluateJavascript
  * 콜백까지 거슬러 올라가는데, 그 자리엔 사용자에게 보여줄 화면이 없다.
  */
+/**
+ * 외부 링크를 네이티브 브라우저로 넘긴다 (KAN-177). 넘겼으면 true, 여기서는 갈 수 없으면 false다.
+ *
+ * false는 브라우저 단독 실행이거나 `openExternalUrl`을 모르는 앱이라는 뜻인데, 호출자에게 그
+ * 구분은 관심사가 아니다 — 어느 쪽이든 "네이티브로는 못 연다"는 같은 사실이고 대응(링크의
+ * 기본 동작에 맡김)도 같다. [shareResult]와 같은 규칙이다.
+ *
+ * true도 "정책 페이지가 떴다"는 뜻은 아니다. 네이티브가 URL을 다시 검증해 거부할 수 있고 그
+ * 판정은 웹으로 회신되지 않는다 — 여기서 true는 호출이 네이티브에 닿았다는 사실까지다.
+ */
+export function openExternalUrl(url: string): boolean {
+  const bridge = window.AccenturyBridge
+  if (typeof bridge?.openExternalUrl !== 'function') return false
+  bridge.openExternalUrl(url)
+  return true
+}
+
+const AD_CONSENT_VALUES: readonly AdConsent[] = ['granted', 'denied', 'unknown']
+
+/**
+ * 맞춤형 광고 동의 상태를 브리지에서 읽는다 (KAN-196). 광고 동의라는 개념이 없는 실행이면 null —
+ * 브리지 자체가 없는 브라우저 단독 실행(KAN-197 범위), 메서드가 없는 구버전 앱, 네이티브가
+ * 계약 밖 문자열을 준 경우가 전부 여기에 포함된다. 셋의 구분은 호출자 관심사가 아니다:
+ * 어느 쪽이든 "물을 동의가 없다"는 같은 사실이고, 대응(시트도 링크도 광고 라벨도 안 그린다)도
+ * 같다 — [getSessionToken]이 세 부재를 null 하나로 접는 것과 같은 규칙이다.
+ *
+ * 모르는 문자열을 `unknown`으로 접지 않는 이유: `unknown`은 "시트를 띄워라"는 뜻이다. 계약이
+ * 어긋난 앱에 시트를 띄우면 쓰기 쪽도 어긋나 있을 가능성이 높고, 그러면 사용자가 골라도
+ * 저장되지 않아 실행마다 다시 묻는다. 계약 불일치는 없는 것으로 다루는 편이 조용하다.
+ */
+export function readAdConsent(): AdConsent | null {
+  const bridge = window.AccenturyBridge
+  if (typeof bridge?.getAdConsent !== 'function') return null
+  const raw = bridge.getAdConsent()
+  return AD_CONSENT_VALUES.includes(raw as AdConsent) ? (raw as AdConsent) : null
+}
+
+/**
+ * 맞춤형 광고 동의를 네이티브 저장소에 쓴다 (KAN-196). 넘겼으면 true, 여기서는 갈 수 없으면
+ * false다 — [openExternalUrl]과 같은 규칙이다.
+ *
+ * true는 "네이티브에 닿았다"까지다. SharedPreferences·UserDefaults 쓰기는 동기라 실패할
+ * 구석이 사실상 없지만, 그렇더라도 확인은 다음 [readAdConsent]가 한다 — 이 함수는 회신을
+ * 받지 않는다.
+ */
+export function writeAdConsent(state: AdConsentChoice): boolean {
+  const bridge = window.AccenturyBridge
+  if (typeof bridge?.setAdConsent !== 'function') return false
+  bridge.setAdConsent(state)
+  return true
+}
+
+/**
+ * 전면 광고를 네이티브에 요청한다 (KAN-196). 넘겼으면 true, 여기서는 갈 수 없으면 false다 —
+ * [shareResult]와 같은 규칙이고, true도 "광고가 떴다"는 뜻이 아닌 것까지 같다. 로드 실패·
+ * 닫힘은 전부 네이티브 안에서 끝나고 웹으로 회신되지 않는다 (인터페이스 주석).
+ *
+ * 세션당 한 번이라는 규칙은 여기 없다 — 호출 횟수를 세는 것은 `ads/interstitial.ts`가 한다.
+ * 이 래퍼는 다른 래퍼와 같이 "부를 수 있으면 부른다"까지만 맡는다.
+ */
+export function showInterstitialAd(): boolean {
+  const bridge = window.AccenturyBridge
+  if (typeof bridge?.showInterstitialAd !== 'function') return false
+  bridge.showInterstitialAd()
+  return true
+}
+
 export function installItemResultReceiver(handler: (result: ItemResult) => void): () => void {
   return installReceiver('onItemResult', (payloadJson) => {
     const result = parseItemResult(payloadJson)

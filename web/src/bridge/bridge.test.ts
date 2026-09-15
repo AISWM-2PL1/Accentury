@@ -6,15 +6,21 @@ import {
   installRetestFailedReceiver,
   isBridgeCompatible,
   isStandaloneWeb,
+  logAnalyticsEvent,
+  openExternalUrl,
+  readAdConsent,
   REQUIRED_BRIDGE_VERSION,
   requestMicPermission,
   shareResult,
+  showInterstitialAd,
   startRetest,
   startVoiceItem,
+  writeAdConsent,
   type AccenturyBridge,
   type SharePayload,
   type VoiceItemStart,
 } from './bridge'
+import { REAL_GUIDE_F0, REAL_GUIDE_F0_ITEM } from '../recording/guideF0Fixture'
 import type { ItemResult } from './itemResult'
 import type { RetestFailure } from './retestFailure'
 
@@ -34,13 +40,14 @@ function fakeBridge(overrides: Partial<AccenturyBridge> = {}): AccenturyBridge {
 }
 
 const voiceStart: VoiceItemStart = {
-  itemId: 'item_1',
-  prompt: '마! 니 어데 가노?',
+  itemId: REAL_GUIDE_F0_ITEM.itemId,
+  prompt: REAL_GUIDE_F0_ITEM.prompt,
   itemNumber: 1,
   totalItems: 10,
   maxDurationMs: 15_000,
-  // 무성 구간 null 포함 — JSON.stringify가 null을 그대로 실어 보내는지도 이 픽스처가 덮는다 (KAN-102)
-  guideF0: { unit: 'semitone', frameIntervalMs: 10, values: [0.5, null, -1.2] },
+  // 발행본 실문항의 곡선이다 (KAN-194). 240점에 무성 null 14개가 섞여 있어,
+  // JSON.stringify가 null을 그대로 실어 보내는지와 실데이터 크기가 함께 덮인다 (KAN-102)
+  guideF0: REAL_GUIDE_F0,
 }
 
 const sharePayload: SharePayload = {
@@ -139,7 +146,20 @@ describe('startVoiceItem — 문항 컨텍스트를 JSON으로 넘긴다', () =>
 
     expect(startVoiceItem(voiceStart)).toBe(true)
     expect(fn).toHaveBeenCalledTimes(1)
-    expect(JSON.parse(fn.mock.calls[0][0])).toEqual(voiceStart)
+    const sent = JSON.parse(fn.mock.calls[0][0]) as VoiceItemStart
+
+    // 곡선을 뺀 나머지는 원본 그대로다
+    expect({ ...sent, guideF0: null }).toEqual({ ...voiceStart, guideF0: null })
+    expect(sent.guideF0.unit).toBe(REAL_GUIDE_F0.unit)
+    expect(sent.guideF0.frameIntervalMs).toBe(REAL_GUIDE_F0.frameIntervalMs)
+    // 곡선은 무성 null 14개를 포함해 240점이 가공 없이 건너간다 (KAN-194)
+    expect(sent.guideF0.values.length).toBe(240)
+    expect(sent.guideF0.values.filter((value) => value === null).length).toBe(14)
+    sent.guideF0.values.forEach((value, i) => {
+      // Object.is가 아니라 ===로 보는 이유: JSON이 -0을 0으로 적는다(실데이터 index 190).
+      // 두 값은 산술적으로 같아 곡선 좌표는 한 픽셀도 달라지지 않는다
+      expect(value === REAL_GUIDE_F0.values[i]).toBe(true)
+    })
   })
 
   it('브리지가 없으면 크래시 없이 false를 돌려준다', () => {
@@ -334,5 +354,132 @@ describe('getSessionToken — 토큰 읽기 (KAN-13)', () => {
     window.AccenturyBridge = fakeBridge({ getSessionToken: () => '' })
 
     expect(getSessionToken()).toBeNull()
+  })
+})
+
+describe('logAnalyticsEvent — 계측 이벤트 전달 (KAN-33)', () => {
+  it('이벤트명과 파라미터 JSON을 네이티브에 넘기고 true를 돌려준다', () => {
+    const logEvent = vi.fn()
+    window.AccenturyBridge = fakeBridge({ logEvent })
+
+    expect(logAnalyticsEvent('tier_assigned', { tier_code: 'NATIVE', overall_bucket: 90 })).toBe(true)
+    expect(logEvent).toHaveBeenCalledWith(
+      'tier_assigned',
+      JSON.stringify({ tier_code: 'NATIVE', overall_bucket: 90 }),
+    )
+  })
+
+  it('파라미터가 없는 이벤트는 빈 객체 JSON으로 간다', () => {
+    const logEvent = vi.fn()
+    window.AccenturyBridge = fakeBridge({ logEvent })
+
+    logAnalyticsEvent('retest_started', {})
+
+    expect(logEvent).toHaveBeenCalledWith('retest_started', '{}')
+  })
+
+  it('브리지가 없으면(브라우저 단독) false — 호출자가 gtag 경로로 내려간다', () => {
+    expect(logAnalyticsEvent('referral_opened', { campaign: null })).toBe(false)
+  })
+
+  it('계측을 모르는 구버전 앱에서도 false다 (메서드 추가는 계약 버전을 올리지 않는다)', () => {
+    window.AccenturyBridge = fakeBridge() // logEvent 없음
+
+    expect(logAnalyticsEvent('referral_opened', { campaign: null })).toBe(false)
+  })
+})
+
+describe('openExternalUrl — 외부 링크 넘기기 (KAN-177)', () => {
+  it('URL을 그대로 네이티브에 넘기고 true를 돌려준다', () => {
+    const open = vi.fn()
+    window.AccenturyBridge = fakeBridge({ openExternalUrl: open })
+
+    expect(openExternalUrl('https://accentury.app/privacy.html')).toBe(true)
+    expect(open).toHaveBeenCalledWith('https://accentury.app/privacy.html')
+  })
+
+  it('브리지가 없으면(브라우저 단독) false — 호출자가 링크 기본 동작에 맡긴다', () => {
+    expect(openExternalUrl('https://accentury.app/privacy.html')).toBe(false)
+  })
+
+  it('메서드를 모르는 구버전 앱에서도 false다 (메서드 추가는 계약 버전을 올리지 않는다)', () => {
+    window.AccenturyBridge = fakeBridge() // openExternalUrl 없음
+
+    expect(openExternalUrl('https://accentury.app/privacy.html')).toBe(false)
+  })
+})
+
+describe('readAdConsent — 맞춤형 광고 동의 읽기 (KAN-196)', () => {
+  it.each(['granted', 'denied', 'unknown'] as const)('계약 안의 값 %s 을 그대로 돌려준다', (state) => {
+    window.AccenturyBridge = fakeBridge({ getAdConsent: () => state })
+
+    expect(readAdConsent()).toBe(state)
+  })
+
+  it('브리지가 없으면(브라우저 단독, KAN-197 범위) null — 광고 동의라는 개념이 없다', () => {
+    expect(readAdConsent()).toBeNull()
+  })
+
+  it('메서드를 모르는 구버전 앱에서도 null이다 (메서드 추가는 계약 버전을 올리지 않는다)', () => {
+    window.AccenturyBridge = fakeBridge() // getAdConsent 없음
+
+    expect(readAdConsent()).toBeNull()
+  })
+
+  it('계약 밖 문자열은 unknown이 아니라 null이다 — 어긋난 앱에 시트를 띄우지 않는다', () => {
+    window.AccenturyBridge = fakeBridge({ getAdConsent: () => 'GRANTED' })
+    expect(readAdConsent()).toBeNull()
+
+    window.AccenturyBridge = fakeBridge({ getAdConsent: () => '' })
+    expect(readAdConsent()).toBeNull()
+
+    // 문자열이 아닌 값도 같다 — 계약은 문자열 셋이다
+    window.AccenturyBridge = fakeBridge({ getAdConsent: () => 1 as unknown as string })
+    expect(readAdConsent()).toBeNull()
+  })
+})
+
+describe('writeAdConsent — 맞춤형 광고 동의 쓰기 (KAN-196)', () => {
+  it('고른 값을 그대로 네이티브에 넘기고 true를 돌려준다', () => {
+    const set = vi.fn()
+    window.AccenturyBridge = fakeBridge({ setAdConsent: set })
+
+    expect(writeAdConsent('granted')).toBe(true)
+    expect(set).toHaveBeenCalledWith('granted')
+
+    expect(writeAdConsent('denied')).toBe(true)
+    expect(set).toHaveBeenLastCalledWith('denied')
+  })
+
+  it('브리지가 없으면(브라우저 단독) false — 저장할 곳이 없다', () => {
+    expect(writeAdConsent('granted')).toBe(false)
+  })
+
+  it('메서드를 모르는 구버전 앱에서도 false다', () => {
+    window.AccenturyBridge = fakeBridge() // setAdConsent 없음
+
+    expect(writeAdConsent('denied')).toBe(false)
+  })
+})
+
+describe('showInterstitialAd — 전면 광고 요청 (KAN-196)', () => {
+  it('인자 없이 네이티브를 부르고 true를 돌려준다', () => {
+    const show = vi.fn()
+    window.AccenturyBridge = fakeBridge({ showInterstitialAd: show })
+
+    expect(showInterstitialAd()).toBe(true)
+    expect(show).toHaveBeenCalledTimes(1)
+    // 회신도 인자도 없는 계약이다 — 무엇을 실어 보내면 계약이 바뀐 것이다
+    expect(show).toHaveBeenCalledWith()
+  })
+
+  it('브리지가 없으면(브라우저 단독) false — 광고가 없는 실행이다', () => {
+    expect(showInterstitialAd()).toBe(false)
+  })
+
+  it('메서드를 모르는 구버전 앱에서도 false다', () => {
+    window.AccenturyBridge = fakeBridge() // showInterstitialAd 없음
+
+    expect(showInterstitialAd()).toBe(false)
   })
 })

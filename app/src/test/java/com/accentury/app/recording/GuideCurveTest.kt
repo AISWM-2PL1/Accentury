@@ -88,4 +88,49 @@ class GuideCurveTest {
         assertEquals(0.5f, points.single().x, 1e-5f)
         assertEquals(0.5f, points.single().y, 1e-5f) // 값 하나는 range 0 - 중앙
     }
+
+    // --- 발행본 실문항 곡선 (KAN-194) -----------------------------------------
+    // 아래 셋은 web `guideCurve.test.ts`의 「발행본 실문항 곡선」과 같은 케이스다. 두 구현이
+    // 1:1 포팅이라(웹 `guideCurve.ts` 머리주석), 같은 실데이터에 같은 결과가 나오는지를
+    // 여기서 못박는다 - 한쪽만 규칙이 흘러가면 사용자는 웹과 앱에서 다른 곡선을 본다.
+
+    @Test
+    fun `실문항은 무성 구간을 보간해 240점을 하나도 버리지 않고 그린다`() {
+        val values = GuideF0Fixture.REAL.values
+        assertEquals("v102", GuideF0Fixture.ITEM_ID)
+        assertEquals(240, values.size)
+        assertEquals(14, values.count { it == null })
+
+        // 앞뒤 가장자리가 유성이라 첫 프레임부터 끝 프레임까지 다 들어온다 - 중간 무성은
+        // 버려지는 게 아니라 양옆 값의 보간으로 메워진다
+        val points = guideCurveDisplayPoints(values)
+        assertEquals(240, points.size)
+        assertEquals(0f, points.first().x, 1e-6f)
+        assertEquals(1f, points.last().x, 1e-6f)
+    }
+
+    @Test
+    fun `실문항의 보간된 무성 구간은 양옆 유성 값 사이를 고르게 잇는다`() {
+        // index 125(-0.48)에서 140(-1.8)으로 내려가는 구간이 통째로 무성이다.
+        // 값이 내려가므로 화면에서는 y가 단조 증가하고, 보간이라 간격이 균일하다
+        val points = guideCurveDisplayPoints(GuideF0Fixture.REAL.values)
+        val hole = points.subList(125, 141)
+        val gaps = (0 until hole.size - 1).map { hole[it + 1].y - hole[it].y }
+        gaps.forEach {
+            assertTrue("무성 구간의 y는 단조 증가해야 한다: $gaps", it > 0f)
+            assertEquals(gaps.first(), it, 1e-5f)
+        }
+    }
+
+    @Test
+    fun `실문항 곡선은 여백 안에 들어와 레인 밖으로 넘치지 않는다`() {
+        val points = guideCurveDisplayPoints(GuideF0Fixture.REAL.values)
+        points.forEach {
+            assertTrue("y가 레인을 벗어났다: $it", it.y > 0f && it.y < 1f)
+        }
+        // 실측 범위는 -5.1 ~ 5.44. 자기 min/max 스케일이라 최고·최저점이 여백 10%만큼
+        // 가장자리에서 떨어져 있다 - 장난감 두 점 케이스와 같은 0.0833/0.9167이 나온다.
+        assertEquals(0.0833f, points.minOf { it.y }, 1e-3f)
+        assertEquals(0.9167f, points.maxOf { it.y }, 1e-3f)
+    }
 }

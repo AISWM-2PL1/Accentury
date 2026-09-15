@@ -13,7 +13,8 @@
  *
  * **`clearSnapshot`을 여기서 부르지 않는다.** 마지막 문항을 제출해도 스냅샷은 남긴다 —
  * 분석 대기 중 백그라운드로 갔다가 복귀하면 `AWAITING_ANALYSIS` 상태로 되살아나야 하기 때문이다.
- * 삭제 시점은 결과 화면(KAN-25)에 진입해 이 진행이 완전히 끝났을 때다.
+ * 삭제는 이 진행이 완전히 끝난 자리, 즉 결과 화면 진입이 한다 (KAN-198로 `App.tsx`에 결선했다.
+ * 끊긴 응시가 남긴 키는 인트로 진입의 `sweepSnapshots`가 걷는다).
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -25,7 +26,12 @@ import {
   type Progress,
   type ProgressState,
 } from './progressMachine'
-import { restoreProgress, saveSnapshot, type SnapshotStorage } from './progressSnapshot'
+import {
+  defaultSnapshotStorage,
+  restoreProgress,
+  saveSnapshot,
+  type SnapshotStorage,
+} from './progressSnapshot'
 import type { TestDefinition, TestItem } from './testDefinition'
 
 /** 화면이 진행을 그리고 움직이는 데 필요한 것 전부 */
@@ -35,28 +41,15 @@ export interface UseTestProgressResult {
   current: TestItem | null
   /** 진행바용 n/N. 첫 문항이 1/10이다 (endowed progress — ux-ui.md §3 Goal-Gradient) */
   progress: Progress
-  /** 현재 문항의 제출 완료 통지. 상태 머신이 거부하면 아무 일도 일어나지 않는다 */
-  submit: (itemId: string) => void
-}
-
-/** 저장소가 아예 없는 환경에서 쓰는 빈 저장소. 진행은 메모리로만 이어진다 */
-const NO_STORAGE: SnapshotStorage = {
-  getItem: () => null,
-  setItem: () => {},
-  removeItem: () => {},
-}
-
-/**
- * 기본 저장소. `progressSnapshot`은 메서드 호출 실패를 방어하지만, 쿠키를 막은 브라우저에서는
- * `window.localStorage` **프로퍼티 접근 자체**가 던진다. 그 한 겹만 여기서 막는다.
- * 반환값은 매번 같은 객체라 렌더마다 참조가 바뀌지 않는다.
- */
-function defaultStorage(): SnapshotStorage {
-  try {
-    return window.localStorage
-  } catch {
-    return NO_STORAGE
-  }
+  /**
+   * 현재 문항의 제출 완료 통지. 상태 머신이 거부하면 아무 일도 일어나지 않는다.
+   *
+   * 돌려주는 값은 **진행이 실제로 밀렸는가**다 (KAN-33). 이 판정은 상태 머신만 할 수 있는데
+   * (중복 제출·순서 위반·모르는 itemId를 여기서 거른다), 호출자는 그 사실을 알아야 문항 제출을
+   * 한 번만 셀 수 있다 — 재녹음 결과도 같은 경로로 들어오므로 세는 쪽에서 다시 판정하면
+   * 같은 규칙이 두 벌이 된다.
+   */
+  submit: (itemId: string) => boolean
 }
 
 /**
@@ -65,7 +58,7 @@ function defaultStorage(): SnapshotStorage {
  */
 export function useTestProgress(
   definition: TestDefinition,
-  storage: SnapshotStorage = defaultStorage(),
+  storage: SnapshotStorage = defaultSnapshotStorage(),
   sessionId = '',
 ): UseTestProgressResult {
   // lazy initializer — 마운트당 한 번만 복원을 시도한다. 매 렌더 복원하면 방금 진행한 상태를
@@ -85,11 +78,12 @@ export function useTestProgress(
     const next = submitItem(previous, itemId)
     // 동일 참조 = 상태 머신이 거부했다(중복 제출·순서 위반·모르는 itemId).
     // 진행이 그대로이므로 저장도 리렌더도 하지 않는다.
-    if (next === previous) return
+    if (next === previous) return false
 
     latest.current.state = next
     saveSnapshot(latest.current.storage, next, latest.current.testVersion, latest.current.sessionId)
     setState(next)
+    return true
   }, [])
 
   useEffect(() => {

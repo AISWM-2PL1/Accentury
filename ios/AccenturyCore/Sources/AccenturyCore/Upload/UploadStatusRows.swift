@@ -13,7 +13,9 @@ public struct UploadFailureRow: Equatable, Sendable {
 
 /// 상태 바가 읽는 요약. 성공(Done)은 조용히 넘어가고, 진행 중 개수와 실패 건만 남는다.
 ///
-/// 복구 경로는 [재시도] 하나다 - 이탈 UX는 KAN-39 디자인 때 정한다 (KAN-147).
+/// 복구 경로는 [재시도] 하나다 (KAN-147). 재시도 불가 실패에도 출구를 두지 않는다 — 진행 중
+/// 화면에 이탈 버튼을 달지 않는다는 결정이고, 출구는 분석 대기 화면의 [다시 녹음] / [다시
+/// 테스트하기]다 (KAN-191, ux-ui.md §4-D·§4-F).
 /// SwiftUI 바 자체는 §6b 몫이고, 여기는 안드로이드 `UploadStatusBar.kt`의 순수한 부분만이다.
 public struct UploadSummary: Equatable, Sendable {
     public let inFlight: Int

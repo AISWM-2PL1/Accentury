@@ -12,7 +12,10 @@ import java.time.Instant;
  * @param sessionToken  {@code st_...} - {@code Authorization: Bearer}로 보낼 불투명 토큰
  * @param testVersion   이 세션에 고정된 테스트 정의 버전 - {@code GET /v0/tests/{testVersion}}에 그대로 넣는다 (§5.4).
  * @param scoreVersion  이 세션에 고정된 점수 산정 버전
- * @param voiceSet      이 세션에 고정된 음성 문항 세트 번호 (KAN-182) - 정의 조회의 {@code ?voiceSet=}에 그대로 넣는다.
+ * @param voiceSet      이 세션에 고정된 음성 문항 세트 번호 (KAN-182, KAN-205). 요청이 세트를
+ *                      생략했으면 서버가 고른 값이다. 클라이언트는 이 값을 정의 조회의
+ *                      {@code ?voiceSet=}에 <b>반드시</b> 그대로 넣어야 한다 - 빠뜨리면 세트 1의
+ *                      문항을 받아 제출이 전부 422 {@code ITEM_NOT_IN_VERSION}으로 막힌다.
  * @param voiceSetCount 고정된 버전의 세트 수 - 앱의 "모든 세트 경험" UI가 쓴다.
  * @param expiresAt     토큰 만료 시각 (UTC) - 기본 30분
  */

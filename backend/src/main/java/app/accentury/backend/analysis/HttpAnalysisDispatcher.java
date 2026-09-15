@@ -2,6 +2,9 @@ package app.accentury.backend.analysis;
 
 import app.accentury.backend.common.CorrelationIdFilter;
 import app.accentury.backend.common.ErrorCode;
+import app.accentury.backend.session.Region;
+import app.accentury.backend.training.TrainingSample;
+import app.accentury.backend.training.TrainingSampleStore;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,11 +27,16 @@ import java.util.concurrent.atomic.AtomicReference;
  * 추론을 기다리지 않고 202를 반환한다. 큐가 가득 차 제출이 거절되면 그 예외가 업로드
  * 요청 스레드로 그대로 올라가고, 업로드 서비스가 RETRYABLE_FAILED + 503으로 처리한다.
  * <p>
- * 일시 장애(연결 실패, 타임아웃, 5xx)는 오디오가 아직 메모리에 있는 이 시점에만
+ * 일시 장애(연결 실패, 5xx)는 오디오가 아직 메모리에 있는 이 시점에만
  * 재전송할 수 있다 (FR-DP-01 - 저장이 없어 나중은 불가). 재전송 예산을 다 쓰면
  * RETRYABLE_FAILED로 종결해 재녹음(새 시도)을 유도한다. 분석 판정 실패
  * ({@link AiAnalysisClient.Rejected})는 같은 오디오에 같은 답이 올 것이므로 재전송하지 않는다 -
  * "재시도 가능한 실패만 다시 큐잉한다"(KAN-24 AC)의 구현이 이 구분이다.
+ * <p>
+ * 읽기 타임아웃은 일시 장애지만 재전송하지 않는다 (KAN-172, 2026-09-01 결정). 실모델은
+ * CPU 바운드 단일 워커라 타임아웃 시점에 아직 그 오디오를 추론 중일 가능성이 높고, 재전송은
+ * 그 위에 같은 분석을 하나 더 얹어 뒤 요청까지 밀리게 한다. AI에 닿았으므로 시도 예산에
+ * 드는 ANALYSIS_TIMEOUT으로 바로 종결하고, 회로에는 다른 장애와 같이 실패로 센다.
  * <p>
  * 장애가 길어지면 재전송도 손해다 - 연속 실패가 임계치에 닿으면 {@link AiCircuitBreaker}가
  * 회로를 열어 이 경로를 통째로 끊는다 (KAN-28). 열린 동안 업로드는 작업조차 만들지 않고
@@ -39,6 +47,10 @@ import java.util.concurrent.atomic.AtomicReference;
  * 작업은 {@link #failQueued()}로 즉시 종결하며, 실행 중인 작업만 종료 예산 안에서 끝나기를
  * 기다린다 - 순서는 {@link AnalysisDrainLifecycle}이 잡는다. 그래서 제출한 작업을 큐 안에서도
  * 알아볼 수 있게 {@link Task}로 감싸 추적한다.
+ * <p>
+ * staging에서는 종결 뒤, 버퍼를 지우기 전에 학습 샘플을 남긴다 (KAN-201, {@link TrainingSampleStore}) -
+ * AI가 계약대로 답한 건(성공과 판정 실패)만이고, 계약 위반과 AI 불가는 원점수도 판정도 없어 남기지
+ * 않는다. 저장 실패는 분석 결과에 영향을 주지 않는다.
  */
 class HttpAnalysisDispatcher implements AnalysisDispatcher {
 
@@ -52,6 +64,8 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
     private final AnalysisJobTransitions transitions;
     private final AnalysisBacklog backlog;
     private final AiCircuitBreaker circuitBreaker;
+    private final AnalysisMetrics metrics;
+    private final TrainingSampleStore trainingSamples;
     private final int retries;
     private final long retryBackoffMs;
 
@@ -63,18 +77,30 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
 
     HttpAnalysisDispatcher(AiAnalysisClient client, TaskExecutor executor,
                            AnalysisJobTransitions transitions, AnalysisBacklog backlog,
-                           AiCircuitBreaker circuitBreaker, int retries) {
-        this(client, executor, transitions, backlog, circuitBreaker, retries, RETRY_BACKOFF_MS);
+                           AiCircuitBreaker circuitBreaker, AnalysisMetrics metrics, int retries) {
+        this(client, executor, transitions, backlog, circuitBreaker, metrics, TrainingSampleStore.NONE, retries,
+                RETRY_BACKOFF_MS);
     }
 
     HttpAnalysisDispatcher(AiAnalysisClient client, TaskExecutor executor,
                            AnalysisJobTransitions transitions, AnalysisBacklog backlog,
-                           AiCircuitBreaker circuitBreaker, int retries, long retryBackoffMs) {
+                           AiCircuitBreaker circuitBreaker, AnalysisMetrics metrics, int retries,
+                           long retryBackoffMs) {
+        this(client, executor, transitions, backlog, circuitBreaker, metrics, TrainingSampleStore.NONE, retries,
+                retryBackoffMs);
+    }
+
+    HttpAnalysisDispatcher(AiAnalysisClient client, TaskExecutor executor,
+                           AnalysisJobTransitions transitions, AnalysisBacklog backlog,
+                           AiCircuitBreaker circuitBreaker, AnalysisMetrics metrics,
+                           TrainingSampleStore trainingSamples, int retries, long retryBackoffMs) {
         this.client = client;
         this.executor = executor;
         this.transitions = transitions;
         this.backlog = backlog;
         this.circuitBreaker = circuitBreaker;
+        this.metrics = metrics;
+        this.trainingSamples = trainingSamples;
         this.retries = retries;
         this.retryBackoffMs = retryBackoffMs;
     }
@@ -215,7 +241,7 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
         }
     }
 
-    private void run(AnalysisRequest request, String correlationId) {
+    private void run(AnalysisRequest request, String correlationId, long acceptedNanos) {
         MDC.put(CorrelationIdFilter.MDC_KEY, correlationId);
         try {
             // 실행 시작을 원자적으로 선점한다 - 이미 종결된(타임아웃 등) 작업이면 그 결과는
@@ -225,7 +251,11 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
                 log.info("이미 종결된 작업이라 AI 호출을 건너뛴다 jobId={}", request.analysisJobId());
                 return;
             }
-            apply(request.analysisJobId(), analyzeWithRetry(request, correlationId));
+            AiAnalysisClient.Outcome outcome = analyzeWithRetry(request, correlationId);
+            apply(request.analysisJobId(), outcome, acceptedNanos);
+            // 상태 전이가 끝난 뒤, 아래 finally의 wipeAudio() 전이다 (KAN-201). 사용자는 이미 종결을 볼 수
+            // 있고, 워커 점유 시간만 저장 왕복만큼 늘어난다 (staging 한정 - 그 밖은 NONE이라 즉시 돌아온다).
+            keepTrainingSample(request, outcome, correlationId);
         } catch (RuntimeException e) {
             // 종결을 놓치면 사용자는 타임아웃 스위퍼까지 대기 화면에 묶인다 - 어떤 예외도 종결로 바꾼다.
             log.error("분석 전달 워커 실패 jobId={}", request.analysisJobId(), e);
@@ -293,6 +323,16 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
                 return outcome;
             } catch (AiAnalysisClient.AiUnavailableException e) {
                 circuitBreaker.recordFailure(request.analysisJobId());
+                if (e.kind() == AiAnalysisClient.AiUnavailableException.Kind.TIMED_OUT) {
+                    // 읽기 타임아웃은 재전송하지 않는다 (KAN-172) - 클래스 주석 참고. AI 자신의 상한이
+                    // 이 타임아웃보다 짧아(75초 < 85초) 보통은 503(SERVER_ERROR)으로 먼저 돌아오므로,
+                    // 여기까지 오면 AI가 응답조차 못 내는 상태다 - 같은 오디오를 또 보내 봐야 얹힐 뿐이다.
+                    log.warn("AI 읽기 타임아웃 - 재전송 없이 종결 jobId={} 시도={}",
+                            request.analysisJobId(), attempt + 1, e);
+                    transitions.fail(request.analysisJobId(), AnalysisJobStatus.RETRYABLE_FAILED,
+                            ErrorCode.ANALYSIS_TIMEOUT.name());
+                    return null;
+                }
                 if (attempt >= retries) {
                     log.warn("AI 일시 장애로 재전송 예산 소진 jobId={} 시도={} kind={}",
                             request.analysisJobId(), attempt + 1, e.kind(), e);
@@ -334,22 +374,73 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
     private static String exhaustedErrorCode(AiAnalysisClient.AiUnavailableException.Kind kind) {
         return switch (kind) {
             case UNREACHED -> ErrorCode.ANALYSIS_UNAVAILABLE.name();
+            // 타임아웃은 재전송 없이 위에서 바로 종결하므로(KAN-172) 여기 오지 않는다 - 분류가 늘어도
+            // switch가 빠짐없이 남게 두는 갈래다.
             case TIMED_OUT -> ErrorCode.ANALYSIS_TIMEOUT.name();
             case SERVER_ERROR -> ErrorCode.INTERNAL_ERROR.name();
         };
     }
 
-    private void apply(String jobId, AiAnalysisClient.@Nullable Outcome outcome) {
+    private void apply(String jobId, AiAnalysisClient.@Nullable Outcome outcome, long acceptedNanos) {
         switch (outcome) {
-            case AiAnalysisClient.Completed completed -> transitions.complete(jobId,
-                    completed.intonationScore(), completed.qualityCode(),
-                    completed.modelVersion(), completed.scoreVersion());
+            case AiAnalysisClient.Completed completed -> {
+                // 전이에 <b>성공한</b> 건만 지연 분포에 넣는다 (KAN-38). 0행으로 버려진 결과는
+                // 사용자가 이미 재녹음 안내를 받은 뒤이고, 그 소요 시간은 정의상 타임아웃보다
+                // 길어 P95를 위로 민다 - 실패를 빼려고 성공만 재는 취지가 그대로 깨진다.
+                // 기준점은 dispatch() 진입이다: 업로드는 작업 행을 저장한 바로 다음 줄에서
+                // 전달하므로(VoiceUploadService) 작업의 createdAt과 사실상 같은 순간이고,
+                // 그 값을 얻자고 종결 경로에 조회를 하나 더 두지 않는다.
+                if (transitions.complete(jobId, completed.intonationScore(), completed.qualityCode(),
+                        completed.modelVersion(), completed.scoreVersion())) {
+                    metrics.recordCompleted(System.nanoTime() - acceptedNanos);
+                }
+            }
             case AiAnalysisClient.Rejected rejected -> transitions.fail(jobId,
                     rejected.retryable() ? AnalysisJobStatus.RETRYABLE_FAILED : AnalysisJobStatus.FAILED,
                     rejected.errorCode());
             case null -> {
                 // analyzeWithRetry가 이미 종결했다.
             }
+        }
+    }
+
+    /**
+     * 학습 샘플로 남길 건이면 저장소에 넘긴다 (KAN-201). AI가 계약대로 답한 건 전부다 - 성공
+     * ({@link AiAnalysisClient.Completed})과 판정 실패({@link AiAnalysisClient.Rejected}의 JUDGED, 부정 샘플도
+     * 학습에 쓴다). 계약 위반은 원점수도 판정도 없고, null(재전송 예산 소진, 타임아웃, 회로 열림, 종료 중)은
+     * AI에 닿지 못했거나 답을 못 받은 것이라 남기지 않는다.
+     * <p>
+     * 저장소가 예외를 삼키기로 되어 있지만 한 번 더 감싼다 - 여기서 새면 바깥 catch가 이미 종결된 작업을
+     * INTERNAL_ERROR로 다시 종결하려 들고(조건부 UPDATE 0행이라 무해하지만 ERROR 로그가 남는다), 저장
+     * 구현의 실수가 분석 경로의 오류로 보인다.
+     */
+    private void keepTrainingSample(AnalysisRequest request, AiAnalysisClient.@Nullable Outcome outcome,
+                                    String correlationId) {
+        TrainingSample sample = switch (outcome) {
+            case AiAnalysisClient.Completed completed -> new TrainingSample(
+                    request.analysisJobId(), request.sessionId(), request.itemId(),
+                    Region.forStorage(request.region()).name(), request.scriptKey(),
+                    request.testVersion(), request.scoreVersion(), request.durationMs(),
+                    TrainingSample.Outcome.COMPLETED, completed.intonationScore(), completed.qualityCode(),
+                    completed.modelVersion(), completed.scoreVersion(), null, correlationId, request.audio());
+            case AiAnalysisClient.Rejected rejected when rejected.cause() == AiAnalysisClient.Rejected.Cause.JUDGED ->
+                    new TrainingSample(
+                            request.analysisJobId(), request.sessionId(), request.itemId(),
+                            Region.forStorage(request.region()).name(), request.scriptKey(),
+                            request.testVersion(), request.scoreVersion(), request.durationMs(),
+                            rejected.retryable() ? TrainingSample.Outcome.RETRYABLE_FAILED
+                                    : TrainingSample.Outcome.FAILED,
+                            null, null, null, null, rejected.errorCode(), correlationId, request.audio());
+            case AiAnalysisClient.Rejected ignored -> null;   // CONTRACT_VIOLATION
+            case null -> null;
+        };
+        if (sample == null) {
+            return;
+        }
+        try {
+            trainingSamples.save(sample);
+        } catch (RuntimeException e) {
+            log.warn("학습 샘플 저장소가 예외를 냈다 - 분석 결과에는 영향 없음 jobId={}", request.analysisJobId(), e);
         }
     }
 
@@ -376,6 +467,8 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
 
         final AnalysisRequest request;
         final String correlationId;
+        /** 전달 접수 시각 - 지연 지표의 기준점이다 (KAN-38). */
+        final long acceptedNanos = System.nanoTime();
         final AtomicReference<State> state = new AtomicReference<>(State.QUEUED);
 
         Task(AnalysisRequest request, String correlationId) {
@@ -406,7 +499,7 @@ class HttpAnalysisDispatcher implements AnalysisDispatcher {
                 return;
             }
             try {
-                HttpAnalysisDispatcher.this.run(request, correlationId);
+                HttpAnalysisDispatcher.this.run(request, correlationId, acceptedNanos);
             } finally {
                 tasks.remove(this);
             }

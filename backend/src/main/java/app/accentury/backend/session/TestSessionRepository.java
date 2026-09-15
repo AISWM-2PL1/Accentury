@@ -39,6 +39,14 @@ public interface TestSessionRepository extends JpaRepository<TestSession, String
     Optional<TestSession> lockByTokenHash(@Param("tokenHash") String tokenHash);
 
     /**
+     * 아직 만료되지 않은 세션 행 수 - 동시 활성 세션 지표의 입력이다 ({@link SessionMetrics}, KAN-38).
+     * <p>
+     * {@code expires_at}에 인덱스가 없어 전체 스캔이다. 발행 주기마다 한 번(1분)만 부르는 조회라
+     * 그대로 두었다 - 근거와 재검토 신호는 {@link SessionMetrics}에 적어 두었다.
+     */
+    long countByExpiresAtAfter(Instant now);
+
+    /**
      * 만료 세션 주기 삭제 (§2.1). 호출부에 트랜잭션 필요.
      * <p>
      * 파생 delete는 엔티티를 전부 로드해 건별 삭제하므로 벌크 쿼리로 선언한다 -

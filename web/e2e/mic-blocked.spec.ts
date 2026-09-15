@@ -27,6 +27,7 @@
  */
 
 import { expect, test, type Page } from '@playwright/test'
+import { passAdConsentIfShown } from './helpers/testFlow'
 
 /**
  * `getUserMedia`가 주어진 이름으로 거절하게 만든다.
@@ -63,7 +64,13 @@ test('마이크 거부 - 권한 안내 화면으로 갈리고 세션은 만들�
   const sessionRequests = countSessionRequests(page)
 
   await page.goto('/')
-  await page.getByRole('button', { name: '시작하기', exact: true }).click()
+  /*
+   * 동의 시트가 덮고 있으면 [시작하기]가 가려져 클릭이 시간 초과로 죽는다 (KAN-197 2단계).
+   * 시트는 광고 ID가 든 빌드에서만 뜨고, 인트로가 그려지기를 기다리는 것은 헬퍼가 한다
+   * (PR #109 리뷰 (2026-09-13)).
+   */
+  await passAdConsentIfShown(page)
+  await page.getByRole('button', { name: '내 억양 테스트하기', exact: true }).click()
 
   // 인트로가 통째로 갈렸다. 문구는 `MicBlockedScreen`의 COPY.denied다.
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('마이크 권한이 필요해요')
@@ -89,7 +96,7 @@ test('마이크 거부 - 권한 안내 화면으로 갈리고 세션은 만들�
    * [시작하기]는 사라졌다. 권한 없이 진행할 수 없는데 버튼이 남아 있으면 사용자는 될 때까지
    * 누르게 된다 — 화면을 갈아치우는 이유가 그것이다.
    */
-  await expect(page.getByRole('button', { name: '시작하기', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '내 억양 테스트하기', exact: true })).toHaveCount(0)
 
   /*
    * 다시 눌러도 마찬가지다. 스텁이 계속 거절하므로 같은 안내로 돌아와야 하고, 그 사이에도
@@ -115,7 +122,13 @@ test('마이크 점유 - 거부와 다른 안내로 갈린다', async ({ page })
   await rejectMicrophoneWith(page, 'NotReadableError')
 
   await page.goto('/')
-  await page.getByRole('button', { name: '시작하기', exact: true }).click()
+  /*
+   * 동의 시트가 덮고 있으면 [시작하기]가 가려져 클릭이 시간 초과로 죽는다 (KAN-197 2단계).
+   * 시트는 광고 ID가 든 빌드에서만 뜨고, 인트로가 그려지기를 기다리는 것은 헬퍼가 한다
+   * (PR #109 리뷰 (2026-09-13)).
+   */
+  await passAdConsentIfShown(page)
+  await page.getByRole('button', { name: '내 억양 테스트하기', exact: true }).click()
 
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('마이크를 사용할 수 없어요')
   await expect(

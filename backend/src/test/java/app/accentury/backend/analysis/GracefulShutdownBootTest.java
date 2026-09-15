@@ -65,6 +65,9 @@ class GracefulShutdownBootTest {
                             "--accentury.analysis.ai-base-url=" + ai.baseUrl(),
                             // 워커 1 - 첫 작업이 AI에 묶인 동안 나머지 둘은 큐에 남는다.
                             "--accentury.analysis.dispatch-concurrency=1",
+                            // 기동 검증(shutdown-budget > ai-timeout)을 통과하는 짧은 조합 - 기본값(85초 / 90초,
+                            // KAN-172)으로는 종료 시나리오가 분 단위로 길어진다.
+                            "--accentury.analysis.ai-timeout=10s",
                             "--accentury.analysis.shutdown-budget=20s",
                             "--spring.lifecycle.timeout-per-shutdown-phase=5s");
             AnalysisJobRepository repository = context.getBean(AnalysisJobRepository.class);
@@ -75,7 +78,7 @@ class GracefulShutdownBootTest {
                         "v" + (i + 1), 1, "idem-" + UUID.randomUUID(), AnalysisJobStatus.PROCESSING,
                         Instant.now()));
                 requests[i] = new AnalysisDispatcher.AnalysisRequest(jobs[i].id(), "s_boot_shutdown",
-                        jobs[i].itemId(), null, "gn-2026.08.1", "sv-0.3", 3000, new byte[] {1, 2, 3});
+                        jobs[i].itemId(), null, "gn-2026.08.1", "sv-0.3", null, 3000, new byte[] {1, 2, 3});
                 dispatcher.dispatch(requests[i]);
             }
             assertTrue(ai.arrived.await(10, TimeUnit.SECONDS), "첫 분석이 AI에 도달해야 한다");

@@ -33,6 +33,13 @@ public final class LogMasking {
     private static final Pattern SESSION_TOKEN = Pattern.compile("\\bst_[A-Za-z0-9_-]{8,}");
 
     /**
+     * 카카오 웹훅의 {@code Authorization: KakaoAK ...} 값 (KAN-164) - {@link #BEARER}와 같은 자리다.
+     * 헤더 이름 없이 값만 찍혀도 걸린다. 이 값은 앱 Admin 키라 새면 카카오 관리 API까지 열린다.
+     */
+    private static final Pattern KAKAO_AK = Pattern.compile(
+            "(?i)\\bKakaoAK\\s+(?!\\*\\*\\*)[^\\s\",;}]+");
+
+    /**
      * {@code Authorization} 헤더 값 전체 - <b>스킴을 가리지 않는다</b>.
      * <p>
      * {@link #BEARER}만 두면 {@code Basic}, {@code Digest}, 사설 스킴의 자격증명이 그대로
@@ -70,6 +77,11 @@ public final class LogMasking {
      * {@code ACCENTURY_AI_INTERNAL_TOKEN}도 같은 값이라 함께 넣는다 (compose 설정이 backend 로그에
      * 덤프될 수 있다).
      * <p>
+     * 카카오 웹훅 검증 키(KAN-164)도 같다 - 설정 키 {@code kakao-admin-key}와
+     * {@code accentury.share.kakao-admin-key}, 바인딩된 필드 {@code kakaoAdminKey}, 환경 변수
+     * {@code ACCENTURY_SHARE_KAKAOADMINKEY}/{@code ACCENTURY_SHARE_KAKAO_ADMIN_KEY}. 헤더로 오는 형태
+     * ({@code Authorization: KakaoAK ...})는 {@link #AUTHORIZATION}과 {@link #KAKAO_AK}가 잡는다.
+     * <p>
      * 따옴표로 열린 값은 <b>닫는 따옴표까지</b> 통째로 받는다 - 공백을 만나면 멈추게 두면
      * {@code "opaque value"} 같은 값의 뒷부분이 로그에 그대로 남고, 열린 따옴표만 닫혀
      * JSON 한 줄이 깨진다. 따옴표가 없으면 예전처럼 공백에서 끊는다 -
@@ -79,7 +91,9 @@ public final class LogMasking {
             "(?i)\\b(sessionToken|X-Admin-Token|adminToken|admin-token|accentury\\.admin\\.token"
                     + "|ACCENTURY_ADMIN_?TOKEN|ACCENTURY_ANALYTICS_ADMIN_?TOKEN"
                     + "|X-Accentury-Internal-Token|aiToken|ai-token|accentury\\.analysis\\.ai-token"
-                    + "|ACCENTURY_ANALYSIS_AI_?TOKEN|ACCENTURY_AI_INTERNAL_?TOKEN)\\b"
+                    + "|ACCENTURY_ANALYSIS_AI_?TOKEN|ACCENTURY_AI_INTERNAL_?TOKEN"
+                    + "|kakaoAdminKey|kakao-admin-key|accentury\\.share\\.kakao-admin-key"
+                    + "|ACCENTURY_SHARE_KAKAO_?ADMIN_?KEY)\\b"
                     + "(\"?\\s*[=:]\\s*)(?:\"([^\"\\r\\n]*)\"|([^\\s\",;}]+))");
 
     /**
@@ -101,6 +115,33 @@ public final class LogMasking {
     private static final Pattern NUMERIC_BLOB = Pattern.compile(
             "\\[\\s*-?\\d{1,3}(?:\\s*,\\s*-?\\d{1,3}){20,}\\s*\\]");
 
+    /**
+     * 업로드 임시파일의 <b>경로</b> - 전용 디렉터리({@code accentury.upload.temp-dir}, KAN-27)
+     * 아래의 것을 지운다. 부모 경로와 디렉터리 이름은 그대로 두고 그 아래만 지운다 - "임시
+     * 디렉터리에서 새고 있다"는 사실이 진단의 출발점이고, 위치 자체는 설정에 적혀 있는 값이라
+     * 비밀이 아니다. 하위 디렉터리가 있으면 그것까지 통째로 지운다.
+     * <p>
+     * 정상 경로에서는 임시파일이 아예 생기지 않고({@code VoiceTempDirectory}의 메모리 전용
+     * 불변식) 스위퍼도 경로를 찍지 않으므로({@code VoiceTempSweeper}), 이 규칙이 걸리는 것은
+     * 그 두 겹이 다 통하지 않은 경우다 - 프레임워크나 라이브러리가 예외 메시지에 스풀 파일
+     * 경로를 끼워 넣는 것이 대표적이다 (KAN-38 AC "로그 샘플 검사에서 민감 정보가 발견되지 않는다").
+     */
+    private static final Pattern TEMP_FILE_PATH = Pattern.compile(
+            "(?i)(accentury-voice-tmp)[/\\\\][^\\s\",;}]+");
+
+    /**
+     * 임시파일 <b>이름</b> - 디렉터리 없이 이름만 찍힌 경우와, 전용 디렉터리 밖(설정을 바꿨거나
+     * 불변식이 깨져 공용 임시 디렉터리로 샌 경우)까지 덮는다. 두 철자를 넣는다:
+     * 서블릿 컨테이너의 multipart 스풀({@code upload_<uuid>.tmp})과 AI 서버의 임시 오디오
+     * ({@code audio-<난수>.wav}, {@code ai/app/tempstore.py}) - 후자는 AI 오류 메시지가 backend
+     * 로그로 옮겨 실릴 때 나타난다.
+     * <p>
+     * 경로 규칙이 디렉터리 이름을 문자열로 아는 것의 한계가 여기서 메워진다 - 설정으로
+     * {@code temp-dir}를 옮기면 위 규칙은 빗나가지만 파일명 규칙은 그대로 걸린다.
+     */
+    private static final Pattern TEMP_FILE_NAME = Pattern.compile(
+            "(?i)\\b(?:upload_[A-Za-z0-9_-]+\\.tmp|audio-[A-Za-z0-9_-]+\\.wav)");
+
     private LogMasking() {
     }
 
@@ -110,6 +151,7 @@ public final class LogMasking {
             return text;
         }
         String masked = BEARER.matcher(text).replaceAll("Bearer ***");
+        masked = KAKAO_AK.matcher(masked).replaceAll("KakaoAK ***");
         masked = AUTHORIZATION.matcher(masked).replaceAll(LogMasking::maskAuthorization);
         masked = SESSION_TOKEN.matcher(masked).replaceAll("st_***");
         masked = NAMED_SECRET.matcher(masked).replaceAll(matchResult -> {
@@ -120,9 +162,13 @@ public final class LogMasking {
         });
         masked = LONG_BLOB.matcher(masked)
                 .replaceAll(matchResult -> "***(" + matchResult.group().length() + "자 생략)");
-        return NUMERIC_BLOB.matcher(masked)
+        masked = NUMERIC_BLOB.matcher(masked)
                 .replaceAll(matchResult -> "[***(" + (matchResult.group().split(",").length)
                         + "개 값 생략)]");
+        // 경로 규칙을 이름 규칙보다 먼저 건다 - 순서가 반대면 이름이 먼저 ***로 바뀌어
+        // 디렉터리 부분만 경로 규칙에 남고, 그러면 "어느 디렉터리인가"를 못 읽는다.
+        masked = TEMP_FILE_PATH.matcher(masked).replaceAll("$1/***");
+        return TEMP_FILE_NAME.matcher(masked).replaceAll("***");
     }
 
     /**

@@ -3,7 +3,14 @@ import Foundation
 /// 앱이 보유한 브리지 계약 버전 (webview-layer.md §5).
 /// 규칙: 메서드·필드 추가는 하위호환이라 버전을 유지하고, 삭제·의미 변경 시에만 올린다.
 /// ItemResult 5필드(KAN-89 계약)를 바꾸는 변경도 반드시 버전 증가 대상이다.
-public let bridgeContractVersion = 1
+///
+/// KAN-205에서 1 → 2로 올렸다. 진입 쿼리의 `voiceSet`이 웹에 필수가 됐고, 그 값을 싣지 않는
+/// 구버전 앱은 문항 화면에서 빠져나올 수 없다 — 웹의 `REQUIRED_BRIDGE_VERSION`과 짝이다.
+///
+/// KAN-196(광고 동의 `getAdConsent`·`setAdConsent`·`showInterstitialAd`)은 **2를 유지한다** — 메서드
+/// 추가뿐이라 하위호환이고, 웹은 없는 메서드를 `readAdConsent() === null`("광고 개념 없음")로 접는다.
+/// 광고 없는 구버전 앱이 신버전 웹을 열어도 응시가 막히지 않으므로 올릴 이유가 없다.
+public let bridgeContractVersion = 2
 
 /// 로드 실패 판정 자체 타임아웃 (§6). 페이지 로드 완료 콜백이 영영 안 오는 경우를 대비한다.
 /// 8초 = Nielsen 10초 주의력 한계 직전, "진입 → 결과 3분" 목표와 정합하는 제안값.
@@ -17,11 +24,15 @@ public let loadTimeout: TimeInterval = 8
 public struct TestEntry: Equatable, Sendable {
     /// 세션에 고정된 정의 버전. 웹이 `GET /v0/tests/{testVersion}`으로 정의를 받는다.
     public let testVersion: String
+    /// 세션에 고정된 음성 문항 세트 (KAN-205). 웹이 정의 조회의 `?voiceSet=`에 그대로 넣는다 —
+    /// 빠지면 세트 1의 문항이 와서 세션의 세트와 갈리고 제출이 전부 422다.
+    public let voiceSet: Int
     /// 진행 스냅샷을 세션별로 가르는 식별자. 업로드가 붙는 세션과 같은 값이어야 한다.
     public let sessionId: String
 
-    public init(testVersion: String, sessionId: String) {
+    public init(testVersion: String, voiceSet: Int, sessionId: String) {
         self.testVersion = testVersion
+        self.voiceSet = voiceSet
         self.sessionId = sessionId
     }
 }
@@ -54,6 +65,7 @@ public func buildWebUrl(
     if let testEntry {
         query += "&screen=test"
         query += "&testVersion=\(encodeQueryValue(testEntry.testVersion))"
+        query += "&voiceSet=\(testEntry.voiceSet)"
         query += "&sessionId=\(encodeQueryValue(testEntry.sessionId))"
     }
     if let campaignToken {
@@ -110,4 +122,55 @@ public func webOrigin(_ url: String) -> String? {
 public func isAllowedWebUrl(_ url: String?, allowedOrigins: Set<String>) -> Bool {
     guard let url, let origin = webOrigin(url) else { return false }
     return allowedOrigins.contains(origin)
+}
+
+/// 앱 밖 브라우저로 열어도 되는 호스트 (KAN-177). 안드로이드 `EXTERNAL_LINK_HOSTS`의 이식본이다.
+///
+/// 지금 여기로 나가는 링크는 개인정보처리방침 하나뿐이다 (`web/src/legal/privacyPolicy.ts`).
+/// 그런데도 목록을 두는 이유는 **여는 주소를 정하는 쪽이 웹**이기 때문이다 — WebView에 실린
+/// 스크립트가 부르는 메서드라, 넘어온 값을 그대로 열면 앱이 아무 주소나 여는 창구가 된다.
+///
+/// **prod 호스트 하나뿐이다.** 방침은 법적 고지라 정본이 하나여야 하고, 그래서 웹 상수도
+/// 환경과 무관하게 prod를 가리킨다 (`web/src/legal/privacyPolicy.ts`) — staging 빌드도 같은
+/// 문서를 연다. 여기에 `staging.accentury.app`을 함께 두면 **웹이 절대 보내지 않는 호스트로
+/// 문을 하나 더 여는 것**이라 뺐다. ``appLinkOrigins``에 staging이 있는 것과 혼동하지 말 것 —
+/// 저쪽은 링크로 앱에 **들어오는** 경로라 릴리스 전 확인에 staging 버킷이 필요하다.
+///
+/// 시뮬레이터의 `webUrl`(로컬 Vite)에서 파생하지 않는 이유도 같다 — 방침 문서는 로컬에 없고
+/// 늘 우리 도메인에 있다.
+public let externalLinkHosts: Set<String> = ["accentury.app"]
+
+/// 브리지가 받은 외부 URL을 열어도 되는지 판정한다 (KAN-177). 열어도 되면 그 URL, 아니면 nil.
+///
+/// ``isAllowedWebUrl(_:allowedOrigins:)``과 판정 대상이 다르다. 저쪽은 **WebView가 로드할** URL을
+/// origin 단위로 보고, 이쪽은 **앱 밖으로 내보낼** URL을 호스트 단위로 본다 — 포트·경로가
+/// 문서마다 다를 수 있어서 origin 일치를 요구하면 방침 문서를 옮기는 날 링크가 조용히 죽는다.
+///
+/// https만 통과시킨다. 방침 문서는 어느 환경에서도 HTTPS로 서므로 http를 받아 줄 이유가 없고,
+/// `javascript:`·앱 스킴은 host가 없어 자동으로 걸린다.
+///
+/// `user@host` 꼴과 역슬래시·공백을 따로 막는다. **여기서 근거는 안드로이드와 다르다**
+/// (KAN-199 #2에서 정정). 저쪽은 검사하는 `java.net.URI`와 여는 `android.net.Uri`가 진짜 다른
+/// 구현이라 host가 갈릴 여지가 있지만, 이쪽은 검사하는 `URLComponents`와 여는 `URL`이 둘 다
+/// Foundation이라 같은 호스트를 준다 — 검사한 곳과 여는 곳이 어긋나지 않는다. 그래도 막는
+/// 이유는 두 가지다: 방침 URL에 애초에 없는 문자이고, 두 플랫폼이 같은 입력에 같은 답을
+/// 내야 계약이 하나로 남는다.
+///
+/// 호스트의 `%`도 같은 이유로 막는다. Foundation은 `%61ccentury.app`을 `accentury.app`으로
+/// 디코딩해 통과시키는데, `java.net.URI`는 디코딩하지 않아 host가 null이 되어 거절한다 —
+/// 같은 입력에 두 앱이 다르게 답하던 자리다. 어느 쪽도 우회는 아니지만(양쪽 다 자기가 검사한
+/// 호스트를 그대로 연다) 동작이 갈리므로 양쪽에서 명시적으로 거절한다. 검사 대상은 디코딩
+/// 이전 값이라 `percentEncodedHost`를 본다 — `host`를 보면 이미 풀린 뒤라 `%`가 남지 않는다.
+public func externalUrlToOpen(_ url: String?, allowedHosts: Set<String> = externalLinkHosts) -> String? {
+    guard let url else { return nil }
+    let hasRiskyCharacter = url.unicodeScalars.contains { scalar in
+        scalar == "\\" || scalar.properties.isWhitespace || scalar.value < 0x20
+    }
+    guard !hasRiskyCharacter else { return nil }
+    guard let components = URLComponents(string: url) else { return nil }
+    guard components.scheme?.lowercased() == "https" else { return nil }
+    guard components.user == nil, components.password == nil else { return nil }
+    guard components.percentEncodedHost?.contains("%") != true else { return nil }
+    guard let host = components.host?.lowercased(), allowedHosts.contains(host) else { return nil }
+    return url
 }

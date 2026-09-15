@@ -27,6 +27,14 @@ enum AppConfig {
     /// 이 값이 nil이면 ``AccenturyApp``이 `KakaoSDK.initSDK`를 건너뛴다.
     static let kakaoNativeAppKey: String? = value(for: "KAKAO_NATIVE_APP_KEY", in: Bundle.main.infoDictionary)
 
+    /// AdMob 광고 단위 둘 (KAN-196). 안드로이드 `BuildConfig.ADMOB_INTERSTITIAL_ID`·`ADMOB_REWARDED_ID` 자리.
+    ///
+    /// 카카오 키와 달리 `required`다 — Base.xcconfig가 기본값(Google 테스트 단위)을 늘 주므로 비어
+    /// 있다는 것은 xcconfig → plist 사슬이 끊긴 것이고, 그건 [webURL]처럼 실행 첫 순간에 알아야
+    /// 하는 빌드 설정 실수다. 앱 ID(`GADApplicationIdentifier`)는 SDK가 직접 읽으므로 여기 없다.
+    static let admobInterstitialId: String = required("ADMOB_INTERSTITIAL_ID")
+    static let admobRewardedId: String = required("ADMOB_REWARDED_ID")
+
     /// 웹에 스큐 협상용으로 알리는 앱 버전 (`CFBundleShortVersionString` = MARKETING_VERSION).
     static let appVersionName: String = value(for: "CFBundleShortVersionString", in: Bundle.main.infoDictionary) ?? "0"
 

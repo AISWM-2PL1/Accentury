@@ -62,7 +62,9 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.accentury.app.audio.AudioQuality
 import com.accentury.app.audio.QualityStatus
 import com.accentury.app.audio.WavWriter
+import com.accentury.app.ads.AdsController
 import com.accentury.app.bridge.VoiceItemStart
+import com.accentury.app.bridge.adDismissedRetestFailure
 import com.accentury.app.bridge.itemResultDeliveryJs
 import com.accentury.app.bridge.retestFailedDeliveryJs
 import com.accentury.app.bridge.retestFailurePayload
@@ -74,8 +76,12 @@ import com.accentury.app.audio.defaultPcmSource
 import com.accentury.app.recording.RecordingViewModel
 import com.accentury.app.recording.VoiceCheckScreen
 import com.accentury.app.recording.VoiceCheckViewModel
-import com.accentury.app.analytics.LogcatEventSink
+import com.accentury.app.analytics.EventParam
+import com.accentury.app.analytics.EventSink
+import com.accentury.app.analytics.RecordingEvents
 import com.accentury.app.analytics.ShareEvents
+import com.accentury.app.analytics.crashIfRequested
+import com.accentury.app.analytics.create
 import com.accentury.app.analytics.log
 import com.accentury.app.analytics.channelParam
 import com.accentury.app.share.ResultSharer
@@ -96,6 +102,7 @@ import com.accentury.app.upload.UploadState
 import com.accentury.app.upload.UploadStatusBar
 import com.accentury.app.upload.UploadViewModel
 import com.accentury.app.web.AppLinkEntry
+import com.accentury.app.web.ExternalBrowser
 import com.accentury.app.web.TestEntry
 import com.accentury.app.web.WebViewHost
 import com.accentury.app.web.appLinkOrigins
@@ -162,6 +169,12 @@ class MainActivity : ComponentActivity() {
         // 바뀌면서 WebView가 다시 로드된다.
         applyAppLink(intent)
 
+        /*
+         * 일부러 내는 테스트 크래시 (KAN-33 AC 9). 디버그 빌드에만 본문이 있다 —
+         * 릴리스 변형은 `src/release`의 빈 함수다 (analytics/TestCrash.kt).
+         */
+        crashIfRequested(intent)
+
         setContent {
             AccenturyTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
@@ -180,6 +193,8 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         applyAppLink(intent)
+        // 이미 떠 있는 앱에도 넣을 수 있어야 한다 — singleTask라 두 번째 `am start`가 여기로 온다.
+        crashIfRequested(intent)
     }
 
     /**
@@ -228,14 +243,20 @@ private fun TestFlow(appLink: StateFlow<AppLinkEntry?>, modifier: Modifier = Mod
     val activity = checkNotNull(LocalActivity.current)
 
     /*
-     * 앱 안 공유 계측 (KAN-30 3단계, FR-SH-06). 지금은 Logcat까지만 간다 — 전송은 KAN-33이
-     * 같은 인터페이스 뒤에 Firebase sink를 끼우는 일이고, 그때 이 화면 코드는 그대로다.
+     * 앱 안 계측 창구 하나 (KAN-33). 공유(FR-SH-06)·재녹음·웹이 브리지로 넘긴 이벤트가 전부
+     * 여기로 모인다 — 같은 사건이 두 경로로 가지 않게 하는 것이 이 하나뿐이라는 사실 자체다.
+     *
+     * 설정(google-services.json)이 없으면 Logcat sink가 온다. 그 판정은 [EventSink.create] 안에
+     * 있고 화면은 어느 쪽인지 모른다 — 계측 도구가 바뀌어도 이 아래 코드는 그대로여야 한다.
      */
-    val events = remember { LogcatEventSink }
+    val events = remember(context) { EventSink.create(context) }
     val resultSharer = remember(activity, events) {
         ResultSharer.forApp(activity) { channel ->
-            // 띄운 통로만 싣는다. 세션·점수·등급은 익명 규칙에서 제외 대상이다 (AppEvents).
-            events.log(ShareEvents.LAUNCHED, mapOf(ShareEvents.PARAM_CHANNEL to channelParam(channel)))
+            // 띄운 통로만 싣는다. 세션·점수는 익명 규칙에서 제외 대상이다 (AppEvents).
+            events.log(
+                ShareEvents.LAUNCHED,
+                mapOf(ShareEvents.PARAM_CHANNEL to EventParam.Text(channelParam(channel))),
+            )
         }
     }
 
@@ -395,17 +416,24 @@ private fun TestFlow(appLink: StateFlow<AppLinkEntry?>, modifier: Modifier = Mod
 
     val scope = rememberCoroutineScope()
 
+    /*
+     * 광고 허브 (KAN-196). Application이 든 프로세스 단위 인스턴스라 remember 키가 없다 —
+     * 미리 받아 둔 광고가 회전을 넘겨야 해서 컴포지션이 소유하지 않는다 (AdsController KDoc).
+     */
+    val ads = remember(appContext) { AdsController.from(appContext) }
+
     /**
-     * 결과 화면의 [다시 테스트하기] (KAN-34 2단계, KAN-107).
+     * 재응시 본체 (KAN-34 2단계, KAN-107). 보상형 광고 게이트를 통과한 뒤에만 온다 ([startRetest]).
      *
      * 세션 게이트 화면이 아니라 여기서 요청을 거는 이유: 재응시가 벌어지는 자리에는 그 화면이 없다.
      * 사용자는 결과 화면(웹)을 보고 있고 그 화면은 요청이 도는 동안에도 그대로 있어야 한다 —
      * 실패하면 돌아갈 곳이 거기다.
      *
-     * 이 함수는 브리지 콜백(postToMain)을 타고 메인 스레드에서 불린다. 진행 중 판정과 상태 전이는
-     * 전부 [SessionGateController]가 하고 여기서는 요청을 걸어 결과를 넘겨줄 뿐이다.
+     * 메인 스레드에서 불린다 — 브리지 콜백(postToMain)에서 직접, 또는 광고 SDK 콜백(메인)에서.
+     * 진행 중 판정과 상태 전이는 전부 [SessionGateController]가 하고 여기서는 요청을 걸어 결과를
+     * 넘겨줄 뿐이다.
      */
-    fun startRetest() {
+    fun proceedRetest() {
         // null이면 이미 요청이 나가 있거나 버릴 세션이 없다 — 어느 쪽이든 할 일은 없다.
         val previousToken = sessionGate.beginRetest() ?: return
         scope.launch {
@@ -454,6 +482,36 @@ private fun TestFlow(appLink: StateFlow<AppLinkEntry?>, modifier: Modifier = Mod
         }
     }
 
+    /**
+     * 결과 화면의 [다시 테스트하기] → 보상형 광고 → 재응시 (KAN-196, webview-bridge.md §8.2).
+     *
+     * 광고를 아는 앱에서는 이 호출이 곧 보상형 광고다. 끝까지 보면(또는 보여줄 광고가 없거나 표시에
+     * 실패하면) [proceedRetest]가 기존 흐름을 밟고, 중도에 닫으면 `AD_DISMISSED`를 웹에 회신해
+     * 결과 화면이 버튼을 다시 연다. 갈래는 [com.accentury.app.ads.RewardedRetestGate]가 정한다.
+     *
+     * **`beginRetest()`(retestInFlight)는 광고 완주 뒤에 건다** — 그 플래그는 "세션 요청이 나가
+     * 있다"는 뜻이고 광고 시청은 그 앞 단계다. 광고 앞에서 걸면 광고 도중 회전으로 이 스코프가
+     * 취소됐을 때 요청은 없는데 플래그만 선 상태가 생기고, 그 반대(광고 중 두 번째 탭)는 웹의
+     * pending 잠금(useRetest)과 게이트의 표시 중 플래그가 막는다.
+     *
+     * 브리지 콜백(postToMain)을 타고 메인 스레드에서 불린다. SDK 콜백도 메인이라 [proceedRetest]가
+     * 어느 쪽에서 불려도 같은 스레드다.
+     */
+    fun startRetest() {
+        ads.rewarded.run(
+            activity = activity,
+            onProceed = { proceedRetest() },
+            onDismissed = {
+                // 결과 화면은 그대로 살아 있다 — 세션 요청은 나가지도 않았다. 서버 실패 회신과
+                // 같은 수신 지점(onRetestFailed)으로 보내고, 웹은 문구를 그대로 그린다.
+                webView?.evaluateJavascript(
+                    retestFailedDeliveryJs(adDismissedRetestFailure()),
+                    null,
+                )
+            },
+        )
+    }
+
     Column(modifier = modifier.fillMaxSize()) {
         Box(modifier = Modifier.weight(1f)) {
             WebViewHost(
@@ -472,7 +530,7 @@ private fun TestFlow(appLink: StateFlow<AppLinkEntry?>, modifier: Modifier = Mod
                      * "세션이 있다"는 응시할 준비가 됐다는 뜻이고, "시작을 눌렀다"가 들어가겠다는 뜻이다.
                      */
                     testEntry = if (startRequested) {
-                        session?.let { TestEntry(it.testVersion, it.sessionId) }
+                        session?.let { TestEntry(it.testVersion, it.voiceSet, it.sessionId) }
                     } else {
                         null
                     },
@@ -495,14 +553,35 @@ private fun TestFlow(appLink: StateFlow<AppLinkEntry?>, modifier: Modifier = Mod
                 },
                 onStartRetest = { startRetest() },
                 /*
-                 * 탭과 실행을 따로 센다 (FR-SH-06). 탭은 사용자가 한 일이고 실행은 통로가 열린
-                 * 일이라, 둘의 차이가 곧 "눌렀는데 아무 데도 못 간" 비율이다 — 한 건으로 뭉치면
-                 * 그 구멍이 보이지 않는다. 실행 쪽은 [resultSharer]가 통로까지 붙여 울린다.
+                 * 탭은 여기서 세지 않는다 (FR-SH-06). 그 한 건은 웹이 `share_clicked`로 이미
+                 * 세고, 앱 안에서는 브리지 `logEvent`를 타고 같은 창구로 들어온다 — 네이티브가
+                 * 이름을 하나 더 붙이면 같은 탭이 앱과 웹에서 다른 축으로 갈린다. 네이티브가 세는
+                 * 것은 통로가 실제로 열린 일뿐이고, 그쪽은 [resultSharer]가 통로를 붙여 울린다.
+                 * 클릭 수와 실행 수의 차이는 그대로 "눌렀는데 아무 데도 못 간" 비율이다.
                  */
-                onShareResult = {
-                    events.log(ShareEvents.TAPPED)
-                    resultSharer.share(it)
-                },
+                onShareResult = { resultSharer.share(it) },
+                /*
+                 * 웹이 센 사건을 앱 스트림으로 넘긴다 (KAN-33). 이름을 여기서 손대지 않는 것이
+                 * 요점이다 — 웹과 앱이 같은 이름으로 쌓여야 하나의 퍼널이 되고, 그 정본은
+                 * `web/src/analytics/events.ts` 하나다. 값 검증은 브리지가 이미 끝냈다.
+                 */
+                onLogEvent = { name, params -> events.log(name, params) },
+                /*
+                 * 인트로의 개인정보처리방침 링크 (KAN-177). 앱에 설정 화면이 없어 방침으로
+                 * 가는 길이 이것뿐이고, WebView 안에서 열면 인트로가 사라져 돌아올 길이 없다 —
+                 * 그래서 인트로 위에 Custom Tabs 시트를 덮는다 (ExternalBrowser).
+                 * URL 검증은 브리지가 이미 끝냈다.
+                 */
+                onOpenExternalUrl = { ExternalBrowser.open(context, it) },
+                /*
+                 * 광고 동의와 전면 광고 (KAN-196). 동의 정본은 네이티브 저장소라 읽기는 저장소로
+                 * 바로 가고(브리지가 JS 스레드에서 동기로 읽는다), 쓰기는 허브를 거친다 — 저장이
+                 * 곧 광고 프리로드의 시작이라 저장소만 갱신하면 광고가 영영 안 받아진다.
+                 * 전면 광고는 Activity 위에 서야 하므로 여기서 activity를 붙인다.
+                 */
+                readAdConsent = { ads.consentStore.read() },
+                onSetAdConsent = { ads.setConsent(it) },
+                onShowInterstitialAd = { ads.interstitial.show(activity) },
                 onWebViewCreated = { webView = it },
                 // 내가 들고 있는 인스턴스일 때만 놓는다 — 재생성 순서에 따라 새 WebView가 먼저
                 // 등록된 뒤 옛 것이 해제될 수 있고, 그때 방금 받은 참조를 지우면 안 된다.
@@ -616,6 +695,27 @@ private fun TestFlow(appLink: StateFlow<AppLinkEntry?>, modifier: Modifier = Mod
                         // 점검을 지났다는 뜻이라 실제로는 항상 값이 있다.
                         centerHz = voiceCenterHz,
                         viewModel = viewModel,
+                        /*
+                         * 네이티브 녹음 화면의 [재녹음] (KAN-33). 웹 녹음기가 세는 것과 같은
+                         * 사건이라 이름·파라미터를 그대로 맞춘다 — 앱 사용자의 재녹음만 다른
+                         * 지표로 갈리면 문항 난이도를 두 표본으로 나눠 보게 된다.
+                         *
+                         * 사유가 USER 하나인 이유는 이 자리가 실패 없이 사용자가 다시 읽기로 한
+                         * 지점이라서다. 서버가 되돌려보낸 재녹음(QUALITY·FAILED)은 웹의 분석 대기
+                         * 화면이 소유하고 거기서 이미 센다 (AnalysisWaitingScreen).
+                         */
+                        onRetake = {
+                            events.log(
+                                RecordingEvents.RETAKE,
+                                mapOf(
+                                    // 사람이 읽는 1-기반 번호다 (웹 `item_seq`와 같은 값).
+                                    RecordingEvents.PARAM_ITEM_SEQ to
+                                        EventParam.Count(overlayStart.itemNumber.toLong()),
+                                    RecordingEvents.PARAM_REASON to
+                                        EventParam.Text(RecordingEvents.REASON_USER),
+                                ),
+                            )
+                        },
                         onSubmit = { attemptId, durationMs, quality ->
                             // consumeRecording은 PCM을 넘기면서 뷰모델에서 지운다 (FR-DP-02: 보관하지 않음).
                             val pcm = viewModel.consumeRecording()
@@ -678,6 +778,8 @@ private fun RecordingOverlay(
     /** 사용자 곡선 y축의 중심 음높이 (KAN-105). 시작 게이트의 목소리 점검이 잰 값이다. */
     centerHz: Float?,
     viewModel: RecordingViewModel,
+    /** [재녹음]을 눌렀다 (KAN-33). 되감기 자체는 화면이 하고, 여기는 세기만 한다 */
+    onRetake: () -> Unit,
     onSubmit: (attemptId: String, durationMs: Long, quality: QualityStatus) -> Unit,
 ) {
     // 색을 명시한다 - Surface 기본값은 surface(카드 흰색)라, 그대로 두면 이 오버레이만
@@ -693,6 +795,7 @@ private fun RecordingOverlay(
             afterUploadFailure = afterUploadFailure,
             failureMessage = failureMessage,
             centerHz = centerHz,
+            onRetake = onRetake,
             viewModel = viewModel,
         )
     }

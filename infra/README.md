@@ -16,7 +16,7 @@ infra/
     config/           backend, ai 환경 변수의 정본인 SSM 파라미터와 시크릿 2종 (관리자 토큰, 내부 호출 토큰) (KAN-129, KAN-36)
     edge/             internal ALB(대상 그룹 ip), VPC 오리진, CloudFront, S3 (KAN-125, KAN-126)
     waf/              CloudFront 앞단 웹 ACL. us-east-1 프로바이더로 호출한다 (KAN-149)
-    monitoring/       SNS 이메일과 CloudWatch 경보 7종 - ALB, RDS 3종 + backend 서비스 2종 + AI 호스트 2종 (KAN-134, KAN-165, KAN-36)
+    monitoring/       SNS 이메일과 CloudWatch 경보 12종(ALB, RDS 3종 + backend 서비스 2종 + AI 호스트 4종 + 관측성 3종), 운영 대시보드 1개 (KAN-134, KAN-165, KAN-36, KAN-38)
     deploy/           GitHub Actions가 OIDC로 맡는 환경별 배포 역할 (KAN-127)
   envs/
     staging/          main.tf + terraform.tfvars
@@ -33,7 +33,7 @@ backend의 Fargate 전환(KAN-165)을 더한 것이다. 요청은 위에서 아�
 
 ```
 사용자 (Android 앱 WebView / 스탠드얼론 웹)
-  │  https://accentury.app  (staging: staging.accentury.app)
+  │  https://accentury.app  (staging: 추측 불가 서브도메인, KAN-206. 이름은 envs/staging/terraform.tfvars의 domain)
   ▼
 Route 53 호스팅 영역 ── Porkbun에서 NS 위임 ── ACM 인증서 2장 (us-east-1, 서울)   KAN-119
   │
@@ -65,20 +65,23 @@ Route 53 호스팅 영역 ── Porkbun에서 NS 위임 ── ACM 인증서 2�
   │   서비스 backend  태스크 1~3개(요청 수 목표 추적, KAN-168), 롤링 배포, 회로 차단기 + 자동 롤백 │
   │   태스크 정의 accentury-{env}-backend  0.5 vCPU / 2 GB, x86_64   │
   │   ┌──────────────┐  awsvpc ENI + 퍼블릭 IP                      │
-  │   │ backend :8080│ Spring Boot, secrets = SSM 7개, 로그 → CloudWatch │
+  │   │ backend :8080│ Spring Boot, secrets = SSM 12개, 로그 → CloudWatch │
   │   └──┬───────┬───┘  stopTimeout 120초 (KAN-166), 회로 상태 지표    │
   └──────┼───────┼───────────────────────────────────────────────┘
-         │       │ http://ai.accentury.internal:8000
-         │       │ + X-Accentury-Internal-Token (ai-sg: backend-sg만 8000)
+         │       │ http://ai.accentury.internal:8000 (= 내부 ALB alias, KAN-201)
+         │       │ + X-Accentury-Internal-Token (ai-alb-sg: backend-sg만 8000)
+         │       ▼
+         │  내부 ALB accentury-{env}-ai-alb ── 대상 그룹 8000 (least_outstanding_requests)   KAN-201
+         │       │ (ai-sg: ai-alb-sg만 8000)
          │       ▼
          │  ┌──────────────────────────────────────────────────────┐
-         │  │ ai 호스트 EC2 c7i.xlarge x86, ASG min 1 max 1     KAN-36 │
-         │  │   부팅 시 Route 53 프라이빗 영역에 자기 A 레코드 UPSERT │
+         │  │ ai 호스트 EC2 c7i.xlarge x86, ASG min 1 max 3     KAN-36 │
+         │  │   PROCESSING >= 6 이면 +1, <= 1 이면 -1 (KAN-201)      │
          │  │   iptables DOCKER-USER: 컨테이너 → VPC 밖 egress DROP  │
          │  │   IMDSv2 hop limit 1, health 타이머 → CloudWatch       │
          │  │   docker compose (docker-compose.ai.yml)               │
          │  │   ┌────────────────┐                                   │
-         │  │   │ ai :8000        │ FastAPI 워커 1, 스텁 (실모델 KAN-22) │
+         │  │   │ ai :8000        │ FastAPI 워커 1 + 실모델 워커 프로세스 1 │
          │  │   └────────────────┘                                   │
          │  └──────────────────────────────────────────────────────┘
          │ 5432 (rds-sg: backend-sg만)
@@ -90,12 +93,12 @@ Route 53 호스팅 영역 ── Porkbun에서 NS 위임 ── ACM 인증서 2�
   └──────────────────────────────────────────────────────────┘
 
 밖으로 거는 연결 (퍼블릭 서브넷 + 퍼블릭 IP라 NAT도 VPC 엔드포인트도 없다)
-  ├─ backend 태스크, 실행 역할: ECR pull, CloudWatch Logs, SSM /accentury/{env}/* 7개 → secrets   KAN-165
+  ├─ backend 태스크, 실행 역할: ECR pull, CloudWatch Logs, SSM /accentury/{env}/* 12개 → secrets  KAN-165
   │    (태스크가 시작할 때 ECS 에이전트가 읽어 컨테이너 env로 준다. 정본은 config 모듈 KAN-129)
   ├─ backend 태스크, 태스크 역할: Secrets Manager RDS 마스터 시크릿(연결 시점, 7일 회전 추종)  KAN-129
   │    CloudWatch PutMetricData accentury/backend (Micrometer, 회로 상태)                    KAN-36
   ├─ ai 호스트: SSM Session Manager, SSM /accentury/{env}/ai/*와 IMAGE_TAG → ai.env, ECR pull,
-  │    Route 53 accentury.internal A 레코드 UPSERT, CloudWatch accentury/ai (health 타이머)   KAN-36
+  │    CloudWatch accentury/ai (health 타이머)                                              KAN-36
   ├─ SSM IMAGE_TAG (파이프라인 KAN-128이 쓴다): ai 호스트가 compose 보간에, Terraform이 backend
   │    태스크 정의 image에 읽는다 - 두 서비스가 같은 SHA다                                    KAN-165
   ├─ ECR accentury/backend, accentury/ai (commit SHA 태그)        KAN-120
@@ -122,8 +125,9 @@ Route 53 호스팅 영역 ── Porkbun에서 NS 위임 ── ACM 인증서 2�
 backend는 KAN-165부터 ECS Fargate다 (온디맨드만, Spot 없음 - 2026-09-01 결정, 아래 설계
 결정 기록). 태스크 1개 고정은 backend의 인메모리 상태(요청 제한, 회로 차단기, 혼잡 판정,
 디스패처 큐) 때문이고 KAN-167(다중 인스턴스 상태 정리)과 KAN-168(오토스케일링)이 푼다.
-AI는 KAN-36 A단계로 전용 EC2에 스텁 모드로 분리됐고, 실모델 이미지 반영(B단계)과 GPU
-여부는 KAN-22, KAN-57 이후다. WAF(KAN-149)는 `modules/waf`가 us-east-1에 만들어 CloudFront
+AI는 KAN-36 A단계로 전용 EC2에 분리됐고, 2026-09-05에 실모델로 바뀌었다 (KAN-22 - `ai/Dockerfile`의
+FROM이 모델 전달본 `accentury/ai-model:<모델 해시>`다). 메모리 상한과 GPU 여부는 KAN-57 실측
+뒤에 정한다. WAF(KAN-149)는 `modules/waf`가 us-east-1에 만들어 CloudFront
 배포에 붙인다 (아래 'WAF 웹 ACL').
 
 workspace가 아니라 디렉토리 분리를 쓴다. workspace는 현재 선택된 환경이 눈에
@@ -139,7 +143,7 @@ diff -r infra/envs/staging infra/envs/prod
 
 ## 사전 요건
 
-- Terraform >= 1.10 (S3 네이티브 잠금 `use_lockfile` 필요. 2026-08-24 기준
+- Terraform >= 1.11 (S3 네이티브 잠금 `use_lockfile`은 1.10부터, write-only 인자 `value_wo`는 1.11부터. 2026-08-24 기준
   로컬 설치 1.15.8에서 확인했고, DynamoDB 잠금 테이블은 필요 없다.)
 - AWS CLI 프로파일(accentury-cli, ap-northeast-2). Terraform 실행용이다. 배포
   파이프라인은 이 프로파일이 아니라 GitHub OIDC 역할을 쓴다 (KAN-127, 아래
@@ -248,14 +252,27 @@ terraform apply
   aws cloudwatch describe-alarms --alarm-names $(terraform output -json backend_autoscaling_alarm_names | jq -r '.[]') \
     --query 'MetricAlarms[].[AlarmName,StateValue]' --output table
   ```
-- ai 호스트 (KAN-36): ASG에 인스턴스 1대가 InService이고, 프라이빗 영역에 `ai.accentury.internal`
-  A 레코드가 그 인스턴스의 사설 IP로 생겼는지 (부팅 스크립트가 만든다 - 인스턴스가 뜬 뒤 1분 안).
+- ai 호스트 (KAN-36, ALB는 KAN-201): ASG에 인스턴스 1대가 InService이고 AI 대상 그룹에서 healthy이며,
+  프라이빗 영역의 `ai.accentury.internal` A 레코드가 내부 ALB의 alias인지. 새 인스턴스가 healthy가 되기까지
+  약 3분 20초다 (2026-09-11 staging 실측 - 시작 06:51:19, healthy 06:54:39. docker 설치 + 이미지 7GB pull +
+  모델 적재, "내부 ALB와 오토스케일링" 절).
 
   ```
   aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$(terraform output -raw ai_asg_name)" \
     --query 'AutoScalingGroups[0].Instances[].[InstanceId,LifecycleState,HealthStatus]' --output table
+  aws elbv2 describe-target-health --target-group-arn "$(aws elbv2 describe-target-groups \
+    --names "$(terraform output -raw ai_target_group_name)" --query 'TargetGroups[0].TargetGroupArn' --output text)" \
+    --query 'TargetHealthDescriptions[].[Target.Id,TargetHealth.State]' --output table
   aws route53 list-resource-record-sets --hosted-zone-id "$(terraform output -raw private_zone_id)" \
-    --query "ResourceRecordSets[?Type=='A'].[Name,ResourceRecords[0].Value]" --output table
+    --query "ResourceRecordSets[?Type=='A'].[Name,AliasTarget.DNSName]" --output table
+  ```
+- 학습 데이터 S3 (KAN-201, staging만): 버킷이 있고 퍼블릭 액세스가 차단됐는지. **이 apply가 backend 코드
+  배포보다 먼저다** - 태스크 정의 secrets에 `ACCENTURY_TRAINING_BUCKET`이 늘어 apply가 태스크 정의를 새
+  리비전으로 갈고, 그 파라미터가 없으면 파이프라인의 리비전 등록이 실패한다 (KAN-132 교훈, "staging 전용
+  학습 데이터 S3" 절).
+
+  ```
+  aws s3api get-public-access-block --bucket "$(terraform output -raw training_bucket)"
   ```
 
 ### 2. prod
@@ -321,12 +338,41 @@ done
 
 ```
 cd infra/envs/staging   # 또는 prod
-env=$(terraform output -raw domain | grep -q '^staging' && echo staging || echo prod)
+env=$(basename "$PWD")   # envs/<env> 디렉터리 이름. 도메인으로 환경을 구분하지 않는다 (staging 이름은 랜덤, KAN-206)
 gh variable set AWS_DEPLOY_ROLE_ARN        -e "$env" --body "$(terraform output -raw github_deploy_role_arn)"
 gh variable set WEB_BUCKET                 -e "$env" --body "$(terraform output -raw web_bucket)"
 gh variable set CLOUDFRONT_DISTRIBUTION_ID -e "$env" --body "$(terraform output -raw cloudfront_distribution_id)"
 gh variable set APP_DOMAIN                 -e "$env" --body "$(terraform output -raw domain)"
 ```
+
+계측 변수 `GA4_MEASUREMENT_ID`(KAN-33)는 apply 출력이 아니라 Firebase 콘솔의 웹
+데이터 스트림에서 나온다 (`G-`로 시작). environment마다 **다른 스트림**을 둔다 -
+같은 ID를 쓰면 staging 확인 트래픽이 prod 집계에 섞인다. 비워 두면 그 환경의
+번들은 계측 없이 빌드되고 배포는 그대로 된다.
+
+```
+gh variable set GA4_MEASUREMENT_ID -e prod --body G-XXXXXXXXXX
+```
+
+광고 변수 `ADSENSE_CLIENT_ID`·`ADSENSE_SLOT_ID`(KAN-197)는 AdSense 콘솔에서 나온다 -
+앞쪽이 게시자 ID(`ca-pub-` + 숫자. 지금 발급되는 값은 16자리인데 `web-deploy.yml`의 ads.txt
+스텝은 자릿수를 고정하지 않고 `^ca-pub-[0-9]+$`로 숫자 여부만 본다 - 리뷰 P1-4),
+뒤쪽이 광고 단위를 만들면 생기는 슬롯 ID다.
+**prod에만 둔다.** GA4처럼 집계가 섞여서가 아니라 승인 대상이 prod 하나이기 때문이다 -
+AdSense는 심사를 통과한 사이트에만 광고를 내려주므로 staging에 값을 넣어도 빈 슬롯만 선다.
+등록 시점도 그래서 늦다: 사이트 승인이 나고 광고 단위를 만든 **뒤에** 둘을 함께 넣는다.
+하나만 넣은 환경은 아예 안 넣은 환경과 똑같이 광고 없는 번들이 된다
+(`web/src/ads/adsense.ts`의 `adSenseIdsFromEnv`).
+
+```
+gh variable set ADSENSE_CLIENT_ID -e prod --body ca-pub-XXXXXXXXXXXXXXXX
+gh variable set ADSENSE_SLOT_ID   -e prod --body XXXXXXXXXX
+```
+
+`ads.txt`는 손으로 올리지 않는다 - `web-deploy.yml`이 배포할 때마다 `ADSENSE_CLIENT_ID`에서
+`ca-`를 떼어 `dist/ads.txt`에 한 줄로 적고 버킷 루트에 올린다. 값이 없으면 파일을 만들지 않고,
+`ca-pub-`으로 시작하지 않으면 그 단계에서 실패한다. 게시 확인은
+`curl https://accentury.app/ads.txt`이고 절차 전체는 `docs/wiki/ads-web-adsense.md` §6·§10에 있다.
 
 환경을 철거해 둔 동안에는 변수 `DEPLOY_PAUSED=true`를 추가로 둔다 ("teardown
 절차"). 있으면 워크플로가 배포 단계를 건너뛰고, 재구축 뒤 지우면 다시 배포한다.
@@ -504,6 +550,22 @@ docker image inspect "${REGISTRY}/accentury/ai-model:${MODEL_HASH}" \
 
 `linux/amd64`가 아니면 그 태그는 쓰지 않고 새 해시로 다시 올린다.
 
+### 모델 교체 (KAN-22)
+
+배포에 쓰는 태그는 **`ai/Dockerfile`의 `ARG MODEL_TAG` 한 곳**에 있다. 모델이 바뀌면 그 줄을
+새 해시로 바꾸는 것이 곧 모델 교체이고, 그 커밋의 SHA로 빌드된 `accentury/ai`가 새 모델을
+품는다 - 어느 배포가 어느 모델을 돌렸는지가 두 태그의 짝으로 남는다. 레지스트리 주소만
+`scripts/push-images.sh`가 계정에서 유도해 `--build-arg MODEL_REGISTRY`로 넘긴다.
+
+빌드 머신은 ECR에 로그인해 있어야 한다 - 베이스가 사설 레지스트리에 있으므로 로그인 없이는
+push가 아니라 빌드가 먼저 실패한다. 스크립트는 `DRY_RUN=1`에서도 로그인한다.
+
+`accentury/ai` 이미지는 이 교체로 약 8.5GB가 된다 (베이스 약 5GB + 파이썬 의존성). 같은
+리포지토리 안에서 베이스 레이어는 한 번만 저장되므로 SHA 태그마다 늘어나는 것은 앱 레이어뿐이지만,
+라이프사이클 상한 50개는 수백 MB짜리 backend 이미지 기준으로 정한 값이다 - 태그가 몇 개 쌓인
+뒤 ECR 콘솔의 리포지토리 크기로 실측하고 필요하면 `infra/bootstrap/ecr.tf`에서
+`accentury/ai`만 낮춘다 (KAN-173 후속).
+
 ## backend Fargate 서비스 (KAN-165)
 
 backend는 `modules/fargate`가 만드는 ECS Fargate 서비스다. EC2 위 docker compose(KAN-124)를
@@ -512,9 +574,9 @@ backend는 `modules/fargate`가 만드는 ECS Fargate 서비스다. EC2 위 dock
 | 구성 | 값 | 비고 |
 | --- | --- | --- |
 | 클러스터 | `accentury-{env}`, 용량 공급자 `FARGATE`만 | `FARGATE_SPOT`은 연결하지 않는다 (2026-09-01 결정). Container Insights 끔 |
-| 태스크 정의 | 패밀리 `accentury-{env}-backend`, 0.5 vCPU / 2 GB, `X86_64`, 컨테이너 `backend` 1개 | image = ECR `accentury/backend:<SSM IMAGE_TAG>`, secrets = SSM 파라미터 8개 (아래 표), `stopTimeout` 120초, awslogs `/accentury/{env}/backend`(14일), 컨테이너 healthCheck = compose와 같은 bash `/dev/tcp` 검사 |
+| 태스크 정의 | 패밀리 `accentury-{env}-backend`, 0.5 vCPU / 2 GB, `X86_64`, 컨테이너 `backend` 1개 | image = ECR `accentury/backend:<SSM IMAGE_TAG>`, secrets = SSM 파라미터 12개 (아래 표), `stopTimeout` 120초, awslogs `/accentury/{env}/backend`(14일), 컨테이너 healthCheck = compose와 같은 bash `/dev/tcp` 검사 |
 | 서비스 | `backend`, 처음 desired 1, 용량 공급자 전략 `FARGATE` weight 1 | 롤링 배포(min 100% / max 200%), 회로 차단기 + 자동 롤백, `health_check_grace_period_seconds` 150초(실측 기반, 아래), 퍼블릭 서브넷 + 퍼블릭 IP, `backend-sg`, 대상 그룹 ip:8080. 태스크 수는 그 뒤 오토스케일링이 1~3에서 조절하고 Terraform은 `desired_count`를 다시 보지 않는다 (다음 절, KAN-168) |
-| 실행 역할 | `accentury-{env}-backend-execution` | `AmazonECSTaskExecutionRolePolicy`(ECR pull, 로그) + 이 환경 config 파라미터 7개의 `ssm:GetParameters`. ECS 에이전트 몫이라 컨테이너 안에서는 보이지 않는다 |
+| 실행 역할 | `accentury-{env}-backend-execution` | `AmazonECSTaskExecutionRolePolicy`(ECR pull, 로그) + 이 환경 config 파라미터 12개의 `ssm:GetParameters`. ECS 에이전트 몫이라 컨테이너 안에서는 보이지 않는다 |
 | 태스크 역할 | `accentury-{env}-backend-task` | RDS 마스터 시크릿 `GetSecretValue` + `cloudwatch:PutMetricData`(네임스페이스 `accentury/backend` 조건). 애플리케이션이 SDK 기본 체인으로 받는다 - IMDS hop limit 조정이 없다 |
 
 **이미지 태그의 정본은 SSM `IMAGE_TAG` 하나다.** Terraform은 그 값을 data 소스로 읽어 태스크
@@ -681,8 +743,8 @@ CloudFront 5xxErrorRate 0 (13:45부터 15:15). 클라이언트 쪽은 세 phase 
 **진행 중 분석은 SIGTERM에 잡히지 않는다.** stop-task든 스케일인이든 롤링 배포든 ECS는 먼저 ALB
 대상을 등록 해제하고 드레인(기본 30초)을 끝낸 뒤에야 SIGTERM을 보낸다. 실측으로 호출부터 SIGTERM까지
 52초와 48초였고, 등록 해제 지연을 5초로 낮춰도 26초였다. 그 사이 새 요청은 오지 않고 이미 받은
-분석은 `ai-timeout`(10초) 안에 끝나므로, 4단계 종료가 시작될 때 실행 중이거나 대기 중인 작업은
-언제나 0건이다. 즉 KAN-166의 워커 배수(예산 90초)는 AI 응답이 ECS 드레인 창보다 길어질 때만
+분석은 `ai-timeout`(실측 당시 10초, 실모델은 85초 - KAN-172. 정상 추론 P95 11초) 안에 끝나므로,
+4단계 종료가 시작될 때 실행 중이거나 대기 중인 작업은 언제나 0건이다. 즉 KAN-166의 워커 배수(예산 90초)는 AI 응답이 ECS 드레인 창보다 길어질 때만
 쓰이는 두 번째 방어선이고, 티켓이 요구한 "종료 시점에 PROCESSING인 AnalysisJob"은 이 구조에서
 만들 수 없다. 대신 실패 격리와 재녹음은 롤링 배포의 ai 컨테이너 reload 창(약 25초)에서 확인됐다 -
 그 창에 접수된 문항 11건이 `RETRYABLE_FAILED(ANALYSIS_UNAVAILABLE)`로 격리됐고 재업로드 11건이
@@ -703,26 +765,123 @@ CloudFront 5xxErrorRate 0 (13:45부터 15:15). 클라이언트 쪽은 세 phase 
 죽이려던 첫 시도(`kan36-09011729`, V4 없음)는 Flyway가 미래 버전 이력을 기본으로 무시해 정상 기동했다 -
 옛 이미지 롤백은 스키마가 앞서 있어도 막히지 않는다는 뜻이라 이것도 기록한다.
 
-## ai 호스트 컨테이너 기동 (KAN-124, 전용 호스트 KAN-36)
+## ai 호스트 컨테이너 기동 (KAN-124, 전용 호스트 KAN-36, 내부 ALB KAN-201)
 
-ai 호스트는 무상태다. `modules/ai-host`의 첫 부팅 user_data가 docker, compose, 운영 compose
-파일(`modules/ai-host/docker-compose.ai.yml`, 호스트에서는 `/opt/accentury/docker-compose.yml`),
-기동 스크립트(`modules/ai-host/accentury-up.sh`), systemd 유닛 `accentury.service`를 놓는다. 두
-환경의 호스트 구성은 완전히 같고, 환경별 값은 전부 SSM Parameter Store에서 온다. compose
-파일이나 스크립트를 고치면 user_data가 바뀌어 **인스턴스가 교체된다** (시작 템플릿 새 버전 +
-ASG instance refresh). 그래도 되는 이유가 무상태다. 교체 동안 분석만 끊기고 backend 회로가
-열렸다 닫힌다. user_data는 raw 16KB 상한이 있어 ai-host 모듈의 precondition이 plan에서 크기를
-검사한다. backend는 이 호스트에 없다 - KAN-165 전의 backend 호스트(`accentury-{env}`, t3.small,
+ai 호스트는 무상태이고 내부 ALB 뒤의 ASG(min 1, max 3)다 (아래 "내부 ALB와 오토스케일링"). `modules/ai-host`의 첫 부팅 user_data가 docker와 compose 플러그인을 깔고,
+운영 compose 파일(`modules/ai-host/docker-compose.ai.yml`, 호스트에서는
+`/opt/accentury/docker-compose.yml`)과 스크립트 3개(`accentury-up.sh`, `ai-egress-guard.sh`,
+`ai-health-metric.sh`)를 **부팅 자산 버킷에서 내려받은 뒤**(KAN-38, 아래 "부팅 자산 버킷") systemd
+유닛 `accentury.service`를 놓는다. 두 환경의 호스트 구성은 완전히 같고, 환경별 값은 전부 SSM
+Parameter Store에서 온다. compose 파일이나 스크립트를 고치면 user_data가 바뀌어 **인스턴스가
+교체된다** (시작 템플릿 새 버전 + ASG instance refresh). 그래도 되는 이유가 무상태다. 1대일 때는 교체 동안
+분석만 끊기고 backend 회로가 열렸다 닫히며, 2대 이상이면 최소 1대가 남는다(instance refresh
+min_healthy 50%). user_data는 raw 16KB 상한이 있어 ai-host 모듈의 precondition이 plan에서 크기를 검사한다.
+
+### 내부 ALB와 오토스케일링 (KAN-201)
+
+backend가 부르는 이름 `ai.accentury.internal`은 KAN-36에서는 인스턴스가 부팅마다 자기 IP로 UPSERT하던
+A 레코드였다 - 1대 전제라 2대가 떠도 마지막에 뜬 1대만 호출을 받는다. KAN-201에서 그 이름을 내부 ALB
+(`accentury-{env}-ai-alb`)의 alias로 바꾸고 ASG의 `max_size`를 tfvars `ai_max_size`(두 환경 3)로 열었다.
+backend 쪽은 무변경이다 - `ACCENTURY_ANALYSIS_AIBASEURL`(`http://ai.accentury.internal:8000`)도,
+`dispatch-concurrency` 1도 그대로다. 동시성은 backend 태스크 수에서 온다(태스크당 1건, 최대 3, 롤링 배포 중
+6)이고 ALB가 그 호출을 빈 인스턴스로 나눈다.
+
+| 항목 | 값 | 근거 |
+| --- | --- | --- |
+| ASG | min 1, max `ai_max_size`(3), 초기 desired 1 | 평시 1대. 계정 vCPU 쿼터(256)로는 64대까지 되므로 이 값은 비용 상한이다 |
+| 대상 그룹 | HTTP 8000, instance, `least_outstanding_requests` | AI는 추론을 한 번에 하나만 돌린다(단일 lock). 라운드 로빈이면 한 대에 2건이 겹쳐 뒤 건이 lock을 기다린다 |
+| 상태 검사 | `GET /internal/v0/health` 200, 15초 x 정상 2회 / 비정상 3회 | 워밍업 전(503 STARTING)에는 트래픽이 가지 않는다. 토큰 불필요 |
+| ALB idle timeout | 90초 | backend 읽기 타임아웃(ai-timeout 85초)보다 길어야 한다. 기본 60초면 긴 추론이 504로 끊긴다 |
+| 등록 해제 지연 | 90초 | 빠지는 인스턴스의 진행 중 추론(AI 상한 75초)이 끝날 시간 |
+| ASG 상태 검사 | ELB, 유예 900초 | 첫 부팅(docker 설치 + 이미지 7GB pull + 모델 적재)이 실측 3분 20초 - 파이프라인의 healthy 대기(600초)에 pull을 더한 여유다 |
+| 확대 | `accentury.analysis.processing.value` Maximum >= 6, 1분 x 2회 -> +1, 워밍업 600초 | backend의 폴링 혼잡 임계치와 같은 지점. CPU는 추론 1건이 10초라 밀림보다 늦다 |
+| 축소 | 같은 지표 <= 1, 1분 x 15회 -> -1, 그 뒤 ALARM이 유지되는 동안 약 3분마다 다시 -1 (min까지) | 늘어난 인스턴스는 늘어난 동안만 과금이라 확대보다 훨씬 느리게 접는다. 실측 3에서 2가 16분, 2에서 1이 19분 |
+| SG | backend-sg -> ai-alb-sg -> ai-sg (8000) | backend 태스크가 호스트에 직접 닿는 길은 없다 |
+
+**MAX를 바꾸려면** 두 환경 tfvars의 `ai_max_size`를 고치고 apply한다 - plan에 ASG 속성 변경 1건만 보여야
+한다. `min_size`는 모듈 기본값 1이고 0은 validation이 막는다 (AI가 아예 없으면 backend 회로가 열린 채 머문다).
+지금 대수와 스케일링 이력:
+
+```
+aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$(terraform output -raw ai_asg_name)" \
+  --query 'AutoScalingGroups[0].[MinSize,MaxSize,DesiredCapacity]' --output text
+aws autoscaling describe-scaling-activities --auto-scaling-group-name "$(terraform output -raw ai_asg_name)" \
+  --max-items 5 --query 'Activities[].[StartTime,StatusCode,Cause]' --output table
+aws cloudwatch describe-alarms --alarm-names "$(terraform output -raw ai_asg_name)-scale-out" "$(terraform output -raw ai_asg_name)-scale-in" \
+  --query 'MetricAlarms[].[AlarmName,StateValue]' --output table
+```
+
+staging 실증 (2026-09-11): apply 뒤 instance refresh로 뜬 새 인스턴스가 3분 20초 만에 대상 그룹 healthy가 됐고,
+실발화 5문항이 ALB를 거쳐 완주했다(AI 컨테이너 로그의 출처 IP가 ALB ENI). 실발화 25건을 한꺼번에 올리자
+PROCESSING이 약 2분간 6 이상이었고, 시작 2분 44초 뒤 경보 `ai-scale-out`이 ALARM으로 바뀌며 desired 1 -> 2가
+됐다. desired 3 + backend 태스크 3에서 20건을 올리자 인스턴스별 7 / 7 / 6으로 갈렸고(로그 스트림
+`ai/<인스턴스 ID>`), 부하를 거둔 뒤 16분에 3 -> 2, 19분에 2 -> 1로 돌아왔다. 순차 reload는 아래 절과 Jira
+KAN-201 코멘트에 있다.
+
+ALB 뒤에서 달라진 backend 쪽 판정 하나: ALB가 스스로 만든 응답은 `Server: awselb/2.0`으로 오는데, 대상이
+없거나 연결을 거부한 502/503은 미도달(UNREACHED)로 접어 시도 예산(§2.5)에서 빼고, 대상이 idle timeout 안에
+답하지 못한 504는 읽기 타임아웃과 같은 TIMED_OUT(재전송 없음, KAN-172)이다 (`RestAiAnalysisClient`). AI가
+직접 낸 503(분석 시간 초과)은 uvicorn 헤더로 오므로 종전대로 도달한 장애다. `ai-timeout`을 SSM으로 ALB idle
+timeout(90초) 이상으로 올리면 504 경로가 실제로 열린다.
+
+**배포 시 순차 reload.** 파이프라인(`deploy.yml`의 `reload_host`)은 ASG의 InService 인스턴스를 한 대씩 돈다 -
+SSM 에이전트 등록 대기, Run Command로 `accentury-up.sh` 재실행(docker healthy까지), 그 대상이 ALB 대상 그룹에서
+healthy가 될 때까지 대기, 다음 인스턴스. 여러 대에 한꺼번에 보내면 전부 같은 순간 대상 그룹에서 빠진다.
+3대면 배포가 그만큼 길어진다(대당 약 2분에서 4분). reload 동안에는 ASG 프로세스 `HealthCheck`,
+`ReplaceUnhealthy`, `AlarmNotification`을 멈춘다 (Codex 리뷰 P1) - ELB 상태 검사를 보는 ASG는 컨테이너가 내려간
+인스턴스를 유예 기간이 지난 뒤 unhealthy로 교체해 버려, 정상 배포가 "인스턴스 사라짐"으로 실패하고 롤백한다.
+어느 경로로 끝나든 파이프라인이 resume하지만 job이 중간에 죽으면(취소, 러너 소실) 멈춘 채 남는다 - 그때는
+손으로 되돌린다. 멈춘 채 두면 죽은 인스턴스가 교체되지 않고 스케일링도 서지 않으며, `terraform apply`의
+instance refresh도 시작되지 않거나 취소된다 (refresh가 Cancelled나 Failed면 먼저 SuspendedProcesses를 본다).
+같은 이유로 배포 파이프라인이 도는 동안에는 apply를 걸지 않는다.
+
+```
+aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$(terraform output -raw ai_asg_name)" \
+  --query 'AutoScalingGroups[0].SuspendedProcesses[].ProcessName' --output text
+aws autoscaling resume-processes --auto-scaling-group-name "$(terraform output -raw ai_asg_name)" \
+  --scaling-processes HealthCheck ReplaceUnhealthy AlarmNotification
+```
+
+배포 역할은 그 조회와 정지/재개 권한(`autoscaling:DescribeAutoScalingGroups`, `autoscaling:SuspendProcesses`와
+`ResumeProcesses`는 이 환경 ai ASG로 한정, `ssm:DescribeInstanceInformation`, `elasticloadbalancing:DescribeTarget*`)을
+갖는다 (deploy 모듈).
+
+**경보.** `ai-alb-no-healthy-host`(대상 그룹 HealthyHostCount < 1, 3분)가 정본이고, 호스트 타이머 지표의
+`ai-unhealthy`는 통계를 Maximum으로 바꿔 이중 안전망으로 남았다 - Minimum이면 새로 뜬 인스턴스의 워밍업(0)이
+확대할 때마다 운다. `ai-disk-high`, `ai-mem-high`는 원래 Maximum이라 그대로다.
+
+**비용.** 내부 ALB는 환경당 시간 요금 약 0.0225달러 + LCU(호출이 적어 최소)로 월 약 20달러다. 추가 인스턴스는
+늘어난 동안만 과금된다(c7i.xlarge 온디맨드, Spot 제외는 기존 결정).
+
+### 부팅 자산 버킷 (KAN-38)
+
+네 파일은 `accentury-{env}-ai-boot-{계정}` 버킷의 `ai-host/` 접두사 아래에 있고 Terraform이
+`aws_s3_object`로 올린다. 퍼블릭 접근은 전면 차단이고, EC2 역할은 그 접두사에 `s3:GetObject`만
+가진다 - 호스트가 뚫려도 자기 부팅 파일을 바꿔치기하지 못한다. 네트워크는 새로 뚫은 것이 없다.
+호스트가 퍼블릭 서브넷에 있어 ECR과 SSM을 쓰던 경로를 그대로 쓴다.
+
+| 항목 | 값 |
+| --- | --- |
+| 옮긴 이유 | 파일을 user_data에 `base64gzip`으로 박으면 16KB 상한의 75%를 먹는다. KAN-38이 health 스크립트를 늘리며 상한을 넘겼다 |
+| 옮긴 뒤 크기 | user_data 약 5.4KB (상한의 약 33%) |
+| 변경 감지 | 네 파일의 `filemd5`를 묶은 해시가 user_data에 주석으로 들어간다. 파일이 바뀌면 해시가 바뀌고 시작 템플릿 새 버전과 instance refresh가 돈다 |
+| 첫 부팅 실패 대비 | `fetch`가 5회까지 늘려 가며 재시도한다 (최대 약 75초). 다 실패하면 `set -e`가 부팅을 세우고 ASG가 교체한다 |
+| 순서 | 시작 템플릿에 `depends_on = [aws_s3_object.boot]`. 오브젝트가 인스턴스보다 먼저 올라간다 |
+
+해시가 핵심이다. 이 값이 없으면 스크립트를 고쳐도 user_data가 그대로라 S3만 갱신되고 도는
+인스턴스는 옛 파일을 계속 쓴다. 파일을 박아 넣던 시절에는 내용이 곧 user_data라 공짜로
+성립하던 성질이라, 옮기면서 명시적으로 되살린 것이다. backend는 이 호스트에 없다 - KAN-165 전의 backend 호스트(`accentury-{env}`, t3.small,
 `aws_instance`)는 Fargate 서비스로 대체됐다.
 
 | | ai 호스트 `accentury-{env}-ai` |
 | --- | --- |
-| 인스턴스 | ASG min 1 max 1, c7i.xlarge (2026-09-01 결정으로 스텁 모드부터) |
-| 보안 그룹 | ai-sg (backend-sg만 8000) |
-| 컨테이너 | ai (호스트 8000, backend 태스크만 닿는다) |
+| 인스턴스 | ASG min 1 max 3 (KAN-201, tfvars `ai_max_size`), c7i.xlarge (8GB - 실모델 RSS 최대 6.2GB를 이 컨테이너 혼자 쓴다), 루트 볼륨 40GiB (B단계, 이미지 7GB x 2 공존 + pull 임시 공간) |
+| 컨테이너 메모리 상한 | `mem_limit: 7g` (B단계, 2026-09-10). 호스트 7.6GiB에서 OS와 에이전트 몫 0.6GiB를 뺀 값 - 1.3배 규칙(8.05GB)은 8GB 호스트에서 성립하지 않아 대신 "호스트 프로세스는 살린다"를 기준으로 잡았다. 근거는 `docker-compose.ai.yml` 주석 |
+| 보안 그룹 | ai-sg (ai-alb-sg만 8000. ALB는 backend-sg만 8000) |
+| 컨테이너 | ai (호스트 8000, 내부 ALB만 닿는다) |
 | SSM 읽기 | `/accentury/{env}/ai/*`와 `IMAGE_TAG`만 (IAM으로도 그것만) |
 | IMDSv2 hop limit | 1 (컨테이너는 IMDS를 못 본다) |
-| 추가 | Route 53 A 레코드 UPSERT, iptables egress 가드, health 타이머 |
+| 추가 | iptables egress 가드, health 타이머 (KAN-36의 Route 53 UPSERT는 KAN-201에서 ALB alias로 대체) |
 
 기동 순서 (`accentury-up.sh`, 부팅마다 그리고 reload마다):
 
@@ -731,11 +890,11 @@ ASG instance refresh). 그래도 되는 이유가 무상태다. 교체 동안 �
 2. 파라미터 이름의 마지막 조각을 환경 변수 이름으로 삼아 `/run/accentury/`
    (tmpfs, root 전용)에 env 파일 2개(compose.env, ai.env)를 쓴다. 여기에 `ACCENTURY_ENV`
    (env.conf)를 더한다 - 지표 차원이다.
-3. IMDSv2로 자기 사설 IP를 읽어 프라이빗 영역에 `ai.accentury.internal` A 레코드(TTL
-   10초)를 UPSERT한다. ASG가 인스턴스를 교체해도 backend가 보는 이름은 그대로다.
-4. 인스턴스 프로파일로 ECR 로그인.
-5. `docker compose --env-file /run/accentury/compose.env up -d --remove-orphans`
-6. 어느 컨테이너도 쓰지 않는 이미지 정리 (`docker image prune -af`). 이전 SHA가
+3. 인스턴스 프로파일로 ECR 로그인. (KAN-36에서는 이 앞에 IMDSv2로 읽은 사설 IP를 프라이빗 영역
+   `ai.accentury.internal` A 레코드로 UPSERT하는 단계가 있었다 - KAN-201부터 그 이름은 내부 ALB의
+   alias이고 대상 등록은 ASG가 하므로 스크립트는 자기 주소를 알리지 않는다.)
+4. `docker compose --env-file /run/accentury/compose.env up -d --remove-orphans`
+5. 어느 컨테이너도 쓰지 않는 이미지 정리 (`docker image prune -af`). 이전 SHA가
    루트 볼륨에 쌓이지 않게 한다. 롤백은 ECR에서 다시 당긴다.
 
 1, 3, 4, 5는 일시 장애(IAM 전파 지연, 네트워크)에 대비해 최대 8회 백오프 재시도한다
@@ -752,6 +911,7 @@ ASG instance refresh). 그래도 되는 이유가 무상태다. 교체 동안 �
 iptables -S DOCKER-USER                         # DROP 4줄 (docker0, br+ 각각 VPC 밖 NEW, IMDS)
 systemctl list-timers accentury-ai-health.timer  # 다음 실행 시각
 journalctl -u accentury-ai-health -n 3           # "ai health=200 -> Healthy=1"
+docker logs --tail 20 $(docker compose ps -q ai)  # 이중 로깅으로 그대로 읽힌다 (KAN-203). 교체 뒤 로그는 CloudWatch
 docker compose exec ai python -c "import urllib.request; urllib.request.urlopen('http://169.254.169.254/latest/meta-data/', timeout=2)"  # 실패해야 정상
 ```
 
@@ -759,7 +919,7 @@ docker compose exec ai python -c "import urllib.request; urllib.request.urlopen(
 | --- | --- | --- |
 | `IMAGE_TAG` | ai 호스트 compose.env, backend 태스크 정의 image (Terraform data 소스) | 두 서비스가 같은 SHA 태그를 쓴다. **없으면 ai 기동 실패, plan 실패.** 파이프라인(KAN-128)이 쓴다 |
 | `ai/*` (하위 경로 전부) | ai.env (ai 호스트만) | ai 컨테이너 환경 변수. 지금은 내부 호출 토큰 하나 (KAN-36). 실모델 설정은 KAN-22가 이 경로 아래 어떤 이름으로든 더한다 - 이 호스트가 읽는 것은 이 경로뿐이라 이름 규칙이 없다 |
-| 그 외 전부 (`modules/config` 출력 8개) | backend 태스크 정의 secrets (KAN-165) | backend 컨테이너 환경 변수. 태스크 시작 시 실행 역할이 읽는다 (아래 표, KAN-129) |
+| 그 외 전부 (`modules/config` 출력 12개) | backend 태스크 정의 secrets (KAN-165) | backend 컨테이너 환경 변수. 태스크 시작 시 실행 역할이 읽는다 (아래 표, KAN-129) |
 
 backend 환경 변수는 전부 Terraform `modules/config`가 만든다 - 값이 다른 모듈의
 출력(RDS 주소, 시크릿 ARN, VPC CIDR, 도메인)이라 손으로 넣으면 재구축 때 어긋난다.
@@ -770,7 +930,7 @@ fargate 모듈이 config의 파라미터 이름 목록을 그대로 태스크 �
 
 | `/accentury/{env}/` 아래 | 값 | 타입 |
 | --- | --- | --- |
-| `SPRING_PROFILES_ACTIVE` | `deploy` (두 환경 동일). 이 프로파일에서만 backend가 아래 7개 누락 시 기동을 세운다 (`DeploymentConfigGuard`) | String |
+| `SPRING_PROFILES_ACTIVE` | `deploy` (두 환경 동일). 이 프로파일에서만 backend가 아래 8개 누락 시 기동을 세운다 (`DeploymentConfigGuard`) | String |
 | `SPRING_DATASOURCE_URL` | `jdbc:aws-wrapper:postgresql://<RDS 주소>:5432/accentury?secretsManagerSecretId=<마스터 시크릿 ARN>` | String |
 | `ACCENTURY_ANALYSIS_AIBASEURL` | `http://ai.accentury.internal:8000` (프라이빗 영역의 고정 이름, 두 환경 동일, KAN-36) | String |
 | `ACCENTURY_ANALYSIS_AITOKEN` | `random_password` 48자 영숫자. backend가 AI 호출마다 `X-Accentury-Internal-Token`으로 싣는다 (KAN-36) | SecureString |
@@ -778,7 +938,9 @@ fargate 모듈이 config의 파라미터 이름 목록을 그대로 태스크 �
 | `ACCENTURY_RESULT_WEBTESTURL` | `https://<도메인>/t?c=kko_share` | String |
 | `ACCENTURY_RESULT_ASSETBASEURL` | `https://<도메인>/share` (KAN-132). backend가 등급 code를 붙여 `share.imageUrl`을 만든다. 이미지는 웹 버킷 `share/<code>.png` (`scripts/publish-share-assets.sh`) | String |
 | `ACCENTURY_ADMIN_TOKEN` | `random_password` 48자 영숫자. 관리자 API(§6)와 E2E 스모크(KAN-138)가 쓴다 | SecureString |
+| `ACCENTURY_SHARE_KAKAOADMINKEY` | 카카오디벨로퍼스 콘솔의 앱 Admin 키 (KAN-164). Terraform은 자리 표시 값으로 만들고(write-only `value_wo`라 state에 값이 남지 않는다) apply 뒤 `put-parameter --overwrite`로 넣는다 (아래 "카카오 공유 웹훅" 절). 두 환경 같은 값 | SecureString |
 | `ai/ACCENTURY_AI_INTERNAL_TOKEN` | `ACCENTURY_ANALYSIS_AITOKEN`과 같은 난수. ai 서버가 health를 뺀 모든 요청에서 대조한다 (KAN-36). ai 호스트 역할만 읽는다 | SecureString |
+| `ACCENTURY_TRAINING_BUCKET` | **staging에만 있다** (KAN-201). 학습 데이터 버킷 이름(`accentury-staging-training-<계정>`). tfvars `training_bucket_enabled`가 true인 환경에만 파라미터가 생기고, 그래서 prod 태스크 정의에는 이 변수가 없어 backend가 S3 클라이언트를 만들지 않는다 (아래 "staging 전용 학습 데이터 S3" 절) | String |
 
 **DB 사용자 이름과 비밀번호 파라미터는 없다.** RDS 관리형 마스터 시크릿은 7일마다
 자동 회전되므로(AWS 문서, 일정 변경만 가능) 값을 SSM에 복사하면 첫 회전에서 접속이
@@ -820,14 +982,65 @@ gh secret list                                 # ACCENTURY_ADMIN_TOKEN이 보이
 gh secret delete ACCENTURY_ADMIN_TOKEN         # 지운다
 ```
 
+### 카카오 공유 웹훅 검증 키 (KAN-164)
+
+카카오톡 공유의 "전송 완료"는 카카오가 우리 서버로 보내는 웹훅(`POST /v0/share/kakao/webhook`,
+API 명세서 §3.8)으로만 셀 수 있고, backend는 그 요청의 `Authorization: KakaoAK {앱 Admin 키}`가
+SSM `ACCENTURY_SHARE_KAKAOADMINKEY`와 같을 때만 받는다. 이 키는 카카오디벨로퍼스 콘솔이 발급한
+값이라 Terraform이 만들 수 없다 - `modules/config`는 자리 표시 값으로 파라미터를 만들되 write-only
+인자(`value_wo`)라 손으로 넣은 값을 state에 읽어 들이지도, 되돌리지도 않는다. apply 뒤에 한 번 넣는다. 자리 표시 값으로 뜬 backend는 웹훅을
+전부 401로 거부한다 - backend가 그 리터럴을 키로 인정하지 않는다 (카운트가 부풀지 않고, 로그
+`SHARE_WEBHOOK_UNAUTHORIZED`로 보인다).
+
+**순서: 두 환경 모두 apply가 먼저, 이 코드를 실은 이미지 배포는 그다음이다** (위 "등급 공유 이미지" 절과 같은
+규칙). `DeploymentConfigGuard`가 이 파라미터를 필수로 보므로, apply로 태스크 정의에 secret이 들어가기
+전에 KAN-164 코드가 배포되면 새 태스크가 `ACCENTURY_SHARE_KAKAOADMINKEY` 누락으로 기동을 세우고
+파이프라인이 롤백한다. 즉 KAN-164 PR 병합 전에 staging과 prod에서 apply한다.
+
+1. 콘솔 [내 애플리케이션] > 앱 > [앱 설정] > [앱 키]에서 **Admin 키**를 읽는다 (네이티브 앱 키가
+   아니다 - 그것은 앱 빌드에 들어가는 공개 값이다).
+2. 환경마다 값을 넣고 backend 태스크를 새로 띄운다 (secrets는 태스크 시작 시 한 번 읽힌다).
+
+   ```
+   aws ssm put-parameter --overwrite --type SecureString \
+     --name /accentury/staging/ACCENTURY_SHARE_KAKAOADMINKEY --value '<Admin 키>'
+   aws ecs update-service --cluster accentury-staging --service backend --force-new-deployment
+   ```
+
+3. 콘솔 [앱 설정] > [카카오톡 공유] > [카카오톡 공유 웹훅]에 URL을 **POST**로 등록한다 -
+   `https://accentury.app/v0/share/kakao/webhook`. 카카오 앱이 하나라 웹훅 URL도 하나이고,
+   그래서 실제 콜백은 prod로만 온다. staging은 아래 curl로 카카오를 흉내 내어 확인한다.
+4. 확인 - 같은 `X-Kakao-Resource-ID`를 두 번 보내면 카운터가 1만 오른다.
+
+   ```
+   KEY=$(aws ssm get-parameter --with-decryption --name /accentury/staging/ACCENTURY_SHARE_KAKAOADMINKEY --query Parameter.Value --output text)
+   curl -sS -o /dev/null -w '%{http_code}\n' -X POST https://<staging 도메인>/v0/share/kakao/webhook \
+     -H "Authorization: KakaoAK $KEY" -H 'X-Kakao-Resource-ID: manual-check-1' \
+     -H 'Content-Type: application/json' -d '{"CHAT_TYPE":"MemoChat","HASH_CHAT_ID":"x","campaign":"kko_share"}'
+   # 폼 인코딩도 같은 결과여야 한다. 카카오가 어느 쪽으로 보내든 받는다.
+   curl -sS -o /dev/null -w '%{http_code}\n' -X POST https://<staging 도메인>/v0/share/kakao/webhook \
+     -H "Authorization: KakaoAK $KEY" -H 'X-Kakao-Resource-ID: manual-check-2' \
+     -H 'Content-Type: application/x-www-form-urlencoded' -d 'CHAT_TYPE=MemoChat&HASH_CHAT_ID=x&campaign=kko_share'
+   ADMIN=$(aws ssm get-parameter --with-decryption --name /accentury/staging/ACCENTURY_ADMIN_TOKEN --query Parameter.Value --output text)
+   curl -sS "https://<staging 도메인>/admin/v0/analytics" -H "X-Admin-Token: $ADMIN" | jq .shares
+   ```
+
+키를 재발급하면(콘솔에서 Admin 키 재발급) 2번을 다시 한다. 웹훅은 앱이 `serverCallbackArgs`에
+`campaign=kko_share`를 실어야 온다 - 그 인자가 없는 앱 빌드(KAN-164 이전)에서는 카카오가 콜백을
+보내지 않으므로, 실제 전송이 0으로 보이면 앱 버전부터 본다. 앱이 맞는데도 0이면 엣지에서 막혔는지 본다 -
+WAF의 AWS 관리 규칙(KAN-149)은 `/recording`만 제외하고 이 경로에도 Block으로 걸려 있어, 카카오의 요청이
+봇 UA나 UA 없음으로 분류되면 backend 로그에 아무 흔적 없이 CloudFront가 403을 낸다. us-east-1의 WAF 로그
+그룹(아래 "WAF 웹 ACL" 절)에서 `/v0/share/kakao/webhook`의 BLOCK을 찾고, 있으면 그 규칙에
+`rule_action_override`(Count)나 scope-down 제외를 더한다.
+
 ### 원격 스모크 수동 실행 (KAN-138)
 
 이미 떠 있는 환경을 도메인 경유로 두드린다. 토큰은 job이 SSM에서, 대상 주소는 그 environment의
 변수 `APP_DOMAIN`에서 읽으므로 넣을 입력이 환경 이름뿐이다.
 
 ```
-gh workflow run e2e-smoke.yml --ref Dev     -f environment=staging -f expect-stub-scores=true
-gh workflow run e2e-smoke.yml --ref Release -f environment=prod    -f expect-stub-scores=true
+gh workflow run e2e-smoke.yml --ref Dev     -f environment=staging
+gh workflow run e2e-smoke.yml --ref Release -f environment=prod
 ```
 
 주소를 입력으로 받지 않는 것은 의도다. 사람이 주소를 넣게 두면 SSM에서 막 읽은 그 환경의
@@ -843,8 +1056,74 @@ gh workflow run e2e-smoke.yml --ref Release -f environment=prod    -f expect-stu
 적용된다. 브랜치를 틀리면 "Branch is not allowed to deploy to ..."로 막힌다. prod에는
 required reviewers가 걸려 있어 실행할 때마다 승인을 한 번 받는다.
 
-`expect-stub-scores`는 AI가 스텁일 때만 켠다. 실모델 전환(KAN-36 B단계) 뒤에는 끈다 -
-점수를 미리 알 수 없어 검산이 실패한다.
+스모크가 올리는 것은 합성 사인파라 실모델은 그것을 내용 게이트에서 판정 실패로 끊는다.
+그래서 기본 실행이 확인하는 종점은 결과가 아니라 **완료 409 `RESULT_RETAKE_REQUIRED`**다
+(업로드 -> AI -> BE 상태 기계까지가 실제로 이어졌다는 뜻이다). 결과 검산과 등급, 공유 카드까지
+보려면 그 문항들의 대본을 읽은 실제 녹음을 `--voice-wav`로 주고 스크립트를 직접 돌린다
+(`scripts/e2e_smoke.py` 머리말). 억양 점수를 예측하던 `expect-stub-scores`는 스텁과 함께
+없앴다 (2026-09-05, KAN-22).
+
+### 분석 시간 예산 (실모델, KAN-172 확정)
+
+`modules/config`가 환경마다 넣는 값이다. KAN-22가 임시로 올렸던 값(85s / 300s / 1 / 75)을
+KAN-57의 c7i.xlarge 실측(bf16 + MFA `align_one`, 1건 P50 10.1초, P95 11.1초, 콜드 스타트 31초,
+동시 처리 상한 1건)으로 2026-09-08에 다시 봤고, 같은 값을 근거를 붙여 정식값으로 확정했다. 코드
+기본값(`application.yml`, `ai/app/config.py`)과 같은 값이고, SSM은 실측이 바뀌었을 때 재빌드 없이
+조정하는 자리다.
+
+| 파라미터 | 값 | 뜻 |
+| --- | --- | --- |
+| `ACCENTURY_ANALYSIS_AITIMEOUT` | `85s` | backend가 AI 호출에 거는 연결과 읽기 타임아웃. AI 상한 75초보다 10초 길다 |
+| `ACCENTURY_ANALYSIS_PROCESSINGTIMEOUT` | `300s` | 실행 잔류 한도. `ai-timeout x 3 + 백오프`(255.9초)보다 길어야 backend가 뜬다 |
+| `ACCENTURY_ANALYSIS_DISPATCHCONCURRENCY` | `1` | 전달 워커 수. AI가 추론을 한 번에 하나만 돌리고 8GB에서 2건이면 OOM이다 |
+| `ai/ACCENTURY_AI_ANALYSIS_TIMEOUT_SECONDS` | `75` | AI 자신의 상한 (lock 대기와 워커 재적재 대기 포함). backend보다 짧아야 AI가 먼저 끊고 503을 돌려준다. 정상 추론 1건이 아니라 롤링 배포 중 태스크 최대 6개(상한 3 x 200%)가 겹친 6 x P95 11초 = 67초와 워커 재적재 31초 + 추론 11초 = 42초를 덮는 값이다 - 짧으면(25초, 40초) 추론 중인 요청을 끊어 멀쩡한 워커를 죽이고 재전송이 새 워커를 또 죽이는 연쇄가 된다 (Codex 리뷰 P1, 실제 어댑터로 재현). 두 시나리오를 각각 덮을 뿐 합(97.6초)은 덮지 않는다 - 그때는 backend 회로 차단기가 연속 5회 실패에서 열려 호출을 멈추므로 연쇄가 자기수렴한다 (KAN-28) |
+
+같은 티켓에서 backend의 읽기 타임아웃은 재전송하지 않게 바꿨다 (`ANALYSIS_TIMEOUT` 즉시 종결 -
+연결 실패와 5xx만 2회 재전송). 폴링 혼잡 임계치는 30에서 6(AI 1분 처리량)으로, 디스패처 큐 용량은
+200에서 30(`queued-timeout` 5분 / 10초)으로, AI compose `start_period`는 300초에서 90초로 내렸고
+`analysis-backlog-high` 경보 임계치는 혼잡 임계치의 두 배 규칙대로 60에서 12가 됐다. 값을 바꿀 때는
+위 관계를 함께 본다 - backend는 기동 시점에 이 관계를 검사하고 어긋나면 뜨지 않는다
+(`AnalysisDispatchConfig`).
+
+**`dispatch-concurrency`는 전역 상한이 아니다** (Codex sol 리뷰 P1). 태스크 하나가 보내는
+동시 호출만 묶으므로, 오토스케일링(최대 3, KAN-168)이나 롤링 배포로 태스크가 둘 이상 뜨면
+그만큼 AI에 동시에 들어간다. AI는 추론을 한 번에 하나만 돌리므로 뒤에 온 요청은 AI 안에서
+기다리다 backend의 읽기 타임아웃에 걸리고, 그 실패가 연속 5회면 회로가 열린다 (KAN-28).
+
+기다리는 요청이 **도는 추론을 방해하지는 않는다** - 취소는 자기 차례를 기다리는 지점에서
+끊기고 워커를 죽이지 않는다 (`ai/app/track1.py`). 그래서 증상은 "느려지고 일부가 재전송된다"
+이지 "전부 죽는다"가 아니다. 전역 한 건으로 묶는 일은 다중 인스턴스 상태를 다루는 KAN-167의
+몫이고, 프로토타입 트래픽(동시 응시 소수)에서는 태스크가 1개로 유지되므로 지금은 두고 본다.
+
+### staging 전용 학습 데이터 S3 (KAN-201)
+
+원본 음성은 요청 처리 중에만 메모리에 있고 영속 저장소에 남지 않는다 (SRS FR-DP-01). 그래서 모델을 다시
+학습시킬 실발화 데이터가 어디에도 없었고, 2026-09-08 결정으로 **staging에만** 버킷을 두고 내부 테스터의
+음성 WAV와 AI 원점수 메타 JSON을 보존한다. prod는 FR-DP-01 그대로다.
+
+| 항목 | 값 |
+| --- | --- |
+| 버킷 | `accentury-staging-training-<계정 ID>` (envs main.tf, tfvars `training_bucket_enabled = true`인 환경만) |
+| 보호 | 퍼블릭 액세스 전면 차단, SSE-S3 기본 암호화, 버전 관리 없음, 수명주기 규칙 없음(학습 데이터라 자동 삭제하지 않는다) |
+| 권한 | backend 태스크 역할에 이 버킷 한 개로 한정한 `s3:PutObject`만 (fargate 모듈 `training_bucket_arn`). Get, List, Delete 없음 |
+| 스위치 | SSM `ACCENTURY_TRAINING_BUCKET` -> `accentury.training.bucket`. 없으면 backend는 S3 클라이언트도 저장 빈도 만들지 않는다 (`TrainingConfig`) |
+| 저장 시점 | 분석 상태 전이가 끝난 뒤, 오디오 버퍼 파기 전 (`HttpAnalysisDispatcher`). 성공과 판정 실패 모두, 계약 위반과 AI 불가는 제외 |
+| 키 | `<region>/<testVersion>/<sessionId>/<itemId>/<analysisJobId>.wav` 와 `.json` (region은 세션 생성 요청의 출신 지역 코드 10개 중 하나 또는 `UNKNOWN`) |
+| 실패 | 삼킨다 - WARN 로그 1줄 + 지표 `accentury.training.samples`(result=failed). 분석 결과와 상태 조회에 영향 없음 |
+
+**apply 순서.** 이 파라미터가 태스크 정의 secrets에 들어가므로 staging apply가 코드 배포보다 먼저다 (KAN-132
+교훈). 반대로 하면 파이프라인이 등록하는 리비전이 없는 파라미터를 가리켜 태스크가 뜨지 않는다. 두 환경의
+main.tf는 같고(KAN-140) 차이는 tfvars 한 줄이다 - prod plan에는 버킷도 정책도 파라미터도 없어야 한다.
+
+**teardown.** 버킷은 `force_destroy`라 destroy가 객체째 지운다 - staging을 부수고 다시 지으면 모인 샘플이 사라진다.
+남겨야 하면 destroy 전에 `aws s3 sync s3://<버킷> <로컬>`로 내려받는다.
+
+확인:
+
+```
+aws s3 ls "s3://$(terraform output -raw training_bucket)/" --recursive | tail        # 지역/버전/세션/문항/작업.wav|.json
+aws s3 cp "s3://$(terraform output -raw training_bucket)/<키>.json" -                  # intonationScore = analysis_job.intonation_score
+```
 
 ### 이미 있는 SSM 파라미터 (재구축, 수동 생성분)
 
@@ -880,7 +1159,7 @@ required reviewers가 걸려 있어 실행할 때마다 승인을 한 번 받는
 따옴표, `#`, 공백)는 그대로 컨테이너에 들어간다 - ai 호스트는 env_file을 `format: raw`로
 읽어 Compose의 보간과 따옴표 처리를 끄고, ECS secrets는 값을 그대로 env로 준다. 시크릿은
 SecureString으로 두면 되고(AWS 관리 키라 별도 kms 권한 불요), 실행 역할은 자기 환경의
-파라미터 7개만, ai 호스트 역할은 자기 하위 경로만 읽는다. ai 호스트의 env 파일은 tmpfs라
+파라미터 12개만, ai 호스트 역할은 자기 하위 경로만 읽는다. ai 호스트의 env 파일은 tmpfs라
 재부팅 시 사라졌다가 다시 만들어진다 (낡은 사본이 쌓이지 않는다). docker 자체는 컨테이너
 환경 변수를 `/var/lib/docker/containers/*/config.v2.json`(암호화된 루트 볼륨, root 전용)에
 기록하므로 호스트 디스크에 평문이 전혀 없는 것은 아니다. Fargate 태스크는 호스트가 없어
@@ -960,10 +1239,10 @@ Count 관찰은 2026-08-28부터의 staging 사이클과 당일 부하 시험(�
 ## 경보와 알림 (KAN-134)
 
 prod는 무인으로 돈다. 서버가 죽은 것을 사용자보다 먼저 알아야 하므로 SNS 토픽
-하나(`accentury-{env}-alerts`)에 이메일 구독을 걸고 CloudWatch 경보 7종을 붙인다
-(`infra/modules/monitoring`, 두 환경 각 1벌). AI 지표 2종을 빼면 지표를 새로 수집하지
-않는다 - ALB, RDS, ECS가 이미 내보내는 표준 지표다. 지표 수집과 대시보드, correlation ID
-규약은 KAN-38이고, 이 절은 그중 최소 선행분이다.
+하나(`accentury-{env}-alerts`)에 이메일 구독을 걸고 CloudWatch 경보를 붙인다
+(`infra/modules/monitoring`, 두 환경 각 1벌). 이 절의 9종은 "서버가 죽었다"를 알리고,
+AI 호스트 지표 4종을 빼면 지표를 새로 수집하지 않는다 - ALB, RDS, ECS가 이미 내보내는 표준 지표다.
+서비스 지표 수집과 대시보드, 그 위의 경보 3종은 아래 "관측성 지표와 대시보드 (KAN-38)"다.
 
 | 경보 | 지표 | 조건 | 결측 처리 |
 | --- | --- | --- | --- |
@@ -974,11 +1253,14 @@ prod는 무인으로 돈다. 서버가 죽은 것을 사용자보다 먼저 알�
 | `backend-mem-high` (KAN-165) | `AWS/ECS` `MemoryUtilization` (ClusterName + ServiceName) | 1분 평균 >= 85%가 3회 연속 | `notBreaching` |
 | `ai-unhealthy` (KAN-36) | `accentury/ai` `Healthy` (차원 env, ai 호스트 타이머가 올린다) | 1분 최소 < 1이 3회 연속 | `breaching` |
 | `ai-circuit-open` (KAN-36) | `accentury/backend` `accentury.ai.circuit.state.value` (차원 env, backend Micrometer) | 1분 최대 >= 2(열림)가 2회 연속 | `notBreaching` |
+| `ai-disk-high` (KAN-36 B단계) | `accentury/ai` `RootDiskUsedPercent` (차원 env, ai 호스트 타이머) | 1분 최대 >= 80%가 3회 연속 | `notBreaching` |
+| `ai-mem-high` (KAN-36 B단계) | `accentury/ai` `MemoryUsedPercent` (차원 env, 호스트 대비, ai 호스트 타이머) | 1분 최대 >= 90%가 2회 연속 | `notBreaching` |
 
 앞의 둘이 KAN-134의 필수 2종이고 셋째는 "선택" 항목인데 두 환경 모두 넣기로 했다
 (2026-08-28). 넷째와 다섯째는 Fargate 전환(KAN-165)이 KAN-134의 `ec2-cpu-surplus` 자리에
-넣은 것이고, 마지막 둘은 AI 전용 호스트 분리(KAN-36)가 더한 것이다 - AI 호스트는 ALB 뒤가
-아니라 대상 그룹 health가 없고, 회로 상태는 어떤 표준 지표에도 없다. 일곱 경보 모두 ALARM과
+넣은 것이고, 여섯째와 일곱째는 AI 전용 호스트 분리(KAN-36 A단계)가 더한 것이다 - AI 호스트는 ALB 뒤가
+아니라 대상 그룹 health가 없고, 회로 상태는 어떤 표준 지표에도 없다. 마지막 둘은 실모델 전환(KAN-36
+B단계, 2026-09-10)이 더한 호스트 자원 경보다 - 아래 항목. 아홉 경보 모두 ALARM과
 OK 양쪽을 알린다. 해제 알림이 없으면 아직 죽어 있는지를 콘솔에서 확인해야 하기 때문이다.
 
 몇 가지가 의도된 선택이다.
@@ -1037,6 +1319,16 @@ OK 양쪽을 알린다. 해제 알림이 없으면 아직 죽어 있는지를 �
   머물다가 기준선을 넘겨 쓴 만큼만 쌓여 기동 오탐이 없었다. 버스트 인스턴스를 다시 쓰게
   되면 같은 선택이 유효하다.
 
+- **AI 호스트 자원 경보 2종은 실모델이 만든 것이다 (KAN-36 B단계, 2026-09-10).** ai 이미지가
+  7GB라 reload마다 SHA 2개와 pull 임시 공간이 루트 볼륨에 함께 놓이고, 컨테이너 RSS 최대 6.2GB
+  (KAN-57 bf16)가 8GB 인스턴스에 올라간다. 디스크가 차면 pull이 실패해 배포가 롤백하고, 메모리가
+  차면 OOM으로 워커가 죽어 재적재 31초가 반복된다 - 둘 다 health는 UP인 채라 `ai-unhealthy`가
+  못 잡는다. 지표는 health 타이머가 같은 경로로 올린다(CloudWatch agent 없음). 디스크 80%는
+  정상 reload의 순간 최대치(약 21GB = 40GiB의 51%)보다 위이고 pull 실패(100%)보다 아래다.
+  메모리 90%는 **호스트 대비**다 - 컨테이너 상한 7GiB(호스트의 92%)보다 조금 아래라 컨테이너가
+  죽기 전에 먼저 운다. 값은 `(MemTotal - MemAvailable) / MemTotal`이라 page cache는 사용으로 세지
+  않는다. 결측은 둘 다 `notBreaching` - 호스트가 없는 것은 `ai-unhealthy`가 잡는다.
+
 ### 수신 주소와 구독 확인
 
 수신 주소는 `envs/{env}/variables.tf`의 `alert_email` 기본값이다 (2026-08-28 확정).
@@ -1086,7 +1378,7 @@ end=$(( $(date +%s) + 180 ))
 while [ "$(date +%s)" -lt "$end" ]; do
   for i in $(seq 1 6); do
     curl -s -o /dev/null -w '%{http_code} ' \
-      "https://staging.accentury.app/v0/tests/gn-2026.08.1"
+      "https://<staging 도메인>/v0/tests/gn-2026.08.1"
   done
   echo " @ $(date +%H:%M:%S)"
   sleep 10
@@ -1169,12 +1461,262 @@ EC2 시절 `unhealthy-hosts`가 더 걸린 이유는 앞에 ALB 헬스체크 판
 `no-healthy-target`이 그보다 빠르다. 티켓 AC의 "수 분 내"는 이 값 기준이다. 복구 뒤에는 같은
 간격으로 OK 메일이 온다.
 
+AI 호스트 자원 경보 2종(KAN-36 B단계)의 2026-09-10 staging 실증이다. 티켓이 허용한 두 방법 중
+**임계 일시 하향**으로 했다 - `put-metric-alarm`으로 임계만 낮춰(디스크 80 -> 20, 메모리 90 -> 50)
+ALARM을 보고, `terraform apply`가 그 드리프트를 되돌리는 것으로 OK를 봤다. 디스크를 실제로
+채우는 방법(`fallocate`)은 지표 경로가 같으므로 결과가 다르지 않다. 그 지표 경로 자체는 같은 날
+instance refresh에서 확인됐다 - 새 인스턴스의 pull 중 `RootDiskUsedPercent`가 23%에서 36%로 올랐다
+23%로 내려왔고(이미지 7GB pull의 임시 공간), `MemoryUsedPercent`는 컨테이너 기동 전 9%에서 워밍업 뒤
+56%로 올랐다. 지표는 health와 무관하게 호스트가 뜬 직후부터 나간다.
+
+| 구간 | 걸린 시간 |
+| --- | --- |
+| `ai-disk-high` 임계 하향(11:03:59 UTC)부터 ALARM까지 | 1분 28초 (이미 쌓인 3개 데이터포인트를 새 임계로 재평가) |
+| `ai-mem-high` 임계 하향(11:05:55)부터 ALARM까지 | 39초 |
+| `terraform apply` 임계 복원(11:07:48)부터 `ai-mem-high` OK까지 | 1분 5초 |
+| 임계 복원부터 `ai-disk-high` OK까지 | 1분 11초 |
+| 시작 템플릿 갱신(루트 볼륨 40GiB)의 instance refresh: 새 인스턴스 시작부터 컨테이너 healthy까지 | 3분 39초 (10:49:23 -> 10:53:02, 이미지 7GB pull 포함) |
+
+실증 뒤 `terraform plan`은 No changes이고 경보 12종 전부 OK다. 실제 임계(80, 90)로 ALARM이 서는
+데는 여기에 조건 길이(디스크 3분, 메모리 2분)가 더해진다.
+
 ### 비용
 
 CloudWatch 표준 경보는 개당 월 0.10달러, 지표 math 경보(`alb-5xx`)는 지표 2개를 세어
-0.20달러다. 경보 7종에 환경당 월 약 0.80달러, 커스텀 지표(`Healthy` 1개 + backend `accentury.*`
-약 5개)가 이름당 월 0.30달러로 약 1.80달러다. SNS 이메일 알림은 월 1000건까지 무료다. 두 환경
-합산 월 5달러 안팎이라 상시 켜 둔다.
+0.20달러다. 경보 9종에 환경당 월 약 1.00달러, 커스텀 지표(`Healthy`, `RootDiskUsedPercent`,
+`MemoryUsedPercent` 3개 + backend `accentury.*` 약 5개)가 이름당 월 0.30달러로 약 2.40달러다. SNS 이메일 알림은 월 1000건까지 무료다. 두 환경
+합산 월 5달러 안팎이라 상시 켜 둔다. KAN-38이 더하는 몫은 아래 절에 따로 적는다.
+
+## 관측성 지표와 대시보드 (KAN-38)
+
+앞 절이 "서버가 죽었다"를 알린다면 이 절은 **"서버는 살아 있는데 파이프라인이 고장 났다"**를
+보는 층이다. 죽음은 사용자가 바로 알지만 이쪽은 대기 화면이 길어지는 것으로만 드러나 아무도
+신고하지 않는다 - 무인 운영에서 조용히 나빠지는 구간이다.
+
+**설계 근거와 지표 카탈로그의 정본은 [docs/wiki/observability.md](../docs/wiki/observability.md)다.**
+여기는 인프라 쪽에 무엇이 생기고 어떻게 확인하는지를 적는다.
+
+### 무엇이 생기는가
+
+| 리소스 | 이름 |
+| --- | --- |
+| 대시보드 1개 | `accentury-{env}-ops` (환경 루트의 `terraform output -raw dashboard_url`이 바로가기) |
+| 경보 3종 | `ai-temp-residue`, `analysis-backlog-high`, `analysis-timeouts-high` |
+| 로그 그룹 1개 | `/accentury/{env}/ai` (KAN-203, 아래 "ai 컨테이너 로그"). backend `/accentury/{env}/backend`는 KAN-165가 만든다 |
+
+경보는 앞 절과 **같은 SNS 토픽**으로 간다. 심각도별 채널을 나누지 않는다 - 3인 팀에 채널이
+여럿이면 어느 쪽도 보지 않게 된다. 모듈 출력 `alarm_names`가 12종 전부를 준다.
+
+| 경보 | 지표 | 조건 | 결측 처리 |
+| --- | --- | --- | --- |
+| `ai-temp-residue` | `accentury/ai` `TempFiles` (차원 env) | 5분 최대 >= 20이 2회 연속 | `notBreaching` |
+| `analysis-backlog-high` | `accentury/backend` `accentury.analysis.processing.value` | 1분 최대 >= 60이 5회 연속 | `notBreaching` |
+| `analysis-timeouts-high` | `accentury.analysis.timeouts.count`의 두 사유(stuck, lost) 합 | 5분 합계 > 5 | `notBreaching` |
+
+셋 다 결측을 장애로 세지 않는다. backend가 죽어 지표가 끊기는 것은 `no-healthy-target`이,
+AI 호스트가 죽는 것은 `ai-unhealthy`가 이미 잡는다 - 같은 사건에 메일 세 통을 보내지 않는다.
+
+### AI 임시파일 지표가 올라오는 경로
+
+`ai-health-metric.sh`(systemd 타이머, 1분)가 하는 일이 넷으로 늘었다.
+
+1. `GET /internal/v0/health` (토큰 불필요) -> `Healthy` 0|1. 같은 회차에 호스트의 `df /`와 `/proc/meminfo`에서
+   `RootDiskUsedPercent`, `MemoryUsedPercent`도 올린다 (KAN-36 B단계 - 토큰도 컨테이너도 필요 없다)
+2. `GET /internal/v0/metrics` (**토큰 필요**) -> `TempFiles`, `TempOldestAge`, `TempScanFailures`
+3. `GET /internal/v0/metrics/stages` (**토큰 필요**, KAN-204) -> `StageDuration` (아래 절)
+
+토큰이 필요한 쪽의 토큰은 SSM을 매분 다시 읽지 않고 `accentury-up.sh`가 기동 때 만들어 둔
+`/run/accentury/ai.env`(root 전용 tmpfs)에서 가져온다 - 컨테이너에 들어가는 것과 같은 값이라
+IAM도 SSM 호출도 늘지 않는다. 그 파일이 없거나(첫 부팅, compose 기동 전) 조회에 실패하면
+**임시파일 지표만 건너뛴다** - health는 그것과 무관하게 계속 나간다.
+
+값을 못 읽었을 때 0을 올리지 않는 것이 중요하다. 0은 "깨끗하다"라서, 조회가 막힌 바로 그
+순간에 경보가 거꾸로 조용해진다 (`ai/app/tempstore.py`가 훑기 실패 시 잔존 값을 덮지 않는
+것과 같은 판단이다).
+
+호스트에서 직접 확인:
+
+```bash
+# ai 호스트 (SSM Session Manager)
+sudo /opt/accentury/ai-health-metric.sh
+# ai health=200 -> Healthy=1, tempFiles=0, tempOldestAge=0, tempScanFailures=0, stageSeries=0 (accentury/ai env=staging)
+```
+
+### AI 추론 단계별 지연 지표 (KAN-204)
+
+문항당 처리 시간(TTS 발화 9.9\~11.1초, 워밍업 뒤 첫 호출 22.9초)이 **어느 단계에 쓰였는지**를
+같은 경로로 올린다. 그 값이 없으면 GPU 전환(KAN-57), MFA 상주화, 인스턴스 상향(KAN-36)의 기대
+효과가 전부 추정으로 남는다.
+
+| 항목 | 값 |
+| --- | --- |
+| 지표 | `accentury/ai` `StageDuration` (단위 Milliseconds) |
+| 차원 | `env`, `stage`, `warm` |
+| `stage` | `lockWait`, `workerLoad`, `model`, `transcribe`, `gate`, `align`, `f0`, `scoring`, `total` |
+| `warm` | `cold`(그 워커의 첫 채점), `warm` |
+| 대시보드 | `accentury-{env}-ops` 4행 (P50, P95, 콜드 스타트와 대기) |
+
+`stage` 이름의 정본은 `ai/app/stages.py`의 `STAGES`다. 뒤쪽 다섯(`transcribe`\~`scoring`)은
+전달본 `Track1Scorer.score` **안쪽** 구간이라 어댑터가 잴 수 없다 - 워커 결과 JSON의 `stageMs`로
+받기로 합의만 해 두었고, 전달본이 그 값을 싣기 전까지는 어댑터가 재는 바깥 구간
+(`lockWait`, `workerLoad`, `model`, `total`)만 올라온다. 대시보드의 나머지 줄이 비어 있는 것은
+그래서이고 고장이 아니다.
+
+**관측값을 낱개로 올린다**(`Value`가 아니라 `Values`). 평균이나 합만 올리면 CloudWatch가 p50과
+p95를 계산할 수 없는데, 이 티켓이 필요로 하는 값이 바로 그 백분위다. backend 쪽 백분위가
+"가장 나쁜 태스크의 P95"인 것과 달리 여기는 전체 표본에서 계산된 진짜 백분위다.
+
+**`/internal/v0/metrics/stages`는 읽으면 비워진다.** 소비자가 이 타이머 하나뿐이라는 전제이고,
+그래서 그 회차의 `put-metric-data`가 실패하면 그 1분의 표본은 사라진다. 재시도 큐를 두지 않는
+이유는 CloudWatch가 오래 막혔을 때 그 대가를 추론 프로세스가 메모리로 치르기 때문이다. 앱은
+계열당 150개(= `Values` 하나의 API 상한)에서 오래된 표본부터 버린다.
+
+### ai 컨테이너 로그 (KAN-203)
+
+지표가 "무엇이 나빠졌는가"라면 이 로그는 **"왜 그렇게 됐는가"**다. 실모델 전환(KAN-22) 뒤 추론 실패의
+원인(내용 게이트 판정 실패, 워커 500, 워커 재적재, 시간 초과 503)은 ai 컨테이너 로그에만 있는데,
+로깅 드라이버가 `json-file`이던 동안 그 로그는 호스트 디스크에만 있었다. ASG가 인스턴스를 교체하면
+(`ai-unhealthy` 경보, 시작 템플릿 갱신에 따른 instance refresh) 원인이 인스턴스와 함께 사라졌다.
+
+| 항목 | 값 |
+| --- | --- |
+| 로그 그룹 | `/accentury/{env}/ai`. Terraform `modules/ai-host`가 만든다 |
+| 보존 | 14일. backend `/accentury/{env}/backend`와 같은 값이고 두 환경이 같다 (`log_retention_days` 기본값, tfvars로 덮지 않는다) |
+| 스트림 | `ai/<인스턴스 ID>`. 교체 전후가 갈리므로 **교체 뒤에도 이전 인스턴스의 로그가 남는다** |
+| 드라이버 | compose `logging`의 `awslogs` + `mode: non-blocking` + `max-buffer-size: 4m` |
+| 호스트 디스크 | `docker logs`용 사본만 남는다. 상한을 `cache-max-size: 10m` x `cache-max-file: 5` = 50MB로 고정했다 (옛 json-file과 같은 값. **기본값은 20MB x 5 = 100MB**라 그냥 두면 디스크를 더 쓴다) |
+| 권한 | 인스턴스 역할에 `logs:CreateLogStream`, `logs:PutLogEvents`뿐이다. 쓰기 전용이고 그룹 생성과 되읽기 권한은 없다 |
+
+**`docker logs`는 그대로 읽힌다.** 도커의 **이중 로깅** 덕이다 - 원격 드라이버를 쓰면 엔진이
+`local` 드라이버로 사본을 하나 더 남기고 `docker logs`가 그것을 읽는다 (2026-09-09 staging 실측,
+docker 25.0.16, 사본은 `/var/lib/docker/containers/<id>/container-cached.log`). 그래서 배포
+파이프라인의 unhealthy 진단(`deploy.yml`의 `docker logs --tail 60`)도 그대로 쓴다.
+
+한계가 하나 있다. **원격 전송이 실패한 줄은 사본에도 안 쌓이고 재시도하지 않는다** - CloudWatch가
+막힌 구간은 `docker logs`로도 안 보인다 (그 줄들은 드라이버 버퍼에 남아 복구 뒤 CloudWatch로 늦게
+간다. 아래 "로그 전송 차단 실증"). 그리고 사본은 링 버퍼라 오래된 줄은 밀려 나간다 - **교체를 넘겨
+보존되는 것은 CloudWatch 쪽뿐이다.**
+
+호스트에서 CloudWatch로 직접 볼 때 (교체된 인스턴스의 로그도 이 경로다):
+
+```bash
+# ai 호스트 (SSM Session Manager) 또는 로컬 - 지금 이 인스턴스의 마지막 60줄
+aws logs get-log-events --region ap-northeast-2 --log-group-name /accentury/staging/ai \
+  --log-stream-name "ai/<인스턴스 ID>" --limit 60 --query 'events[].message' --output text | tr '\t' '\n'
+```
+
+correlationId 하나로 backend와 ai를 잇는 Logs Insights 질의는 `docs/wiki/observability.md`의 "실패한
+세션 하나를 추적하는 절차"가 정본이다. 그룹 선택에서 접두사 `/accentury/{env}/` 한 번으로 두 그룹이
+함께 걸리도록 이름을 맞춘 것이다.
+
+로그 전송이 막혔을 때의 성질:
+
+- `mode: non-blocking`이라 버퍼(4MB)가 찰 때까지 컨테이너 프로세스는 로그 쓰기에 붙들리지 않고, 차면
+  **새 줄을 버린다**. 추론이 밀리는 것보다 로그 몇 줄을 잃는 것이 낫다는 판단이다.
+- 로그 드라이버는 컨테이너가 아니라 **호스트 dockerd**에서 나간다. 컨테이너 egress 가드(iptables
+  `DOCKER-USER`, KAN-36)는 컨테이너 브리지에서 시작되는 연결만 보므로 로그 전송과 무관하다.
+
+### 로그 전송 차단 실증 (2026-09-09, staging)
+
+"로그가 안 나가면 추론도 멈추는 것 아닌가"를 실측으로 닫아 둔 기록이다. 로깅 드라이버를 바꿀 때
+(또는 `mode`를 건드릴 때) 같은 절차로 다시 본다.
+
+차단 방법이 중요하다. **`/etc/hosts`만 무효화해서는 막히지 않는다** - dockerd가 이미 맺어 둔
+연결을 계속 쓰기 때문에 새 DNS 조회가 일어나지 않는다. 실제 도달 불가를 만들려면 호스트
+`iptables OUTPUT`에서 그 IP의 443을 끊어야 한다.
+
+```bash
+# ai 호스트 (SSM Session Manager). 반드시 되돌릴 것 - 아래 안전망을 먼저 건다
+EP=logs.ap-northeast-2.amazonaws.com
+getent ahostsv4 $EP | awk '{print $1}' | sort -u > /tmp/logs-ips
+# 다른 서비스와 IP가 겹치면 SSM 세션까지 끊긴다. 겹침 검사가 먼저다
+for svc in ssm ssmmessages ec2messages monitoring api.ecr; do
+  getent ahostsv4 $svc.ap-northeast-2.amazonaws.com | awk '{print $1}'
+done | sort -u > /tmp/other-ips
+comm -12 /tmp/logs-ips /tmp/other-ips    # 출력이 있으면 하지 않는다
+
+# 안전망: 세션이 끊겨도 300초 뒤 스스로 풀린다
+setsid bash -c 'sleep 300; for ip in $(cat /tmp/logs-ips); do
+  while iptables -C OUTPUT -d $ip -p tcp --dport 443 -j DROP 2>/dev/null; do
+    iptables -D OUTPUT -d $ip -p tcp --dport 443 -j DROP; done; done' >/dev/null 2>&1 </dev/null &
+
+for ip in $(cat /tmp/logs-ips); do iptables -I OUTPUT -d $ip -p tcp --dport 443 -j DROP; done
+```
+
+실측 결과 (인스턴스 `i-0474d5e02dfabab6a`, logs 엔드포인트 IP 6개를 끊은 상태):
+
+| 항목 | 결과 |
+| --- | --- |
+| 컨테이너 재생성 | `docker compose up -d --force-recreate` 종료 코드 0. 기동이 막히지 않는다 |
+| 준비 상태 | health UP까지 12초 (평시와 같다 - 가중치는 페이지 캐시에 있다) |
+| 분석 요청 | 2.69초, 2.52초, 2.60초. 차단 전 2.51초, 복구 뒤 2.70초와 차이가 없다 |
+| 401 경로 | 1.3~1.7ms. 로그 한 줄을 만드는 요청도 밀리지 않는다 |
+| 차단 중 남긴 줄 | **버려지지 않았다.** 복구 뒤 25~75초 늦게 전부 도착했다 (드라이버가 버퍼를 들고 재시도한다) |
+| 차단 중 컨테이너를 다시 만들면 | 그 컨테이너 버퍼에 남아 있던 줄은 사라진다 (직전 한 줄이 유실됐다) |
+| 차단 중 `docker logs` | 그 구간의 줄은 보이지 않는다 - 이중 로깅은 원격 쓰기가 실패하면 사본도 남기지 않는다 |
+
+읽는 법은 둘이다. **짧은 CloudWatch 장애로는 로그를 잃지 않는다** - 버퍼(4MB) 안이면 늦게라도
+온다. 그리고 **로그가 못 나가는 것이 추론을 멈추지 않는다** - 이것이 `mode: non-blocking`의
+목적이고, 위 숫자가 그 증거다.
+
+덤으로 확인된 것 하나. 이 차단은 호스트 `OUTPUT` 체인에서만 걸렸다. 컨테이너 egress 가드
+(`DOCKER-USER`, KAN-36)는 실증 내내 그대로 있었고 로그 전송에 아무 영향이 없었다 - **로그
+드라이버 트래픽이 컨테이너가 아니라 호스트 dockerd에서 나간다**는 전제가 실측으로 확인된 것이다.
+
+### 배포 뒤 확인 절차
+
+```bash
+ENV=staging
+REGION=ap-northeast-2
+
+# 1. 경보 12종이 다 있고 INSUFFICIENT_DATA를 벗어났는가
+aws cloudwatch describe-alarms --region "$REGION"   --alarm-name-prefix "accentury-$ENV-"   --query 'MetricAlarms[].[AlarmName,StateValue]' --output table
+
+# 2. backend 지표가 실제로 올라오는가 (기동 뒤 2분 이상 기다린다 - 발행 주기가 1분이다)
+aws cloudwatch list-metrics --region "$REGION" --namespace accentury/backend   --query 'Metrics[].MetricName' --output text | tr '	' '
+' | sort
+
+# 3. AI 지표도 올라오는가
+aws cloudwatch list-metrics --region "$REGION" --namespace accentury/ai   --query 'Metrics[].MetricName' --output text | tr '	' '
+' | sort
+
+# 3-1. 단계별 지연이 올라오는가 (KAN-204). 분석을 한 건이라도 돌린 뒤에 본다 -
+#      표본이 없는 계열은 지표 자체가 생기지 않는다.
+aws cloudwatch list-metrics --region "$REGION" --namespace accentury/ai   --metric-name StageDuration --query 'Metrics[].Dimensions[?Name==`stage`].Value' --output text
+
+# 4. 대시보드가 값을 그리는가 - 스모크 한 바퀴(KAN-138) 뒤에 열어 본다
+terraform output -raw dashboard_url
+
+# 5. ai 컨테이너 로그가 오는가 (KAN-203). 스트림 이름의 인스턴스 ID가 지금 도는 인스턴스와 같아야 한다
+aws logs describe-log-streams --region "$REGION" --log-group-name "$(terraform output -raw ai_log_group)" \
+  --query 'logStreams[].[logStreamName,lastEventTimestamp]' --output table
+```
+
+2번에 `accentury.http.requests.percentile.value`가 없으면 백분위 게이지 등록이 빠진 것이다 -
+CloudWatch 레지스트리는 Timer의 백분위를 스스로 내보내지 않으므로, 그 게이지가 없으면 대시보드의
+P95만 영영 빈 채로 나머지는 멀쩡해 보인다 (`ServiceMetrics.registerPercentiles`).
+
+그 P95는 **태스크마다 계산된 값을 `Maximum`으로 접은 것**이라 "가장 나쁜 태스크의 P95"다.
+NFR-PF-01 판단에 안전한 쪽을 택한 것이고, 표본이 작은 새 태스크에서 튈 수 있다는 읽는 법까지
+`docs/wiki/observability.md`에 적어 두었다.
+
+### 비용
+
+이 절이 더하는 커스텀 지표가 29개(이름 x 차원 조합)로 환경당 월 약 8.7달러, 경보 3종에
+0.40달러(`analysis-timeouts-high`는 지표 2개를 세는 math 경보라 0.20달러)다. 29개의 내역은
+`docs/wiki/observability.md`의 수집 경로 절에 표로 있다. 대시보드는 계정당
+3개까지 무료라 이 하나는 요금이 없다. 두 환경 합산 월 18달러 안팎이 늘어난다.
+
+ai 컨테이너 로그(KAN-203)는 요금이 수집량에 붙는다. 이 컨테이너가 남기는 것은 기동 줄 몇 개와
+요청당 종료 줄 한 줄(uvicorn 접근 로그 포함 두어 줄)이라, 하루 수백 문항 수준에서는 월 1MB대이고
+수집 요금(GB당 약 0.76달러)과 14일 보관 요금 모두 반올림하면 0달러에 가깝다. 늘어날 자리는 로그
+수준을 DEBUG로 내리거나(`ACCENTURY_AI_LOG_LEVEL`) 요청/응답 덤프를 켜는 변경이므로, 그때 이 줄을
+다시 본다.
+
+지표 수가 곧 요금이므로 **태그는 값이 다섯 이하로 닫힌 것만 쓴다** - 세션 ID나 IP를 태그로
+쓰면 요금이 트래픽에 비례한다. 이 규칙은 backend의 `ServiceMetrics` javadoc에도 적혀 있고,
+`CloudWatchMetricsConfigTest`가 이름 목록이 내보내기 필터를 통과하는지까지 본다.
+
 
 ## 환경별 값 차이 (KAN-129)
 
@@ -1184,15 +1726,17 @@ Terraform 입력의 차이는 `diff -r infra/envs/staging infra/envs/prod`가 �
 
 | 항목 | staging | prod | 흘러가는 곳 |
 | --- | --- | --- | --- |
-| 도메인 | `staging.accentury.app` | `accentury.app` | CloudFront 대체 도메인, Route 53, `ACCENTURY_RESULT_WEBTESTURL`, `ACCENTURY_RESULT_ASSETBASEURL` |
+| 도메인 | `<랜덤>.accentury.app` (KAN-206, 이름은 tfvars에만) | `accentury.app` | CloudFront 대체 도메인, Route 53, `ACCENTURY_RESULT_WEBTESTURL`, `ACCENTURY_RESULT_ASSETBASEURL` |
 | VPC CIDR | `10.1.0.0/16` | `10.0.0.0/16` | 서브넷 4개, `ACCENTURY_TRUSTEDPROXIES` |
 | RDS 엔드포인트 | `accentury-staging.<id>.ap-northeast-2.rds.amazonaws.com` | `accentury-prod.<id>...` | `SPRING_DATASOURCE_URL` (apply 후 output `rds_endpoint`) |
 | RDS 마스터 시크릿 | `rds!db-<staging uuid>` | `rds!db-<prod uuid>` | `SPRING_DATASOURCE_URL`의 `secretsManagerSecretId`, backend 태스크 역할 정책 |
-| SSM 경로 | `/accentury/staging/*` | `/accentury/prod/*` | backend 실행 역할 정책(secrets 8개), ai 호스트 역할 정책과 기동 스크립트, backend 태스크 정의의 `IMAGE_TAG` 조회 |
+| SSM 경로 | `/accentury/staging/*` | `/accentury/prod/*` | backend 실행 역할 정책(secrets 12개), ai 호스트 역할 정책과 기동 스크립트, backend 태스크 정의의 `IMAGE_TAG` 조회 |
 | backend 태스크 (KAN-165) | 0.5 vCPU / 2 GB, desired 1 | 같은 값 | `modules/fargate` 기본값 (tfvars 아님) |
 | 관리자 토큰 | 환경별 난수 | 환경별 난수 | `ACCENTURY_ADMIN_TOKEN` |
 | 내부 호출 토큰 (KAN-36) | 환경별 난수 | 환경별 난수 | `ACCENTURY_ANALYSIS_AITOKEN`, `ai/ACCENTURY_AI_INTERNAL_TOKEN` |
-| AI 호스트 (KAN-36) | c7i.xlarge, 루트 20GB | 같은 값 | `ai_instance_type`, `ai_root_volume_size` (실모델 전환 시 40) |
+| AI 호스트 (KAN-36) | c7i.xlarge, 루트 40GiB | 같은 값 | `ai_instance_type`, `ai_root_volume_size` (B단계 2026-09-10에 20에서 40으로) |
+| AI 호스트 오토스케일링 (KAN-201) | max 3 | 같은 값 | `ai_max_size` - ai-host 모듈 ASG `max_size`. min 1은 모듈 기본값 |
+| 학습 데이터 S3 (KAN-201) | 켬 | 끔 | `training_bucket_enabled` - 버킷, 태스크 역할 PutObject, SSM `ACCENTURY_TRAINING_BUCKET`(secrets 13개째) |
 | RDS 삭제 보호, 최종 스냅샷 | 없음, 생략 | 켬, 남김 | RDS |
 | 배포 역할 ECR push | 허용 | 불가 | `modules/deploy` image-deploy 정책 (KAN-128 승격 모델) |
 
@@ -1205,16 +1749,16 @@ staging 설정으로 prod에 닿을 수 없는 이유: VPC가 분리돼 있고(�
 
 ```
 systemctl status accentury          # 마지막 기동 결과
-journalctl -u accentury -n 50       # 기동 스크립트 로그 (어느 태그를 읽었는지, Route 53 갱신)
+journalctl -u accentury -n 50       # 기동 스크립트 로그 (어느 태그를 읽었는지)
 docker compose -f /opt/accentury/docker-compose.yml --env-file /run/accentury/compose.env ps
 ```
 
 backend는 호스트가 없다 - 위 "backend Fargate 서비스"의 `describe-services`와 `logs tail`로
-본다. ai 컨테이너는 호스트 8000(ai-sg가 backend 태스크만 허용)을 발행하고
+본다. ai 컨테이너는 호스트 8000(ai-sg가 ai-alb-sg만 허용)을 발행하고
 `restart: unless-stopped`라 프로세스가 죽으면 docker가 다시 띄우며, 호스트가 재부팅되면
-systemd 유닛이 SSM 값을 새로 읽어 `up -d`를 다시 건다. ai 호스트 자체가 죽으면 ASG가
-교체하고 새 인스턴스가 같은 이름의 A 레코드를 갱신한다. backend 태스크가 죽으면 ECS
-서비스가 desired 수만큼 새 태스크를 띄운다.
+systemd 유닛이 SSM 값을 새로 읽어 `up -d`를 다시 건다. ai 호스트 자체가 죽거나 대상 그룹 상태
+검사에 떨어지면 ASG가 교체하고 새 인스턴스는 ASG가 대상 그룹에 넣는다 (KAN-201 - 이름은 ALB alias라
+바뀌지 않는다). backend 태스크가 죽으면 ECS 서비스가 desired 수만큼 새 태스크를 띄운다.
 
 ## teardown 절차
 
@@ -1256,9 +1800,11 @@ terraform destroy
 - 잔존 확인은 `terraform state list`에 더해 `aws ecs list-clusters`,
   `aws ecs list-task-definitions --status ACTIVE`, `aws logs describe-log-groups
   --log-group-name-prefix /accentury`로 본다 (SCP가 tag:GetResources를 막는다).
-- 프라이빗 영역의 `ai.accentury.internal` A 레코드는 ai 인스턴스가 만든 것이라 Terraform
-  밖이지만, 영역이 `force_destroy = true`라 destroy가 레코드째 지운다 (KAN-36). ASG는
-  인스턴스를 먼저 종료한 뒤 삭제된다.
+- 프라이빗 영역의 `ai.accentury.internal` A 레코드는 KAN-201부터 Terraform 소유(ALB alias)라
+  destroy가 함께 지운다. KAN-36 시절 인스턴스가 만든 레코드가 남아 있어도 영역이
+  `force_destroy = true`라 레코드째 지운다. ASG는 인스턴스를 먼저 종료한 뒤 삭제된다.
+  학습 데이터 버킷(KAN-201, staging)도 `force_destroy`라 샘플째 사라진다 - 남길 것은 미리 내려받는다. ai 컨테이너 로그 그룹 `/accentury/{env}/ai`(KAN-203)도
+  Terraform 소유라 로그째 지워진다 - 스트림은 인스턴스마다 쌓이지만 그룹 하나에 딸려 있다.
 - 미확인 SNS 이메일 구독은 AWS가 지워 주지 않아 state에서만 빠지지만, 토픽이
   삭제되면 딸린 구독도 함께 사라져 잔존물이 남지 않는다 (KAN-134). 재구축 때는
   토픽이 새로 생기므로 확인 메일이 다시 오고 다시 눌러야 한다.
@@ -1287,6 +1833,14 @@ terraform destroy
 - **AMI 고정 (ai 호스트)**: AL2023 최신 AMI를 SSM 파라미터로 읽되 `ignore_changes = [image_id]`.
   AMI 갱신이 "plan No changes" AC를 깨고 instance refresh를 유발하지 않게 한다.
 - **PriceClass_200**: 한국이 포함되는 최소 티어.
+- **지표 수집은 Micrometer CloudWatch push (2026-09-05, KAN-38)**: 티켓이 남긴 선택지는
+  "레지스트리 push"와 "구조화 로그 기반(Logs Insights)"이었다. push를 택한 이유는 셋이다 -
+  KAN-36이 회로 상태를 올리려고 이미 배선(네임스페이스, 차원, IAM 조건, 발행 주기 1분)을
+  깔아 두었고, 경보와 대시보드가 지표를 직접 읽으며, 백분위를 낼 수 있다. 대가는 이름 x 차원
+  조합마다 붙는 월 0.30달러라, 태그는 값이 다섯 이하로 닫힌 것만 쓴다. 자세한 근거는
+  `docs/wiki/observability.md`.
+- **actuator는 지표를 노출하지 않는다 (KAN-38)**: 수집 경로가 push라 `/actuator/metrics`를
+  열 이유가 없다. 노출 폭은 여전히 health 하나이고 `ActuatorHealthApiTest`가 붙들고 있다.
 - **backend 태스크 1개, ai 워커 1개 고정 (KAN-124, KAN-36, Fargate 전환 뒤에도 KAN-165)** -
   backend 쪽은 KAN-167과 KAN-168으로 풀렸다 (2026-09-02): 혼잡 판정과 활성 정의 포인터는 DB
   기준이 됐고 요청 제한, 회로 차단기, 워커 큐는 인스턴스별로 두기로 했으며(KAN-167), 그 위에
@@ -1328,7 +1882,7 @@ terraform destroy
   롤링 배포와 회로 차단기 판정이 2분 30초씩 늦다).
 - **실행 역할과 태스크 역할 분리 (KAN-165)**: EC2 시절 인스턴스 역할 하나가 ECR pull, SSM,
   Secrets Manager, CloudWatch를 다 가졌다. 실행 역할(ECS 에이전트 몫: ECR pull, awslogs,
-  secrets 주입용 `ssm:GetParameters` 7개)은 컨테이너 안에서 보이지 않고, 태스크 역할
+  secrets 주입용 `ssm:GetParameters` 12개)은 컨테이너 안에서 보이지 않고, 태스크 역할
   (애플리케이션 몫: RDS 시크릿, PutMetricData)만 SDK 기본 체인으로 흘러간다. 신뢰 정책에
   `aws:SourceAccount`, `aws:SourceArn` 조건을 둔다 (AWS 문서의 혼동된 대리인 방지).
   SecureString은 AWS 관리 키라 kms 권한이 따로 없다.
@@ -1374,8 +1928,8 @@ terraform destroy
   지속 추론)은 backend와 메모리를 나눌 수 없다. 분리 시점을 "실모델이 나오면"에서 "지금, 스텁으로"로
   당겨 prod를 최종 구조로 한 번만 세운다 (KAN-171). 인스턴스는 처음부터 c7i.xlarge다 (2026-09-01) -
   t3.small로 시작하는 안은 단계 전환에 인스턴스 교체를 하나 더 만들고 staging 실증과 prod의 유형을
-  다르게 했다. 대가는 스텁 기간의 월 147달러다. 루트 볼륨(40GB), `mem_limit`, 실모델 이미지는 B단계에서
-  tfvars와 KAN-22가 바꾼다. Fargate가 아니라 EC2인 이유는 모델 로드가 길고 이미지가 커서(약 8.5GB)
+  다르게 했다. 대가는 스텁 기간의 월 147달러다. 루트 볼륨(40GiB)과 `mem_limit`(7g)은 B단계(2026-09-10)가
+  tfvars와 compose로, 실모델 이미지는 KAN-22가 바꿨다. Fargate가 아니라 EC2인 이유는 모델 로드가 길고 이미지가 커서(7GB)
   스케일링 이점이 없고 GPU 선택지가 Fargate에 없기 때문이다. 1대 고정(ASG min 1 max 1)이라 교체 동안
   분석은 끊기고 회로가 열렸다 닫힌다 - 2대 이상은 내부 LB(월 약 20달러)가 필요해 미뤘다.
 - **backend가 AI를 부르는 이름은 Route 53 프라이빗 영역 (KAN-36)**: ASG가 인스턴스를 교체하면 사설
@@ -1415,9 +1969,14 @@ terraform destroy
   성립한다. 대가는 compose 변경 시 인스턴스 교체인데, 호스트가 무상태라 감수한다.
   배포 파이프라인(KAN-128)은 SSM `IMAGE_TAG` 갱신과 `systemctl reload`만 한다.
   backend는 KAN-165부터 compose가 없다 - 태스크 정의가 그 자리다.
-  compose 파일과 기동 스크립트는 `base64gzip`으로 실어 온다 (2026-08-26, KAN-129
-  리뷰) - 평문이면 user_data가 16KB 상한의 91%라 주석 몇 줄에 apply가 터진다.
-  압축 뒤 약 11KB이고, 더 커지면 S3 배치로 옮긴다.
+  compose 파일과 스크립트는 `base64gzip`으로 실어 왔다가 (2026-08-26, KAN-129 리뷰)
+  **2026-09-05에 S3 부팅 자산 버킷으로 옮겼다** (KAN-38, 위 "부팅 자산 버킷").
+  압축해도 16KB 상한의 75%였고 KAN-38의 health 스크립트 확장이 상한을 넘겨,
+  precondition의 error_message가 제시하던 두 갈래 중 "주석을 줄인다"가 아니라
+  "S3 배치로 옮긴다"를 골랐다 - 주석을 깎는 쪽은 결정 근거를 태우면서 KAN-36
+  B단계(compose 확장)에 다시 걸린다. 2026-08-25 결정의 "별도 전달 채널 없이"는
+  파일 배치 경로에 한해 깨졌지만, 성립시키려던 AC 둘(재부팅 자동 기동, 두 환경
+  같은 파일)은 그대로다 - 파일의 정본은 여전히 Terraform이고 S3는 전달만 한다.
 - **ssm_prefix는 env와 결합** (2026-08-26): envs 변수 validation이 `/accentury/{env}`와
   정확히 같은지 plan에서 세운다. prod tfvars에 staging 접두사를 잘못 적으면 prod EC2
   역할이 staging 경로를 읽게 되기 때문이다. compute의 인스턴스 precondition도 config가

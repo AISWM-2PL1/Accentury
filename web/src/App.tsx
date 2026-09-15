@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { overallBucket } from './analytics/events'
+import { clearTestId, ensureTestId } from './analytics/testId'
 import { track } from './analytics/track'
 import type { CaptureFactory } from './audio'
 import { detectStorePlatform } from './audio/storeLink'
@@ -6,7 +8,10 @@ import { IntroScreen } from './intro/IntroScreen'
 import { START_FAILED_MESSAGE, STORAGE_UNAVAILABLE_MESSAGE } from './intro/introText'
 import { getSessionToken, isBridgeCompatible, isStandaloneWeb } from './bridge/bridge'
 import { buildIntroUrl, buildResultUrl, buildTestUrl } from './navigation/entryUrl'
+import { clearSnapshot, defaultSnapshotStorage, sweepSnapshots } from './progress/progressSnapshot'
 import { TestFlowScreen } from './progress/TestFlowScreen'
+import { isRegionSelectEnabled, type RegionCode } from './region/regions'
+import { RegionSelectScreen } from './region/RegionSelectScreen'
 import { ResultScreen } from './result/ResultScreen'
 import { useRetest } from './result/useRetest'
 import { readCampaignToken, sanitizeCampaignToken } from './session/campaign'
@@ -67,7 +72,7 @@ export default function App({ navigate = assignHref, voiceCheckCapture }: AppPro
   }
 
   /*
-   * `?screen=test&testVersion=...&sessionId=...` — 문항 진행 화면의 **정식 진입 쿼리**다.
+   * `?screen=test&testVersion=...&voiceSet=...&sessionId=...` — 문항 진행 화면의 **정식 진입 쿼리**다.
    * 두 실행이 같은 쿼리로 들어온다. 앱에서는 인트로 [시작하기] → 네이티브 마이크 권한
    * 게이트(KAN-98) 뒤 네이티브가 이 쿼리를 붙여(기존 bridge·app 파라미터에 더해) WebView를
    * 다시 로드하고(KAN-100 Stage 4), 웹 단독 실행에서는 [startStandaloneTest]가 세션을 만든 뒤
@@ -75,10 +80,27 @@ export default function App({ navigate = assignHref, voiceCheckCapture }: AppPro
    */
   const params = new URLSearchParams(window.location.search)
   if (params.get('screen') === 'test') {
+    /*
+     * 이 응시의 계측 상관 키를 확보한다 (KAN-33 AC 1). 세션 id를 아는 자리가 진입 분기라
+     * 여기서 부른다 — [track]은 세션을 모르고, 알게 만들면 계측 창구가 진입 쿼리 규칙까지
+     * 알아야 한다 (`analytics/testId.ts`).
+     *
+     * 렌더 중에 부르는 것이 걸리지만, 같은 세션이면 저장된 값을 그대로 돌려주는 멱등 호출이고
+     * 이펙트로 미루면 첫 문항 노출(`item_shown`)이 키 없이 나간다 — 자식의 이펙트가 부모의
+     * 이펙트보다 먼저 돌기 때문이다.
+     */
+    startedTest(params.get('sessionId') ?? '', trackedCampaign())
     return (
       <TestFlowScreen
         apiBase={API_BASE}
         testVersion={params.get('testVersion') ?? ''}
+        /*
+         * 세션에 고정된 음성 문항 세트 (KAN-205). 서버가 세션 생성 때 골라 응답에 실어 주고,
+         * 앱은 네이티브가, 웹 단독은 [startStandaloneTest]가 이 쿼리에 실어 보낸다. 값이 없거나
+         * 세트 번호 꼴이 아니면 정의 조회가 네트워크를 타기 전에 끊는다 — 세트 없이 받은 세트 1의
+         * 문항으로 응시하면 제출이 전부 422라, 진행하다 막히는 것보다 여기서 멈추는 편이 낫다.
+         */
+        voiceSet={params.get('voiceSet') ?? ''}
         /*
          * 세션 클라이언트(KAN-9) 결선 전까지는 네이티브가 sessionId를 모를 수 있다. 그때는 빈
          * 문자열이 내려가고 진행 스냅샷이 세션별로 나뉘지 않는다 — 과도기의 알려진 한계다.
@@ -98,10 +120,23 @@ export default function App({ navigate = assignHref, voiceCheckCapture }: AppPro
          * 만들어질 때 함께 확정돼 세션이 바뀌기 전에는 변하지 않는다.
          */
         userCurveCenterHz={standalone ? (loadWebSession()?.userCurveCenterHz ?? null) : null}
+        /*
+         * 분석이 막다른 상태에 걸렸을 때의 [다시 테스트하기] 폴백 (KAN-191). 결과 화면의
+         * `backToIntro`와 **같은 함수**다 — 브리지로 갈 수 없는 실행에서 재응시는 어느
+         * 화면에서 눌렀든 인트로 복귀로 내려간다 ([goToIntro]).
+         *
+         * `useCallback`으로 감싸지 않는다. [App]은 스큐 판정에서 조기 반환하므로 그 뒤에 훅을
+         * 놓을 수 없고, 이 컴포넌트는 상태가 없어 스스로 다시 그려지지 않는다 — 매 렌더마다
+         * 새 함수가 생겨 아래 훅이 다시 도는 상황 자체가 없다.
+         */
+        retestFallback={() => goToIntro(navigate)}
         onAnalysisReady={() => {
-          // 완주 계측 (KAN-31 퍼널 3번째 지점). 결과가 실제로 나온 자리라 "끝까지 갔다"를
-          // 여기서만 확실히 말할 수 있다 — 마지막 문항 제출은 아직 분석 실패로 갈 수 있다.
-          if (standalone) track({ name: 'test_completed', campaign: trackedCampaign() })
+          // 완주 계측 (퍼널). 결과가 실제로 나온 자리라 "끝까지 갔다"를 여기서만 확실히
+          // 말할 수 있다 — 마지막 문항 제출은 아직 분석 실패로 갈 수 있다.
+          //
+          // 실행을 가리지 않는다 (KAN-33). 앱 안에서는 [track]이 브리지로 넘겨 네이티브
+          // Firebase가 앱 스트림에 싣는다 — 완주율은 앱에서도 봐야 하는 값이다.
+          track({ name: 'test_completed', campaign: trackedCampaign() })
           goToResult(params.get('sessionId') ?? '', navigate)
         }}
       />
@@ -118,6 +153,14 @@ export default function App({ navigate = assignHref, voiceCheckCapture }: AppPro
    * 경로도 그대로 살아 있다: 결과 화면만 따로 확인하는 개발 통로다.
    */
   if (params.get('screen') === 'result') {
+    /*
+     * 문항 화면과 같은 이유로 키를 확보한다 — 결과 도착 계측(`result_viewed`·`tier_assigned`)이
+     * 같은 응시로 묶여야 «시작한 사람 중 몇이 결과까지 왔나»를 셀 수 있다.
+     *
+     * 여기서는 시작을 세지 않는다. 결과 화면만 따로 여는 경로(개발 통로, 공유된 결과 URL)에서
+     * 키가 처음 발급될 수 있는데, 그건 응시를 시작한 것이 아니다.
+     */
+    ensureTestId(params.get('sessionId') ?? '')
     return (
       <ResultRoute sessionId={params.get('sessionId') ?? ''} standalone={standalone} navigate={navigate} />
     )
@@ -151,10 +194,42 @@ function IntroRoute({
    * 사라지므로 실사용 집계에는 영향이 없다.
    */
   useEffect(() => {
-    // 웹 단독 실행만 여기서 센다. 앱 안 이벤트는 네이티브 Firebase 몫이다 (KAN-33).
-    if (!standalone) return
+    /*
+     * 직전 응시의 상관 키를 버린다 (KAN-33). 인트로는 어느 응시에도 속하지 않는 화면이고,
+     * 여기 왔다는 것은 앞의 응시가 끝났다는 뜻이다 — 남겨 두면 이 유입이 직전 응시의 키를
+     * 달고 나가 순서 분석에서 A의 목록 끝에 B의 시작이 붙는다 (`analytics/testId.ts`).
+     */
+    clearTestId()
+
+    /*
+     * 남은 진행 기록을 걷는다 (KAN-198). 이 자리가 필요한 것은 결과 화면의 삭제([ResultRoute])가
+     * sessionId를 아는 응시만 덮기 때문이다. 마지막 문항까지 가지 못하고 끊긴 응시(앱 종료, 탭
+     * 닫기, 분석 실패)의 키는 그 sessionId를 다시 들고 오는 사람이 없어 영영 지워지지 않는다 —
+     * 응시할 때마다 키가 하나씩 쌓이던 원인이 그것이다.
+     *
+     * **지금 살아 있는 세션 하나는 뺀다.** 위 [clearTestId]와 갈리는 지점이다 — 계측 키는 인트로
+     * 노출을 앞 응시에 묶지 않기 위해 무조건 버리지만, 진행 기록은 되돌아올 수 있는 값이다.
+     * 문항 화면에서 뒤로 가 인트로로 오는 것은 정상 행동이고([goToResult] 주석: 인트로→문항은
+     * 히스토리를 쌓는다), 거기서 앞으로 가면 같은 세션의 문항 화면이 그대로 살아나야 한다.
+     * 전부 지우면 그 복귀가 1번 문항부터 다시가 된다.
+     *
+     * 남길 세션을 아는 것은 웹 단독 실행뿐이다 — 앱 안에서는 네이티브가 세션을 쥐고 있어 인트로
+     * 문서가 그 id를 모른다. 그쪽은 히스토리 뒤로가기 자체가 네이티브 몫이라 되살릴 화면도 없다.
+     */
+    sweepSnapshots(
+      defaultSnapshotStorage(),
+      standalone ? (loadWebSession()?.sessionId ?? null) : null,
+    )
+
+    /*
+     * 실행을 가리지 않는다 (KAN-33). 인트로를 그리는 것이 앱에서도 이 WebView라 사건이 같고,
+     * 앱 안에서는 [track]이 브리지로 넘겨 네이티브 Firebase가 앱 스트림에 싣는다 — 보내는
+     * 경로만 갈릴 뿐 세는 사건은 하나다.
+     *
+     * 앱의 정상 실행은 `campaign`이 null이고, 앱 링크(KAN-32)로 들어온 실행만 값이 붙는다.
+     */
     track({ name: 'referral_opened', campaign: trackedCampaign() })
-  }, [standalone])
+  }, [])
 
   /*
    * 마이크 권한을 받았는가 (KAN-31 4단계). 인트로가 세션 생성으로 곧장 넘어가지 않고 이 값만
@@ -166,6 +241,13 @@ function IntroRoute({
    * 이 값도 false로 돌아간다 — 재응시는 마이크를 새로 열게 되므로 점검도 다시 한다(앱과 같다).
    */
   const [micGranted, setMicGranted] = useState(false)
+  /*
+   * 고른 출신 지역 (KAN-202). 스위치가 켜진 빌드(staging)에서만 값이 잡히고, 그 외에는 늘 null이다.
+   * `micGranted`와 같은 이유로 URL 화면이 아니라 이 문서의 상태다 — 리로드하면 권한부터 다시
+   * 받는 흐름이라 지역도 그 문서 안에서만 살면 되고, 세션을 만들 때 한 번 쓰고 나면 필요 없다
+   * (`RegionSelectScreen` 헤더).
+   */
+  const [region, setRegion] = useState<RegionCode | null>(null)
   /** 점검은 통과했는데 세션 생성이 막혔다. 값이 곧 사용자에게 보일 문구다 */
   const [startFailure, setStartFailure] = useState<string | null>(null)
   /*
@@ -186,7 +268,7 @@ function IntroRoute({
       if (startingRef.current) return
       startingRef.current = true
       setStartFailure(null)
-      startStandaloneTest(navigate, centerHz)
+      startStandaloneTest(navigate, centerHz, region)
         .catch((error: unknown) => {
           setStartFailure(error instanceof Error ? error.message : START_FAILED_MESSAGE)
         })
@@ -194,7 +276,7 @@ function IntroRoute({
           startingRef.current = false
         })
     },
-    [navigate],
+    [navigate, region],
   )
 
   /*
@@ -202,7 +284,15 @@ function IntroRoute({
    * 권한 → 목소리 점검 → 세션 생성. 세션을 점검 뒤로 미루는 이유는 점검이 네트워크를 쓰지
    * 않아 실패할 구석이 없기 때문이다 — 앞에 두면 이미 발급된 세션을 든 채 점검에 붙들리는
    * 구간이 생긴다 (`VoiceCheckScreen` 헤더).
+   *
+   * staging 빌드는 권한과 점검 사이에 출신 지역 선택이 하나 더 선다 (KAN-202): 권한 → **지역** →
+   * 점검 → 세션 생성. 지역도 네트워크를 쓰지 않으므로 같은 근거로 세션 앞에 둔다. 스위치가
+   * 꺼진 빌드(prod)는 이 분기를 타지 않아 이 티켓 전과 흐름이 같다.
    */
+  if (standalone && micGranted && isRegionSelectEnabled() && region === null) {
+    return <RegionSelectScreen onDone={setRegion} />
+  }
+
   if (standalone && micGranted) {
     return (
       <VoiceCheckScreen
@@ -237,6 +327,22 @@ function trackedCampaign(): string | null {
 }
 
 /**
+ * 문항 화면 진입을 응시의 시작으로 센다 (퍼널 2번째 지점).
+ *
+ * 상관 키가 **처음 발급되는 순간**이 곧 이 세션의 첫 진입이라, 그 신호 하나로 두 실행을 함께
+ * 덮는다 (`analytics/testId.ts`). 같은 세션으로 화면을 다시 열면(백그라운드 복귀, 리로드)
+ * 키가 이미 있으므로 다시 세지 않는다.
+ *
+ * 렌더 중에 부르는 것이 걸리지만 멱등이고, 이펙트로 미루면 첫 문항 노출(`item_shown`)이 키
+ * 없이 나간다 — 자식의 이펙트가 부모의 이펙트보다 먼저 돌기 때문이다.
+ */
+function startedTest(sessionId: string, campaign: string | null): void {
+  if (ensureTestId(sessionId)?.issued === true) {
+    track({ name: 'referral_test_started', campaign })
+  }
+}
+
+/**
  * 웹 단독 실행의 [시작하기] — 세션을 만들고 문항 화면으로 넘긴다 (KAN-31).
  *
  * 이전 세션의 토큰을 함께 보낸다. 저장된 세션이 있다는 것은 이 탭에서 이미 한 번 응시했다는
@@ -250,9 +356,14 @@ function trackedCampaign(): string | null {
  * 화면은 화면 전환(문서 리로드)을 건너온 뒤에 그 값을 읽는다.
  *
  * @param userCurveCenterHz 목소리 점검이 잰 이 화자의 중심 음높이 (Hz)
+ * @param region 출신 지역 코드 (KAN-202). 스위치가 꺼진 빌드에서는 늘 null이라 본문이 그대로다
  * @throws Error 사용자에게 보일 문구를 담은 오류 ([startFailureMessage] 참고)
  */
-async function startStandaloneTest(navigate: Navigate, userCurveCenterHz: number): Promise<void> {
+async function startStandaloneTest(
+  navigate: Navigate,
+  userCurveCenterHz: number,
+  region: RegionCode | null,
+): Promise<void> {
   const search = window.location.search
 
   /*
@@ -272,7 +383,12 @@ async function startStandaloneTest(navigate: Navigate, userCurveCenterHz: number
   try {
     session = await createWebSession(API_BASE, {
       campaignToken: readCampaignToken(search),
-      previousToken: loadWebSession()?.sessionToken,
+      // 세션 전체가 아니라 토큰만 본다 (KAN-205) - 세트가 계약에 들어오기 전에 저장된
+      // 세션도 폐기 대상이다. 읽지 못하면 폐기 없이 새 세션만 만들어진다.
+      previousToken: getWebSessionToken(),
+      // staging의 지역 선택이 준 값 (KAN-202). 스위치가 꺼진 빌드에서는 null이고, 그때
+      // `createWebSession`이 필드째 빼므로 prod 본문은 이 티켓 전과 같다.
+      region,
     })
   } catch (error: unknown) {
     throw new Error(startFailureMessage(error))
@@ -291,15 +407,25 @@ async function startStandaloneTest(navigate: Navigate, userCurveCenterHz: number
   }
 
   /*
-   * 시작 계측 (퍼널 2번째 지점). 세션이 실제로 만들어진 뒤에 센다 — 탭 시점에 세면 429나
-   * 네트워크 실패로 시작하지 못한 사람까지 "시작"으로 세어져 완주율의 분모가 부풀어 오른다.
+   * 시작 계측은 여기서 하지 않는다 — 다음 문서의 문항 화면 진입이 [startedTest]로 센다.
+   *
+   * 세션을 만드는 주체가 실행마다 다르기 때문이다: 웹 단독은 이 함수가, 앱은 네이티브가
+   * 만든다(KAN-9). 이 자리에서 세면 **앱 응시는 시작이 영영 세어지지 않는다** — 에뮬레이터
+   * 확인에서 실제로 그 구멍이 드러났다(2026-09-05). 두 실행이 공유하는 자리는 "문항 화면에
+   * 처음 도달했다"이고, 거기서 세면 규칙이 하나로 남는다.
+   *
+   * 429나 네트워크 실패로 시작하지 못한 사람이 세어지지 않는다는 성질도 그대로다 — 그런
+   * 실패는 이 함수가 던져서 화면을 옮기지 않으므로 문항 화면에 도달하지 못한다.
    */
-  track({ name: 'referral_test_started', campaign: trackedCampaign() })
 
   // 진입 경로(`/t`)와 나머지 쿼리(`c` 등)는 그대로 두고 화면 지정만 얹는다.
   navigate(
     window.location.pathname +
-      buildTestUrl(search, { testVersion: session.testVersion, sessionId: session.sessionId }),
+      buildTestUrl(search, {
+        testVersion: session.testVersion,
+        voiceSet: session.voiceSet,
+        sessionId: session.sessionId,
+      }),
   )
 }
 
@@ -349,7 +475,24 @@ function ResultRoute({
    * 새 세션을 주므로 클라이언트가 만료를 판정할 일이 없다.
    */
   const backToIntro = useCallback(() => goToIntro(navigate), [navigate])
-  const retest = useRetest(backToIntro)
+  const retest = useRetest(backToIntro, 'result')
+
+  /*
+   * 이 응시의 진행 기록을 지운다 (KAN-198 — KAN-99가 "삭제 시점은 결과 화면"이라 예고한 자리다).
+   *
+   * 결과 화면인 이유: 스냅샷은 분석 대기 중 백그라운드 복귀까지 살아 있어야 하므로 마지막 문항
+   * 제출로는 지울 수 없고(`progress/useTestProgress.ts` 헤더), 결과가 나왔다는 것은 이 진행을
+   * 다시 이어 갈 일이 없다는 뜻이다. 결과 URL을 직접 여는 경로에서도 판정은 같다.
+   *
+   * 재응시가 이전 세션의 키를 남기지 않는 것도 여기서 정해진다 — [다시 테스트하기]는 결과
+   * 화면에만 있으므로 그 화면에 들어온 시점에 이미 지워져 있다 (인트로의 훑기가 이중 방어다).
+   *
+   * 이펙트로 미루는 이유는 렌더 중 부작용을 피하기 위해서다. 지연은 문제되지 않는다 — 이 문서에는
+   * 스냅샷을 다시 읽을 코드가 없다. 두 번 불려도(StrictMode) 삭제는 멱등이다.
+   */
+  useEffect(() => {
+    clearSnapshot(defaultSnapshotStorage(), sessionId)
+  }, [sessionId])
 
   /*
    * [앱 다운로드]는 웹 단독 실행에만 있다 (KAN-31). UA 판별을 여기서 하는 이유는 화면이
@@ -387,14 +530,37 @@ function ResultRoute({
        * 갔는지는 통로를 고른 뒤에야 알 수 있는 값이고, 계측 때문에 공유가 한 틱이라도 늦으면
        * 안 된다 ([shareResult]도 [track]도 던지지 않으므로 순서만 남는 이야기다).
        *
-       * 웹 단독 실행에서만 센다. 앱 안의 같은 탭은 네이티브가 세므로(`analytics/AppEvents.kt`,
-       * KAN-33) 여기서도 세면 공유 클릭이 두 번 잡힌다 — 다운로드·유입 계측과 같은 규칙이다.
+       * **실행을 가리지 않는다.** 예전에는 앱 안의 같은 탭을 네이티브가 `share_tapped`로 따로
+       * 셌는데, 그러면 한 사람의 같은 행동이 플랫폼에 따라 다른 이름으로 쌓여 공유 퍼널이 둘로
+       * 갈렸다 (Codex 검증 지적, AC 8). 지금은 **클릭은 여기 하나가 세고** 네이티브는 통로가
+       * 실제로 열린 것(`share_launched`)만 센다 — 둘의 차이로 "눌렀는데 아무 데도 못 간 비율"은
+       * 그대로 나오면서 이름이 하나 줄었다.
+       *
+       * 앱 안에서는 `channel`이 `bridge`다. 그 값이 곧 "네이티브가 통로를 고르러 갔다"는 뜻이고,
+       * 어느 통로였는지는 네이티브의 `share_launched`가 말한다.
        */
       onShare={(result) => {
         const channel = shareResult(result.share)
-        if (standalone) track({ name: 'share_clicked', campaign: trackedCampaign(), channel })
+        track({ name: 'share_clicked', campaign: trackedCampaign(), channel })
       }}
       retest={retest}
+      /*
+       * 결과 도착 계측 (KAN-33). 두 이벤트가 같은 순간에 나가지만 세는 것이 다르다 —
+       * `result_viewed`는 퍼널의 마지막 지점(공유 링크를 탄 사람이 여기까지 왔다)이고,
+       * `tier_assigned`는 등급 분포 편향(KAN-21)을 보는 계기판이다. 하나로 합치면 유입
+       * 코드가 없는 앱 응시가 등급 집계에서 빠지거나, 등급이 유입 퍼널의 축이 된다.
+       *
+       * 점수 원값은 싣지 않는다 — `overallBucket`이 10점 단위로 뭉갠 값만 나간다 (FR-AN-09).
+       */
+      onResultLoaded={(result) => {
+        track({ name: 'result_viewed', campaign: trackedCampaign() })
+        track({
+          name: 'tier_assigned',
+          tier_code: result.tier.code,
+          score_version: result.scoreVersion,
+          overall_bucket: overallBucket(result.scores.overall),
+        })
+      }}
       storePlatform={storePlatform}
       /*
        * 다운로드 탭 계측 (퍼널 4번째 지점, KAN-31 3단계). 링크의 이동은 이 콜백과 무관하게

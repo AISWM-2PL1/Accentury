@@ -12,6 +12,18 @@
  * 잠금 해제 조건이 **실패 회신 도착뿐**인 것도 같은 이유다. 시간으로 풀면 느린 망에서 아직
  * 살아 있는 요청 위에 두 번째 요청이 겹치는데, 그때 첫 요청이 만든 세션이 곧바로 고아가 된다.
  *
+ * ## 보상형 광고 갈래 (KAN-196)
+ *
+ * 광고를 아는 앱에서는 `startRetest` 호출이 곧 보상형 광고다 — 네이티브가 광고를 먼저 띄우고,
+ * 끝까지 본 경우에만 세션을 만들어 리로드한다. 이 훅이 보기에 달라지는 것은 없다: 성공은
+ * 여전히 페이지 교체로 오고, 중도에 닫은 경우는 `onRetestFailed`로 `code: 'AD_DISMISSED'`,
+ * `retryable: true`, `retryAfterMs: null`이 와서 위의 실패 갈래를 그대로 탄다 — 버튼이 다시
+ * 열리고 네이티브가 준 문구("광고를 끝까지 보시면 다시 테스트할 수 있어요")가 아래 붙는다.
+ * 광고 로드 실패는 회신이 없다. 네이티브가 광고 없이 그대로 재응시를 진행하므로 성공 경로다.
+ *
+ * `pending` 동안 사용자가 광고를 보고 있을 수 있다는 점은 화면이 알 필요가 없다 — 광고가
+ * 화면을 덮고 있어 "준비 중…" 버튼은 보이지 않고, 닫히면 회신 아니면 리로드 중 하나가 온다.
+ *
  * ## 왜 잠금이 웹 몫인가
  *
  * KAN-107이 서버 측 멱등 장치를 두지 않기로 확정하면서 더블탭 방지가 클라이언트 책임이 됐다.
@@ -27,6 +39,8 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
+import type { RetestOrigin } from '../analytics/events'
+import { track } from '../analytics/track'
 import { installRetestFailedReceiver, startRetest } from '../bridge/bridge'
 
 /** 남은 대기 시간을 다시 세는 간격. 화면에 초 단위로만 적으므로 1초면 충분하다 */
@@ -66,8 +80,11 @@ type Phase =
  * @param fallback 브리지로 갈 수 없을 때 대신 탈 길. 브라우저 단독 실행과, 메서드가 없는
  *   계약 버전 1 구버전 앱이 여기로 떨어진다 (§5 graceful degrade — 두 경우 모두 크래시가
  *   아니라 예전 동작인 인트로 복귀로 내려간다)
+ * @param from 이 훅을 세운 화면 ([RetestOrigin], KAN-191). 기본값을 두지 않는다 — 두면
+ *   자리가 하나 늘 때 그 자리만 조용히 `result`로 세어져, 그 화면의 출구가 얼마나 밟히는지
+ *   묻는 순간 답이 없다
  */
-export function useRetest(fallback: () => void): RetestControl {
+export function useRetest(fallback: () => void, from: RetestOrigin): RetestControl {
   const [phase, setPhase] = useState<Phase>({ status: 'idle' })
   const [retryAfterSec, setRetryAfterSec] = useState(0)
 
@@ -122,12 +139,22 @@ export function useRetest(fallback: () => void): RetestControl {
     // 책임(KAN-107)이라, 잠금이 한 겹뿐이면 그 한 겹을 우회하는 순간 세션이 고아가 된다.
     if (disabled) return
 
+    /*
+     * 재응시 계측 (KAN-33). 잠금 게이트를 통과한 탭만 센다 — 잠긴 버튼을 두드린 것은 새
+     * 응시가 아니고, 그것까지 세면 재응시율이 연타 습관을 따라간다.
+     *
+     * 브리지 갈래보다 **먼저** 센다. 성공하면 네이티브가 이 페이지를 통째로 갈아치우므로
+     * (`startRetest` 주석) 호출 뒤에 셀 자리가 남아 있지 않다. 폴백(브라우저 단독·구버전 앱)도
+     * 같은 사건이라 함께 센다 — 사용자가 다시 응시하기 시작한 것은 어느 경로에서나 같다.
+     */
+    track({ name: 'retest_started', from })
+
     if (!startRetest()) {
       fallback()
       return
     }
     setPhase({ status: 'pending' })
-  }, [disabled, fallback])
+  }, [disabled, fallback, from])
 
   return {
     onRetest,

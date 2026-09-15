@@ -1,6 +1,11 @@
 package com.accentury.app.web
 
 import android.webkit.JavascriptInterface
+import com.accentury.app.ads.AdConsent
+import com.accentury.app.analytics.CrashReports
+import com.accentury.app.analytics.EventParam
+import com.accentury.app.analytics.isAnalyticsName
+import com.accentury.app.analytics.parseEventParams
 import com.accentury.app.bridge.SharePayload
 import com.accentury.app.bridge.VoiceItemStart
 import com.accentury.app.bridge.parseSharePayload
@@ -9,10 +14,13 @@ import com.accentury.app.bridge.parseVoiceItemStart
 /**
  * 웹 → 네이티브 브리지 (webview-layer.md §8). `window.AccenturyBridge`로 주입된다.
  *
- * 최소 표면 원칙 — 화면 전환(KAN-100)·답안 제출 인증(KAN-13)·재응시(KAN-34)·결과 공유(KAN-30)까지
- * 필요한 여섯 메서드만 둔다. 늘리기 전에 웹에서 해결 가능한지 먼저 볼 것.
+ * 최소 표면 원칙 — 화면 전환(KAN-100)·답안 제출 인증(KAN-13)·재응시(KAN-34)·결과 공유(KAN-30)·
+ * 계측(KAN-33)·외부 링크(KAN-177)·광고 동의와 전면 광고(KAN-196)까지 필요한 열한 메서드만 둔다.
+ * 늘리기 전에 웹에서 해결 가능한지 먼저 볼 것.
  *
- * 메서드 추가는 하위호환이라 [BRIDGE_CONTRACT_VERSION]을 올리지 않는다 (§5).
+ * 메서드 추가는 하위호환이라 [BRIDGE_CONTRACT_VERSION]을 올리지 않는다 (§5). KAN-196의 세 메서드도
+ * 추가라 2를 유지한다 — 광고를 모르는 구버전 앱에서는 웹 래퍼가 메서드 부재를 null로 접어 시트도
+ * 광고 호출도 하지 않는다 (webview-bridge.md §8).
  *
  * @JavascriptInterface 메서드는 WebView에 로드된 임의 페이지의 JS가 **별도 스레드**에서
  * 호출한다. 그래서 상태를 바꾸는 호출은 (1) 메인 스레드로 넘긴 뒤 (2) 실행 시점의 현재 URL이
@@ -28,6 +36,16 @@ import com.accentury.app.bridge.parseVoiceItemStart
  *   상태 머신이 맡는다 — 진행 중이라는 사실의 주인이 둘이면 어긋난다 (SessionGateController.retestInFlight)
  * @param onShareResult 결과 화면의 [친구에게 공유하기] (KAN-30). 카드 자산은 웹이 실어 보내고
  *   (서버가 정한 값이다) 어느 통로로 나갈지는 네이티브가 정한다 (ResultSharer)
+ * @param onLogEvent 웹이 센 계측 이벤트 (KAN-33). 이름·파라미터는 검증을 통과한 값이고, 어디로
+ *   보낼지는 창구 너머의 sink가 정한다 (analytics/AppEvents.kt)
+ * @param onOpenExternalUrl 앱 밖으로 열 링크 (KAN-177). [externalUrlToOpen]을 통과한 URL만 온다 —
+ *   어떻게 열지는 창구 너머가 정한다 (ExternalBrowser의 Custom Tabs)
+ * @param readAdConsent 광고 동의 정본 읽기 (KAN-196). [getAdConsent]가 **JS 스레드에서 동기로**
+ *   부르므로 임의 스레드에서 안전해야 한다 (SharedPreferences는 그렇다)
+ * @param onSetAdConsent 시트에서 고른 동의 (KAN-196). `granted`·`denied`만 온다 — 저장과 광고
+ *   프리로드는 창구 너머가 한다 (AdsController.setConsent)
+ * @param onShowInterstitialAd 대기 화면의 전면 광고 (KAN-196). 로드된 것이 없으면 아무 일도 없다
+ *   (InterstitialGate)
  */
 class AccenturyBridge(
     private val postToMain: (() -> Unit) -> Unit,
@@ -38,6 +56,11 @@ class AccenturyBridge(
     private val onStartVoiceItem: (VoiceItemStart) -> Unit,
     private val onStartRetest: () -> Unit,
     private val onShareResult: (SharePayload) -> Unit,
+    private val onLogEvent: (String, Map<String, EventParam>) -> Unit,
+    private val onOpenExternalUrl: (String) -> Unit,
+    private val readAdConsent: () -> AdConsent,
+    private val onSetAdConsent: (AdConsent) -> Unit,
+    private val onShowInterstitialAd: () -> Unit,
 ) {
     /** §5 스큐 협상 — 웹이 앱의 계약 버전을 런타임에 재확인할 때 쓴다. 상태 변경이 없어 스레드 무관. */
     @JavascriptInterface
@@ -92,7 +115,12 @@ class AccenturyBridge(
     fun startVoiceItem(payloadJson: String) {
         postToMain {
             if (!isCurrentUrlAllowed()) return@postToMain
-            val start = parseVoiceItemStart(payloadJson) ?: return@postToMain
+            val start = parseVoiceItemStart(payloadJson) ?: run {
+                // 조용히 버리되 흔적은 남긴다 (KAN-33). allowlist를 통과한 페이지만 여기 오므로
+                // 이 실패는 우리 웹과 앱이 계약을 다르게 알고 있다는 뜻이다 (CrashReports).
+                CrashReports.recordBridgeParseFailure("startVoiceItem")
+                return@postToMain
+            }
             onStartVoiceItem(start)
         }
     }
@@ -115,8 +143,123 @@ class AccenturyBridge(
     fun shareResult(payloadJson: String) {
         postToMain {
             if (!isCurrentUrlAllowed()) return@postToMain
-            val payload = parseSharePayload(payloadJson) ?: return@postToMain
+            val payload = parseSharePayload(payloadJson) ?: run {
+                CrashReports.recordBridgeParseFailure("shareResult")
+                return@postToMain
+            }
             onShareResult(payload)
+        }
+    }
+
+    /**
+     * 웹이 센 계측 이벤트를 네이티브 Firebase로 넘긴다 (KAN-33).
+     *
+     * 앱 안 이벤트를 웹의 gtag가 아니라 여기로 받는 이유는 두 가지다. SDK가 붙여 주는 축
+     * (기기·OS·앱 버전·앱 인스턴스)은 WebView 안에서 만들 수 없고, 웹 스트림으로 보내면 앱
+     * 사용자가 웹 트래픽으로 세어진다 (`analytics/track.ts`의 분기표).
+     *
+     * @JavascriptInterface는 문자열만 주고받으므로 파라미터는 JSON으로 온다. 검증 순서는
+     * [startVoiceItem]과 같다 — origin을 통과한 값만 파싱한다. 다만 여기서 거르는 것은 안전이
+     * 아니라 **집계 축의 위생**이다: 규격 밖 이름이 한 번 흘러가면 GA4에 지울 수 없는 축이 생긴다
+     * (`analytics/EventParams.kt`).
+     *
+     * 이벤트 하나를 잃는 것은 감수한다. 웹은 오류를 돌려줄 상대가 아니고(§8), 계측 때문에 응시를
+     * 멈출 이유는 더더욱 없다 — 대신 버렸다는 사실만 Crashlytics 비치명 이벤트로 남긴다.
+     *
+     * 메서드 추가는 하위호환이라 [BRIDGE_CONTRACT_VERSION] 1을 유지한다 (§5). 그래서 계측을 모르는
+     * 구버전 앱도 스큐 게이트를 그대로 통과하고, 웹 래퍼가 false로 걸러 이벤트만 조용히 사라진다.
+     */
+    @JavascriptInterface
+    fun logEvent(name: String, paramsJson: String) {
+        postToMain {
+            if (!isCurrentUrlAllowed()) return@postToMain
+            val params = if (isAnalyticsName(name)) parseEventParams(paramsJson) else null
+            if (params == null) {
+                CrashReports.recordBridgeParseFailure("logEvent")
+                return@postToMain
+            }
+            onLogEvent(name, params)
+        }
+    }
+
+    /**
+     * 인트로의 개인정보처리방침 링크 → 앱 밖 브라우저 (KAN-177).
+     *
+     * 여는 주체가 네이티브인 이유는 웹이 열 수 없기 때문이다. WebView는 allowlist 밖 URL의
+     * 로드를 막고(§7) 그 검사가 곧 보안 경계라 방침 문서 하나 때문에 문을 넓힐 수 없으며,
+     * `target="_blank"`도 답이 아니다 — `setSupportMultipleWindows`가 꺼져 있어 앱 안에서는
+     * 아무 일도 하지 않는다 (WebViewHost의 §7 설정표).
+     *
+     * 검증 순서는 [startVoiceItem]과 같다 — origin을 통과한 값만 판정한다. 다만 여기서 거르는
+     * 것의 무게가 다르다: 이 값은 화면에 그려지고 마는 게 아니라 **앱이 여는 주소**가 된다.
+     * 그래서 [externalUrlToOpen]이 https와 호스트를 다시 본다 ([shareResult]가 카드 URL을
+     * 다시 보는 것과 같은 이유다).
+     *
+     * 거절도 실패도 웹에 회신하지 않는다 (§8). 링크를 눌렀는데 아무 일이 없는 것으로 보이는
+     * 실패인데, 웹이 그것을 알아도 인트로에서 대신 할 수 있는 일이 없다 — 대신 흔적은 남긴다.
+     *
+     * 메서드 추가는 하위호환이라 [BRIDGE_CONTRACT_VERSION] 1을 유지한다 (§5).
+     */
+    @JavascriptInterface
+    fun openExternalUrl(url: String) {
+        postToMain {
+            if (!isCurrentUrlAllowed()) return@postToMain
+            val target = externalUrlToOpen(url) ?: run {
+                CrashReports.recordBridgeParseFailure("openExternalUrl")
+                return@postToMain
+            }
+            onOpenExternalUrl(target)
+        }
+    }
+
+    /**
+     * 맞춤형 광고 동의 상태 (KAN-196, §8.5). `'granted' | 'denied' | 'unknown'`, 저장된 적 없으면 `unknown`.
+     *
+     * 동기 반환이라 [getSessionToken]과 같은 꼴이다 — postToMain을 못 쓰고 [isOriginAllowedNow]
+     * 플래그를 본다. **허용이 아니면 빈 문자열이다.** `unknown`을 돌려주지 않는 이유: `unknown`은
+     * "사용자에게 물어야 한다"는 진짜 상태라, 거부에 그 값을 쓰면 우리 웹이 아닌 페이지에 시트를
+     * 띄우라는 답을 준 셈이 된다. 빈 문자열은 계약 밖이라 웹 래퍼가 null("이 실행에 광고 동의
+     * 개념이 없다")로 접는데, allowlist 밖 페이지에는 그것이 정확히 맞는 답이다 — 토큰 거부가
+     * 빈 문자열인 것과 같은 규칙이다. 동의 값은 비밀은 아니지만 사용자가 고른 값이고, 남에게
+     * 알려 줄 이유가 없다.
+     */
+    @JavascriptInterface
+    fun getAdConsent(): String = if (isOriginAllowedNow()) readAdConsent().bridgeValue else ""
+
+    /**
+     * 시트에서 고른 동의를 적는다 (KAN-196). `granted`·`denied`만 받는다.
+     *
+     * `unknown`을 거르는 이유: 그 값은 "고른 적 없음"이라 사용자가 고를 수 있는 것이 아니다. 웹이
+     * 보낸다면 계약을 다르게 알고 있는 것이고, 받아 적으면 이미 고른 동의를 되돌리는 통로가 된다.
+     * 계약 밖 값과 함께 조용히 버리고 흔적만 남긴다 ([startVoiceItem]과 같은 규칙, §5).
+     *
+     * 저장이 곧 광고 프리로드의 시작이다 — `unknown`인 동안은 광고 요청이 없다가 이 호출로
+     * 처음 나간다 (AdsController KDoc). 회신은 없다: 쓰기가 동기라 웹은 되읽으면 같은 값이고,
+     * 웹 훅은 되읽지도 않는다 (`ads/adConsent.ts`).
+     */
+    @JavascriptInterface
+    fun setAdConsent(state: String) {
+        postToMain {
+            if (!isCurrentUrlAllowed()) return@postToMain
+            val consent = AdConsent.fromBridgeValue(state)?.takeIf { it != AdConsent.Unknown } ?: run {
+                CrashReports.recordBridgeParseFailure("setAdConsent")
+                return@postToMain
+            }
+            onSetAdConsent(consent)
+        }
+    }
+
+    /**
+     * 분석 대기 화면의 전면 광고 (KAN-196, §8.3). 인자도 회신도 없다 — 광고가 떴는지·닫혔는지·
+     * 실패했는지에 따라 대기 화면이 달라질 것이 없다. 세션당 한 번은 웹이 센다.
+     *
+     * 이 호출이 광고 요청의 시작점은 아니다 — 광고는 동의가 정해진 뒤 미리 받아 두고([setAdConsent]
+     * 이후 AdsController), 여기서는 받아 둔 것을 띄울 뿐이다. 없으면 아무 일도 없다.
+     */
+    @JavascriptInterface
+    fun showInterstitialAd() {
+        postToMain {
+            if (isCurrentUrlAllowed()) onShowInterstitialAd()
         }
     }
 }

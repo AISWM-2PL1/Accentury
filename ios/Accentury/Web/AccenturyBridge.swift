@@ -5,10 +5,11 @@ import WebKit
 /// 웹 → 네이티브 브리지의 **네이티브 쪽 절반** (webview-layer.md §8).
 /// 안드로이드 `AccenturyBridge.kt`의 이식본이고, JS 쪽 절반은 ``BridgeUserScript``다.
 ///
-/// 최소 표면 원칙 — 화면 전환(KAN-100)·답안 제출 인증(KAN-13)·재응시(KAN-34)·결과 공유(KAN-30)까지
-/// 필요한 여섯 메서드만 둔다. 늘리기 전에 웹에서 해결 가능한지 먼저 볼 것.
-/// 그중 값을 돌려주는 둘(`getContractVersion`·`getSessionToken`)은 여기로 오지 않는다 —
-/// JS 안에서 끝난다 (``BridgeUserScript`` 참고).
+/// 최소 표면 원칙 — 화면 전환(KAN-100)·답안 제출 인증(KAN-13)·재응시(KAN-34)·결과 공유(KAN-30)·
+/// 계측(KAN-33)·외부 링크(KAN-177)·광고 동의(KAN-196)까지 필요한 열한 메서드만 둔다. 늘리기 전에
+/// 웹에서 해결 가능한지 먼저 볼 것.
+/// 그중 값을 돌려주는 셋(`getContractVersion`·`getSessionToken`·`getAdConsent`)은 여기로 오지
+/// 않는다 — JS 안에서 끝난다 (``BridgeUserScript`` 참고).
 ///
 /// ## `postToMain`이 없는 이유
 ///
@@ -36,6 +37,21 @@ struct BridgeDispatcher {
     let onStartVoiceItem: (VoiceItemStart) -> Void
     let onStartRetest: () -> Void
     let onShareResult: (SharePayload) -> Void
+
+    /// 웹이 센 계측 이벤트 (KAN-33). 이름과 파라미터는 여기 도착하기 전에 이미 GA4 규격으로
+    /// 좁혀져 있다 — 받는 쪽(``EventSink``)은 이름을 손대지 않는다.
+    let onLogEvent: (String, [String: EventParam]) -> Void
+
+    /// 앱 밖으로 열 링크 (KAN-177). ``AccenturyCore/externalUrlToOpen(_:allowedHosts:)``을
+    /// 통과한 URL만 온다 — 어떻게 열지는 창구 너머가 정한다 (``ExternalBrowser``의 Safari 시트).
+    let onOpenExternalUrl: (String) -> Void
+
+    /// 시트에서 고른 광고 동의 (KAN-196). `granted`·`denied`만 온다 — 저장과 광고 프리로드는
+    /// 받는 쪽(``AdsController/setConsent(_:)``)이 한다.
+    let onSetAdConsent: (AdConsent) -> Void
+
+    /// 분석 대기 화면의 전면 광고 (KAN-196). 인자도 회신도 없다 (``InterstitialGate``).
+    let onShowInterstitialAd: () -> Void
 
     /// 메시지 한 건을 처리한다. 조건에 맞지 않으면 **조용히** 아무 일도 하지 않는다.
     ///
@@ -65,13 +81,83 @@ struct BridgeDispatcher {
 
         case "startVoiceItem":
             guard let json = payload as? String else { return }
-            guard let start = parseVoiceItemStart(json) else { return }
+            guard let start = parseVoiceItemStart(json) else {
+                // 조용히 버리되 흔적은 남긴다 (KAN-33). allowlist를 통과한 페이지만 여기 오므로
+                // 이 실패는 우리 웹과 우리 앱이 계약을 다르게 알고 있다는 뜻이다 (``CrashReports``).
+                CrashReports.recordBridgeParseFailure("startVoiceItem")
+                return
+            }
             onStartVoiceItem(start)
 
         case "shareResult":
             guard let json = payload as? String else { return }
-            guard let share = parseSharePayload(json) else { return }
+            guard let share = parseSharePayload(json) else {
+                CrashReports.recordBridgeParseFailure("shareResult")
+                return
+            }
             onShareResult(share)
+
+        case "logEvent":
+            /*
+             * 여기서 거르는 것은 안전이 아니라 **집계 축의 위생**이다. 규격 밖 이름이 한 번
+             * 흘러가면 GA4에 지울 수 없는 축이 생기고(이벤트·파라미터 정의는 사후 삭제가 안 된다),
+             * 그 축은 사람이 다시 읽어야 하는 대시보드가 된다 (`AccenturyCore` `EventParams`).
+             *
+             * 이벤트 하나를 잃는 것은 감수한다 — 웹은 오류를 돌려줄 상대가 아니고, 계측 때문에
+             * 응시를 멈출 이유는 더더욱 없다. 대신 버렸다는 사실만 비치명 이벤트로 남긴다.
+             *
+             * 봉투가 이 메서드만 객체인 이유는 ``BridgeUserScript`` 주석에 있다.
+             */
+            guard let body = payload as? [String: Any],
+                  let name = body["name"] as? String,
+                  let paramsJson = body["params"] as? String
+            else { return }
+            guard isAnalyticsName(name), let params = parseEventParams(paramsJson) else {
+                CrashReports.recordBridgeParseFailure("logEvent")
+                return
+            }
+            onLogEvent(name, params)
+
+        case "openExternalUrl":
+            /*
+             * 인트로의 개인정보처리방침 링크 (KAN-177). 여는 주체가 네이티브인 이유는 웹이 열 수
+             * 없기 때문이다 — WebView는 allowlist 밖 URL의 로드를 막고(§7) 그 검사가 곧 보안
+             * 경계이며, `target="_blank"`는 `uiDelegate`가 없어 앱 안에서 아무 일도 하지 않는다.
+             *
+             * 여기서 거르는 것의 무게가 위 case들과 다르다: 이 값은 화면에 그려지고 마는 게
+             * 아니라 **앱이 여는 주소**가 된다. 그래서 https와 호스트를 다시 본다
+             * (`shareResult`가 카드 URL을 다시 보는 것과 같은 이유다).
+             */
+            guard let url = payload as? String else { return }
+            guard let target = externalUrlToOpen(url) else {
+                CrashReports.recordBridgeParseFailure("openExternalUrl")
+                return
+            }
+            onOpenExternalUrl(target)
+
+        case "setAdConsent":
+            /*
+             * 시트에서 고른 동의를 적는다 (KAN-196, §8.5). `granted`·`denied`만 받는다.
+             *
+             * `unknown`을 거르는 이유: 그 값은 "고른 적 없음"이라 사용자가 고를 수 있는 것이 아니다.
+             * 웹이 보낸다면 계약을 다르게 알고 있는 것이고, 받아 적으면 이미 고른 동의를 되돌리는
+             * 통로가 된다. 계약 밖 값과 함께 조용히 버리고 흔적만 남긴다 (`startVoiceItem`과 같은 규칙).
+             *
+             * 저장이 곧 광고 프리로드의 시작이다 — `unknown`인 동안은 광고 요청이 없다가 이 호출로
+             * 처음 나간다 (`AdsController`). 회신은 없다: 웹 훅은 되읽지 않는다 (`ads/adConsent.ts`),
+             * 다만 문서의 `getAdConsent` 값은 `WebViewHost`가 저장값 변경을 보고 다시 민다.
+             */
+            guard let raw = payload as? String else { return }
+            guard let consent = AdConsent(bridgeValue: raw), consent != .unknown else {
+                CrashReports.recordBridgeParseFailure("setAdConsent")
+                return
+            }
+            onSetAdConsent(consent)
+
+        case "showInterstitialAd":
+            // 인자도 회신도 없다 (§8.3) — 광고가 떴는지·닫혔는지·실패했는지에 따라 대기 화면이
+            // 달라질 것이 없다. 세션당 한 번은 웹이 센다. 받아 둔 광고가 없으면 아무 일도 없다.
+            onShowInterstitialAd()
 
         default:
             // 모르는 메서드. 신버전 웹이 구버전 앱에 보낸 호출일 수도 있고(메서드 추가는

@@ -54,14 +54,14 @@ final class VoiceItemStartTests: XCTestCase {
     }
 
     func testGuideF0ParsesValuesIncludingUnvoicedNulls() {
-        let start = parseVoiceItemStart(
-            payload(extra: ",\"guideF0\":{\"unit\":\"semitone\",\"frameIntervalMs\":10,\"values\":[0.5,null,-1.2]}")
-        )
+        // 발행본 실문항(v102)의 원문 조각을 그대로 끼운다 (KAN-194). 장난감 3점 배열로는
+        // 240점·무성 14개짜리 실제 곡선이 통째로 살아 오는지를 말해 줄 수 없다 — 실데이터에서
+        // 곡선이 버려지지 않는다는 것이 이 티켓이 보는 것이다.
+        let start = parseVoiceItemStart(payload(extra: "," + GuideF0Fixture.json))
 
-        XCTAssertEqual(
-            GuideF0(unit: "semitone", frameIntervalMs: 10, values: [0.5, nil, -1.2]),
-            start?.guideF0
-        )
+        XCTAssertEqual(GuideF0Fixture.real, start?.guideF0)
+        XCTAssertEqual(240, start?.guideF0?.values.count)
+        XCTAssertEqual(14, start?.guideF0?.values.filter { $0 == nil }.count)
     }
 
     func testOlderWebPayloadWithoutGuideF0IsAccepted() {

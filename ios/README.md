@@ -35,6 +35,11 @@ xcodebuild -project Accentury.xcodeproj -scheme Accentury \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' CODE_SIGNING_ALLOWED=NO test
 ```
 
+PR에서 `ios/**`가 바뀌면 `.github/workflows/test.yml`의 `ios-test` 잡이 macos-26 러너에서 위
+`test` 명령을 그대로 돌린다. 로컬과 다른 점은 하나뿐이다 — 기기를 이름으로 고르지 않고 러너의
+가용 목록에서 골라 `-destination "id=<UDID>"`로 준다. 이미지마다 깔린 시뮬레이터가 달라
+이름을 박아 두면 언젠가 destination을 못 찾기 때문이다.
+
 ## Local.xcconfig
 
 `Accentury/Config/Local.xcconfig.example`를 같은 폴더에 `Local.xcconfig`로 복사해서 쓴다
@@ -47,6 +52,11 @@ xcodebuild -project Accentury.xcodeproj -scheme Accentury \
 - `KAKAO_NATIVE_APP_KEY` — 카카오톡 공유 앱 키 (KAN-180). 안드로이드 `local.properties`의
   `kakaoNativeAppKey=`와 **같은 앱의 같은 키**다. 비어 있으면 카카오 경로가 꺼지고 공유가
   OS 공유 시트로만 가며, 그게 기본 상태다 — 아래 참고.
+- `ADMOB_APP_ID` / `ADMOB_INTERSTITIAL_ID` / `ADMOB_REWARDED_ID` — AdMob **iOS 앱**의 앱 ID·전면·
+  보상형 광고 단위 (KAN-196). 안드로이드 `admobAppId=` 등과 같은 자리이되 플랫폼별 ID다. 없으면
+  `Base.xcconfig`의 Google 테스트 ID로 빌드되고 테스트 광고가 정상으로 뜬다 — 그게 기본 상태다.
+  아카이브는 명령줄로 넘기고 `REQUIRE_ADMOB_IDS=YES`를 붙이면 테스트 ID가 남았을 때 빌드가 즉시
+  실패한다 (`docs/wiki/ads-admob.md` §7.2).
 
 ## 카카오톡 공유 (KAN-180)
 
@@ -64,6 +74,27 @@ OS 공유 시트로 내려간다 — 그쪽은 텍스트 한 줄이 가는 경�
 
 **시뮬레이터로는 확인할 수 없다** — 카톡이 없으므로 늘 2번에서 시트로 간다. 카드 수신은
 실기기 확인 사항이다.
+
+## 계측·크래시 (KAN-33)
+
+`Accentury/GoogleService-Info.plist`(Firebase 콘솔 › 프로젝트 `accentury-c2713` › iOS 앱
+`com.accentury.app`)가 있으면 켜지고, **없으면 계측·크래시 보고 없이 그대로 돈다** — 카카오 키와
+같은 자리·같은 판단이고, 없는 것이 정상 상태다. 판정은 `Analytics/FirebaseEventSink.swift`의
+`FirebaseSetup` 한 곳에서 한다.
+
+이벤트 스키마·콘솔 설정·GA4에서 무엇을 어떻게 보는지는 [`docs/wiki/analytics.md`](../docs/wiki/analytics.md)에 있다.
+
+```bash
+# 설정이 없는 빌드에서 이벤트가 도는지 (로그로만 남는다)
+xcrun simctl spawn booted log stream --predicate 'subsystem == "com.accentury.app" AND category == "analytics"'
+
+# 설정이 있는 빌드에서 GA4 DebugView로 흘려보기
+xcrun simctl launch --console-pty booted com.accentury.app -FIRDebugEnabled
+```
+
+dSYM 업로드는 빌드 단계(`project.yml`의 «Crashlytics dSYM 업로드»)가 한다. **Debug 빌드에서는
+«Unable to process Accentury.app.dSYM» 경고 한 줄이 나오는 것이 정상이다** — dSYM은
+Release·아카이브에서만 만들어진다 (Debug의 `DEBUG_INFORMATION_FORMAT`은 `dwarf`).
 
 ## 가짜 마이크 (디버그 전용)
 
@@ -258,6 +289,11 @@ xcrun simctl launch --console-pty booted com.accentury.app \
 
 `-StubSession`을 **주지 않는다** — 실제 세션이어야 업로드가 받아들여지고, 그래야 결과 주입까지
 간다. 가짜 마이크(`FAKE_MIC_ASSET`)가 물려 있어야 문항마다 같은 발화가 들어간다.
+
+광고 동의(KAN-196)는 구동기가 켜지면 앱 시작에 **`denied`로 미리 적히고** 전면·보상형 호출은 광고
+없이 통과한다 (`ADS: smoke consent=denied suppressed=true`). 시트가 [시작하기] 앞을 막지 않고, 광고
+위에서 구동기가 멈추지 않게 하기 위해서다 — `-AutoStartSmoke 1`만 줘도 같다. 시뮬레이터에서 실제
+테스트 광고를 보려면 두 인자 없이 띄워 시트를 손으로 고른다.
 
 `RESULT:` 줄이 이 스모크의 핵심이다. `accepted=false`나 «webView 없음»이면 업로드는 됐는데 결과가
 웹에 닿지 않았다는 뜻이고, 그때 웹은 «잠시만요…»에서 멈춘다.

@@ -15,10 +15,11 @@ import kotlin.math.roundToLong
  * "지금까지 들어온 만큼"이라는 것 - 매 청크마다 다시 불리므로, 프레임이 늘어도 이미 그린
  * 부분이 흔들리지 않는 규칙이 필요하다. 아래 결정들이 그 요구에서 나왔다.
  *
- * - **사용자 창은 가이드 길이의 [USER_CURVE_WINDOW_SCALE]배다**([userCurveWindowMs], Review는
- *   녹음 전체 길이 [reviewWindowMs]). 시드 가이드보다 실제 발화가 길어서, 창을 가이드에
- *   맞춰 놓으면 발화 앞부분이 창 밖으로 밀린다. 녹음이 창 길이를 넘어가면 창이 미끄러져
- *   최신 프레임이 항상 오른쪽 끝에 있게 하고, 밀린 프레임은 버린다.
+ * - **사용자 창은 가이드 길이의 [USER_CURVE_WINDOW_SCALE]배이되 녹음 상한을 넘지 않는다**
+ *   ([userCurveWindowMs], Review는 발화 구간에 맞춘 [reviewWindow]). 시드 가이드보다 실제
+ *   발화가 길어서, 창을 가이드에 맞춰 놓으면 발화 앞부분이 창 밖으로 밀린다. 녹음이 창
+ *   길이를 넘어가면 창이 미끄러져 최신 프레임이 항상 오른쪽 끝에 있게 하고, 밀린 프레임은
+ *   버린다. 상한을 두는 이유는 [userCurveWindowMs]에 적었다.
  * - **가이드 레인은 별도 시간축이다** (2026-08-25 결정). 가이드는 사용자 창이 얼마든 자기
  *   길이로 레인 폭 전체를 쓴다 - KAN-104의 원래 모양이다. 한때 가이드를 사용자 창에 맞춰
  *   축소해 두 레인의 같은 x가 같은 시각이 되게 했지만(KAN-104/AC4), 발화가 길수록 가이드가
@@ -146,33 +147,130 @@ fun guideDurationMs(frameIntervalMs: Int?, valueCount: Int?): Long {
 }
 
 /**
- * 사용자 레인 한 폭이 담을 시간. 가이드 길이의 [USER_CURVE_WINDOW_SCALE]배다.
+ * 사용자 레인 한 폭이 담을 시간. 가이드 길이의 [USER_CURVE_WINDOW_SCALE]배이되
+ * [maxDurationMs]를 넘지 않는다.
  *
  * 가이드가 없거나(정의에 guideF0가 없음) 길이를 계산할 수 없으면 [FALLBACK_GUIDE_MS]를
  * 가이드 길이로 놓고 같은 배율을 곱한다.
+ *
+ * ## 왜 녹음 상한으로 자르나 (KAN-195)
+ *
+ * 배율 2배는 "시드 가이드 한 문항 0.9~1.2초"를 전제로 잡은 값이다. 정본 발행본
+ * `gn-2026.09.1`의 가이드는 3.18~5.98초라, 그대로 곱하면 창이 최대 11.96초가 되는데
+ * **녹음은 [maxDurationMs](10초)에서 자동 종료된다**. 그러면 창의 오른쪽 끝 2초는 어떤
+ * 녹음으로도 닿을 수 없는 자리가 되고, 사용자 레인은 아무리 길게 말해도 83%까지만 찬다 -
+ * 곡선이 레인 중간에서 끊긴 것처럼 보인다. 145문항 중 29개가 이 구간이다.
+ *
+ * 배율을 낮추지 않고 상한으로 자르는 쪽을 택했다. 배율을 1.6으로 낮추면 상한에 닿지 않는
+ * 나머지 116문항의 창까지 20% 좁아져, 가이드보다 느리게 읽은 발화의 앞부분이 새로 잘린다.
+ * 자르는 쪽은 실제로 넘치는 문항에서만 값이 달라진다.
+ *
+ * 상한을 이 파일의 상수로 두지 않고 인자로 받는 이유는 **플랫폼마다 실제로 녹음을 끊는 값이
+ * 다른 자리에 있기 때문**이다. 앱은 [com.accentury.app.audio.RecordingEngine.MAX_DURATION_MS]로
+ * 끊고, 웹은 문항 정의의 `maxDurationMs`(서버가 준 값)로 버퍼를 잡는다. 창은 그 둘 중
+ * **이 화면에서 실제로 적용되는 쪽**을 받아야 창의 오른쪽 끝이 닿을 수 있는 자리가 된다.
+ *
+ * 그래서 앱이 브리지로 받은 [com.accentury.app.bridge.VoiceItemStart.maxDurationMs]를 여기
+ * 넘기지 않는 것은 의도다 - 넘기면 서버가 15초를 주는 날 창은 15초인데 녹음은 10초에 끊겨
+ * 이 함수가 고친 바로 그 문제로 되돌아간다. 녹음 엔진이 서버 값을 읽지 않는 것 자체는
+ * KAN-195 범위 밖이고, 서버가 상한을 올리는 날 웹과 네이티브의 창이 갈리는 것이 그 미결의
+ * 대가다.
+ *
+ * @param maxDurationMs 이 문항의 녹음 상한. 0 이하면 자르지 않는다 - 상한을 알 수 없다고
+ *   창을 0으로 만들면 레인이 통째로 사라진다
  */
-fun userCurveWindowMs(frameIntervalMs: Int?, valueCount: Int?): Long {
+fun userCurveWindowMs(frameIntervalMs: Int?, valueCount: Int?, maxDurationMs: Long): Long {
     val guideMs = guideDurationMs(frameIntervalMs, valueCount).takeIf { it > 0L } ?: FALLBACK_GUIDE_MS
-    return (guideMs * USER_CURVE_WINDOW_SCALE).roundToLong()
+    val windowMs = (guideMs * USER_CURVE_WINDOW_SCALE).roundToLong()
+    if (maxDurationMs <= 0L) return windowMs
+    return minOf(windowMs, maxDurationMs)
 }
 
+/** [reviewWindow]가 정한 "무엇을 얼마나 넓게 보여줄 것인가" 한 벌 */
+data class ReviewWindow(
+    /** 그릴 프레임. 발화가 있으면 유성 구간만 남긴 목록이다 */
+    val frames: List<RecordingEngine.PitchFrame>,
+    /** 그 프레임을 담을 창 길이 */
+    val windowMs: Long,
+)
+
 /**
- * 녹음이 끝난 Review 화면이 쓸 창 길이. 라이브 창([userCurveWindowMs])과 "녹음 전체 길이" 중
- * 긴 쪽이다. 프레임이 없으면 라이브 창을 그대로 쓴다.
+ * 녹음이 끝난 Review 화면이 보여줄 구간과 창 (KAN-195).
+ *
+ * 둘을 한 함수가 정하는 이유는 **서로 맞아야만 뜻이 통하기 때문**이다. 창의 왼쪽 끝은
+ * [userCurveDisplayPoints]가 `max(0, 최신 프레임 - 창)`으로 유도하므로, 프레임을 어디까지
+ * 남겼는지와 창을 얼마로 잡았는지가 어긋나면 곡선이 엉뚱한 자리에 놓인다. 따로 두면 두
+ * 함수가 각자 늙는다.
+ *
+ * ## 녹음 중과 규칙이 다른 이유
  *
  * 녹음 중에는 창이 미끄러져야 한다 - 지금 내 목소리가 오른쪽 끝에 붙어 있어야 방금 낸 소리와
- * 화면이 같이 움직인다. 그런데 녹음이 끝나면 볼 대상이 "방금 한 발화 전체"로 바뀐다. 라이브 창을
- * 그대로 두면 창 길이를 넘긴 발화는 마지막 구간만 남고 앞부분이 잘려 나가, 정작 다시 볼 수 있게
- * 된 시점에 앞부분을 못 본다.
+ * 화면이 같이 움직인다. 녹음이 끝나면 볼 대상이 "방금 한 발화 전체"로 바뀐다.
  *
- * 창을 마지막 프레임 시각까지 늘리면 [userCurveDisplayPoints]의
- * `windowStartMs = max(0, newest - window)`가 0이 되어 처음부터 끝까지 그려진다. 한 프레임 간격
- * ([FRAME_INTERVAL_MS])을 더 얹는 건 마지막 점이 x=1인 오른쪽 모서리에 딱 붙지 않게 하기
- * 위해서다 - 그 프레임도 자기 몫의 폭을 차지한다.
+ * ## 발화 구간에 맞춘다 (2026-09-10 결정)
+ *
+ * 종전에는 라이브 창(가이드의 2배)을 바닥으로 깔아, 정상적으로 다 읽어도 레인의 30~40%가
+ * 빈 채로 남았다 - 가이드 4.38초 문항을 5.7초에 읽으면 창이 8.76초라 곡선이 왼쪽 62%만
+ * 차지했다. 앞뒤 침묵(보통 0.3~0.6초)까지 그 안에 들어가 곡선이 레인 한가운데 떠 있었다.
+ *
+ * 그래서 **첫 유성 프레임부터 마지막 유성 프레임까지만 남기고 창을 그 길이로 잡는다.**
+ * x가 0에서 1까지 꽉 찬다 - 가이드 레인이 `x = i / lastIndex`로 이미 하고 있는 것과 같은
+ * 규칙이다 ([guideCurveDisplayPoints]). 두 레인이 같은 시각을 가리키지 않는 것은 이미 정해진
+ * 성질이고 (2026-08-25, `pitch-curve.md` §4 "가이드 레인은 별도 시간축이다"), 비교 대상은
+ * 모양이므로 양쪽 다 폭을 꽉 쓰는 편이 견주기 좋다.
+ *
+ * ## 바닥은 가이드 길이다
+ *
+ * 무조건 맞추지는 않는다. 40음절 문장에서 세 음절만 웅얼거리고 끝낸 녹음까지 레인을 꽉
+ * 채우면, 위 가이드 레인과 나란히 놓였을 때 비슷한 분량을 말한 것처럼 보인다. 그래서 발화가
+ * 가이드보다 짧으면 창을 가이드 길이로 두고 곡선이 그만큼만 차지하게 남긴다 - 덜 말했다는
+ * 사실이 화면에 남는다. 바닥을 라이브 창(가이드의 2배)에서 가이드 길이로 낮춘 것이 이번
+ * 변경이고, 그 사이 구간이 정상 낭독이 전부 들어오는 자리다.
+ *
+ * @param frames 시각 순 프레임. Review는 [fillShortGaps]를 거친 목록을 넘긴다
+ * @param frameIntervalMs 가이드의 프레임 간격. 바닥을 정하는 데만 쓴다
+ * @param valueCount 가이드 값 개수. 가이드를 쓸 수 없으면 [FALLBACK_GUIDE_MS]가 바닥이다
  */
-fun reviewWindowMs(frames: List<RecordingEngine.PitchFrame>, liveWindowMs: Long): Long {
-    val lastMs = frames.maxOfOrNull { it.timestampMs } ?: return liveWindowMs
-    return maxOf(liveWindowMs, lastMs + FRAME_INTERVAL_MS.roundToLong())
+fun reviewWindow(
+    frames: List<RecordingEngine.PitchFrame>,
+    frameIntervalMs: Int?,
+    valueCount: Int?,
+): ReviewWindow {
+    val floorMs = guideDurationMs(frameIntervalMs, valueCount).takeIf { it > 0L } ?: FALLBACK_GUIDE_MS
+
+    var firstVoicedMs: Long? = null
+    var lastVoicedMs: Long? = null
+    for (frame in frames) {
+        if (frame.voicedHz() == null) continue
+        if (firstVoicedMs == null) firstVoicedMs = frame.timestampMs
+        lastVoicedMs = frame.timestampMs
+    }
+
+    /*
+     * 유성 프레임이 하나도 없으면 자를 기준이 없다. 창만 바닥으로 두고 원본을 넘긴다 -
+     * 그릴 점이 애초에 없으므로([userCurveDisplayPoints]가 무성 프레임에서 점을 만들지 않는다)
+     * 창을 어떻게 잡든 결과가 같다.
+     */
+    val first = firstVoicedMs
+    val last = lastVoicedMs
+    if (first == null || last == null) return ReviewWindow(frames, floorMs)
+
+    /*
+     * **유성이 하나라도 있으면 반드시 자른다.** 발화가 바닥에 못 미쳐도, 유성이 딱 하나여서
+     * 구간 길이가 0이어도 마찬가지다. 자르지 않고 창만 넓히면 창의 오른쪽 끝이 뒤쪽 침묵에
+     * 붙어(`max(0, 최신 - 창)`), 10초 자동 종료로 뒤에 몇 초가 남은 녹음에서는 유성 구간이
+     * 통째로 창 왼쪽 밖으로 밀려나 곡선이 사라진다 - 기침 한 번처럼 유성이 하나뿐인 녹음이
+     * 정확히 그 경우다.
+     *
+     * 자른 뒤에는 어떤 입력에서도 x가 [0,1]을 벗어나지 않는다. 발화가 바닥보다 짧을 때 곡선이
+     * 레인 어디에 놓이는지는 마지막 유성의 시각이 가른다 - `마지막 유성 >= 바닥`이면
+     * `windowStart`가 0보다 커져 곡선이 레인 오른쪽에 붙고, 그보다 이르면 `windowStart`가 0에
+     * 걸려 실제로 말한 시각 자리에 놓인다. 어느 쪽이든 차지하는 폭은 `발화 / 바닥`으로 같다.
+     */
+    return ReviewWindow(
+        frames = frames.filter { it.timestampMs in first..last },
+        windowMs = maxOf(last - first, floorMs),
+    )
 }
 
 /**

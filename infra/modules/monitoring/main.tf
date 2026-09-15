@@ -2,7 +2,7 @@
 #
 # 목적은 하나다. prod를 무인으로 운영하니 서버가 죽은 것을 사용자보다 먼저 알아야 한다.
 # KAN-38(전체 관측성: 지표 수집, 대시보드, correlation ID 규약)의 최소 선행분만 앞당긴
-# 것이고, KAN-38 본체는 그대로 남는다. 지표를 새로 수집하지 않는다 - AI 지표 2종을 빼면
+# 것이고, KAN-38 본체는 그대로 남는다. 지표를 새로 수집하지 않는다 - AI 호스트 지표 4종을 빼면
 # 전부 AWS가 이미 내보내는 표준 지표다.
 #
 #   필수 (KAN-134 Requirements)
@@ -16,6 +16,8 @@
 #   AI 전용 호스트 (KAN-36)
 #     ai-unhealthy      AI 호스트의 health 프로브 실패 (호스트 타이머가 올리는 커스텀 지표)
 #     ai-circuit-open   backend의 AI 회로가 열렸다 (backend가 Micrometer로 올리는 커스텀 지표)
+#     ai-disk-high      AI 호스트 루트 볼륨 사용률 (B단계, 실모델 이미지 7GB x 2 공존 - 호스트 타이머 지표)
+#     ai-mem-high       AI 호스트 메모리 사용률, 호스트 대비 (B단계, 컨테이너 상한 7GiB 직전 신호 - 호스트 타이머 지표)
 #
 # 전부 ap-northeast-2다. WAF 로그 그룹(KAN-149)만 us-east-1인데 그것은 CLOUDFRONT 스코프
 # 웹 ACL의 제약이고, 여기서 보는 ALB, RDS, ECS 지표는 리소스와 같은 서울 리전에 있다.
@@ -246,11 +248,49 @@ resource "aws_cloudwatch_metric_alarm" "backend_memory_high" {
   tags = { Name = "${local.name}-backend-mem-high" }
 }
 
+# ---- AI 호스트 경보 0: 대상 그룹에 healthy 대상 없음 (KAN-201) ----
+
+# AI 호스트가 내부 ALB 뒤로 가면서(KAN-201) backend의 관점과 같은 신호가 생겼다 - "받아 줄 healthy AI가
+# 없다". 대상 그룹 상태 검사는 준비 상태 게이트(/internal/v0/health, 워밍업 전 503)를 보므로 모델이 적재된
+# 대상만 센다. 아래 ai-unhealthy(호스트 타이머 지표)보다 이쪽이 정본이다 - 같은 조건을 ALB가 직접 판정한다.
+# 오토스케일링으로 늘어난 대상 중 하나가 죽은 것은 여기 안 잡히지만 ASG가 교체한다 (no-healthy-target과 같다).
+#
+# treat_missing_data = "breaching": 등록된 대상이 하나도 없으면 지표가 끊기는데 그것도 장애다 (ASG가 인스턴스를
+# 못 띄움). 대가로 apply 직후와 1대 교체 직후 몇 분은 한 번 운다 - OK 알림이 따라온다.
+resource "aws_cloudwatch_metric_alarm" "ai_no_healthy_host" {
+  alarm_name        = "${local.name}-ai-alb-no-healthy-host"
+  alarm_description = "accentury ${var.env}: AI 대상 그룹에 healthy 대상이 없습니다. ai 컨테이너 준비 상태(STARTING), ASG 인스턴스, 인스턴스 교체 진행을 확인하세요. (KAN-201)"
+
+  namespace   = "AWS/ApplicationELB"
+  metric_name = "HealthyHostCount"
+  dimensions = {
+    TargetGroup  = var.ai_target_group_arn_suffix
+    LoadBalancer = var.ai_alb_arn_suffix
+  }
+
+  statistic           = "Minimum"
+  period              = 60
+  evaluation_periods  = var.ai_unhealthy_evaluation_periods
+  comparison_operator = "LessThanThreshold"
+  threshold           = 1
+  treat_missing_data  = "breaching"
+
+  alarm_actions = local.alarm_actions
+  ok_actions    = local.alarm_actions
+
+  tags = { Name = "${local.name}-ai-alb-no-healthy-host" }
+}
+
 # ---- AI 호스트 경보 1: health 프로브 실패 (KAN-36) ----
 
-# AI 호스트는 ALB 뒤가 아니라 대상 그룹 health가 없다. 대신 호스트의 systemd 타이머
-# (ai-host 모듈 ai-health-metric.sh)가 1분마다 /internal/v0/health를 찔러 Healthy 0|1을
-# 올린다 (네임스페이스 accentury/ai, 차원 env). 워밍업 중(503 STARTING)도 0이다.
+# 호스트의 systemd 타이머(ai-host 모듈 ai-health-metric.sh)가 1분마다 /internal/v0/health를 찔러
+# Healthy 0|1을 올린다 (네임스페이스 accentury/ai, 차원 env). 워밍업 중(503 STARTING)도 0이다.
+# 내부 ALB(KAN-201) 이후 정본은 위 ai-alb-no-healthy-host이고, 이 경보는 ALB나 대상 그룹 자체가
+# 사라진 경우까지 덮는 이중 안전망이다.
+#
+# 통계는 Maximum이다 (KAN-201) - 인스턴스가 여럿이면 전부 같은 차원(env)으로 올라와 한 지표로 섞인다.
+# Minimum이면 오토스케일링으로 새로 뜬 인스턴스가 워밍업 동안 올리는 0이 3분 연속 잡혀 확대할 때마다
+# 운다. Maximum < 1은 "어느 인스턴스도 healthy가 아니다"라 KAN-36의 1대 시절과 같은 뜻이다.
 #
 # treat_missing_data = "breaching": 지표가 끊겼다는 것은 타이머가 도는 호스트 자체가 없거나
 # (ASG 교체 중, 스택 철거) 지표를 못 올리는 상태라 그것도 장애로 센다. 대가로 apply 직후와
@@ -264,7 +304,7 @@ resource "aws_cloudwatch_metric_alarm" "ai_unhealthy" {
   metric_name = "Healthy"
   dimensions  = { env = var.env }
 
-  statistic           = "Minimum"
+  statistic           = "Maximum"
   period              = 60
   evaluation_periods  = var.ai_unhealthy_evaluation_periods
   comparison_operator = "LessThanThreshold"
@@ -312,4 +352,215 @@ resource "aws_cloudwatch_metric_alarm" "ai_circuit_open" {
   ok_actions    = local.alarm_actions
 
   tags = { Name = "${local.name}-ai-circuit-open" }
+}
+
+# ---- AI 호스트 경보 3, 4: 루트 디스크와 호스트 메모리 사용률 (KAN-36 B단계, 2026-09-10) ----
+
+# 실모델 전환으로 이 호스트의 두 자원이 빠듯해졌다. ai 이미지가 7GB라 reload 중 SHA 태그 2개와 pull 임시
+# 공간이 함께 루트 볼륨(40GiB)에 놓이고, 컨테이너 RSS 최대 6.2GB(KAN-57 bf16)가 8GB 인스턴스에 올라간다.
+# 디스크가 차면 이미지 pull과 임시 오디오 쓰기가 실패하고(배포 롤백, 분석 실패), 메모리가 차면 OOM으로
+# 워커가 죽어 재적재 31초가 반복된다 - 둘 다 health는 UP인 채 조용히 나빠지는 종류라 ai-unhealthy가
+# 못 잡는다. 지표는 health 타이머(ai-host 모듈 ai-health-metric.sh)가 같은 네임스페이스로 1분마다
+# 올린다 - CloudWatch agent를 깔지 않고 이미 있는 경로 하나를 쓴다.
+#
+# 디스크 임계 80%: 정상 reload의 순간 최대치(OS 2.5 + 이미지 7 x 2 + pull 임시 4 = 약 21GB)가 40GiB의
+# 약 51%라 정상 경로는 닿지 않고, 로그 사본이나 임시파일이 새는 상태에는 pull 실패(100%) 전에 걸린다.
+# 3회 연속을 요구하는 것은 reload 중 두 이미지가 공존하는 1~2분을 넘기기 위해서다.
+#
+# treat_missing_data = "notBreaching": 타이머가 값을 못 읽으면 올리지 않고(0은 "여유 있다"라서 덮지
+# 않는다), 호스트 자체가 없는 것은 ai-unhealthy(breaching)가 잡는다 - 같은 사건에 메일을 셋 보내지 않는다.
+resource "aws_cloudwatch_metric_alarm" "ai_disk_high" {
+  alarm_name        = "${local.name}-ai-disk-high"
+  alarm_description = "accentury ${var.env}: AI 호스트의 루트 볼륨 사용률이 ${var.ai_disk_evaluation_periods}분 연속 ${var.ai_disk_threshold}%를 넘었습니다. 다음 배포의 이미지 pull이 실패할 수 있습니다. docker system df와 /var/lib/docker/containers의 로그 사본, 임시 오디오 디렉터리를 확인하세요. (KAN-36)"
+
+  namespace   = var.ai_metric_namespace
+  metric_name = "RootDiskUsedPercent"
+  dimensions  = { env = var.env }
+
+  statistic           = "Maximum"
+  period              = 60
+  evaluation_periods  = var.ai_disk_evaluation_periods
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = var.ai_disk_threshold
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = local.alarm_actions
+  ok_actions    = local.alarm_actions
+
+  tags = { Name = "${local.name}-ai-disk-high" }
+}
+
+# 메모리 임계 90%는 <b>호스트 대비</b>다 (컨테이너 mem_limit 대비가 아니다 - 티켓 결정). 지키려는 것이
+# "호스트 OOM 킬러가 SSM 에이전트나 docker를 고르는" 상황이라 기준도 호스트 메모리다. 컨테이너 상한
+# 7GiB는 호스트 7.6GiB의 92%이므로 이 경보(90%)가 상한보다 먼저 운다 - 컨테이너가 죽기 직전에 메일이
+# 온다. 값은 (total - available) / total 이라 page cache는 사용으로 세지 않는다. 추론 1건이 도는 동안
+# 잠깐 오르는 것은 정상이므로 2회 연속을 요구하고, 임계는 KAN-57 RSS 재실측으로 다시 확정한다
+# (지금 값 6.19GB = 호스트의 81%).
+resource "aws_cloudwatch_metric_alarm" "ai_memory_high" {
+  alarm_name        = "${local.name}-ai-mem-high"
+  alarm_description = "accentury ${var.env}: AI 호스트의 메모리 사용률(호스트 대비)이 ${var.ai_memory_evaluation_periods}분 연속 ${var.ai_memory_threshold}%를 넘었습니다. 컨테이너 상한(7GiB) 직전입니다 - OOM으로 워커가 죽어 재적재가 반복되는지(ai 로그 그룹), RSS가 KAN-57 실측을 넘었는지 확인하세요. (KAN-36)"
+
+  namespace   = var.ai_metric_namespace
+  metric_name = "MemoryUsedPercent"
+  dimensions  = { env = var.env }
+
+  statistic           = "Maximum"
+  period              = 60
+  evaluation_periods  = var.ai_memory_evaluation_periods
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = var.ai_memory_threshold
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = local.alarm_actions
+  ok_actions    = local.alarm_actions
+
+  tags = { Name = "${local.name}-ai-mem-high" }
+}
+
+# ---- KAN-38 경보 3종: 관측성 지표가 실제로 사람을 부르는 자리 ----
+#
+# KAN-134가 "서버가 죽었다"를 알리고, 아래 셋은 "서버는 살아 있는데 파이프라인이 고장 났다"를
+# 알린다. 죽음은 사용자가 바로 알지만 이쪽은 대기 화면이 길어지는 것으로만 드러나 아무도
+# 신고하지 않는다 - 무인 운영에서 조용히 나빠지는 구간이다.
+#
+# 셋 다 같은 SNS 토픽으로 간다. 심각도별 채널을 나누지 않는 것은 KAN-38의 제약 그대로다
+# (경보와 화면을 최소로) - 3인 팀에 채널이 여럿이면 어느 쪽도 보지 않게 된다.
+
+# ---- 경보 1: AI 임시 디렉터리 잔존 파일 (KAN-27 청소 잡 실패) ----
+
+# AI는 BE와 달리 오디오가 디스크를 한 번 거친다 (ai/app/tempstore.py - 추론 라이브러리가 파형
+# 파일을 읽는다). 지우는 겹이 셋인데(요청 종료 시 finally, 기동 정리, 주기 스윕) 전부 실패하면
+# 원본 음성이 호스트에 남는다 - 즉시 파기(NFR-PR-03, §5.5) 위반이라 사람이 봐야 한다.
+#
+# 임계치가 20인 이유: 이 지표는 <b>처리 중인 파일도 센다</b>(스윕은 보존 기간 안의 파일을 잔존으로
+# 집계한다). 동시 추론은 backend 태스크당 워커 1개(dispatch-concurrency, 실모델 기준 KAN-172) x
+# 태스크 최대 3개(KAN-168)라 구조적으로 3을 넘지 못하므로, 20이면 정상 부하가 절대 닿지 않으면서
+# "안 지워지고 쌓인다"는 신호에는 걸린다. 그 3이라는 상한이 바뀌면(워커 수, 오토스케일링 상한) 여기도 함께 본다.
+#
+# 정확한 고장 신호는 잔존 시간(TempOldestAge)이다 - 보존 기간 30분을 넘긴 파일은 삭제가 실패한
+# 것뿐이다. 다만 티켓 AC가 "잔존 파일 수 임계치"라 경보는 건수로 걸고, 잔존 시간은 대시보드에
+# 함께 그려 원인을 가르게 한다 (건수만 오르면 부하, 시간까지 오르면 청소 잡 고장).
+#
+# treat_missing_data = "notBreaching": 호스트 타이머가 값을 못 읽으면 이 지표를 아예 올리지 않는다
+# (스크립트가 0으로 덮지 않는다 - 0은 "깨끗하다"라서 조회가 막힌 순간에 경보가 조용해진다).
+# 그 결측은 잔존이 쌓인 것과 다르고, 타이머나 호스트 자체가 죽은 것은 ai-unhealthy가 잡는다.
+resource "aws_cloudwatch_metric_alarm" "ai_temp_residue" {
+  alarm_name        = "${local.name}-ai-temp-residue"
+  alarm_description = "accentury ${var.env}: AI 호스트의 임시 디렉터리에 파일이 ${var.ai_temp_residue_threshold}개 이상 남아 있습니다. 청소 잡(KAN-27)이 막혔는지, 원본 음성이 파기되지 않고 있는지 확인하세요. 대시보드의 최장 잔존 시간이 30분을 넘었으면 삭제 실패입니다. (KAN-38)"
+
+  namespace   = var.ai_metric_namespace
+  metric_name = "TempFiles"
+  dimensions  = { env = var.env }
+
+  statistic           = "Maximum"
+  period              = 300
+  evaluation_periods  = 2
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = var.ai_temp_residue_threshold
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = local.alarm_actions
+  ok_actions    = local.alarm_actions
+
+  tags = { Name = "${local.name}-ai-temp-residue" }
+}
+
+# ---- 경보 2: 분석 진행 중 건수 적체 ----
+
+# 큐가 없는 구조라(HTTP 디스패치) 진행 중 건수가 곧 AI에 걸린 압력이다. 이 값이 지속적으로 높다는
+# 것은 추론이 유입을 못 따라간다는 뜻이고, 사용자에게는 대기 화면 체류로 나타난다 - 그러다 실행
+# 잔류 한도(60초)에 닿으면 재녹음 안내를 받는다.
+#
+# 보는 값은 <b>전 인스턴스</b> 합(DB의 PROCESSING 행 수)이다. 태스크별 인메모리 카운터
+# (accentury.analysis.inflight)로 걸면 태스크 셋이 임계치를 나눠 가져 아무도 울지 않는다 - KAN-167이
+# 혼잡 판정을 DB로 옮긴 것과 같은 이유다. 태스크가 여럿이면 이 지표는 태스크마다 같은 값을 올리므로
+# Maximum으로 읽는다 (합이 아니다 - 합하면 태스크 수만큼 부풀려진다).
+#
+# 임계치 12는 폴링 혼잡 임계치(congestion-threshold 6, application.yml - KAN-172)의 두 배다. 6에서는 서버가
+# 폴링 간격을 올려 스스로 압력을 빼는 것으로 충분하고, 그 조치에도 두 배로 쌓였다면 사람이 볼 일이다.
+# AI가 1건 10초라(KAN-57) 12건은 대기열 2분이다.
+# 5분 연속을 요구해 업로드가 몰린 순간(다섯 문항 연속 제출)으로는 서지 않는다.
+#
+# treat_missing_data = "notBreaching": backend가 죽으면 지표가 끊기는데 그것은 no-healthy-target이 잡는다.
+resource "aws_cloudwatch_metric_alarm" "analysis_backlog_high" {
+  alarm_name        = "${local.name}-analysis-backlog-high"
+  alarm_description = "accentury ${var.env}: 진행 중 분석이 ${var.analysis_backlog_evaluation_periods}분 연속 ${var.analysis_backlog_threshold}건을 넘었습니다. AI가 유입을 못 따라가는 중입니다 - AI 호스트 부하와 backend 워커 수(dispatch-concurrency)를 확인하세요. (KAN-38)"
+
+  namespace   = var.backend_metric_namespace
+  metric_name = "accentury.analysis.processing.value"
+  dimensions  = { env = var.env }
+
+  statistic           = "Maximum"
+  period              = 60
+  evaluation_periods  = var.analysis_backlog_evaluation_periods
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = var.analysis_backlog_threshold
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = local.alarm_actions
+  ok_actions    = local.alarm_actions
+
+  tags = { Name = "${local.name}-analysis-backlog-high" }
+}
+
+# ---- 경보 3: 분석 타임아웃 급증 ----
+
+# 적체 경보가 "밀리고 있다"라면 이쪽은 "이미 버려지고 있다"이다. 타임아웃 종결은 그 사용자가
+# 재녹음 안내를 받았다는 뜻이라 적체보다 늦고 더 아픈 신호다 - 둘 다 두는 이유이고, AC의
+# "AI 진행 중 건수 또는 타임아웃"의 "또는"이기도 하다. 지표 하나로 합치지 않는 것은 단위가 달라서다
+# (건수 게이지와 누적 카운터를 더하면 어느 쪽이 울렸는지 알 수 없다).
+#
+# 두 사유를 합해서 본다 - 실행 잔류(stuck)든 큐 유실(lost)든 사용자에게는 같은 실패이고, 어느
+# 쪽이었는지는 대시보드가 나눠 그린다. 합을 쓰는 이유는 alb-5xx와 같다: 한쪽만 보면 다른 쪽 장애를
+# 놓치고, 경보를 둘로 늘리면 이 티켓의 "경보 최소" 제약을 깬다.
+#
+# 임계치 5는 5분에 5건이다. 정상 운영에서 타임아웃은 0이다(워커가 죽거나 AI가 60초 넘게 붙들려야
+# 난다) - 1~2건은 배포 중 태스크 교체로도 나므로, 그 위를 사람이 볼 선으로 잡는다.
+#
+# treat_missing_data = "notBreaching": 카운터는 0도 발행하지만, backend가 죽으면 끊긴다 -
+# 그것은 no-healthy-target이 잡는다.
+resource "aws_cloudwatch_metric_alarm" "analysis_timeouts_high" {
+  alarm_name        = "${local.name}-analysis-timeouts-high"
+  alarm_description = "accentury ${var.env}: 분석 타임아웃이 5분 동안 ${var.analysis_timeout_threshold}건을 넘었습니다. 실행 잔류와 큐 유실의 합이며, 그만큼의 사용자가 재녹음 안내를 받았습니다. 대시보드에서 두 사유를 나눠 보세요. (KAN-38)"
+
+  evaluation_periods  = 1
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = var.analysis_timeout_threshold
+  treat_missing_data  = "notBreaching"
+
+  metric_query {
+    id          = "total_timeouts"
+    expression  = "SUM([stuck, lost])"
+    label       = "타임아웃 합계 (실행 잔류 + 큐 유실)"
+    return_data = true
+  }
+
+  metric_query {
+    id = "stuck"
+
+    metric {
+      namespace   = var.backend_metric_namespace
+      metric_name = "accentury.analysis.timeouts.count"
+      dimensions  = { env = var.env, reason = "stuck" }
+      period      = 300
+      stat        = "Sum"
+    }
+  }
+
+  metric_query {
+    id = "lost"
+
+    metric {
+      namespace   = var.backend_metric_namespace
+      metric_name = "accentury.analysis.timeouts.count"
+      dimensions  = { env = var.env, reason = "lost" }
+      period      = 300
+      stat        = "Sum"
+    }
+  }
+
+  alarm_actions = local.alarm_actions
+  ok_actions    = local.alarm_actions
+
+  tags = { Name = "${local.name}-analysis-timeouts-high" }
 }

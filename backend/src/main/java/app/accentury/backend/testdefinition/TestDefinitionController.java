@@ -37,7 +37,12 @@ public class TestDefinitionController {
             .cachePrivate()
             .immutable();
 
-    /** 세트를 모르는 기존 클라이언트(웹)는 세트 1을 받는다 - 생략이 곧 1이다 (KAN-182 하위 호환). */
+    /**
+     * 세트를 모르는 호출자는 세트 1을 받는다 - 생략이 곧 1이다 (KAN-182 하위 호환).
+     * <p>
+     * 세션 생성의 생략과 뜻이 다르다 - 거기는 서버에 배정을 위임한다는 뜻이다 (KAN-205).
+     * 이 엔드포인트는 인증이 없어 세션을 모르므로 그 세션의 세트를 알아서 줄 수 없다.
+     */
     static final int DEFAULT_VOICE_SET = 1;
 
     private final TestDefinitionRegistry registry;
@@ -50,8 +55,10 @@ public class TestDefinitionController {
      * 테스트 정의(세트 하나)를 조회한다.
      * <p>
      * 세션 생성 응답의 {@code testVersion}을 그대로 넣어 문항 목록을 받는다. 인증이 필요 없다.
-     * {@code voiceSet}은 세션 생성 응답의 값이고, 생략하면 세트 1이다 - 세트를 모르는 기존
-     * 클라이언트는 변경 없이 세트 1을 받고, 그 응답은 {@code voiceSet=1}과 바이트 단위로 같다.
+     * {@code voiceSet}도 세션 생성 응답의 값을 그대로 넣는다 - 서버가 세션마다 세트를 고르므로
+     * (KAN-205) 이 값을 빠뜨리면 세션의 세트와 응시한 문항의 세트가 갈려 제출이 전부 422
+     * {@code ITEM_NOT_IN_VERSION}으로 막힌다. 생략하면 세트 1이다 - 세트를 모르는 호출자는
+     * 변경 없이 세트 1을 받고, 그 응답은 {@code voiceSet=1}과 바이트 단위로 같다.
      * <p>
      * 버전 경로는 <b>불변</b>이다. 문항 내용이 바뀌면 같은 경로를 고치는 게 아니라 새 {@code testVersion}을
      * 발행한다. 그래서 응답에 {@code ETag}와 1년짜리 {@code Cache-Control: private, immutable}이 붙는다.
@@ -67,7 +74,8 @@ public class TestDefinitionController {
      * 404 그런 {@code testVersion}이 없거나 {@code voiceSet}이 세트 수를 넘음({@code RESOURCE_NOT_FOUND}).
      *
      * @param testVersion 세션 생성 응답의 {@code testVersion} (예: {@code gn-2026.08.1})
-     * @param voiceSet    세션 생성 응답의 {@code voiceSet} (1부터). 생략 시 1.
+     * @param voiceSet    세션 생성 응답의 {@code voiceSet} (1부터). 생략 시 1 - 세션이 있는
+     *                    클라이언트는 생략하면 안 된다.
      */
     @GetMapping("/{testVersion}")
     public @Nullable ResponseEntity<TestDefinitionResponse> get(

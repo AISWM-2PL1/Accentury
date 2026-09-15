@@ -124,7 +124,8 @@ internal fun CurveLane(
                 )
             },
     ) {
-        Canvas(modifier = Modifier.fillMaxSize().padding(top = Spacing.x4, bottom = Spacing.x1)) {
+        // 위 여백이 라벨 한 줄보다 넓어야 한다 - x4(16)이던 때는 캡션(19.5)이 넘쳐 곡선과 겹쳤다
+        Canvas(modifier = Modifier.fillMaxSize().padding(top = Spacing.x6, bottom = Spacing.x1)) {
             val stroke = (if (isUser) USER_STROKE else GUIDE_STROKE).toPx()
             // 점선은 가이드에만 쓴다 - 색이 아니라 선 모양으로 두 곡선을 가르므로
             // 색각 이상에서도 어느 쪽이 내 곡선인지 알 수 있다 (WCAG 1.4.1)
@@ -179,7 +180,7 @@ internal fun CurveLane(
             label,
             style = MaterialTheme.typography.labelSmall,
             color = muted,
-            modifier = Modifier.padding(start = Spacing.x3, top = Spacing.x1),
+            modifier = Modifier.padding(start = Spacing.x3),
         )
     }
 }

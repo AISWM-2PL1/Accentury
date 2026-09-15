@@ -1,7 +1,10 @@
 import { useState } from 'react'
+import { useAdConsent } from '../ads/adConsent'
+import { AdConsentSheet } from '../ads/AdConsentSheet'
 import { requestMicrophonePermission, type MicPermission } from '../audio/microphone'
 import { detectStorePlatform } from '../audio/storeLink'
 import { requestMicPermission } from '../bridge/bridge'
+import { PrivacyNotice } from '../legal/PrivacyNotice'
 import { Button } from '../ui'
 import { TextHero } from '../ui/TextHero'
 import {
@@ -40,9 +43,26 @@ export interface IntroScreenProps {
  * 권한이 없으면 테스트를 시작할 수 없다(API 명세서 §5.6) — 그래서 실패는 안내 화면으로
  * 갈아치운다. 인트로에 오류 문구만 붙이면 [시작하기]가 계속 눌리는 버튼으로 남는다.
  *
- * 배치는 Papercut 아트보드(`Main.dc.html`)를 따른다 — 확성기 일러스트, 제목·부제, 숫자 카드,
- * 바닥의 주버튼. 문항 수·시간은 `introText.ts`의 상수가 정본이라 KAN-10 연동 때 서버 값으로
+ * 배치는 Papercut 아트보드(`Main.dc.html`)를 따른다 — 워드마크·제목·숫자 카드와 바닥의
+ * 주버튼. 문항 수·시간은 `introText.ts`의 상수가 정본이라 KAN-10 연동 때 서버 값으로
  * 바꾸면 화면은 그대로 따라간다.
+ *
+ * ## 맞춤형 광고 동의 시트가 여기 있는 이유 (KAN-196)
+ *
+ * 시트는 이 화면 위에 덮이고, 시트를 다시 여는 링크(「맞춤형 광고 설정」)도 이 화면 하단에
+ * 있다 — 여닫는 상태를 아는 곳이 둘 다 이 화면이라 App까지 올릴 이유가 없다. 수신자 설치를
+ * 부모가 하는 규칙(webview-layer.md §8)은 네이티브 → 웹 슬롯의 마운트 순서 문제인데, 동의는
+ * 웹 → 네이티브 동기 읽기·쓰기뿐이라 그 규칙이 걸리지 않는다.
+ *
+ * 앱의 첫 실행에 묻는다는 것은 곧 인트로에서 묻는다는 뜻이다 — 앱에 인트로보다 먼저 서는
+ * 웹 화면이 없다. 브라우저 단독 실행의 첫 방문도 같은 자리에서 같은 시트로 묻는다
+ * (KAN-197 2단계) — 갈리는 것은 저장소와 문안의 사업자뿐이다 (`ads/adConsent.ts`).
+ *
+ * 권한 차단 화면(`MicBlockedScreen`)으로 갈아치운 뒤에는 시트를 그리지 않는다. 그 화면은 할
+ * 일이 하나뿐이고(마이크를 되찾는 것) 그 위에 동의 시트를 겹치면 무엇을 먼저 하라는 말인지
+ * 알 수 없다. 잃는 것도 없다 — [다시 시도]로 인트로에 돌아오면 아직 `unknown`이라 시트가
+ * 그대로 다시 뜬다. 애초에 시트가 떠 있는 동안에는 막이 [시작하기]를 덮어 이 화면까지 오기도
+ * 어렵다 (`AdConsentSheet`의 「닫는 길이 선택뿐이다」).
  */
 export function IntroScreen({
   onWebStart = warnWebStartUnwired,
@@ -55,6 +75,18 @@ export function IntroScreen({
   const [blocked, setBlocked] = useState<Exclude<MicPermission, 'granted'> | null>(null)
   /** 권한은 통과했는데 시작이 막혔다 (세션 생성 실패). 값이 곧 사용자에게 보일 문구다 */
   const [startFailure, setStartFailure] = useState<string | null>(null)
+  /*
+   * 맞춤형 광고 동의 (KAN-196, 웹 갈래는 KAN-197 2단계). `unknown`이면 아직 묻지 않은 것이라
+   * 시트를 띄운 채 시작한다 — 앱의 첫 실행과 브라우저의 첫 방문이 여기서 같아졌다. null이면
+   * 이 실행에 광고 동의라는 개념이 없어(광고 동의 메서드를 모르는 구버전 앱) 시트도 링크도
+   * 없다 — `granted`·`denied`와 같이 시트는 닫혀 있지만, 링크의 유무가 다르다.
+   *
+   * [vendor]는 훅이 고른 저장소를 그대로 따라온다 (`useAdConsent`) — 네이티브에 묻는 실행은
+   * AdMob, 브라우저 저장소에 묻는 실행은 AdSense다. 시트 문안 중 사업자와 수집 항목이 이 값에서
+   * 갈린다 (`ads/adConsentText.ts`).
+   */
+  const { consent, choose: chooseConsent, vendor: adVendor } = useAdConsent()
+  const [consentSheetOpen, setConsentSheetOpen] = useState(consent === 'unknown')
 
   async function startWebGate() {
     setRequesting(true)
@@ -106,28 +138,30 @@ export function IntroScreen({
   }
 
   return (
-    <main className="screen">
+    <main className="screen intro-screen">
       <div className="screen__body">
-        {/*
-          종이 일러스트(확성기를 든 사람)를 걷어내고 글자를 세웠다 (KAN-178). 그림은 이 앱이
-          무엇을 하는 곳인지 말하지 않았다 — 첫 화면은 사용자에게 말을 걸어야 하고, 그건
-          그리는 것보다 적는 편이 빠르다.
-
-          히어로가 이 화면의 h1이다. 아래에 있던 제목("사투리 억양 테스트")을 걷어냈다 —
-          큰 글자로 말을 건 바로 밑에서 같은 말을 정색하고 되풀이하는 꼴이었고, 사용자가
-          그 두 줄에서 새로 얻는 정보가 없었다. 화면 이름을 말하는 것이 히어로 하나뿐이므로
-          `heading`으로 세운다 (`TextHero` 주석 참고).
-
-          제목이 빠진 만큼 히어로를 192px 슬롯에서 꺼내 부제와 한 덩어리로 묶었다 —
-          근거는 `.intro-hero` 주석에 적었다.
-        */}
+        {/* 화면 이름은 큰 문장 하나이므로 `heading`은 히어로에만 주고,
+            브랜드 표기인 워드마크는 평문으로 남겨 h1이 둘로 갈리지 않게 한다. */}
         <div className="intro-hero">
-          <TextHero heading>사투리 좀 치나?</TextHero>
-          <p className="type-body-sm" style={{ color: 'var(--color-muted-foreground)' }}>
-            짧은 테스트로 내 억양이
-            <br />
-            얼마나 사투리인지 알아봐요.
-          </p>
+          <p className="type-title-sm intro-wordmark">Accentury</p>
+          <div className="intro-heading">
+            <TextHero heading>
+              사투리
+              <br />
+              좀 치나?
+            </TextHero>
+            {/* 7px stroke의 절반인 y=3.5를 위에 남기고 viewBox 하단도 곡선 끝에 맞췄다.
+                직선 밑줄보다 둘째 줄을 바로 받치는 얕은 손짓으로 읽히게 하기 위해서다. */}
+            <svg
+              className="intro-heading__underline"
+              viewBox="0 0 200 12"
+              preserveAspectRatio="none"
+              aria-hidden
+            >
+              <path d="M 4 3.5 Q 100 13.5 196 3.5" vectorEffect="non-scaling-stroke" />
+            </svg>
+          </div>
+          <p className="type-body-sm intro-subtitle">내 목소리로 확인하는 사투리 억양</p>
         </div>
 
         {/*
@@ -144,9 +178,10 @@ export function IntroScreen({
           </div>
           {/* 문항 구성. 이모지(🎤📝)를 뺀 이유는 위 일러스트와 같다 */}
           <p className="type-label card__footnote">
-            음성 {VOICE_ITEM_COUNT} · 단어 {VOCABULARY_ITEM_COUNT}
+            음성 {VOICE_ITEM_COUNT} + 단어 {VOCABULARY_ITEM_COUNT}
           </p>
         </div>
+        <p className="type-body-sm intro-prompt">사투리 좀 치는지, 지금 확인해봐요.</p>
       </div>
 
       <div className="screen__footer">
@@ -164,10 +199,48 @@ export function IntroScreen({
           것은 결과 화면에서 [다시 테스트하기]로 말하면 되고, 시작하기 전에 미리 말하면
           하단이 두 줄이 되어 주 버튼 하나만 남기는 시안의 배치가 흐려진다.
         */}
-        <Button onClick={handleStart} disabled={requesting} style={{ width: '100%' }}>
-          {requesting ? '마이크 확인 중…' : '시작하기'}
+        <Button className="intro-cta" onClick={handleStart} disabled={requesting}>
+          {requesting ? (
+            '마이크 확인 중…'
+          ) : (
+            <>
+              내 억양 테스트하기 <span aria-hidden>→</span>
+            </>
+          )}
         </Button>
+        {/*
+          고지는 버튼 **아래**다 (KAN-177). [시작하기]가 곧 마이크 권한 요청이라, 대화상자가
+          뜨기 직전 마지막으로 읽히는 자리에 둬야 고지 노릇을 한다.
+
+          버튼의 크기도 탭 영역도 그대로다 — 늘어나는 것은 하단 자리의 높이뿐이고, 바닥에
+          붙는 것이 버튼에서 이 한 줄로 바뀐다. 캡션 글자라 주버튼과 무게가 겹치지 않는다.
+        */}
+        <PrivacyNotice
+          /*
+           * 링크는 광고 동의가 있는 실행에만 준다 (KAN-196). `PrivacyNotice`는 값이 없으면
+           * 그리지 않으므로 판정을 여기서 한 번만 한다.
+           */
+          onAdConsentSettings={consent === null ? undefined : () => setConsentSheetOpen(true)}
+        />
       </div>
+
+      {/*
+        동의 시트 (KAN-196). `position: fixed`라 `.screen`의 flex 흐름 밖에서 화면 전체를
+        덮는다 — 하단 자리(`.screen__footer`) 뒤에 두는 이유는 쌓임 순서다: sticky가 만드는
+        맥락보다 뒤에 와야 막이 고지 줄을 덮는다 (`.ad-consent-sheet`의 z-index와 함께).
+        `consent`가 null이면 열릴 수 없다 — 초기값이 `unknown`에서만 true이고, 링크가 없어
+        다시 열 길도 없다.
+      */}
+      {consentSheetOpen && consent !== null && (
+        <AdConsentSheet
+          current={consent}
+          vendor={adVendor}
+          onChoose={(state) => {
+            chooseConsent(state)
+            setConsentSheetOpen(false)
+          }}
+        />
+      )}
     </main>
   )
 }

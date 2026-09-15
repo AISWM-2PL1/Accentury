@@ -41,6 +41,21 @@ DEVELOPMENT_TEAM = $(ACCENTURY_TEAM_ID)
 // 읽지 않으므로(그쪽 주석 참고) 릴리스 빌드가 이 키를 받는 경로도 이 한 줄과 명령줄뿐이다.
 KAKAO_NATIVE_APP_KEY =
 
+// AdMob 앱 ID·광고 단위 ID 셋 (KAN-196). 안드로이드 `app/build.gradle.kts`의 admobAppId()·
+// admobInterstitialId()·admobRewardedId()와 같은 자리이고 **기본값이 Google 테스트 ID**다 —
+// 카카오 키와 갈리는 지점이다. 카카오는 빈 키로 기능을 끄지만 광고는 테스트 ID로 켜 둔다:
+// 광고 없는 빌드는 대기 화면·재응시의 광고 결선을 한 번도 밟지 않아 검증이 안 되고, Google이
+// 테스트 ID를 주는 이유가 정확히 그것이다 (developers.google.com/admob/ios/test-ads).
+//
+// 값을 넣는 자리는 카카오 키와 같다 — 로컬은 Local.xcconfig, 아카이브는 명령줄
+// `xcodebuild ... ADMOB_APP_ID=... ADMOB_INTERSTITIAL_ID=... ADMOB_REWARDED_ID=...`.
+// 테스트 ID가 스토어로 나가는 것은 `REQUIRE_ADMOB_IDS=YES` 빗장이 막는다 (project.yml).
+// 앱 ID는 Info-*.plist의 GADApplicationIdentifier로, 단위 ID 둘은 같은 plist를 거쳐
+// AppConfig.swift로 흐른다 (WEB_URL과 같은 사슬).
+ADMOB_APP_ID = ca-app-pub-3940256099942544~1458002511
+ADMOB_INTERSTITIAL_ID = ca-app-pub-3940256099942544/4411468910
+ADMOB_REWARDED_ID = ca-app-pub-3940256099942544/1712485313
+
 // 여기서 Local.xcconfig를 한 번 읽는 이유는 ACCENTURY_TEAM_ID 하나 때문이다 — Release도
 // 팀 ID는 필요하다. WEB_URL·API_BASE_URL 오버라이드는 이 지점이 아니라 Debug.xcconfig 끝의
 // 두 번째 `#include?`가 담당한다. Release의 URL은 이 include '뒤'에 놓여 있어(Release.xcconfig)

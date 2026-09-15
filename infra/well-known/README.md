@@ -8,8 +8,8 @@
 infra/well-known/
   prod/.well-known/assetlinks.json                  accentury.app 용 (릴리스 지문 1개)
   prod/.well-known/apple-app-site-association       accentury.app 용
-  staging/.well-known/assetlinks.json               staging.accentury.app 용 (릴리스 + 디버그 지문)
-  staging/.well-known/apple-app-site-association    staging.accentury.app 용 (prod와 내용 동일)
+  staging/.well-known/assetlinks.json               staging 도메인 용 (릴리스 + 디버그 지문)
+  staging/.well-known/apple-app-site-association    staging 도메인 용 (prod와 내용 동일)
 ```
 
 환경 디렉터리가 그 환경에 올라갈 것 전부를 들고 있다. AASA 두 벌이 글자까지 같은데도 복사본을

@@ -29,10 +29,10 @@ class DeployProfileStartupTest {
 
         // 명령행 인자로 준다 - builder.properties()는 기본값(최하위)이라 application-deploy.yml이
         // 비워 둔 값에 덮인다. 배포에서 환경 변수가 yml을 이기는 것과 같은 우선순위 관계다.
-        // 빠뜨릴 여섯은 빈 값으로 명시한다 - 명령행 인자는 OS 환경 변수보다 우선하므로, 개발자 셸에
-        // ACCENTURY_ADMIN_TOKEN 같은 값이 있어도 "누락 6건"이 흔들리지 않는다 (PR 리뷰).
+        // 빠뜨릴 일곱은 빈 값으로 명시한다 - 명령행 인자는 OS 환경 변수보다 우선하므로, 개발자 셸에
+        // ACCENTURY_ADMIN_TOKEN 같은 값이 있어도 "누락 7건"이 흔들리지 않는다 (PR 리뷰).
         Throwable thrown = assertThrows(Throwable.class, () -> app.run(
-                // DB 주소와 자격 증명은 있다 - 나머지 여섯이 없다 (web-test-url과 asset-base-url은 deploy yml이
+                // DB 주소와 자격 증명은 있다 - 나머지 일곱이 없다 (web-test-url과 asset-base-url은 deploy yml이
                 // 비운다 - main의 prod 도메인 기본값이 staging에 새지 않게).
                 "--spring.datasource.url=jdbc:postgresql://deploy-guard.invalid:5432/accentury",
                 "--spring.datasource.username=accentury",
@@ -43,17 +43,19 @@ class DeployProfileStartupTest {
                 "--accentury.admin.token=",
                 "--accentury.result.web-test-url=",
                 "--accentury.result.asset-base-url=",
+                "--accentury.share.kakao-admin-key=",
                 // CloudWatch 내보내기(KAN-36)는 배포 프로파일이 켜지만 여기서는 올릴 곳이 없다.
                 "--management.cloudwatch.metrics.export.enabled=false"));
         String message = String.valueOf(NestedExceptionUtils.getMostSpecificCause(thrown).getMessage());
 
-        assertTrue(message.contains("필수 설정 누락 6건"), message);
+        assertTrue(message.contains("필수 설정 누락 7건"), message);
         assertTrue(message.contains("ACCENTURY_ANALYSIS_AIBASEURL"), message);
         assertTrue(message.contains("ACCENTURY_ANALYSIS_AITOKEN"), message);
         assertTrue(message.contains("ACCENTURY_TRUSTEDPROXIES"), message);
         assertTrue(message.contains("ACCENTURY_ADMIN_TOKEN"), message);
         assertTrue(message.contains("ACCENTURY_RESULT_WEBTESTURL"), message);
         assertTrue(message.contains("ACCENTURY_RESULT_ASSETBASEURL"), message);
+        assertTrue(message.contains("ACCENTURY_SHARE_KAKAOADMINKEY"), message);
         // 시크릿 값이 메시지에 실리지 않는다 - 기동 로그도 로그다.
         assertFalse(message.contains("unused"), message);
     }

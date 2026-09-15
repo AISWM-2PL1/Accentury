@@ -228,7 +228,7 @@ class AnalysisDrainLifecycleTest extends IntegrationTest {
             }
         };
         holder[0] = new HttpAnalysisDispatcher(client, new SyncTaskExecutor(), transitions,
-                new AnalysisBacklog(), openCircuitNever(), 2, 0);
+                new AnalysisBacklog(), openCircuitNever(), TestMetrics.analysisMetrics(), 2, 0);
 
         holder[0].dispatch(request(job));
 
@@ -281,7 +281,7 @@ class AnalysisDrainLifecycleTest extends IntegrationTest {
     private HttpAnalysisDispatcher dispatcher(AiAnalysisClient client, ThreadPoolTaskExecutor executor,
                                               AnalysisBacklog backlog) {
         return new HttpAnalysisDispatcher(client, executor, transitions, backlog,
-                openCircuitNever(), 0, 0);
+                openCircuitNever(), TestMetrics.analysisMetrics(), 0, 0);
     }
 
     private static AiCircuitBreaker openCircuitNever() {
@@ -300,6 +300,6 @@ class AnalysisDrainLifecycleTest extends IntegrationTest {
 
     private static AnalysisDispatcher.AnalysisRequest request(AnalysisJob job) {
         return new AnalysisDispatcher.AnalysisRequest(job.id(), job.sessionId(), job.itemId(), null,
-                "gn-2026.08.1", "sv-0.3", 3000, new byte[] {1, 2, 3});
+                "gn-2026.08.1", "sv-0.3", null, 3000, new byte[] {1, 2, 3});
     }
 }

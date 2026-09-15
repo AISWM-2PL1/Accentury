@@ -3,8 +3,8 @@
 # 보안의 핵심은 참조 사슬이다: CloudFront VPC 오리진 -> alb-sg -> backend-sg -> rds-sg.
 # 각 계층이 바로 앞 계층의 보안 그룹만 허용하므로 앞 단계를 건너뛴 직접 접근이 없다.
 # 규칙은 IP 대역이 아니라 보안 그룹 참조로 지정한다 - 태스크가 교체되고 늘어도(KAN-168) 규칙을
-# 고칠 필요가 없다. AI 호스트(ai-sg)는 이 사슬의 곁가지다: backend-sg(Fargate 태스크)만
-# 8000에 들어올 수 있고, 인터넷은 물론 ALB에서도 닿지 않는다 (KAN-36).
+# 고칠 필요가 없다. AI 호스트는 이 사슬의 곁가지다: backend-sg(Fargate 태스크) -> ai-alb-sg(내부 ALB)
+# -> ai-sg(호스트) 두 단계이고(KAN-201), 인터넷은 물론 앞단 alb-sg에서도 닿지 않는다 (KAN-36).
 # backend-sg는 KAN-124의 ec2-sg 자리다 - EC2 인스턴스가 아니라 awsvpc 태스크 ENI에 붙는다 (KAN-165).
 
 locals {
@@ -177,18 +177,49 @@ resource "aws_security_group" "ai" {
   tags = { Name = "${local.name}-ai-sg" }
 }
 
-# A단계(KAN-36)의 출처는 backend EC2의 ec2-sg였다. Fargate 전환(KAN-165)에서 backend 태스크 SG로 옮겼다.
-resource "aws_vpc_security_group_ingress_rule" "ai_from_backend" {
-  security_group_id            = aws_security_group.ai.id
-  description                  = "ai 8000 from backend tasks only"
+# ai 호스트 앞의 내부 ALB (KAN-201, ai-host 모듈). 호스트가 2대 이상이 되면서 backend가 부르는 이름
+# (ai.accentury.internal)이 인스턴스 하나의 IP가 아니라 이 ALB를 가리킨다. 이 SG는 backend 태스크에서만
+# 8000을 받고 ai-sg로만 8000을 내보낸다 - 앞단 alb-sg(CloudFront 오리진용)와는 별개다.
+resource "aws_security_group" "ai_alb" {
+  name        = "${local.name}-ai-alb-sg"
+  description = "internal ALB in front of AI hosts - inbound 8000 only from backend-sg"
+  vpc_id      = aws_vpc.this.id
+
+  tags = { Name = "${local.name}-ai-alb-sg" }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "ai_alb_from_backend" {
+  security_group_id            = aws_security_group.ai_alb.id
+  description                  = "ai ALB 8000 from backend tasks only"
   ip_protocol                  = "tcp"
   from_port                    = 8000
   to_port                      = 8000
   referenced_security_group_id = aws_security_group.backend.id
 }
 
-# 아웃바운드 전체 허용: ECR pull, SSM(Session Manager, Parameter Store), Route 53 API(자기
-# A 레코드 갱신), CloudWatch(상태 지표)가 전부 호스트가 밖으로 거는 연결이다. 컨테이너의
+resource "aws_vpc_security_group_egress_rule" "ai_alb_to_ai" {
+  security_group_id            = aws_security_group.ai_alb.id
+  description                  = "forward and health check to AI hosts"
+  ip_protocol                  = "tcp"
+  from_port                    = 8000
+  to_port                      = 8000
+  referenced_security_group_id = aws_security_group.ai.id
+}
+
+# A단계(KAN-36)의 출처는 backend EC2의 ec2-sg였고, Fargate 전환(KAN-165)에서 backend 태스크 SG로, 내부 ALB
+# 도입(KAN-201)에서 ai-alb-sg로 옮겼다. backend 태스크가 호스트 8000에 직접 닿는 길은 이제 없다 - 모든
+# 호출과 상태 검사가 ALB를 거친다.
+resource "aws_vpc_security_group_ingress_rule" "ai_from_ai_alb" {
+  security_group_id            = aws_security_group.ai.id
+  description                  = "ai 8000 from ai ALB only"
+  ip_protocol                  = "tcp"
+  from_port                    = 8000
+  to_port                      = 8000
+  referenced_security_group_id = aws_security_group.ai_alb.id
+}
+
+# 아웃바운드 전체 허용: ECR pull, SSM(Session Manager, Parameter Store), CloudWatch(상태 지표),
+# 부팅 자산 S3가 전부 호스트가 밖으로 거는 연결이다. 컨테이너의
 # 인터넷과 IMDS 차단은 SG가 아니라 호스트 iptables가 한다 - SG egress는 호스트와 컨테이너를
 # 못 가른다 (ai-host 모듈 ai-egress-guard.sh).
 resource "aws_vpc_security_group_egress_rule" "ai_all_ipv4" {
@@ -206,9 +237,10 @@ resource "aws_vpc_security_group_egress_rule" "ai_all_ipv6" {
 }
 
 # backend가 AI를 부르는 고정 이름 (KAN-36). ASG가 인스턴스를 교체하면 사설 IP가 바뀌므로
-# 주소를 SSM에 박아 둘 수 없다. 인스턴스가 부팅 시 자기 IP로 A 레코드(TTL 10초)를 UPSERT하고
-# backend는 이름만 안다 - 값의 정본은 config 모듈의 ACCENTURY_ANALYSIS_AIBASEURL이다. Fargate
-# 태스크는 awsvpc라 VPC의 기본 리졸버를 쓰므로 이 영역이 그대로 풀린다 (KAN-165).
+# 주소를 SSM에 박아 둘 수 없다. KAN-36에서는 인스턴스가 부팅 시 자기 IP로 A 레코드를 UPSERT했고,
+# KAN-201부터는 ai-host 모듈이 내부 ALB의 alias 레코드로 만든다 - backend는 이름만 안다. 값의
+# 정본은 config 모듈의 ACCENTURY_ANALYSIS_AIBASEURL이다. Fargate 태스크는 awsvpc라 VPC의 기본
+# 리졸버를 쓰므로 이 영역이 그대로 풀린다 (KAN-165).
 # 영역 이름은 두 환경이 같다(accentury.internal). 프라이빗 영역은 연결된 VPC 안에서만
 # 풀리고 VPC는 환경마다 다르므로 같은 이름이 충돌하지 않고, tfvars 차이도 늘지 않는다.
 # 검토한 대안: 고정 ENI 사전 생성(AZ에 묶여 ASG를 서브넷 1개로 제한), 내부 NLB(월 16달러
@@ -221,8 +253,8 @@ resource "aws_route53_zone" "private" {
     vpc_id = aws_vpc.this.id
   }
 
-  # A 레코드는 Terraform이 아니라 AI 인스턴스가 만든다(ai-host 모듈 accentury-up.sh). destroy가
-  # 그 레코드 때문에 영역 삭제에서 막히지 않게 남은 레코드를 함께 지운다.
+  # KAN-36 시절 AI 인스턴스가 직접 만든 A 레코드가 남아 있어도 destroy가 영역 삭제에서 막히지 않게
+  # 남은 레코드를 함께 지운다. 지금 레코드는 ai-host 모듈이 소유한다 (alias, KAN-201).
   force_destroy = true
 
   tags = { Name = "${local.name}-private-zone" }

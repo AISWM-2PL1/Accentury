@@ -47,6 +47,13 @@ struct RecordingScreen: View {
     /// 같은 인스턴스가 남는다.
     @State private var guideCurve = GuideCurveCache()
 
+    /// 검토 화면의 [재녹음]을 눌렀다 (KAN-33 계측). 되감기는 이 화면이 직접 걸고(``RecordingModel``)
+    /// 이 콜백은 세기만 한다 — 문항 번호를 아는 쪽이 호출자라 파라미터를 여기서 만들 수 없다.
+    ///
+    /// 기본값이 있는 유일한 인자다. `.failed`의 [다시 시도]는 부르지 않는다 — 그쪽은 녹음이 아예
+    /// 안 된 자리라 "다시 읽기로 했다"는 사건이 아니고, 웹 `RetakeReason`에도 그 사유가 없다.
+    var onRetake: () -> Void = {}
+
     /// quality는 검토 상태에만 있고 화면이 넘어가는 즉시 되감기므로 호출자가 나중에 되물을 수
     /// 없다. 브리지 계약(KAN-89)이 qualityStatus를 요구해서 여기서 함께 넘긴다.
     let onNext: (_ attemptId: String, _ durationMs: Int64, _ quality: QualityStatus) -> Void
@@ -120,17 +127,28 @@ struct RecordingScreen: View {
          * "값을 어떻게 읽을 것인가"의 문제라 단위를 모르면 그릴 수 없지만, 길이는 간격 × 구간
          * 수라서 단위와 무관하게 맞는다. 그래서 가이드를 못 그리는 경우에도 창은 제 값을 잡는다.
          */
+        // 상한은 이 화면이 실제로 녹음을 끊는 값과 같아야 한다 - 아래 "/ n초" 표기도 같은 상수를
+        // 읽는다 (KAN-195, `userCurveWindowMs` 주석).
         let liveWindowMs = userCurveWindowMs(
             frameIntervalMs: guideF0?.frameIntervalMs,
-            valueCount: guideF0?.values.count
+            valueCount: guideF0?.values.count,
+            maxDurationMs: RecordingEngine.maxDurationMs
         )
-        let frames = model.curvePitchFrames
         // 이 창은 사용자 레인만 쓴다. 가이드는 사용자 창과 무관하게 항상 자기 길이로 레인 폭
         // 전체를 쓴다 (2026-08-25 결정 — `docs/wiki/pitch-curve.md` §4 "가이드 레인은 별도
         // 시간축이다"). 두 레인은 같은 시각을 맞춰 보는 도구가 아니라 모양을 견주는 도구다.
-        let windowMs = model.isReviewing
-            ? reviewWindowMs(frames, liveWindowMs: liveWindowMs)
-            : liveWindowMs
+        //
+        // Review에서는 창과 보여줄 구간을 `reviewWindow`가 함께 정한다 (KAN-195) — 발화 구간에
+        // 맞춰 앞뒤 침묵을 걷어내므로 곡선이 레인 양끝에 닿는다.
+        let review = model.isReviewing
+            ? reviewWindow(
+                model.curvePitchFrames,
+                frameIntervalMs: guideF0?.frameIntervalMs,
+                valueCount: guideF0?.values.count
+            )
+            : nil
+        let frames = review?.frames ?? model.curvePitchFrames
+        let windowMs = review?.windowMs ?? liveWindowMs
         let guidePoints = guideCurve.points(for: guideF0)
         let userSegments = userCurveDisplayPoints(frames, windowMs: windowMs, centerHz: centerHz)
 
@@ -267,7 +285,10 @@ struct RecordingScreen: View {
              * 않을 만큼 작아진다.
              */
             HStack(spacing: Papercut.space3) {
-                AccenturyButton(text: "재녹음", variant: .secondary, fillsWidth: true) { model.retry() }
+                AccenturyButton(text: "재녹음", variant: .secondary, fillsWidth: true) {
+                    onRetake()
+                    model.retry()
+                }
                 AccenturyButton(
                     text: "다음",
                     enabled: review.canProceed,

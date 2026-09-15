@@ -32,15 +32,15 @@ final class WebConfigTests: XCTestCase {
 
     // MARK: - buildWebUrl: 테스트 진입 URL 조립 (KAN-100)
 
-    /// 테스트 진입 URL은 스큐 파라미터에 screen test testVersion sessionId를 잇는다.
-    func testTestEntryUrlAppendsScreenTestVersionAndSessionId() {
+    /// 테스트 진입 URL은 스큐 파라미터에 screen test testVersion voiceSet sessionId를 잇는다.
+    func testTestEntryUrlAppendsScreenTestVersionVoiceSetAndSessionId() {
         XCTAssertEqual(
             "https://web.example.com?bridge=\(bridgeContractVersion)&app=1.0"
-                + "&screen=test&testVersion=gn-2026.08.1&sessionId=dev-session",
+                + "&screen=test&testVersion=gn-2026.08.1&voiceSet=7&sessionId=dev-session",
             buildWebUrl(
                 base: "https://web.example.com",
                 appVersionName: "1.0",
-                testEntry: TestEntry(testVersion: "gn-2026.08.1", sessionId: "dev-session")
+                testEntry: TestEntry(testVersion: "gn-2026.08.1", voiceSet: 7, sessionId: "dev-session")
             )
         )
     }
@@ -59,9 +59,11 @@ final class WebConfigTests: XCTestCase {
             base: "https://web.example.com",
             appVersionName: "1.0",
             // 서버가 발급하는 값이라 형식을 앱이 보증하지 않는다 — 파라미터를 덧붙이는 꼴이 되면 안 된다.
-            testEntry: TestEntry(testVersion: "gn 2026&x=1", sessionId: "s/1?2")
+            testEntry: TestEntry(testVersion: "gn 2026&x=1", voiceSet: 2, sessionId: "s/1?2")
         )
         XCTAssertTrue(url.contains("&testVersion=gn+2026%26x%3D1&"))
+        // 세트는 정수라 인코딩할 것이 없다 - 값이 그대로 실렸는지만 본다 (KAN-205)
+        XCTAssertTrue(url.contains("&voiceSet=2&"))
         XCTAssertTrue(url.hasSuffix("&sessionId=s%2F1%3F2"))
     }
 
@@ -76,11 +78,11 @@ final class WebConfigTests: XCTestCase {
     func testAppendsTestEntryParametersToBaseWithExistingQuery() {
         XCTAssertEqual(
             "https://web.example.com?env=dev&bridge=\(bridgeContractVersion)&app=1.0"
-                + "&screen=test&testVersion=v1&sessionId=s1",
+                + "&screen=test&testVersion=v1&voiceSet=1&sessionId=s1",
             buildWebUrl(
                 base: "https://web.example.com?env=dev",
                 appVersionName: "1.0",
-                testEntry: TestEntry(testVersion: "v1", sessionId: "s1")
+                testEntry: TestEntry(testVersion: "v1", voiceSet: 1, sessionId: "s1")
             )
         )
     }
@@ -99,11 +101,11 @@ final class WebConfigTests: XCTestCase {
     func testCampaignTokenIsAppendedAtTheEndOfTheTestEntryUrl() {
         XCTAssertEqual(
             "https://web.example.com?bridge=\(bridgeContractVersion)&app=1.0"
-                + "&screen=test&testVersion=v1&sessionId=s1&c=kko_share",
+                + "&screen=test&testVersion=v1&voiceSet=1&sessionId=s1&c=kko_share",
             buildWebUrl(
                 base: "https://web.example.com",
                 appVersionName: "1.0",
-                testEntry: TestEntry(testVersion: "v1", sessionId: "s1"),
+                testEntry: TestEntry(testVersion: "v1", voiceSet: 1, sessionId: "s1"),
                 campaignToken: "kko_share"
             )
         )
@@ -178,4 +180,73 @@ final class WebConfigTests: XCTestCase {
             isAllowedWebUrl("https://WEB.Example.com/intro", allowedOrigins: ["https://web.example.com"])
         )
     }
+
+    // MARK: - externalUrlToOpen: 앱 밖으로 내보낼 URL (KAN-177)
+
+    /// prod 도메인의 https 문서는 그대로 돌려준다.
+    func testTheProdDocumentPassesThroughUnchanged() {
+        XCTAssertEqual(
+            "https://accentury.app/privacy.html",
+            externalUrlToOpen("https://accentury.app/privacy.html")
+        )
+    }
+
+    /// staging 호스트도 거절한다 - 방침은 정본이 하나이고 웹이 이 호스트를 보내지 않는다.
+    /// ``appLinkOrigins``와 갈리는 지점이다: 저쪽은 앱으로 들어오는 경로라 staging이 필요하다.
+    func testTheStagingHostIsRejectedToo() {
+        XCTAssertNil(externalUrlToOpen("https://staging.accentury.app/privacy.html"))
+    }
+
+    /// 경로와 포트가 달라도 호스트만 맞으면 통과한다 — `isAllowedWebUrl`과 갈리는 지점이다.
+    func testPathAndPortDoNotMatterOnlyTheHost() {
+        XCTAssertEqual(
+            "https://accentury.app/legal/privacy.html",
+            externalUrlToOpen("https://accentury.app/legal/privacy.html")
+        )
+    }
+
+    /// 목록 밖 호스트는 거절한다. 접미사 비교가 아니라 완전 일치다.
+    func testHostsOutsideTheListAreRejected() {
+        XCTAssertNil(externalUrlToOpen("https://evil.example.com/privacy.html"))
+        XCTAssertNil(externalUrlToOpen("https://accentury.app.evil.example.com/privacy.html"))
+    }
+
+    /// https가 아니면 거절한다.
+    func testNonHttpsSchemesAreRejected() {
+        XCTAssertNil(externalUrlToOpen("http://accentury.app/privacy.html"))
+        XCTAssertNil(externalUrlToOpen("javascript:alert(1)"))
+        XCTAssertNil(externalUrlToOpen("accentury://privacy"))
+    }
+
+    /// 파서를 갈라 놓을 수 있는 문자는 거절한다 — 검사에 쓰는 `URLComponents`와 실제로 여는
+    /// `URL`이 그 문자에서 host를 다르게 읽을 여지를 애초에 없앤다 (안드로이드와 같은 자리).
+    func testCharactersThatCanSplitTheTwoParsersAreRejected() {
+        XCTAssertNil(externalUrlToOpen("https://accentury.app@evil.example.com/privacy.html"))
+        XCTAssertNil(externalUrlToOpen("https://accentury.app\\@evil.example.com/privacy.html"))
+        XCTAssertNil(externalUrlToOpen("https://accentury.app/priv acy.html"))
+        XCTAssertNil(externalUrlToOpen("https://accentury.app/privacy.html\n"))
+    }
+
+    /// 호스트에 percent-encoding이 있으면 거절한다 (KAN-199 #2).
+    ///
+    /// Foundation은 `%61`을 `a`로 풀어 `accentury.app`으로 읽고 통과시켰고, 안드로이드
+    /// `java.net.URI`는 authority를 디코딩하지 않아 host가 nil이라 거절했다 — 같은 입력에
+    /// 두 앱이 다르게 답하던 자리다. 안드로이드 `WebConfigTest.kt`에 같은 케이스가 있다.
+    func testPercentEncodedHostsAreRejected() {
+        XCTAssertNil(externalUrlToOpen("https://%61ccentury.app/privacy.html"))
+        XCTAssertNil(externalUrlToOpen("https://accentury%2eapp/privacy.html"))
+        // 경로의 percent-encoding은 정상이다 - 막는 것은 호스트뿐이다
+        XCTAssertEqual(
+            "https://accentury.app/privacy%20policy.html",
+            externalUrlToOpen("https://accentury.app/privacy%20policy.html")
+        )
+    }
+
+    /// 빈 값과 형식이 아닌 값은 거절한다.
+    func testEmptyAndMalformedValuesAreRejected() {
+        XCTAssertNil(externalUrlToOpen(nil))
+        XCTAssertNil(externalUrlToOpen(""))
+        XCTAssertNil(externalUrlToOpen("not a url"))
+    }
+
 }

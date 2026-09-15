@@ -1,5 +1,8 @@
 package app.accentury.backend.common;
 
+import app.accentury.backend.observability.ServiceMetrics;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -47,29 +50,48 @@ import java.util.concurrent.TimeUnit;
 @Component
 public class RateLimits {
 
-    /** 제한 축 - 이름이 곧 "무엇을 무엇으로 세는가"다. */
+    /**
+     * 제한 축 - 이름이 곧 "무엇을 무엇으로 세는가"다.
+     * <p>
+     * {@link #axis()}는 그 "무엇으로"의 두 갈래(IP인가 세션인가)이고, 429 지표의 태그로 나간다
+     * (KAN-38 AC "429 발생률을 세션별, IP별로 구분해 볼 수 있다"). 세션 ID나 IP 자체를 태그로
+     * 쓰지 않는 이유는 {@link ServiceMetrics}에 있다 - 값이 열려 있으면 요금이 트래픽에 비례한다.
+     */
     public enum Scope {
         /** {@code POST /v0/sessions} - IP당 (인증 없는 유일한 쓰기 경로, §3.1) */
-        SESSION_CREATE,
+        SESSION_CREATE("ip"),
         /** 음성 업로드 - IP당 (§3.3, multipart 해석 전에 집행) */
-        VOICE_UPLOAD_IP,
+        VOICE_UPLOAD_IP("ip"),
         /** 음성 업로드 - 세션당 (§3.3, 인증 뒤 집행) */
-        VOICE_UPLOAD_SESSION,
+        VOICE_UPLOAD_SESSION("session"),
         /** 어휘 답안 - 세션당 (§3.5) */
-        VOCAB_ANSWER,
+        VOCAB_ANSWER("session"),
         /** 완료 폴링 - 세션당 (§3.6) */
-        COMPLETE
+        COMPLETE("session");
+
+        private final String axis;
+
+        Scope(String axis) {
+            this.axis = axis;
+        }
+
+        /** 이 축이 무엇을 키로 세는가 - {@code ip} 또는 {@code session}. */
+        public String axis() {
+            return axis;
+        }
     }
 
     private final Map<Scope, FixedWindowRateLimiter> limiters;
+    private final Map<Scope, Counter> rejections;
 
     @Autowired
-    public RateLimits(AccenturyProperties properties) {
-        this(limitsFrom(properties), Clock.systemUTC());
+    public RateLimits(AccenturyProperties properties, MeterRegistry meterRegistry) {
+        this(limitsFrom(properties), Clock.systemUTC(), meterRegistry);
     }
 
-    RateLimits(Map<Scope, Integer> limitsPerMinute, Clock clock) {
+    RateLimits(Map<Scope, Integer> limitsPerMinute, Clock clock, MeterRegistry meterRegistry) {
         Map<Scope, FixedWindowRateLimiter> byScope = new EnumMap<>(Scope.class);
+        Map<Scope, Counter> byScopeRejections = new EnumMap<>(Scope.class);
         for (Scope scope : Scope.values()) {
             Integer limit = limitsPerMinute.get(scope);
             if (limit == null) {
@@ -83,8 +105,16 @@ public class RateLimits {
                         "요청 제한 한도는 1 이상이어야 한다: " + scope + "=" + limit);
             }
             byScope.put(scope, new FixedWindowRateLimiter(limit, clock));
+            // 축마다 미리 등록한다 - 429가 처음 나는 순간에 만들면, 아무도 한도를 넘지 않은
+            // 동안 그 축의 지표가 아예 없어 대시보드가 "0"과 "모름"을 구분하지 못한다.
+            byScopeRejections.put(scope, Counter.builder(ServiceMetrics.RATE_LIMITED)
+                    .description("429로 끊긴 요청 수 - 재시도 폭풍과 임계치 적절성의 신호 (KAN-38)")
+                    .tag("axis", scope.axis())
+                    .tag("scope", scope.name())
+                    .register(meterRegistry));
         }
         this.limiters = Map.copyOf(byScope);
+        this.rejections = Map.copyOf(byScopeRejections);
     }
 
     /** 설정에서 범위별 한도를 뽑는다 - 한도가 어느 설정 키에서 오는지가 여기 한 곳에 있다. */
@@ -97,9 +127,17 @@ public class RateLimits {
                 Scope.COMPLETE, properties.completion().rateLimitPerMinute());
     }
 
-    /** 한도 초과면 429 {@code RATE_LIMITED} + {@code Retry-After} (§2.2, §2.3) */
+    /**
+     * 한도 초과면 429 {@code RATE_LIMITED} + {@code Retry-After} (§2.2, §2.3).
+     * 초과 건은 축별로 센다 (KAN-38) - 429가 어느 축에서 나는지가 임계치를 어디서 올릴지를 정한다.
+     */
     public void check(Scope scope, String key) {
-        limiters.get(scope).check(key);
+        try {
+            limiters.get(scope).check(key);
+        } catch (ApiException e) {
+            rejections.get(scope).increment();
+            throw e;
+        }
     }
 
     /**

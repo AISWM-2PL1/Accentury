@@ -22,12 +22,13 @@
  * 화면과 큰 글자 크기에서 두 칸이 서로를 찌그러뜨리지 않게 하기 위해서다 (AC 6항).
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { storeLabelFor, storeUrlFor, type StorePlatform } from '../audio/storeLink'
 import type { FetchLike } from '../progress/fetchTestDefinition'
-import { Button, StatusBlock, type ButtonVariant } from '../ui'
+import { Button, StatusBlock } from '../ui'
 import { ShareIcon } from '../ui/icons'
 import { fetchResult, ResultFetchError } from './fetchResult'
+import { RetestAction } from './RetestAction'
 import { TIER_IMAGE_HEIGHT, TIER_IMAGE_WIDTH, tierImageFor } from './tierAssets'
 import type { RetestControl } from './useRetest'
 import type { TestResultView } from './testResult'
@@ -70,6 +71,15 @@ export interface ResultScreenProps {
    */
   onDownloadClick?: () => void
   /**
+   * 결과가 처음으로 도착했다 (KAN-33 계측 자리). **성공한 첫 조회에 한 번만** 부른다 —
+   * [다시 시도]로 다시 조회해도, 부모가 리렌더돼도 두 번 가지 않는다.
+   *
+   * 화면이 직접 세지 않고 콜백으로 올리는 이유는 `campaign` 때문이다. 유입 코드는 진입 URL이
+   * 들고 있는 값이라 그 규칙을 아는 것은 App이고(`trackedCampaign`), 이 화면이 URL을 읽기
+   * 시작하면 다운로드 CTA를 부모 판정으로 받는 규칙과 어긋난다.
+   */
+  onResultLoaded?: (result: TestResultView) => void
+  /**
    * 주입용 fetch (테스트용).
    *
    * **참조가 안정적이어야 한다** — 이 값이 조회 이펙트의 의존성이라, 렌더마다 새로 만든
@@ -92,11 +102,18 @@ export function ResultScreen({
   retest,
   storePlatform,
   onDownloadClick,
+  onResultLoaded,
   fetchImpl,
 }: ResultScreenProps) {
   const [load, setLoad] = useState<LoadState>({ status: 'loading' })
   // [다시 시도]는 이 값을 올려 조회 이펙트를 다시 돌린다 (TestFlowScreen과 같은 방식).
   const [attempt, setAttempt] = useState(0)
+  /*
+   * 결과 도착을 이미 알렸는가. 계측은 "이 사람이 결과를 봤다" 한 건이라, 재조회나 토큰
+   * 변경으로 이펙트가 다시 돌아도 한 번이어야 한다 (AC "중복 화면 노출로 이벤트가 과다
+   * 발생하지 않는다").
+   */
+  const notified = useRef(false)
 
   useEffect(() => {
     // 재시도로 요청이 겹칠 때 먼저 뜬 응답이 뒤늦게 화면을 덮지 않도록 버린다.
@@ -104,7 +121,12 @@ export function ResultScreen({
     setLoad({ status: 'loading' })
     fetchResult({ apiBase, sessionId, sessionToken }, fetchImpl)
       .then((result) => {
-        if (!cancelled) setLoad({ status: 'ready', result })
+        if (cancelled) return
+        setLoad({ status: 'ready', result })
+        if (!notified.current) {
+          notified.current = true
+          onResultLoaded?.(result)
+        }
       })
       .catch((error: unknown) => {
         if (!cancelled) setLoad({ status: 'error', error: asResultError(error) })
@@ -112,6 +134,13 @@ export function ResultScreen({
     return () => {
       cancelled = true
     }
+    /*
+     * `onResultLoaded`는 의존성에 없다. 부모가 렌더마다 새로 만드는 인라인 콜백이라 넣으면
+     * 부모가 다시 그려질 때마다 결과를 다시 조회한다 (`fetchImpl` 주석과 같은 함정이고,
+     * 그쪽은 참조 안정을 요구해 풀었지만 이 콜백은 계측 한 번이라 그럴 값어치가 없다).
+     * 한 번만 부르는 것은 위 `notified`가 보증한다.
+     */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiBase, sessionId, sessionToken, fetchImpl, attempt])
 
   const retry = useCallback(() => setAttempt((n) => n + 1), [])
@@ -351,49 +380,6 @@ function AppDownloadAction({
       <p className="type-caption" style={{ color: 'var(--color-muted-foreground)' }}>
         {storeLabelFor(platform)}로 이동해요
       </p>
-    </>
-  )
-}
-
-/**
- * [다시 테스트하기] 한 벌 — 버튼과 그 아래 안내 한두 줄 (KAN-34).
- *
- * 만료 화면(410)과 하단, 두 자리가 이걸 그대로 쓴다. 두 곳이 각자 그리면 한쪽만 잠긴 화면이
- * 생기는데, 더블탭 방지가 클라이언트 몫이라(KAN-107) 한 자리라도 새면 방어가 아니게 된다.
- */
-function RetestAction({ retest, variant }: { retest: RetestControl; variant?: ButtonVariant }) {
-  const { onRetest, disabled, pending, message, retryAfterSec } = retest
-
-  return (
-    <>
-      <Button variant={variant} onClick={onRetest} disabled={disabled}>
-        {/*
-          성공하면 회신이 아니라 페이지 교체가 온다. 그 사이 create 왕복 동안 화면은 아무것도
-          모르므로, 할 수 있는 말은 "받았고 진행 중"까지다 — 몇 초 걸리는지도 알 수 없다.
-        */}
-        {pending ? '준비 중…' : '다시 테스트하기'}
-      </Button>
-
-      {message !== null && (
-        /*
-          네이티브가 준 문구를 그대로 그린다 — 갈래별 카피를 웹이 따로 들면 같은 판정에 두
-          벌이 생겨 앱과 웹이 다른 말을 하게 된다 (RetestFailure 계약).
-
-          role="alert"인 이유는 StatusBlock의 오류 문구와 같다: 이미 떠 있는 화면에서 나중에
-          나타나는 실패라, 스스로 읽어 주지 않으면 버튼이 왜 죽었는지 알 길이 없다.
-        */
-        <p className="type-caption result-retest__message" role="alert">
-          {message}
-        </p>
-      )}
-
-      {retryAfterSec > 0 && (
-        /*
-          429 대기 안내 (§2.5). live 영역에 두지 않는다 — 1초마다 바뀌는 값이라 읽어 주면
-          같은 문장을 매초 반복해 위 실패 문구를 덮는다.
-        */
-        <p className="type-caption result-retest__wait">{retryAfterSec}초 후 다시 시도할 수 있어요</p>
-      )}
     </>
   )
 }

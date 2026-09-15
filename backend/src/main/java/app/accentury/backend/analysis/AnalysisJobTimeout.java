@@ -19,8 +19,9 @@ import java.util.concurrent.TimeUnit;
  * 오인해 정상 대기 작업을 폐기하면 안 된다):
  * <ul>
  *   <li><b>실행 잔류</b> ({@code startedAt} 경과): 실행 중 프로세스 사망 등. 한도는
- *       AI 호출 재시도 전체 소요보다 긴 60초 - 클라이언트 폴링 상한(§5.3 규칙 5)과 같은
- *       스케일이다. AI에 닿았을 수 있어 ANALYSIS_TIMEOUT(시도 예산에 포함)이다.</li>
+ *       AI 호출 재시도 최악 소요(ai-timeout 85초 x 3회 + 백오프 = 255.9초)보다 긴 300초다
+ *       (KAN-172, 실모델 기준). 클라이언트 폴링 상한 60초(§5.3 규칙 5)보다 길지만 정상 추론
+ *       P95 11초에서는 닿지 않는다. AI에 닿았을 수 있어 ANALYSIS_TIMEOUT(시도 예산에 포함)이다.</li>
  *   <li><b>큐 유실</b> ({@code startedAt} 없이 {@code createdAt} 경과): 접수와 실행 사이의
  *       프로세스 사망. 정상 큐 대기와 구분할 수 없어 한도가 더 길다(5분 - 정상 큐 소진보다
  *       길고, 복구가 세션 TTL 안에 보이도록 그보다 짧다). AI에 닿지 않았으므로
@@ -36,10 +37,13 @@ public class AnalysisJobTimeout {
 
     private final AnalysisJobRepository repository;
     private final AccenturyProperties properties;
+    private final AnalysisMetrics metrics;
 
-    public AnalysisJobTimeout(AnalysisJobRepository repository, AccenturyProperties properties) {
+    public AnalysisJobTimeout(AnalysisJobRepository repository, AccenturyProperties properties,
+                              AnalysisMetrics metrics) {
         this.repository = repository;
         this.properties = properties;
+        this.metrics = metrics;
     }
 
     @Scheduled(initialDelay = 30, fixedDelay = 30, timeUnit = TimeUnit.SECONDS)
@@ -55,6 +59,10 @@ public class AnalysisJobTimeout {
         int lost = repository.failUnstartedBefore(
                 now.minus(properties.analysis().queuedTimeout()),
                 ErrorCode.ANALYSIS_UNAVAILABLE.name(), now);
+        // 지표는 로그와 달리 0건도 지난다 - 카운터는 증가분만 올리므로 0을 더해도 값이 그대로다.
+        // 두 사유를 태그로 가르는 이유는 대응이 다르기 때문이다 (KAN-38): 실행 잔류는 워커나
+        // AI 쪽이고, 큐 유실은 프로세스가 죽은 흔적이다.
+        metrics.recordTimeouts(stuck, lost);
         if (stuck > 0 || lost > 0) {
             log.warn("PROCESSING 잔류 작업 종결 - 실행 잔류 {}건, 큐 유실 {}건", stuck, lost);
         }

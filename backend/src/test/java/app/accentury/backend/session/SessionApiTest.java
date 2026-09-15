@@ -14,7 +14,9 @@ import java.time.Instant;
 
 import static org.hamcrest.Matchers.aMapWithSize;
 import static org.hamcrest.Matchers.startsWith;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -34,6 +36,9 @@ class SessionApiTest extends IntegrationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private TestSessionRepository sessionRepository;
+
     // === KAN-9 AC - 유효한 요청은 새 세션을 반환한다 ===
 
     @Test
@@ -50,7 +55,8 @@ class SessionApiTest extends IntegrationTest {
                 // KAN-9 AC - 응답에 testVersion과 scoreVersion이 모두 포함된다.
                 .andExpect(jsonPath("$.testVersion").value("gn-2026.08.1"))
                 .andExpect(jsonPath("$.scoreVersion").value("sv-0.3"))
-                // KAN-182 - 세트를 모르는 클라이언트는 세트 1이고, 현행 발행본은 세트가 하나다.
+                // KAN-182, KAN-205 - 세트를 생략하면 서버가 고르는데, 현행 발행본은 음성 5문항이라
+                // 세트가 하나뿐이라 결과가 항상 1이다.
                 .andExpect(jsonPath("$.voiceSet").value(1))
                 .andExpect(jsonPath("$.voiceSetCount").value(1))
                 .andExpect(jsonPath("$.expiresAt").exists())
@@ -58,7 +64,7 @@ class SessionApiTest extends IntegrationTest {
                 .andExpect(jsonPath("$").value(aMapWithSize(7)));
     }
 
-    // === KAN-182 - 세트 선택 ===
+    // === KAN-182, KAN-205 - 세트 선택 ===
 
     @Test
     void voiceSet_1은_명시해도_생략과_같다() throws Exception {
@@ -145,6 +151,55 @@ class SessionApiTest extends IntegrationTest {
                         .content("{ \"campaignToken\": \"한글 토큰!\" }"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
+    // === 출신 지역 (KAN-201, §3.1 region) ===
+
+    @Test
+    void region은_코드_10개_중_하나로_세션에_저장되고_응답에는_없다() throws Exception {
+        String body = mockMvc.perform(post("/v0/sessions")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{ \"region\": \"GYEONGNAM\" }"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.region").doesNotExist())
+                .andReturn().getResponse().getContentAsString();
+        String sessionId = objectMapper.readTree(body).get("sessionId").asString();
+
+        TestSession stored = sessionRepository.findById(sessionId).orElseThrow();
+        assertEquals("GYEONGNAM", stored.region());
+    }
+
+    @Test
+    void region을_보내지_않으면_null로_저장된다() throws Exception {
+        // 앱과 prod 웹은 보내지 않는다 - 학습 데이터 키에서는 UNKNOWN으로 읽힌다 (Region.forStorage).
+        String sessionId = createSession().get("sessionId").asString();
+
+        assertNull(sessionRepository.findById(sessionId).orElseThrow().region());
+        assertEquals(Region.UNKNOWN, Region.forStorage(null));
+    }
+
+    @Test
+    void 빈_region은_보내지_않은_것과_같다() throws Exception {
+        // 웹이 미선택을 빈 값으로 보내도 세션 생성이 막히지 않는다 (PR #105 리뷰).
+        String body = mockMvc.perform(post("/v0/sessions")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{ \"region\": \"\" }"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        assertNull(sessionRepository.findById(objectMapper.readTree(body).get("sessionId").asString())
+                .orElseThrow().region());
+    }
+
+    @Test
+    void 코드_밖의_region은_400_VALIDATION_FAILED다() throws Exception {
+        // 소문자, 모르는 지역, 저장 전용 UNKNOWN 전부 거절한다 - campaignToken 형식 검증과 같은 결과다.
+        for (String bad : new String[] {"busan", "gyeongnam", "UNKNOWN", " GYEONGNAM"}) {
+            mockMvc.perform(post("/v0/sessions")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{ \"region\": \"" + bad + "\" }"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+        }
     }
 
     private JsonNode createSession() throws Exception {

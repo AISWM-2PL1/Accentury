@@ -31,6 +31,11 @@ struct TestFlowView: View {
     @StateObject private var voiceCheck = VoiceCheckModel()
     @StateObject private var uploads = UploadModel()
 
+    /// 광고 허브 (KAN-196). 프로세스 단위 인스턴스라 `@StateObject`가 아니라 `@ObservedObject`다 —
+    /// 미리 받아 둔 광고가 화면 재생성을 넘겨야 해서 뷰가 소유하지 않는다 (``AdsController`` 주석).
+    /// 관측하는 값은 `consent` 하나이고, 그것이 바뀌면 `WebViewHost`가 현재 문서에 다시 민다.
+    @ObservedObject private var ads = AdsController.shared
+
     /// 결과를 웹에 넣으려면 `evaluateJavaScript`를 부를 인스턴스가 필요하다.
     /// 로드 실패 화면·재시도 구간에는 WebView가 아예 없으므로 옵셔널이다.
     @State private var webView: WKWebView?
@@ -44,6 +49,16 @@ struct TestFlowView: View {
     /// 통로 판정이 끝난 뒤에만 채워지므로, 카카오로 나간 공유는 여기까지 오지 않는다.
     @State private var sheetShare: SharePayload?
 
+    /// 앱 안 이벤트가 나가는 창구 하나 (KAN-33). 안드로이드 `MainActivity`의
+    /// `remember { EventSink.create(context) }` 자리다 — 웹이 브리지로 보낸 것도, 네이티브 화면이
+    /// 직접 세는 것도(공유·재녹음) 전부 여기로 모인다. 같은 사건이 두 경로로 가지 않게 하는 것이
+    /// 이 창구가 하나뿐이라는 사실 자체다.
+    ///
+    /// `@StateObject`가 아니라 값인 이유: 고른 sink는 상태가 없다 (``FirebaseEventSink``). 뷰 값이
+    /// 다시 만들어질 때마다 새로 골라도 같은 판정이 나오고, 판정 자체는 ``FirebaseSetup``이 앱
+    /// 시작에 한 번 끝내 둔 값을 읽을 뿐이다.
+    private let events: EventSink = makeEventSink()
+
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -53,10 +68,31 @@ struct TestFlowView: View {
                     url: model.webUrl,
                     allowedOrigins: model.allowedOrigins,
                     sessionToken: model.bridgeToken,
+                    adConsent: ads.consent.bridgeValue,
                     onRequestMicPermission: { model.onRequestMicPermission() },
                     onStartVoiceItem: { model.onStartVoiceItem($0) },
-                    onStartRetest: { Task { @MainActor in await handleRetest() } },
+                    onStartRetest: { handleRetest() },
                     onShareResult: { model.onShareResult($0) },
+                    /*
+                     * 웹이 센 사건을 앱 스트림으로 넘긴다 (KAN-33). 이름을 여기서 손대지 않는 것이
+                     * 요점이다 — 웹과 앱이 같은 이름으로 쌓여야 하나의 퍼널이 되고, 그 정본은
+                     * `web/src/analytics/events.ts` 하나다. 값 검증은 브리지가 이미 끝냈다.
+                     */
+                    onLogEvent: { name, params in events.log(name, params) },
+                    /*
+                     * 인트로의 개인정보처리방침 링크 (KAN-177). 앱에 설정 화면이 없어 방침으로
+                     * 가는 길이 이것뿐이고, WebView 안에서 열면 인트로가 사라져 돌아올 길이 없다 —
+                     * iOS에는 시스템 뒤로가기조차 없다. 그래서 인트로 위에 Safari 시트를 덮는다
+                     * (``ExternalBrowser``). URL 검증은 브리지가 이미 끝냈다.
+                     */
+                    onOpenExternalUrl: { ExternalBrowser.open($0) },
+                    /*
+                     * 광고 (KAN-196). 저장과 프리로드는 허브가 하고, 전면 광고는 받아 둔 것을 띄울
+                     * 뿐이다. 판단은 하나도 여기 없다 — 시트 값 걸러내기는 브리지가, 요청 조건은
+                     * 허브가, 재응시 갈래는 Core 상태기계가 정한다.
+                     */
+                    onSetAdConsent: { ads.setConsent($0) },
+                    onShowInterstitialAd: { ads.showInterstitial() },
                     onWebViewCreated: { created in
                         webView = created
                         #if DEBUG
@@ -303,6 +339,25 @@ struct TestFlowView: View {
                 // 쓴다 — 문항마다 다시 잡으면 같은 사람의 곡선이 문항마다 다른 축에 놓인다.
                 centerHz: model.voiceCenterHz.map { Float($0) },
                 recording: recording,
+                /*
+                 * 네이티브 녹음 화면의 [재녹음] (KAN-33). 웹 녹음기가 세는 것과 같은 사건이라
+                 * 이름·파라미터를 그대로 맞춘다 — 앱 사용자의 재녹음만 다른 지표로 갈리면 문항
+                 * 난이도를 두 표본으로 나눠 보게 된다.
+                 *
+                 * 사유가 USER 하나인 이유는 이 자리가 실패 없이 사용자가 다시 읽기로 한 지점이라서다.
+                 * 서버가 되돌려보낸 재녹음(QUALITY·FAILED)은 웹의 분석 대기 화면이 소유하고 거기서
+                 * 이미 센다.
+                 */
+                onRetake: {
+                    events.log(
+                        RecordingEvents.retake,
+                        [
+                            // 사람이 읽는 1-기반 번호다 (웹 `item_seq`와 같은 값).
+                            RecordingEvents.paramItemSeq: .count(Int64(start.itemNumber)),
+                            RecordingEvents.paramReason: .text(RecordingEvents.reasonUser),
+                        ]
+                    )
+                },
                 onSubmit: { attemptId, durationMs, quality in
                     submitRecording(start: start, attemptId: attemptId, durationMs: durationMs, quality: quality)
                 }
@@ -417,7 +472,20 @@ struct TestFlowView: View {
     private func routeShare(_ payload: SharePayload?) {
         guard let payload else { return }
         model.consumeShare()
-        ResultSharer.forApp(presentSheet: { sheetShare = $0 }).share(payload)
+        /*
+         * 탭은 여기서 세지 않는다 (FR-SH-06). 그 한 건은 웹이 `share_clicked`로 이미 세고, 앱
+         * 안에서는 브리지 `logEvent`를 타고 같은 sink로 들어온다 — 네이티브가 이름을 하나 더
+         * 붙이면 같은 탭이 앱과 웹에서 다른 축으로 갈린다. 네이티브가 세는 것은 통로가 실제로
+         * 열린 일뿐이고, 그쪽은 ``ResultSharer``가 통로를 붙여 울린다. 클릭 수와 실행 수의
+         * 차이는 그대로 "눌렀는데 아무 데도 못 간" 비율이다.
+         */
+        ResultSharer.forApp(
+            presentSheet: { sheetShare = $0 },
+            // 띄운 통로만 싣는다. 세션·점수는 익명 규칙에서 제외 대상이다 (``EventSink``).
+            onLaunched: { channel in
+                events.log(ShareEvents.launched, [ShareEvents.paramChannel: .text(channelParam(channel))])
+            }
+        ).share(payload)
     }
 
     @MainActor
@@ -525,8 +593,38 @@ struct TestFlowView: View {
     }
     #endif
 
+    /// 결과 화면의 [다시 테스트하기] → 보상형 광고 → 재응시 (KAN-196, webview-bridge.md §8.2).
+    /// 안드로이드 `MainActivity.startRetest` 자리다.
+    ///
+    /// 광고를 아는 앱에서는 이 호출이 곧 보상형 광고다. 끝까지 보면(또는 보여줄 광고가 없거나 표시에
+    /// 실패하면) ``proceedRetest()``가 기존 흐름을 밟고, 중도에 닫으면 `AD_DISMISSED`를 웹에 회신해
+    /// 결과 화면이 버튼을 다시 연다. 갈래는 Core ``AccenturyCore/RewardedRetestGate``가 정한다.
+    ///
+    /// **`beginRetest()`(retestInFlight)는 광고 완주 뒤에 건다** — ``TestFlowModel/startRetest()`` 안에
+    /// 있으므로 광고 앞에서는 아무 플래그도 서지 않는다. 그 플래그는 "세션 요청이 나가 있다"는
+    /// 뜻이고 광고 시청은 그 앞 단계다. 광고 중 두 번째 탭은 웹의 pending 잠금(useRetest)과
+    /// 게이트의 표시 중 플래그가 막는다.
+    ///
+    /// 브리지 메시지(메인)에서 불리고 SDK 콜백도 메인이라 ``proceedRetest()``가 어느 쪽에서
+    /// 불려도 같은 스레드다.
     @MainActor
-    private func handleRetest() async {
+    private func handleRetest() {
+        ads.runRewardedRetest(
+            onProceed: { Task { @MainActor in await proceedRetest() } },
+            onDismissed: {
+                // 결과 화면은 그대로 살아 있다 — 세션 요청은 나가지도 않았다. 서버 실패 회신과
+                // 같은 수신 지점(onRetestFailed)으로 보내고, 웹은 문구를 그대로 그린다.
+                webView?.evaluateJavaScript(
+                    retestFailedDeliveryJs(adDismissedRetestFailure()),
+                    completionHandler: nil
+                )
+            }
+        )
+    }
+
+    /// 재응시 본체 (KAN-34 2단계, KAN-107). 보상형 광고 게이트를 통과한 뒤에만 온다 (``handleRetest()``).
+    @MainActor
+    private func proceedRetest() async {
         guard let failure = await model.startRetest() else { return }
         // 결과 화면은 그대로 살아 있다 — 왜 아무 일도 일어나지 않았는지 그 화면에 회신한다.
         webView?.evaluateJavaScript(retestFailedDeliveryJs(failure), completionHandler: nil)
@@ -556,6 +654,9 @@ private struct RecordingOverlay: View {
 
     @ObservedObject var recording: RecordingModel
 
+    /// 검토 화면의 [재녹음]을 눌렀다 (KAN-33 계측). 되감기 자체는 화면이 ``RecordingModel``에 직접 건다.
+    let onRetake: () -> Void
+
     let onSubmit: (_ attemptId: String, _ durationMs: Int64, _ quality: QualityStatus) -> Void
 
     var body: some View {
@@ -570,6 +671,7 @@ private struct RecordingOverlay: View {
             guideF0: start.guideF0,
             centerHz: centerHz,
             model: recording,
+            onRetake: onRetake,
             onNext: onSubmit
         )
         // 화면이 걷히면 마이크를 놓는다. 되감기 판정(`continuesFrom`)은 상위가 하지만, 오버레이
@@ -614,7 +716,7 @@ private struct ShareSheet: UIViewControllerRepresentable {
 /// 값이 아니라 배선과 렌더를 보는 데이터이므로 실제 발화에서 뽑을 이유가 없다.
 ///
 /// 1.2초(10ms × 120)는 시드 문항의 길이 범위(0.9~1.2초) 위쪽이다. 사용자 창은 그 2배인
-/// 2.4초가 되어(``AccenturyCore/userCurveWindowMs(frameIntervalMs:valueCount:)``) 가짜 마이크
+/// 2.4초가 되어(``AccenturyCore/userCurveWindowMs(frameIntervalMs:valueCount:maxDurationMs:)``) 가짜 마이크
 /// WAV 2.5초가 거의 그대로 들어온다.
 private var debugGuideF0: GuideF0 {
     let count = 120

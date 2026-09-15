@@ -329,25 +329,72 @@
 }
 
 /*
- * 인트로의 히어로 + 부제 (KAN-178). 중복이던 제목("사투리 억양 테스트")을 걷어내면서
- * 히어로가 이 화면의 h1이 됐고, 그러면 부제는 제목에 딸린 줄이라 **한 덩어리로 읽혀야 한다**.
+ * 인트로의 워드마크 + 히어로 + 부제. 셋은 제목에 딸린 줄이라 **한 덩어리로 읽혀야 한다**.
  *
- * 그래서 인트로에서는 히어로를 192px 슬롯 밖으로 꺼냈다(대기 화면은 `.illustration--waiting`에
- * 그대로 둔다). 슬롯은 그림이 뜨기 전후로 아래가 오르내리지 않게 높이를 미리 잡아 두는
- * 자리인데, 글자에는 늦게 도착할 것이 없어 잡아 둘 이유가 사라졌다. 남는 것은 40px 글자를 192px 안에 가운데 세우고 생기는
- * 위아래 ~73px의 빈 자리뿐이고, 제목이 있던 때는 그 여백이 "히어로 밴드 / 제목 블록"의
- * 경계로 읽혔지만 지금은 제목과 부제 사이를 벌려 놓아 부제가 카드 쪽에 붙어 보인다.
+ * 히어로는 192px 슬롯 밖에 있다(대기 화면은 `.illustration--waiting`에 그대로 둔다). 슬롯은
+ * 그림이 뜨기 전후로 아래가 오르내리지 않게 높이를 미리 잡아 두는 자리인데, 글자에는 늦게
+ * 도착할 것이 없어 잡아 둘 이유가 없다 (KAN-178).
  *
- * 간격은 걷어낸 제목이 부제와 두던 8px 그대로다. 히어로가 30px 제목보다 크니 사이도
- * 넓혀야 할 것 같지만, 12px로 벌려 보니 부제가 카드 쪽으로 붙어 세 덩어리처럼 읽혔다 —
- * 아래 카드와의 간격(`.screen__body`의 24px)이 위와 비슷해지는 순간 짝이 흐려진다.
- * 8px이면 그 차이가 세 배라 "붙은 두 줄 + 떨어진 카드"로 한 번에 갈린다.
+ * 안쪽 간격이 8px인 이유는 바깥과의 차이다. 아래 카드와의 간격은 `.intro-screen
+ * .screen__body`의 16px이라 **두 배 차이**가 나고, 그만큼이면 "붙은 세 줄 + 떨어진 카드"로
+ * 한 번에 갈린다. 히어로가 56px(`--text-intro-hero`)로 커졌으니 안쪽도 넓혀야 할 것 같지만,
+ * 12px로 벌리면 바깥과 거의 같아져 세 덩어리처럼 읽힌다.
  */
 .intro-hero {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--space-2);
+  width: 100%;
+}
+
+.intro-screen .screen__body {
+  gap: var(--space-4);
+}
+
+.intro-wordmark {
+  color: var(--color-foreground);
+  font-weight: var(--weight-normal);
+}
+
+.intro-heading {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* 8px에서는 SVG 자체의 위쪽 여백과 더해져 아치가 분리돼 보였다. 4px은 글자를 받치되 닿지는 않는다. */
+  gap: var(--space-1);
+}
+
+.intro-heading .text-hero {
+  padding: 0;
+  font-size: var(--text-intro-hero);
+}
+
+.intro-heading__underline {
+  display: block;
+  width: 100%;
+  /* 12-unit viewBox를 12px로 표시해 좌표와 stroke 여백이 일치하고 하단 빈 공간도 남지 않는다. */
+  height: var(--space-3);
+  overflow: visible;
+  fill: none;
+  stroke: var(--color-point);
+  stroke-width: var(--intro-emphasis-line-width);
+  stroke-linecap: round;
+}
+
+.intro-subtitle,
+.intro-prompt {
+  color: var(--color-muted-foreground);
+}
+
+/*
+ * 인트로 CTA는 다른 화면의 주버튼과 같은 잉크다. 한때 포인트 컬러 면이었는데, 그러면 이
+ * 화면에 색이 제목 아치와 버튼 둘이 되어 "화면당 한 자리"(정본 §7)를 첫 화면부터 어긴다.
+ * 둘 중 남길 쪽은 아치다 — 버튼은 잉크만으로도 화면 바닥에서 유일하게 누를 것이라 이미
+ * 분명하고, 아치는 색이 아니면 아무것도 아니다.
+ */
+.intro-cta {
   width: 100%;
 }
 
@@ -399,25 +446,41 @@
   box-shadow: var(--shadow-card);
 }
 
-/* 숫자 두 칸. `1fr 1fr`이라 문항 수와 예상 시간이 정확히 반씩 갖는다 — flex로 두면 글자 수가
-   많은 쪽("10문항")이 더 넓어져 가운데 선이 카드 가운데에서 벗어난다 */
+/*
+ * 숫자 두 칸. `1fr 1fr`이라 문항 수와 예상 시간이 정확히 반씩 갖는다 — flex로 두면 글자 수가
+ * 많은 쪽("10문항")이 더 넓어져 가운데 선이 카드 가운데에서 벗어난다.
+ *
+ * 칸을 가르는 선을 **칸이 아니라 이 컨테이너가** 그린다. 둘째 칸의 왼쪽 테두리로 두면 선이
+ * `gap`의 오른쪽 끝에 붙어 카드 가운데에서 `gap`의 절반(8px)만큼 밀린다 — 두 칸이 반씩
+ * 나눠 가져도 그 사이의 빈 자리는 선의 왼쪽에만 생기기 때문이다. 배경으로 그리면
+ * `background-position: center`가 자리를 정하므로 칸 폭이나 gap이 바뀌어도 가운데다.
+ *
+ * 실선이 아니라 파선인 이유는 뜻이다 — 실선은 두 칸이 다른 상자라는 뜻이고 파선은 한 종이를
+ * 접은 자국이다. 여기 둘은 같은 테스트를 두 가지로 잰 값이라 후자가 맞다. 색이
+ * `muted-foreground`인 것도 같은 이유다: 잉크 실선이면 카드 테두리와 무게가 같아진다.
+ *
+ * **`dashed` 테두리를 쓰지 않는다** (KAN-199 #1). WebKit은 소수점 굵기(`1.5px`)의 `dashed`에서
+ * 대시 길이를 굵기로 계산하다 패턴이 무너져 대시 하나만 남긴다 — 2026-09-08 픽셀 대조에서
+ * 같은 화면의 구분선 색 픽셀이 Android(Blink) 88행, iOS(WebKit) 4행이었다. 사용자에게는
+ * "선이 없다"로 보인다. 실선으로 바꾸는 것은 답이 아니다: 위 문단이 파선을 고른 이유가 뜻이다.
+ * 반복 그라디언트는 대시와 간격 길이를 CSS가 직접 정하므로 두 엔진이 같은 자리를 칠한다.
+ */
 .card__stats {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-4);
+  background-image: repeating-linear-gradient(
+    to bottom,
+    var(--color-muted-foreground) 0 4px,
+    transparent 4px 8px
+  );
+  background-size: 1.5px 100%;
+  background-position: center;
+  background-repeat: no-repeat;
 }
 
 .card__stat {
   text-align: center;
-}
-
-/*
- * 칸을 가르는 선. 실선이 아니라 파선인 이유는 뜻이다 — 실선은 두 칸이 다른 상자라는 뜻이고
- * 파선은 한 종이를 접은 자국이다. 여기 둘은 같은 테스트를 두 가지로 잰 값이라 후자가 맞다.
- * 색이 `muted-foreground`인 것도 같은 이유다: 잉크 실선이면 카드 테두리와 무게가 같아진다.
- */
-.card__stat + .card__stat {
-  border-left: 1.5px dashed var(--color-muted-foreground);
 }
 
 .card__stat-value {
@@ -485,6 +548,55 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+}
+
+/*
+ * 2열 나열 (KAN-202, 출신 지역 선택). 지역 열 개를 한 줄씩 쌓으면 작은 화면에서 [다음]이 접히고
+ * 스크롤이 생긴다 — 라벨이 두 글자라 두 칸에 나란히 두어도 읽힌다. 간격은 .choice-list의 것을
+ * 그대로 쓴다. 어휘 문항의 선택지는 문장이라 이 변형을 쓰지 않는다.
+ */
+.choice-list--columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+/*
+ * 지역 카드의 글자 (KAN-202). 어휘 선택지는 문장이라 왼쪽에서 읽기 시작하지만 지역 이름은
+ * 두 글자 단어라 가운데가 자연스럽다 — 왼쪽에 붙이면 2열 카드의 오른쪽이 비어 보인다.
+ * 글꼴은 인트로 제목·주 버튼과 같은 Jua로 맞춰 화면 톤을 잇는다. 크기·자간은 .btn--primary와
+ * 같은 값이다 — 한 화면에서 "누르는 것"이 같은 글자로 보이게. nowrap은 좁은 칸에서 라벨이
+ * 두 줄로 꺾여 카드 높이가 달라지지 않게 한다.
+ */
+.choice-list--columns .choice {
+  position: relative;
+  justify-content: center;
+  text-align: center;
+  white-space: nowrap;
+  font-family: var(--font-display);
+  font-size: var(--text-title-sm);
+  font-weight: var(--weight-normal);
+  letter-spacing: 0.02em;
+}
+
+/*
+ * Jua는 굵기 하나짜리 폰트다(tokens.css의 굵기 주석) — .choice--selected의 500을 그대로 두면
+ * 글꼴에 없는 굵기를 요청하는 셈이라 브라우저에 따라 합성 굵기가 생긴다. 고른 것은 테두리·
+ * 그림자·체크 셋이 이미 말하므로 굵기는 400에 고정한다.
+ */
+.choice-list--columns .choice--selected {
+  font-weight: var(--weight-normal);
+}
+
+/*
+ * 체크 표시는 흐름에서 빼서 오른쪽에 띄운다. flex 항목으로 두면 가운데 정렬의 중심이 라벨+체크
+ * 묶음으로 옮겨가 고른 카드만 라벨이 왼쪽으로 밀린다. 라벨이 두 글자라 체크와 겹칠 자리는
+ * 없다. .choice:active의 translate는 카드 자체를 옮기므로 그 안의 절대 위치도 같이 움직인다.
+ */
+.choice-list--columns .choice .choice__check {
+  position: absolute;
+  right: var(--space-4);
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 /*
@@ -660,8 +772,13 @@
   stroke-dasharray: 3 5;
 }
 
+/*
+ * 내 점수 호는 포인트 컬러다 (정본 §7). 결과 화면에서 색이 서는 한 자리이고, 잉크 파선
+ * 트랙 위에 실선으로 겹쳐 그려지므로 **색 없이도 채운 몫과 남은 몫이 갈린다** — 색은
+ * 어디까지 찼는지를 한눈에 잡아 주는 몫만 한다 (WCAG 1.4.1).
+ */
 .score-donut__value {
-  stroke: var(--color-primary);
+  stroke: var(--color-point);
   transition: stroke-dashoffset var(--duration-reveal) var(--ease-out);
 }
 
@@ -743,6 +860,10 @@
  * 점수 막대. 진행 도트(.progress-indicator)와 달리 막대인 이유는 뜻이 다르기 때문이다 -
  * 저쪽은 "몇 개 남았나"라 셀 수 있는 칸이 맞고, 이쪽은 "몇 점인가"라 연속한 양이다.
  * 브라우저마다 <progress> 의사 요소가 갈려 셋을 다 적는다.
+ *
+ * 채운 몫은 포인트 컬러다 — 총점 도넛의 호와 같은 색이다. 이 세 값(총점·억양·단어)은 한
+ * 덩어리로 읽히는 한 가지 결과라, 총점만 색이고 내역이 잉크면 도넛과 막대가 다른 것을
+ * 재는 것처럼 보인다 (정본 §7). 그릇을 그리는 1px 윤곽은 잉크 그대로다.
  */
 .score-row__bar {
   width: 100%;
@@ -767,13 +888,13 @@
 }
 
 .score-row__bar::-webkit-progress-value {
-  background: var(--color-primary);
+  background: var(--color-point);
   border-radius: var(--radius-full);
   transition: width var(--duration-reveal) var(--ease-out);
 }
 
 .score-row__bar::-moz-progress-bar {
-  background: var(--color-primary);
+  background: var(--color-point);
   border-radius: var(--radius-full);
 }
 
@@ -953,6 +1074,24 @@
 
 .analysis-step-line[data-state='done'] {
   background: var(--color-primary);
+}
+
+/*
+ * 웹 배너 광고 자리 (KAN-197 3단계, `ads/AdSlot.tsx`).
+ *
+ * `min-height`가 이 규칙의 전부다. 광고는 스크립트가 늦게 와서 늦게 채워지는데, 자리를 미리
+ * 잡아 두지 않으면 광고가 도착하는 순간 위 단계 표시가 그만큼 위로 튄다 — 사용자가 진행을
+ * 읽고 있는 화면에서 가장 하면 안 되는 움직임이다. 100은 AdSense 반응형 배너가 모바일 폭에서
+ * 잡는 흔한 높이이고, 실제로 더 큰 광고가 오면 상자가 따라 늘어난다(상한을 두지 않는다).
+ *
+ * `align-self: stretch`인 이유는 `.analysis-waiting`이 가운데 정렬 컬럼이라서다 — 그대로 두면
+ * 상자가 내용 폭(0)으로 쪼그라든다. 위 여백은 `.analysis-waiting`의 gap(24) 위에 8을 더한
+ * 것이다: 광고는 단계 표시와 같은 덩어리가 아니라는 것이 간격으로 읽혀야 한다.
+ */
+.ad-slot {
+  align-self: stretch;
+  min-height: 100px;
+  margin-top: var(--space-2);
 }
 
 /* ── 분석 대기 문항 목록 (KAN-14) ── */
@@ -1141,28 +1280,33 @@ a.btn {
   border-top: 1px solid var(--color-muted-foreground);
 }
 
-/* 라벨은 레인 좌상단에 얹는다(시안). 곡선 그리기 영역 위쪽 여백 안이라 겹치지 않는다 */
+/*
+ * 라벨은 레인 좌상단에 얹는다(시안). 곡선 그리기 영역 **위쪽 여백 안**에 통째로 들어가야
+ * 겹치지 않는다 — 여백이 16이던 때는 캡션 한 줄(13px × 1.5 = 19.5)이 그보다 커서 아래가
+ * 캔버스를 4px 남짓 침범했고, 곡선이 레인 꼭대기까지 오르는 프레임에서 실제로 겹쳤다.
+ * 여백을 24로 넓히고 라벨을 0에 붙여 라벨 아래(19.5)와 캔버스 위(24) 사이를 띄웠다.
+ */
 .curve-lane__label {
   position: absolute;
-  top: var(--space-1);
+  top: 0;
   left: var(--space-3);
   color: var(--color-muted-foreground);
 }
 
 /*
- * 그리기 영역. 레인 높이에서 라벨 자리(위 16px)와 아래 여백(4px)을 뺀 만큼이다 — 앱의
- * `padding(top = Spacing.x4, bottom = Spacing.x1)`과 같은 배분이고, 아래 여백은 곡선이
+ * 그리기 영역. 레인 높이에서 라벨 자리(위 24px)와 아래 여백(4px)을 뺀 만큼이다 — 앱의
+ * `padding(top = Spacing.x6, bottom = Spacing.x1)`과 같은 배분이고, 아래 여백은 곡선이
  * 테두리에 닿지 않게 한다.
  *
- * **CurveLane.tsx의 DRAW_HEIGHT(100)가 이 값의 짝이다.** 좌표를 픽셀로 계산하는 쪽은
+ * **CurveLane.tsx의 DRAW_HEIGHT(92)가 이 값의 짝이다.** 좌표를 픽셀로 계산하는 쪽은
  * 스크립트라 CSS 변수를 못 읽고, 렌더마다 실측하면 곡선 높이가 레이아웃에 되먹임된다.
  * 토큰을 바꾸면 저쪽 상수도 같이 바꿔야 한다.
  */
 .curve-lane__canvas {
   display: block;
   width: 100%;
-  height: calc(var(--curve-lane-height) - var(--space-4) - var(--space-1));
-  margin-top: var(--space-4);
+  height: calc(var(--curve-lane-height) - var(--space-6) - var(--space-1));
+  margin-top: var(--space-6);
 }
 
 /* ── 목소리 점검 (KAN-31 4단계) ── */
@@ -1198,4 +1342,136 @@ a.btn {
   width: 2px;
   height: 100%;
   background: var(--color-muted-foreground);
+}
+
+/* ── 고지 한 줄 (KAN-177) ── */
+
+/*
+ * 인트로 하단의 개인정보처리방침 고지. 흐린 잉크로 적어 주버튼과 위계를 가른다 (KAN-161) —
+ * 읽어야 하는 줄이지만 누르러 온 것은 위의 버튼이라, 같은 농도로 적으면 화면에 눌러야 할
+ * 것이 둘로 보인다.
+ */
+.privacy-notice {
+  color: var(--color-muted-foreground);
+  /*
+   * `keep-all`은 `.text-hero`와 같은 이유로 필수다 — 기본값이면 낱말 가운데서 잘린다.
+   * 캡션 글자라 폭이 좁고 문장이 두 줄로 넘어가는 자리라 여기서 실제로 드러난다
+   * (2026-09-08 에뮬레이터 확인: "…끝나면 바 / 로 지워요"로 갈렸다).
+   */
+  word-break: keep-all;
+  text-align: center;
+}
+
+/*
+ * 본문에 섞이는 링크. 잉크 한 색 화면이라 색으로는 링크임을 말할 수 없어 밑줄이 유일한
+ * 단서다 — 색을 바꾸면 팔레트 밖의 색조가 하나 생긴다.
+ *
+ * 밑줄을 글자에서 살짝 띄운다. 한글은 받침이 기준선까지 내려와 기본 위치의 밑줄과 붙는다.
+ */
+.text-link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+/* ── 맞춤형 광고 동의 시트 (KAN-196) ── */
+
+/*
+ * 인트로 위를 덮는 막. `fixed; inset: 0`이 곧 모달의 실체다 — 뒤의 [시작하기]에 손이 닿지
+ * 않는 것은 이 막이 화면을 다 덮기 때문이지 스크립트가 버튼을 잠가서가 아니다. 그래서
+ * 시트가 떠 있는 동안 인트로 쪽 코드는 아무것도 몰라도 된다.
+ *
+ * 막의 색은 잉크를 옅게 깐 것이다. 팔레트에 반투명 토큰이 없어(정본은 전부 단색) 여기서
+ * `color-mix`로 잉크(`--color-primary`)를 흐린다 — 새 색을 적는 것이 아니라 있는 색의 농도를
+ * 낮추는 것이라 "네 번째 출처" 규칙(파일 헤더)에 어긋나지 않는다. 안드로이드 WebView·iOS
+ * WebKit 모두 `color-mix`를 지원한다 (Chromium 111+, Safari 16.2+).
+ *
+ * `z-index`는 이 파일에서 처음이다. 인트로의 `.screen__footer`가 `sticky`라 쌓임 맥락을
+ * 만드는데, 막이 그보다 뒤에 오면 하단 고지가 막 위로 올라온다.
+ */
+.ad-consent-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  background: color-mix(in srgb, var(--color-primary) 40%, transparent);
+}
+
+/*
+ * 아래에서 올라온 종이 한 장. 카드(`.card`)와 같은 테두리·반경 규칙이고, 위 두 모서리만
+ * 둥글다 — 아래는 화면 바닥에 붙어 있어 모서리가 보이지 않고, 둥글면 바닥과 시트 사이에 막
+ * 색이 비친다. 그림자를 두지 않는 이유는 막이 이미 "떠 있다"를 말하기 때문이다.
+ *
+ * 좌우 여백은 `.screen`의 화면 여백(24)과 같은 값이라, 시트의 글자 왼쪽 선이 인트로의 글자
+ * 왼쪽 선과 맞는다. `padding-bottom`에 안전 영역을 더한다 — 홈 인디케이터 뒤에 버튼이
+ * 깔리면 눌리지 않는다.
+ */
+.ad-consent-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: 100%;
+  padding: var(--space-6) var(--space-6) calc(var(--space-6) + env(safe-area-inset-bottom));
+  background: var(--color-card);
+  color: var(--color-card-foreground);
+  border: 1.5px solid var(--color-border);
+  border-bottom: none;
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+}
+
+.ad-consent-title {
+  margin: 0;
+}
+
+/*
+ * 본문 문단. `keep-all`은 `.privacy-notice`와 같은 이유다 — 낱말 가운데서 잘리지 않게.
+ * 문단 사이 간격을 `gap`으로 두고 `p`의 기본 margin은 지운다: 첫 문단 위·마지막 문단 아래에
+ * 여백이 생겨 제목·버튼과의 간격이 `gap` 규칙 밖으로 벗어난다.
+ */
+.ad-consent-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  word-break: keep-all;
+}
+
+.ad-consent-body p {
+  margin: 0;
+}
+
+/* 다시 열었을 때의 상태 한 줄. 흐린 잉크로 적어 고지 본문과 구분한다 */
+.ad-consent-current {
+  color: var(--color-muted-foreground);
+}
+
+/*
+ * 버튼 둘을 세로로 쌓는다. 가로로 나란히 두면 각 버튼이 반 폭이 되어 「맞춤형 광고 허용」
+ * 여섯 자가 Jua 20px에서 두 줄로 갈린다. 주버튼이 위인 이유는 초점이 먼저 가는 자리이고
+ * 엄지가 먼저 닿는 자리이기 때문이다 — 아래는 시트 가장자리라 오히려 닿기 어렵다.
+ */
+.ad-consent-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.ad-consent-actions .btn {
+  width: 100%;
+}
+
+/*
+ * 인트로 하단의 「맞춤형 광고 설정」 — `<button>`이지만 옆의 방침 링크와 같은 글자로 보여야
+ * 한다. 버튼의 기본 상자(테두리·배경·안쪽 여백)와 글꼴을 걷어내면 `.text-link`의 밑줄만
+ * 남는다. 터치 타겟 48dp 규칙의 예외다 — 옆의 `<a>`도 같은 크기의 글자 링크이고, 캡션 줄에서
+ * 하나만 48dp로 키우면 줄이 벌어진다.
+ */
+.ad-consent-settings {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
 }

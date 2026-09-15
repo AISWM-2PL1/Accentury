@@ -34,6 +34,8 @@ INK = "#1c1a17"
 CREAM = "#f3ecd9"
 PAPER_SHADOW = "#cfc5aa"
 MUTED_INK = "#6b6459"
+# 포인트 컬러 (정본 §2 TERRACOTTA). 종이에 얹은 두 번째 잉크다
+TERRACOTTA = "#a8503a"
 
 
 def _luminance(hex_color: str) -> float:
@@ -71,6 +73,8 @@ PAIRS = [
     ("`prompt-card-muted` / `prompt-card-start`", MUTED_INK, CREAM),
     ("`prompt-card-foreground` / `prompt-card-end`", INK, CREAM),
     ("`prompt-card-muted` / `prompt-card-end`", MUTED_INK, CREAM),
+    ("`point-foreground` / `point` (라이트)", CREAM, TERRACOTTA),
+    ("`point` / `background` (라이트)", TERRACOTTA, CREAM),
     ("`foreground` / `background` (다크)", INK, CREAM),
     ("`foreground` / `card` (다크)", INK, CREAM),
     ("`muted-foreground` / `background` (다크)", MUTED_INK, CREAM),
@@ -82,6 +86,8 @@ PAIRS = [
     ("`destructive-on-surface` / `destructive-surface` (다크)", INK, CREAM),
     ("`prompt-card-muted` / `prompt-card-start` (다크)", MUTED_INK, CREAM),
     ("`prompt-card-muted` / `prompt-card-end` (다크)", MUTED_INK, CREAM),
+    ("`point-foreground` / `point` (다크)", CREAM, TERRACOTTA),
+    ("`point` / `background` (다크)", TERRACOTTA, CREAM),
 ]
 
 # F0 곡선과 레인 테두리는 텍스트가 아니라 3:1이 기준이다 (WCAG 1.4.11).
@@ -89,9 +95,11 @@ PAIRS = [
 GRAPHIC_PAIRS = [
     # 곡선은 레인 안쪽 면(curve-lane-surface) 위에 그려진다 - 카드가 아니다
     ("`guide-curve` / `curve-lane-surface` (라이트)", INK, CREAM),
-    ("`user-curve` / `curve-lane-surface` (라이트)", INK, CREAM),
+    ("`user-curve` / `curve-lane-surface` (라이트)", TERRACOTTA, CREAM),
     ("`guide-curve` / `curve-lane-surface` (다크)", INK, CREAM),
-    ("`user-curve` / `curve-lane-surface` (다크)", INK, CREAM),
+    ("`user-curve` / `curve-lane-surface` (다크)", TERRACOTTA, CREAM),
+    # 결과 도넛의 내 점수 호. 트랙(잉크 파선)과 배경 둘 다 위에 서므로 낮은 쪽을 본다
+    ("`point`(점수 호) / `background`", TERRACOTTA, CREAM),
     ("`control-border` / `background` (라이트)", INK, CREAM),
     ("`control-border` / `card` (라이트)", INK, CREAM),
     ("`control-border` / `background` (다크)", INK, CREAM),

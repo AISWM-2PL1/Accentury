@@ -5,7 +5,8 @@
 # backend는 ECS Fargate 서비스(modules/fargate, KAN-165)라 compose 파일이 없고, 로컬 풀스택은 레포 루트의 docker-compose.yml이다.
 #
 # 값이 채워지는 경로 (accentury-up.sh가 매 기동마다 만든다):
-#   compose.env  - ECR_REGISTRY, IMAGE_TAG. 아래 image: 보간에만 쓰이고 컨테이너에는 안 들어간다.
+#   compose.env  - ECR_REGISTRY, IMAGE_TAG, AWS_REGION, AI_LOG_GROUP, INSTANCE_ID. 이 파일 안의 ${...} 보간에만
+#                  쓰이고 컨테이너에는 안 들어간다 (아래 image:와 logging:).
 #   ai.env       - SSM ${prefix}/ai/* (ACCENTURY_AI_INTERNAL_TOKEN 등) + ACCENTURY_ENV.
 #
 # [배포 제약 - ai 워커 1개. scale 금지]
@@ -17,12 +18,39 @@
 # DOCKER-USER 체인) 시작 템플릿의 IMDSv2 hop limit 1이 한 겹 더 막는다. 외부 미노출은 ai-sg
 # (backend-sg만 8000, KAN-165)가 성립시킨다.
 
-# 로그 로테이션 - 호스트 디스크가 컨테이너 로그로 차지 않게 50MB로 막는다.
+# 로그는 CloudWatch Logs로 보낸다 (KAN-203). json-file(10m x 5)이던 동안 컨테이너 로그는 호스트 디스크에만
+# 있어, ASG가 인스턴스를 교체하면 추론 실패의 원인이 함께 사라졌다 - 실모델 전환(KAN-22) 뒤 그 원인(내용
+# 게이트 판정 실패, 워커 재적재, 시간 초과)은 이 컨테이너 로그에만 있다. 로그 그룹은 Terraform이 만들고
+# (modules/ai-host, /accentury/{env}/ai, 보존 14일 - backend와 같다) 스트림 이름에 인스턴스 ID가 들어가
+# 교체 전후가 갈린다. 호스트 디스크에는 `docker logs`용 사본만 남는다 (아래 cache-*).
+#
+# 값 3개는 compose.env에서 보간된다 (accentury-up.sh가 부팅마다 쓴다). INSTANCE_ID에 기본값을 둔 것은
+# 보간이 조용히 빈 이름("ai/")을 만드는 경로를 남기지 않기 위해서다 - 그 값은 IMDS에서 오고 못 읽으면
+# 기동 스크립트가 먼저 죽지만, 스트림 이름은 교체 전후를 가르는 유일한 표식이라 한 겹 더 둔다.
+#
+# mode: non-blocking - CloudWatch가 막혔을 때 로그 쓰기가 컨테이너 프로세스를 멈추지 못하게 한다. 버퍼가
+# 차면 새 줄을 버린다(기본 1MB, 여기서는 4MB) - 추론이 밀리는 것보다 로그 몇 줄을 잃는 것이 낫다. 이
+# 컨테이너의 로그는 요청당 몇 줄이라 4MB면 넉넉하다.
+#
+# cache-* 는 호스트 디스크 상한이다. 드라이버를 바꿔도 `docker logs`는 그대로 읽히는데(도커의 이중
+# 로깅 - 원격 드라이버를 쓰면 엔진이 local 드라이버로 사본을 하나 남긴다), 그 사본의 **기본 상한이
+# 컨테이너당 20MB x 5 = 100MB**라 그냥 두면 옛 json-file(10m x 5 = 50MB)보다 디스크를 더 쓴다.
+# 루트 볼륨이 두 환경 다 20GB뿐이므로(tfvars ai_root_volume_size) 옛 값과 같은 50MB로 되돌려 고정한다. 2026-09-09 staging 실측:
+# docker 25.0.16, 사본은 /var/lib/docker/containers/<id>/container-cached.log.
+#
+# 이중 로깅에는 한계가 하나 있다 - 원격 전송이 실패하면 그 줄은 사본에도 안 쌓이고 재시도하지 않는다.
+# CloudWatch가 막힌 구간은 `docker logs`로도 안 보인다는 뜻이다 (그 구간의 줄은 드라이버 버퍼에 남아
+# 있다가 복구 뒤 CloudWatch로 늦게 간다 - infra/README.md "로그 전송 차단 실증").
 x-logging: &log
-  driver: json-file
+  driver: awslogs
   options:
-    max-size: "10m"
-    max-file: "5"
+    awslogs-region: "${AWS_REGION}"
+    awslogs-group: "${AI_LOG_GROUP}"
+    awslogs-stream: "ai/${INSTANCE_ID:-unknown}"
+    mode: "non-blocking"
+    max-buffer-size: "4m"
+    cache-max-size: "10m"
+    cache-max-file: "5"
 
 services:
   ai:
@@ -45,8 +73,19 @@ services:
         # raw: 값을 글자 그대로 넘긴다. 기본 형식은 $VAR 보간, 따옴표 벗기기, " #" 주석 처리를
         # 하므로 SSM 값(내부 호출 토큰 등)이 조용히 바뀔 수 있다 (Codex P1).
         format: raw
-    # 메모리 상한은 실모델 전환(KAN-36 B단계)에서 KAN-57 실측 RSS의 1.3배로 잡는다. 스텁(약 35MB)에는
-    # 두지 않는다 - c7i.xlarge 8GB를 스텁 혼자 쓴다.
+    # 메모리 상한 7GiB (KAN-36 B단계, 2026-09-10 결정). 티켓 규칙은 KAN-57 실측 RSS의 1.3배인데, 채택안
+    # (Whisper bf16 + MFA align_one)의 RSS 최대 6.19GB에 1.3을 곱하면 8.05GB로 c7i.xlarge의 물리 메모리
+    # (7.6GiB)를 넘는다 - 그 규칙은 8GB 호스트에서 성립하지 않는다. 대신 호스트가 자기 몫으로 쓰는 양
+    # (systemd, SSM 에이전트, docker 데몬, awslogs 버퍼 - prod 유휴 실측 약 0.35GB)에 여유를 더한 0.6GiB를
+    # 빼서 7GiB로 잡는다. 벤치 최대치의 1.13배, staging 실측(2026-09-10, 4.55GiB 최대)의 1.5배다.
+    #
+    # 상한의 뜻은 "여기서부터는 컨테이너 안에서만 죽는다"이다. 상한이 없으면 호스트 OOM 킬러가 아무
+    # 프로세스나 고르므로 SSM 에이전트나 docker가 죽어 배포와 진단 경로까지 잃는다. 상한이 있으면 cgroup
+    # OOM이 컨테이너 안 프로세스를 죽이고 - 추론 워커면 앱이 재적재(31초)하고, 서버 프로세스면 docker가
+    # 다시 띄운다(restart: unless-stopped, 워밍업 31초). 호스트 메모리 90% 경보(monitoring 모듈
+    # ai-mem-high)가 이 상한(92%)보다 조금 아래라 죽기 전에 먼저 운다. 값을 바꾸면 KAN-57 RSS 재실측과
+    # 그 경보 임계를 함께 본다. 이 값은 mem_limit이라 swap 상한(memswap_limit)은 따로 없고 호스트에 swap도 없다.
+    mem_limit: 7g
     logging: *log
     healthcheck:
       # slim 이미지에는 curl도 wget도 없다 - 이미 있는 파이썬으로 확인한다. 503 STARTING(워밍업 전)은
@@ -55,6 +94,9 @@ services:
       interval: 10s
       timeout: 3s
       retries: 6
-      # 스텁은 즉시 뜨지만 실모델(KAN-22)이 워밍업(가중치 적재)을 붙이면 그 시간만큼 여유가 필요하다 -
-      # 그때 이 값을 실측으로 올린다.
-      start_period: 30s
+      # 실모델은 Whisper 가중치 2.8GB를 디스크에서 올린 뒤에야 UP이다 (KAN-22의 워밍업). 그동안
+      # health는 503 STARTING이고 이 검사는 실패하므로, 여유가 없으면 정상 기동이 unhealthy로
+      # 찍혀 배포가 롤백한다. start_period 안의 실패는 재시도 횟수에 세지 않는다.
+      # 90초는 c7i.xlarge 콜드 스타트 실측 31초(bf16, KAN-57)의 약 3배다 (KAN-172). 그 뒤로도
+      # retries 6 x interval 10초가 더 있어 unhealthy 판정은 빨라야 150초 뒤다.
+      start_period: 90s

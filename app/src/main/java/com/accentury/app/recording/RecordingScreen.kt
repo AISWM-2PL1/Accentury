@@ -90,6 +90,15 @@ fun RecordingScreen(
      * null이면 아래 기본 안내를 쓴다.
      */
     failureMessage: String? = null,
+    /*
+     * [재녹음]을 눌렀다 (KAN-33). 되감기는 그대로 뷰모델이 하고, 이 콜백은 세기만 한다 - 계측을
+     * 화면 안에서 보내면 이 파일이 sink를 알게 되고, 그러면 미리보기와 화면 테스트가 계측기를
+     * 함께 끌고 다닌다. 기본값이 있는 이유도 같다: 이 화면은 계측 없이도 온전하다.
+     *
+     * 실패 상태의 [다시 시도]에는 붙이지 않는다. 그 자리는 녹음이 성립하지 못한 경우라 되돌릴
+     * 녹음 자체가 없고, `recording_retake`가 세는 것은 "다 읽고 나서 다시 읽기로 했다"는 판단이다.
+     */
+    onRetake: () -> Unit = {},
     viewModel: RecordingViewModel = viewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -99,26 +108,26 @@ fun RecordingScreen(
     // 창 길이에는 unit 가드를 걸지 않는다. 아래 가드는 "값을 어떻게 읽을 것인가"의 문제라
     // 단위를 모르면 그릴 수 없지만, 길이는 간격 x 구간 수라서 단위와 무관하게 맞는다.
     // 그래서 가이드를 못 그리는 경우에도 두 레인의 시간축은 여전히 같게 잡을 수 있다.
+    // 상한은 이 화면이 실제로 녹음을 끊는 값과 같아야 한다 - 아래 카운트다운과 "/ n초" 표기도
+    // 같은 상수를 읽는다 (KAN-195, userCurveWindowMs KDoc).
     val liveWindowMs = remember(guideF0) {
-        userCurveWindowMs(guideF0?.frameIntervalMs, guideF0?.values?.size)
+        userCurveWindowMs(guideF0?.frameIntervalMs, guideF0?.values?.size, RecordingEngine.MAX_DURATION_MS)
     }
     // 녹음 중에는 자라는 곡선, 완료 후에는 방금 녹음의 곡선을 남긴다 (2026-08-18 결정).
     // 재녹음을 시작하면 Recording의 빈 목록으로 바뀌므로 지난 곡선이 새 녹음에 섞이지 않는다.
-    val pitchFrames = when (val s = state) {
-        is RecordingUiState.Recording -> s.pitchFrames
-        // Review에서만 짧은 무성 구멍을 메운다. 녹음 중에는 곡선이 인과적이어야 해서(뒤 프레임을
-        // 보면 이미 그린 과거가 다시 그려진다) 구멍을 앞 값으로 유지하는 수밖에 없지만, 완료 후에는
-        // 데이터가 다 모여 있어 구멍의 양옆을 보고 이어도 거짓이 아니다 - fillShortGaps KDoc 참고.
-        is RecordingUiState.Review -> fillShortGaps(s.pitchFrames)
-        else -> emptyList()
-    }
     // 이 창은 사용자 레인만 쓴다. 녹음 중에는 최신 구간이 오른쪽 끝에 붙어야 하니 미끄러지는
-    // 라이브 창을 그대로 쓰고, 녹음이 끝난 Review에서는 발화 전체가 들어오게 창을 늘린다
-    // - reviewWindowMs KDoc 참고.
-    val windowMs = when (state) {
-        is RecordingUiState.Review -> reviewWindowMs(pitchFrames, liveWindowMs)
-        else -> liveWindowMs
+    // 라이브 창을 그대로 쓰고, 녹음이 끝난 Review에서는 발화 구간에 맞춘다 - reviewWindow KDoc 참고.
+    //
+    // Review에서만 짧은 무성 구멍을 메운다. 녹음 중에는 곡선이 인과적이어야 해서(뒤 프레임을
+    // 보면 이미 그린 과거가 다시 그려진다) 구멍을 앞 값으로 유지하는 수밖에 없지만, 완료 후에는
+    // 데이터가 다 모여 있어 구멍의 양옆을 보고 이어도 거짓이 아니다 - fillShortGaps KDoc 참고.
+    val review = (state as? RecordingUiState.Review)?.let {
+        reviewWindow(fillShortGaps(it.pitchFrames), guideF0?.frameIntervalMs, guideF0?.values?.size)
     }
+    // 녹음 중에는 자라는 곡선, 완료 후에는 방금 녹음의 곡선을 남긴다 (2026-08-18 결정).
+    // 재녹음을 시작하면 Recording의 빈 목록으로 바뀌므로 지난 곡선이 새 녹음에 섞이지 않는다.
+    val pitchFrames = review?.frames ?: (state as? RecordingUiState.Recording)?.pitchFrames ?: emptyList()
+    val windowMs = review?.windowMs ?: liveWindowMs
     // 가이드는 사용자 창과 무관하게 항상 자기 길이로 레인 폭 전체를 쓴다 (2026-08-25 결정,
     // KAN-104의 원래 모양으로 되돌림). 가이드 레인은 "정답 억양이 어떤 모양인가"를 보여 주는
     // 그림이라 레인을 꽉 채워야 오르내림이 읽힌다. 사용자 창(가이드의 2배, Review는 녹음 전체
@@ -216,7 +225,10 @@ fun RecordingScreen(
 
                 is RecordingUiState.Review -> ReviewControls(
                     state = s,
-                    onRetry = viewModel::retryRecording,
+                    onRetry = {
+                        onRetake()
+                        viewModel.retryRecording()
+                    },
                     onNext = { onNext(s.attemptId, s.durationMs, s.quality) },
                 )
 

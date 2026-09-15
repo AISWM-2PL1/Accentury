@@ -23,7 +23,8 @@ class PollIntervalsTest {
 
     private final AtomicLong processing = new AtomicLong();
     private final PollIntervals pollIntervals = new PollIntervals(
-            new AnalysisCongestion(processing::get, Duration.ZERO, new SteppingClock()), properties());
+            new AnalysisCongestion(processing::get, Duration.ZERO, new SteppingClock()), properties(),
+            TestMetrics.analysisMetrics());
 
     @Test
     void 임계치_미만이면_기준_간격이다() {

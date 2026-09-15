@@ -39,11 +39,11 @@ class WebConfigTest {
     fun `테스트 진입 URL은 스큐 파라미터에 screen test testVersion sessionId를 잇는다`() {
         assertEquals(
             "https://web.example.com?bridge=$BRIDGE_CONTRACT_VERSION&app=1.0" +
-                "&screen=test&testVersion=gn-2026.08.1&sessionId=dev-session",
+                "&screen=test&testVersion=gn-2026.08.1&voiceSet=7&sessionId=dev-session",
             buildWebUrl(
                 base = "https://web.example.com",
                 appVersionName = "1.0",
-                testEntry = TestEntry(testVersion = "gn-2026.08.1", sessionId = "dev-session"),
+                testEntry = TestEntry(testVersion = "gn-2026.08.1", voiceSet = 7, sessionId = "dev-session"),
             ),
         )
     }
@@ -62,9 +62,11 @@ class WebConfigTest {
             base = "https://web.example.com",
             appVersionName = "1.0",
             // 서버가 발급하는 값이라 형식을 앱이 보증하지 않는다 — 파라미터를 덧붙이는 꼴이 되면 안 된다.
-            testEntry = TestEntry(testVersion = "gn 2026&x=1", sessionId = "s/1?2"),
+            testEntry = TestEntry(testVersion = "gn 2026&x=1", voiceSet = 2, sessionId = "s/1?2"),
         )
         assertTrue(url.contains("&testVersion=gn+2026%26x%3D1&"))
+        // 세트는 정수라 인코딩할 것이 없다 - 값이 그대로 실렸는지만 본다 (KAN-205)
+        assertTrue(url.contains("&voiceSet=2&"))
         assertTrue(url.endsWith("&sessionId=s%2F1%3F2"))
     }
 
@@ -72,8 +74,8 @@ class WebConfigTest {
     fun `기존 쿼리가 있는 base에도 테스트 진입 파라미터를 잇는다`() {
         assertEquals(
             "https://web.example.com?env=dev&bridge=$BRIDGE_CONTRACT_VERSION&app=1.0" +
-                "&screen=test&testVersion=v1&sessionId=s1",
-            buildWebUrl("https://web.example.com?env=dev", "1.0", TestEntry("v1", "s1")),
+                "&screen=test&testVersion=v1&voiceSet=1&sessionId=s1",
+            buildWebUrl("https://web.example.com?env=dev", "1.0", TestEntry("v1", 1, "s1")),
         )
     }
 
@@ -91,8 +93,8 @@ class WebConfigTest {
     fun `테스트 진입 URL에도 계측 코드가 맨 뒤에 붙는다`() {
         assertEquals(
             "https://web.example.com?bridge=$BRIDGE_CONTRACT_VERSION&app=1.0" +
-                "&screen=test&testVersion=v1&sessionId=s1&c=kko_share",
-            buildWebUrl("https://web.example.com", "1.0", TestEntry("v1", "s1"), campaignToken = "kko_share"),
+                "&screen=test&testVersion=v1&voiceSet=1&sessionId=s1&c=kko_share",
+            buildWebUrl("https://web.example.com", "1.0", TestEntry("v1", 1, "s1"), campaignToken = "kko_share"),
         )
     }
 
@@ -160,4 +162,87 @@ class WebConfigTest {
     fun `호스트 대소문자는 origin 비교에 영향을 주지 않는다`() {
         assertTrue(isAllowedWebUrl("https://WEB.Example.com/intro", setOf("https://web.example.com")))
     }
+
+    // --- externalUrlToOpen: 앱 밖으로 내보낼 URL (KAN-177) ---
+
+    @Test
+    fun `prod 도메인의 https 문서는 그대로 돌려준다`() {
+        assertEquals(
+            "https://accentury.app/privacy.html",
+            externalUrlToOpen("https://accentury.app/privacy.html"),
+        )
+    }
+
+    @Test
+    fun `staging 호스트도 거절한다`() {
+        /*
+         * 방침은 법적 고지라 정본이 하나이고, 웹 상수가 환경과 무관하게 prod를 가리킨다
+         * (privacyPolicy.ts). staging 빌드도 같은 문서를 열므로 웹은 이 호스트를 보내지
+         * 않는다 — 목록에 두면 쓰지도 않는 문을 하나 더 여는 셈이다.
+         *
+         * APP_LINK_ORIGINS와 갈리는 지점이다. 저쪽은 링크로 앱에 들어오는 경로라
+         * staging이 필요하고, 이쪽은 앱 밖으로 나가는 경로라 필요 없다.
+         */
+        assertNull(externalUrlToOpen("https://staging.accentury.app/privacy.html"))
+    }
+
+    @Test
+    fun `경로와 포트가 달라도 호스트만 맞으면 통과한다`() {
+        // isAllowedWebUrl과 갈리는 지점이다 - 저쪽은 origin 일치, 이쪽은 호스트 일치다
+        assertEquals("https://accentury.app/legal/privacy.html", externalUrlToOpen("https://accentury.app/legal/privacy.html"))
+    }
+
+    @Test
+    fun `목록 밖 호스트는 거절한다`() {
+        assertNull(externalUrlToOpen("https://evil.example.com/privacy.html"))
+        // 서브도메인을 흘리지 않는다 - suffix 비교가 아니라 완전 일치다
+        assertNull(externalUrlToOpen("https://accentury.app.evil.example.com/privacy.html"))
+    }
+
+    @Test
+    fun `https가 아니면 거절한다`() {
+        assertNull(externalUrlToOpen("http://accentury.app/privacy.html"))
+        assertNull(externalUrlToOpen("javascript:alert(1)"))
+        assertNull(externalUrlToOpen("intent://accentury.app/privacy.html#Intent;end"))
+        assertNull(externalUrlToOpen("accentury://privacy"))
+    }
+
+    @Test
+    fun `파서를 갈라 놓을 수 있는 문자는 거절한다`() {
+        /*
+         * java.net.URI가 읽는 호스트와 android.net.Uri가 여는 호스트가 갈릴 여지를 막는다.
+         * userinfo 꼴에서 URI는 host를 evil.example.com으로 읽지만, 그 판정에 기대는 것 자체가
+         * 파서 두 개의 일치에 기대는 것이다 - 방침 URL에는 애초에 없는 문자들이다.
+         */
+        assertNull(externalUrlToOpen("https://accentury.app@evil.example.com/privacy.html"))
+        assertNull(externalUrlToOpen("https://accentury.app\\@evil.example.com/privacy.html"))
+        assertNull(externalUrlToOpen("https://accentury.app/priv acy.html"))
+        assertNull(externalUrlToOpen("https://accentury.app/privacy.html\n"))
+    }
+
+    @Test
+    fun `호스트에 percent-encoding이 있으면 거절한다`() {
+        /*
+         * KAN-199 #2. iOS Foundation은 %61을 a로 풀어 accentury.app으로 읽고 통과시켰고
+         * java.net.URI는 authority를 디코딩하지 않아 host가 null이라 거절했다 — 같은 입력에
+         * 두 앱이 다르게 답하던 자리다. 이제 양쪽 다 명시적으로 거절한다.
+         *
+         * iOS `WebConfigTests.swift`에 같은 케이스가 있다. 한쪽만 고치면 계약이 다시 갈린다.
+         */
+        assertNull(externalUrlToOpen("https://%61ccentury.app/privacy.html"))
+        assertNull(externalUrlToOpen("https://accentury%2eapp/privacy.html"))
+        // 경로의 percent-encoding은 정상이다 - 막는 것은 호스트뿐이다
+        assertEquals(
+            "https://accentury.app/privacy%20policy.html",
+            externalUrlToOpen("https://accentury.app/privacy%20policy.html"),
+        )
+    }
+
+    @Test
+    fun `빈 값과 형식이 아닌 값은 거절한다`() {
+        assertNull(externalUrlToOpen(null))
+        assertNull(externalUrlToOpen(""))
+        assertNull(externalUrlToOpen("not a url"))
+    }
+
 }

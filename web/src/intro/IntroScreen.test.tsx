@@ -1,6 +1,15 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  AD_CONSENT_ALLOW,
+  AD_CONSENT_CURRENT,
+  AD_CONSENT_DENY,
+  AD_CONSENT_SETTINGS_LINK,
+  AD_CONSENT_TITLE,
+} from '../ads/adConsentText'
+import { resetWebAdConsentMemory } from '../ads/webAdConsentStore'
 import type { MicPermission } from '../audio/microphone'
+import { REQUIRED_BRIDGE_VERSION, type AccenturyBridge } from '../bridge/bridge'
 import { IntroScreen } from './IntroScreen'
 
 const ANDROID_UA =
@@ -29,11 +38,23 @@ function permissionStub(...results: MicPermission[]) {
  * 테스트가 있는데, DOM의 `.click()`은 act 밖이라 리액트가 그 갱신을 미룬다.
  */
 function clickStart() {
-  fireEvent.click(screen.getByRole('button', { name: '시작하기' }))
+  fireEvent.click(screen.getByRole('button', { name: '내 억양 테스트하기' }))
+}
+
+/** 진입 쿼리를 갈아 끼운다 (`App.test.tsx`와 같은 방법). 실행 환경 판정이 이 값을 본다 */
+function setSearch(search: string) {
+  window.history.replaceState(null, '', `/${search}`)
 }
 
 afterEach(() => {
   delete window.AccenturyBridge
+  setSearch('')
+  /*
+   * 웹 동의의 사본은 모듈 변수라(`ads/webAdConsentStore.ts`) 테스트 사이에 그대로 남는다.
+   * 비우지 않으면 앞 테스트가 고른 값 때문에 다음 테스트의 인트로가 시트 없이 시작한다.
+   */
+  resetWebAdConsentMemory()
+  vi.unstubAllEnvs()
 })
 
 describe('IntroScreen — 마이크 게이트 (KAN-56)', () => {
@@ -65,7 +86,7 @@ describe('IntroScreen — 마이크 게이트 (KAN-56)', () => {
     expect(screen.getByRole('button', { name: '마이크 확인 중…' })).toBeDisabled()
 
     await waitFor(() => expect(onWebStart).toHaveBeenCalledTimes(1))
-    expect(screen.getByRole('button', { name: '시작하기' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '내 억양 테스트하기' })).toBeEnabled()
   })
 
   it('권한이 거부되면 안내 화면으로 갈아치우고 스토어 링크를 준다', async () => {
@@ -77,7 +98,7 @@ describe('IntroScreen — 마이크 게이트 (KAN-56)', () => {
 
     expect(await screen.findByText('마이크 권한이 필요해요')).toBeInTheDocument()
     // 권한 없이는 테스트를 시작할 수 없다 (§5.6) — 인트로가 남아 있으면 안 된다
-    expect(screen.queryByRole('button', { name: '시작하기' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '내 억양 테스트하기' })).not.toBeInTheDocument()
     expect(onWebStart).not.toHaveBeenCalled()
 
     const storeLink = screen.getByRole('link', { name: '앱으로 테스트하기' })
@@ -121,19 +142,190 @@ describe('IntroScreen — 마이크 게이트 (KAN-56)', () => {
     await waitFor(() => expect(onWebStart).toHaveBeenCalledTimes(1))
     expect(requestWebPermission).toHaveBeenCalledTimes(2)
     // 통과했으므로 안내 화면이 걷힌다
-    expect(screen.getByRole('button', { name: '시작하기' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '내 억양 테스트하기' })).toBeInTheDocument()
   })
 })
 
-describe('IntroScreen — 텍스트 히어로 (KAN-178)', () => {
-  it('히어로 문구가 이 화면의 h1이고, 중복이던 제목은 걷혔다', () => {
+describe('IntroScreen — 인트로 히어로', () => {
+  it('큰 제목만 이 화면의 h1이고 설명은 부제와 프롬프트로 남는다', () => {
     render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
 
     // 화면 이름을 말하는 것이 히어로뿐이라 장식으로 두면 인트로가 접근 가능한 이름을 잃는다
     expect(screen.getByRole('heading', { level: 1, name: '사투리 좀 치나?' })).toBeInTheDocument()
-    // 히어로 바로 밑에서 같은 말을 되풀이하던 제목이다
-    expect(screen.queryByText('사투리 억양 테스트')).not.toBeInTheDocument()
+    expect(screen.getByText('내 목소리로 확인하는 사투리 억양')).toBeInTheDocument()
+    expect(screen.getByText('사투리 좀 치는지, 지금 확인해봐요.')).toBeInTheDocument()
     // 제목 자리를 넘겨받은 것이지 하나 더 생긴 것이 아니다 — h1은 여전히 하나다
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
+  })
+})
+
+describe('IntroScreen — 맞춤형 광고 동의 (KAN-196)', () => {
+  /** 광고 동의를 아는 앱의 브리지 대역. 읽기 값은 인자, 쓰기는 기록만 한다 */
+  function adBridge(consent: string, setAdConsent = vi.fn()): AccenturyBridge {
+    return {
+      requestMicPermission: vi.fn(),
+      startVoiceItem: vi.fn(),
+      getContractVersion: () => REQUIRED_BRIDGE_VERSION,
+      getAdConsent: () => consent,
+      setAdConsent,
+    }
+  }
+
+  const dialog = () => screen.queryByRole('dialog', { name: AD_CONSENT_TITLE })
+  const settingsLink = () => screen.queryByRole('button', { name: AD_CONSENT_SETTINGS_LINK })
+
+  /**
+   * 광고 ID가 들어간 빌드로 만든다. 브라우저 갈래는 이 두 값이 있어야 시트가 뜬다 — 없으면
+   * 광고가 나가지 않는 빌드라 묻지 않는다 (PR #109 리뷰 (2026-09-13), `resolveAdConsentSource`).
+   */
+  function stubAdSenseIds() {
+    vi.stubEnv('VITE_ADSENSE_CLIENT_ID', 'ca-pub-0000000000000000')
+    vi.stubEnv('VITE_ADSENSE_SLOT_ID', '0000000000')
+  }
+
+  it('아직 묻지 않았으면(unknown) 시트를 띄운 채 시작한다', () => {
+    window.AccenturyBridge = adBridge('unknown')
+
+    render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
+
+    expect(dialog()).toBeInTheDocument()
+    // 인트로는 그 아래 그대로 있다 — 시트가 화면을 갈아치우는 것이 아니다
+    expect(screen.getByRole('button', { name: '내 억양 테스트하기' })).toBeInTheDocument()
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
+  })
+
+  it.each(['granted', 'denied'] as const)('이미 골랐으면(%s) 시트가 뜨지 않고 링크만 있다', (consent) => {
+    window.AccenturyBridge = adBridge(consent)
+
+    render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
+
+    expect(dialog()).not.toBeInTheDocument()
+    expect(settingsLink()).toBeInTheDocument()
+  })
+
+  it('브라우저 단독 실행도 같은 시트로 묻되 문안이 웹 것이다 (KAN-197 2단계)', () => {
+    // 브리지 객체도 `?bridge=`도 없으면 브라우저 단독 실행이다 (`bridge.ts`의 `isStandaloneWeb`)
+    stubAdSenseIds()
+
+    render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
+
+    expect(dialog()).toBeInTheDocument()
+    /*
+     * 사업자와 수집 항목이 앱과 갈린다. 브라우저로 오신 분에게 「기기의 광고 식별자」라고
+     * 말하면 쓰지 않는 것을 수집한다고 고지하는 셈이다 (`adConsentText.ts`).
+     */
+    expect(screen.getByText(/Google AdSense/)).toBeInTheDocument()
+    expect(screen.getByText(/브라우저 쿠키/)).toBeInTheDocument()
+    expect(screen.queryByText(/Google AdMob/)).not.toBeInTheDocument()
+  })
+
+  it('웹에서 고르면 시트가 닫히고 링크로 지금 상태를 다시 볼 수 있다 (KAN-197 2단계)', () => {
+    stubAdSenseIds()
+
+    render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
+
+    fireEvent.click(screen.getByRole('button', { name: AD_CONSENT_DENY }))
+
+    // 방침 10항이 약속한 철회 경로다 — 「첫 화면 아래 맞춤형 광고 링크에서 언제든」
+    expect(dialog()).not.toBeInTheDocument()
+    expect(settingsLink()).toBeInTheDocument()
+
+    fireEvent.click(settingsLink()!)
+
+    expect(dialog()).toBeInTheDocument()
+    expect(screen.getByText(AD_CONSENT_CURRENT.denied)).toBeInTheDocument()
+  })
+
+  it('광고 ID가 없는 브라우저 빌드에는 시트도 링크도 없다 (팀 결정 2026-09-13)', () => {
+    /*
+     * staging과 슬롯 등록 전 prod가 이 상태다. 태그도 슬롯도 서지 않는 빌드에서 「AdSense
+     * 광고가 나와요」를 필수 모달로 띄우면 나가지도 않는 광고를 고지하는 셈이고, 테스터는 첫
+     * 화면부터 막힌다 (PR #109 리뷰 (2026-09-13)).
+     */
+    vi.stubEnv('VITE_ADSENSE_CLIENT_ID', undefined)
+    vi.stubEnv('VITE_ADSENSE_SLOT_ID', undefined)
+
+    render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
+
+    expect(dialog()).not.toBeInTheDocument()
+    expect(settingsLink()).not.toBeInTheDocument()
+  })
+
+  it('`?bridge=`는 있는데 객체가 없는 WebView에는 시트도 링크도 없다', () => {
+    // 앱이 연 WebView로 보는 조합이다. 웹 저장소에 적으면 정작 SDK를 세우는 네이티브가 모른다
+    setSearch('?bridge=1')
+
+    render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
+
+    expect(dialog()).not.toBeInTheDocument()
+    expect(settingsLink()).not.toBeInTheDocument()
+  })
+
+  it('메서드를 모르는 구버전 앱에도 시트도 링크도 없다 — 객체가 있으면 쿼리와 무관하다', () => {
+    window.AccenturyBridge = {
+      requestMicPermission: vi.fn(),
+      startVoiceItem: vi.fn(),
+      getContractVersion: () => REQUIRED_BRIDGE_VERSION,
+    }
+
+    render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
+
+    expect(dialog()).not.toBeInTheDocument()
+    expect(settingsLink()).not.toBeInTheDocument()
+  })
+
+  it('[맞춤형 광고 허용]은 granted를 네이티브에 쓰고 시트를 닫는다', () => {
+    const setAdConsent = vi.fn()
+    window.AccenturyBridge = adBridge('unknown', setAdConsent)
+    render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
+
+    fireEvent.click(screen.getByRole('button', { name: AD_CONSENT_ALLOW }))
+
+    expect(setAdConsent).toHaveBeenCalledWith('granted')
+    expect(dialog()).not.toBeInTheDocument()
+    // 고른 뒤에는 바꿀 길이 남는다
+    expect(settingsLink()).toBeInTheDocument()
+  })
+
+  it('[일반 광고만 보기]는 denied를 쓰고 시트를 닫는다', () => {
+    const setAdConsent = vi.fn()
+    window.AccenturyBridge = adBridge('unknown', setAdConsent)
+    render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
+
+    fireEvent.click(screen.getByRole('button', { name: AD_CONSENT_DENY }))
+
+    expect(setAdConsent).toHaveBeenCalledWith('denied')
+    expect(dialog()).not.toBeInTheDocument()
+  })
+
+  it('「맞춤형 광고 설정」은 시트를 지금 상태와 함께 다시 연다', () => {
+    const setAdConsent = vi.fn()
+    window.AccenturyBridge = adBridge('denied', setAdConsent)
+    render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
+
+    fireEvent.click(settingsLink()!)
+
+    expect(dialog()).toBeInTheDocument()
+    expect(screen.getByText('지금은 일반 광고만 보는 상태예요.')).toBeInTheDocument()
+
+    // 바꾸면 사본도 따라간다 — 다시 열었을 때 새 상태를 말한다
+    fireEvent.click(screen.getByRole('button', { name: AD_CONSENT_ALLOW }))
+    expect(setAdConsent).toHaveBeenCalledWith('granted')
+    expect(dialog()).not.toBeInTheDocument()
+    fireEvent.click(settingsLink()!)
+    expect(screen.getByText('지금은 맞춤형 광고를 허용한 상태예요.')).toBeInTheDocument()
+  })
+
+  it('시트가 떠 있는 동안 고른 뒤에야 [시작하기]가 네이티브 게이트로 간다', () => {
+    const requestMicPermission = vi.fn()
+    window.AccenturyBridge = { ...adBridge('unknown'), requestMicPermission }
+    render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
+
+    // 시트는 막으로 손을 막는 것이지 버튼을 잠그는 것이 아니다 — 잠갔다면 스모크 구동기가
+    // 인트로에서 멈춘다. 그래서 여기서 확인하는 것은 "고른 뒤 정상 경로가 그대로"까지다.
+    fireEvent.click(screen.getByRole('button', { name: AD_CONSENT_DENY }))
+    clickStart()
+
+    expect(requestMicPermission).toHaveBeenCalledTimes(1)
   })
 })

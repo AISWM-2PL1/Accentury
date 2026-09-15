@@ -1,6 +1,7 @@
 package com.accentury.app.audio
 
 import androidx.annotation.RequiresPermission
+import com.accentury.app.analytics.CrashReports
 import kotlinx.coroutines.flow.takeWhile
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -71,6 +72,15 @@ class RecordingEngine(private val source: PcmSource = AudioRecorder()) {
                     )
                 }
         } catch (e: AudioRecorder.CaptureException) {
+            /*
+             * 마이크가 열리지 않은 실패는 사용자에게 "녹음에 실패했어요"까지만 보이고 그 뒤가
+             * 남지 않는다 (KAN-33). 기기·OS 조합에 따라 갈리는 실패라 분포를 봐야 대응이 갈려서,
+             * 여기서 비치명 이벤트로 남긴다. 문구는 AudioRecorder가 든 우리 고정 문자열이다.
+             *
+             * 아래 SecurityException에는 붙이지 않는다 - 녹음 중 권한이 회수된 경우라 결함이 아니라
+             * 사용자 상태이고, 앱이 고칠 것도 없다.
+             */
+            CrashReports.recordCaptureFailure(e.message ?: "capture error")
             return Outcome.Failure(e.message ?: "capture error")
         } catch (e: SecurityException) {
             return Outcome.Failure("녹음 권한 없음 - ${e.message}")

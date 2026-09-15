@@ -3,25 +3,26 @@
 BE(Spring Boot)만 호출하는 **사설망 전용** 분석 서버입니다 (API 명세서 §1.1, §4, NFR-SC-04).
 퍼블릭 인터넷에 노출하지 않습니다.
 
-## 지금 들어 있는 것 (KAN-27)
+## 지금 들어 있는 것
 
-이 스켈레톤이 완성한 범위는 **원본 음성의 수명 관리**입니다.
+점수는 실모델이 만들고(KAN-22), 원본 음성의 수명 관리는 라우트가 쥡니다 (KAN-27).
 
 - `POST /internal/v0/analyze` (§4.1) - multipart(audio + meta)를 받아 §4.1 봉투로 응답합니다.
-  점수는 스텁이 만듭니다 - 기본값은 `correlationId`를 해시해 0~100을 고르게 덮는
-  분산 모드입니다 (KAN-136).
+  점수는 전달본 채점 모델이 만듭니다 (KAN-159의 트랙 1, 아래 "실모델 어댑터").
 - 입력 오디오는 전용 임시 디렉터리에만 내려놓고, 응답을 돌려주는 즉시 지웁니다.
   성공, 판정 실패, 예외, 클라이언트 취소 어느 경로로 빠져나가도 같습니다.
 - 임시파일은 예측 불가능한 이름 + 0600, 디렉터리는 0700입니다.
 - 프로세스가 만드는 모든 임시파일이 이 디렉터리에 모입니다(`tempfile.tempdir`를 돌려둡니다) -
   프레임워크가 큰 업로드를 디스크로 스풀해도 공용 임시 디렉터리로 새지 않습니다.
-- 추론에 상한(기본 30초)을 걸어 멈춘 요청이 임시파일을 무한정 붙들지 못하게 합니다. 초과하면 503입니다.
+- 추론에 상한(기본 75초)을 걸어 멈춘 요청이 임시파일을 무한정 붙들지 못하게 합니다. 초과하면 503입니다.
 - 본문 상한(2MB)을 multipart 파싱 전에 끊고, 오디오 파트 상한(1MB)을 다시 확인합니다. 초과하면 413입니다.
 - **디렉터리 하나는 프로세스 하나가 전용으로 씁니다.** 기동 정리가 남아 있던 파일을 전부 지우므로,
   `uvicorn --workers`로 여러 프로세스를 띄우려면 워커마다 다른 `ACCENTURY_AI_TEMP_DIR`를 줘야 합니다.
 - 기동 시 디렉터리에 남아 있던 파일은 나이와 무관하게 전부 지웁니다(앞선 프로세스의 잔여물뿐입니다).
 - 이후 청소 잡이 5분마다 돌면서 30분 이상 잔존한 파일을 지웁니다. 삭제는 멱등합니다.
 - `GET /internal/v0/metrics`가 잔존 파일 수와 최장 잔존 시간을 돌려줍니다 (KAN-38이 소비).
+- `GET /internal/v0/metrics/stages`가 추론 단계별 소요 시간 표본을 돌려줍니다
+  (KAN-204, 아래 "추론 단계별 소요 시간"). **읽으면 비워집니다.**
 - `GET /internal/v0/health` (§4.2) - 기동 중(워밍업 전)에는 503 `{"status": "STARTING"}`,
   준비가 끝나면 200 `{"status": "UP"}`입니다. BE는 200 + `UP`만 살아 있는 것으로 읽습니다.
 
@@ -42,7 +43,10 @@ AI 서버는 backend와 다른 EC2에서 돕니다 (KAN-36 A단계). 같은 comp
   이름의 `async def warm_up(self) -> None`(동기 `def`도 됩니다 - 스레드로 넘깁니다)에 두면 그동안
   backend의 회로 복구 프로브와 compose healthcheck가 503 `STARTING`을 보고 요청을 보내지 않습니다.
   이름이 다르면 조용히 건너뛰므로 기동 로그의 `warmUp=있음`으로 확인합니다. 워밍업이 실패하면
-  준비 전에 머물러 컨테이너가 unhealthy로 남고 파이프라인이 롤백합니다. 스텁은 워밍업이 없습니다.
+  준비 전에 머물러 컨테이너가 unhealthy로 남고 파이프라인이 롤백합니다. 실모델의 워밍업은
+  워커 프로세스를 띄워 가중치를 적재하는 일입니다.
+- **종료할 때는 엔진의 `close()`(있으면)를 부릅니다.** 워밍업과 대칭이고, 실모델이 여기서
+  워커 프로세스를 죽입니다 - 부르지 않으면 별도 세션으로 뜬 워커가 부모를 따라 죽지 않습니다.
 - **배포에서는 토큰이 없으면 기동하지 않습니다.** 운영 compose가 `ACCENTURY_AI_INTERNAL_TOKEN_REQUIRED=true`를
   주므로 SSM에서 토큰이 빠진 채 뜨는 fail-open 상태가 없습니다 (backend `DeploymentConfigGuard`와 대칭).
 
@@ -56,16 +60,15 @@ AI 서버는 backend와 다른 EC2에서 돕니다 (KAN-36 A단계). 같은 comp
 | 라우트 (`app/analyze.py`) | 임시파일 수명, 추론 상한, 오디오 파트 상한(413), §4.1 봉투 조립 |
 | 엔진 (`app/engine.py`) | 오디오 1건 -> 상태, 억양 점수, 신뢰도, 품질 코드, `segments` |
 
-- 엔진은 기동 시 `ACCENTURY_AI_ANALYSIS_ENGINE`으로 한 번만 고릅니다. 모르는 이름이면
-  기동이 실패합니다 - 스텁으로 조용히 흘러가면 실모델을 띄웠다고 믿는 환경이 고정 점수를
-  내보내면서 아무 신호도 남기지 않기 때문입니다.
-- `modelVersion`은 설정이 아니라 엔진이 스스로 보고합니다. 스텁은 `stub-0.1`을 냅니다.
-  비어 있으면 기동이 실패합니다 - BE가 성공 응답을 계약 위반으로 끊고 회로 차단기를
-  세우기 때문입니다.
-- 실모델(KAN-22)을 붙여도 **라우트(`app/analyze.py`)는 고치지 않습니다.** 엔진 구현
-  하나를 더하면 됩니다. 프로토콜만 맞추면 상속은 필요 없습니다 (`tests/conftest.py`의
-  `FakeEngine`이 그 예입니다). 다만 `GET /internal/v0/models`와 워밍업 상태는 이 경계
-  바깥이라 `app/main.py`에 자리를 만들어야 합니다.
+- 엔진은 기동 시 `ACCENTURY_AI_ANALYSIS_ENGINE`으로 한 번만 고릅니다 - 실모델 `track1`(기본값)과
+  개발 기계용 `fake` 둘입니다. 모르는 이름이면 기동이 실패합니다 - 아무거나 만들어 흘려보내면
+  무엇을 띄웠다고 믿는 환경이 다른 것을 돌리면서 아무 신호도 남기지 않기 때문입니다.
+- `modelVersion`은 설정이 아니라 엔진이 스스로 보고합니다. 실모델은 적재한 참조 stamp와
+  코드 해시, Whisper 저장소가 들어간 `track1-...` 문자열을 냅니다. 비어 있으면 기동이
+  실패합니다 - BE가 성공 응답을 계약 위반으로 끊고 회로 차단기를 세우기 때문입니다.
+- 실모델을 붙이면서 **라우트(`app/analyze.py`)는 한 줄도 고치지 않았습니다** (KAN-135의
+  경계가 지켜졌다는 증거입니다). 프로토콜만 맞추면 상속은 필요 없습니다 (`tests/conftest.py`의
+  `FakeEngine`이 그 예입니다).
 - `AnalysisOutcome`은 만들어지는 시점에 스스로를 검사합니다. 아래를 어기면 값 자체가
   존재하지 못합니다 - 그런 응답을 BE가 받으면 계약 위반으로 끊으면서 회로 차단기를
   세우기 때문입니다.
@@ -84,29 +87,84 @@ AI 서버는 backend와 다른 EC2에서 돕니다 (KAN-36 A단계). 같은 comp
     `numpy.float32`, `numpy.int64`면 거절됩니다 - 파이썬 `float`/`int`의 하위 타입이
     아니라서, 막지 않으면 응답 조립 시점에 500이 되고 BE가 재전송 예산을 태웁니다.
     엔진은 파이썬 기본 타입으로 변환해서 냅니다.
-- `StubEngine`은 실모델 전환 시 통째로 제거됩니다. 스텁 전용 동작은 전부 이 클래스 안에만
-  둡니다 - 점수 분산(KAN-136)의 해시도 그 안입니다.
+- 스텁 엔진은 2026-09-05에 제거했습니다 (KAN-22). 실모델은 개발 기계(arm64)와 CI 러너에서
+  돌릴 수 없어 로컬 풀스택과 E2E가 함께 사라졌는데, 그러자 앱과 웹의 완주 확인이 돌릴 스택을
+  통째로 잃었습니다 (PR #87 리뷰). 그래서 `fake` 엔진(`app/fake.py`)을 두었습니다 -
+  `ACCENTURY_AI_ANALYSIS_ENGINE=fake`로 명시해야 켜지고, 점수는 `correlationId`의 해시라
+  추론이 아니며(`modelVersion`이 `fake-0.1`로 나가 정체가 드러납니다), 배포 compose가 켜는
+  `ACCENTURY_AI_INTERNAL_TOKEN_REQUIRED=true`와는 양립하지 않아 운영에서는 기동이 거부됩니다.
+  루트 `docker-compose.yml`의 `ai`가 이 엔진으로 뜹니다 (`ai/Dockerfile.fake`, slim 이미지).
 
-### 스텁 점수 (KAN-136)
+### 실모델 어댑터 (KAN-22)
 
-- 기본은 **분산 모드**입니다. `correlationId`를 `blake2b`로 해시해 0~100 중 하나로 접습니다.
-  같은 `correlationId`는 언제나 같은 점수라, BE 재전송이 멱등이고 E2E도 재현됩니다.
-- 고정 75점이던 시절에는 종합 점수가 50.0~83.3에만 놓였습니다. 억양이 상수라 종합
-  `(억양x2 + 단어)/3`이 단어 점수에만 좌우되고, 5등급 중 셋만 나왔습니다.
-- 앱은 업로드마다 새 `X-Correlation-Id`를 발급하므로 한 세션의 음성 5문항은 서로 독립이고,
-  억양 점수는 그 다섯의 평균입니다. **한 세션의 다섯 요청에 같은 `X-Correlation-Id`를
-  고정하면** 다섯 문항이 같은 점수가 되어 세션 억양 점수를 원하는 자리로 끌 수 있습니다 -
-  특정 등급 화면을 재현하는 수단입니다.
-- 씨앗은 라우트가 정한 추적 ID 하나입니다 (§2.2 - 헤더 우선, 없으면 `meta`). 손으로 호출할
-  때 헤더만 주고 `meta.correlationId`를 빠뜨려도 헤더 값이 그대로 씨앗이 됩니다.
-- 회귀 테스트나 계약 테스트처럼 기준값이 필요하면 `ACCENTURY_AI_STUB_SCORE_MODE=fixed`로
-  기존 동작(75점)을 그대로 씁니다.
-- 해시는 추론이 아닙니다. 오디오를 한 바이트도 보지 않습니다.
+모델은 우리 코드가 아니라 **베이스 이미지 안**에 있습니다 (ECR `accentury/ai-model`,
+모델 해시 태그. KAN-159, KAN-173). `ai/Dockerfile`의 `FROM`이 그 이미지를 가리키고, 우리는
+그 위에 FastAPI 앱과 어댑터(`app/track1.py`)만 얹습니다. 참조 분포와 Whisper 가중치, MFA
+음향 모델, 문장 목록이 전부 이미지 안이라 운영 컨테이너가 인터넷과 S3에 닿지 않아도 됩니다.
+
+**어댑터는 워커 프로세스를 하나 띄웁니다.**
+
+- 전달본의 `Track1Scorer.score()`는 동기이고 14~30초입니다 (08-30 실측). 스레드로 넘기면
+  엔진 계약 2번("취소가 실제로 닿아야 한다")을 지킬 수 없습니다 - 파이썬에는 스레드를
+  밖에서 멈추는 수단이 없어서, 라우트가 503을 내고 임시파일을 지운 뒤에도 그 스레드는
+  계속 돕니다. 그래서 워커를 별도 세션으로 띄우고 취소 때 **프로세스 그룹째** 죽입니다
+  (MFA가 워커의 자식이라 그룹째가 아니면 정렬만 살아남습니다).
+- 워커는 기동 시 한 번 뜨고 모델을 한 번만 적재합니다. 요청은 stdin/stdout 파이프로 한 줄씩
+  오갑니다. 워커가 밖에서 죽으면(OOM 킬러 등) 다음 요청이 새 워커로 한 번 다시 시도합니다.
+- **취소의 대가는 재적재입니다.** 죽인 뒤 다음 분석은 가중치를 다시 올릴 때까지 기다립니다.
+  그래서 `ACCENTURY_AI_ANALYSIS_TIMEOUT_SECONDS`는 정상 추론보다 넉넉해야 합니다 - 상한을
+  P95 근처로 조이면 정상 요청이 서로의 재적재를 기다리는 형태로 무너집니다 (KAN-172).
+- 임시파일도 워커 몫이 있습니다. 자식에게 `TMPDIR`로 전용 임시 디렉터리를 넘겨 전달본이
+  만드는 정렬 작업 폴더(그 안에 **오디오 사본**이 있습니다)까지 청소 잡과 잔존 지표가 닿게
+  하고, 워커를 죽인 뒤에는 그 폴더를 어댑터가 지웁니다. MFA가 `MFA_ROOT_DIR`에 남기는 코퍼스
+  작업 폴더는 워커가 요청마다 지웁니다 (KAN-27 AC).
+- `scriptKey`는 KAN-182가 실어 보내는 문장 참조 키입니다 ("1|5" 형식). 모델은 이 키로만
+  문장을 찾습니다 - 문항 번호로는 못 찾습니다. 값이 없거나 서비스 문장이 아니면 **비재전송
+  판정 실패(422 `ANALYSIS_MISREAD`, `retryable=false`)**입니다 (2026-09-05 결정). 무시하고
+  분석하면 대본 없이 채점한 점수가 정상값처럼 나가고, 재전송 가능으로 내면 정의가 바뀌지
+  않는 한 결과가 같은 요청을 BE가 예산이 마를 때까지 반복합니다.
+
+### 추론 단계별 소요 시간 (KAN-204)
+
+문항 하나가 10초대(TTS 발화 실측 9.9\~11.1초)인데 그 시간이 어느 단계에 쓰였는지가 로그에도
+지표에도 없었습니다. GPU 전환(KAN-57)은 Whisper만 줄이고 MFA는 CPU 작업이라 그대로인데 두
+단계의 비율을 모르면 그 판단이 추정으로 남습니다.
+
+라우트가 수첩(`app/stages.py`의 `StageRecord`)을 하나 만들어 `AnalysisRequest`에 실어 보내고
+어댑터가 채웁니다. 추적 ID와 같은 성격입니다 - **라우트가 쥐고 있어야** 시간 초과처럼 결과가
+없는 경로에서도 "어디까지 갔다가 끊겼는가"가 남습니다.
+
+| 단계 | 무엇 | 누가 |
+| --- | --- | --- |
+| `lockWait` | 앞 요청의 추론이 끝나기를 기다린 시간 | 어댑터 |
+| `workerLoad` | 워커 적재와 재적재 대기. 적재가 실제로 있었던 요청에만 적습니다 | 어댑터 |
+| `model` | 전달본 `score()` 호출 전체 | 어댑터 |
+| `transcribe` `gate` `align` `f0` `scoring` | 전사, 내용 게이트, 정렬, F0 추출, 거리와 채점 | 전달본 |
+| `total` | 엔진 호출 전체 (합계) | 라우트 |
+
+**전달본 몫의 다섯은 아직 비어 있습니다.** `score()` 안쪽은 어댑터에서 잴 수 없어, 워커 결과
+JSON의 `stageMs`(단계 이름 -> ms)로 받기로 인터페이스만 정해 두었습니다. 전달본이 봉투에
+`{"stageMs": {"transcribe": 8123.4, ...}}`를 실으면 워커가 그것을 봉투에서 덜어 내 부모에게
+넘기고(`_stage_ms`), 어댑터와 지표는 고칠 것이 없습니다. 목록에 없는 이름은 버립니다 - 이름이
+곧 CloudWatch 차원 값이고 조합 하나가 월 0.30달러입니다.
+
+콜드/웜은 **그 워커의 첫 채점인가**입니다. 가중치는 워밍업에서 이미 올라와 있어도 전달본 안쪽의
+지연 초기화가 첫 채점에서 한 번 일어납니다 - staging 첫 호출 22.9초와 그 뒤 10초대의 차이가
+그것입니다 (KAN-172 실측).
+
+값은 두 곳으로 나갑니다.
+
+- 요청 종료 로그 한 줄 - `... warm=cold stages=lockWait:3,model:22901,total:22904`
+- `GET /internal/v0/metrics/stages` - 호스트 타이머가 1분마다 훑어 CloudWatch
+  `accentury/ai` `StageDuration`으로 올립니다 (차원 `env`, `stage`, `warm`).
+  **읽으면 비워집니다** - 소비자가 그 타이머 하나라는 전제이고, 그 회차의 발행이 실패하면 그
+  1분의 표본은 사라집니다. 표본을 접지 않고 낱개로 올리는 이유는 CloudWatch가 그래야 p50과
+  p95를 계산하기 때문입니다.
 
 ### 엔진 쪽 계약
 
 라우트가 거는 보장(추론 상한, 임시파일 삭제)은 엔진이 다음 둘을 지킬 때만 성립합니다.
-편의가 아니라 계약이고, 적합성 검사는 KAN-137이 맡습니다.
+편의가 아니라 계약이고, 지켰는지는 아래 계약 적합성 스위트가 봅니다 (KAN-137).
 
 1. **이벤트 루프를 막지 않습니다.** `asyncio.timeout`은 `await` 지점에서만 발화하므로,
    동기 추론을 `async def` 안에서 그대로 돌리면 상한이 걸리지 않습니다. 블로킹 추론은
@@ -115,14 +173,71 @@ AI 서버는 backend와 다른 EC2에서 돕니다 (KAN-36 A단계). 같은 comp
 2. **취소가 실제로 닿아야 합니다.** `asyncio.to_thread`에 넘긴 작업은 취소되지 않아서,
    라우트가 503을 내고 임시파일을 지운 뒤에도 워커가 계속 돌며 이미 사라진 파일을 봅니다.
 
+### 계약 적합성 스위트 (KAN-137)
+
+`tests/contract`는 **엔진 구현을 모르는** 테스트입니다. 이 스위트의 통과가 실모델(KAN-22)의
+인수 조건입니다.
+
+| 항목 | 근거 |
+| --- | --- |
+| 응답 봉투가 §4.1과 일치합니다 (필드 집합과 타입) | BE `RestAiAnalysisClient`가 필드로 역직렬화합니다 |
+| 억양 점수가 0~100입니다 | §4.3 스케일 |
+| 동일 입력 반복 분석 오차가 ±2점 이내입니다 | KAN-19 AC |
+| 오디오가 같으면 추적 ID가 달라도 점수가 같습니다 | 점수는 오디오에서 나와야 합니다 |
+| 예산을 넘기면 503입니다 | §4.1. 엔진이 이벤트 루프를 막으면 여기가 200으로 떨어집니다 |
+| 오디오 상한을 넘기면 413입니다 | §3.3과 같은 1MB. 계약값을 직접 쓰고 서버 설정이 그 값인지도 봅니다 - 설정에서 유도하면 어긋난 상한이 그대로 통과합니다 |
+| meta 형식 오류는 400입니다 | 계약 위반은 BE 버그이고, 5xx로 내면 재전송을 부릅니다 |
+| `scoreVersion`을 그대로 에코백합니다 | §5.4 불일치 가드의 전제 |
+| 판정 실패가 §2.4 코드와 불리언 `retryable`을 냅니다 | BE `ErrorCode`에 없는 이름은 문항을 죽입니다 |
+| `scriptKey` 없는 meta를 비재전송으로 거절합니다 | KAN-182 계약, 2026-09-05 결정 |
+| 모든 종료 경로 뒤에 오디오가 남지 않습니다 | KAN-27 AC-1 |
+
+엔진 프로파일 표(`ENGINE_PROFILES`)와 `--contract-engine` 옵션은 스텁이 사라지면서 접었습니다
+(KAN-22) - 고를 엔진이 하나면 표는 목적을 잃습니다. 항목마다 무엇을 기대하는지는 이제 테스트
+본문에 그대로 적혀 있습니다.
+
+이 스위트는 **전달본이 들어 있는 이미지 안에서만** 돕니다. 전달본 모듈이 없는 개발 기계에서는
+사유와 함께 건너뜁니다 - 조용히 통과시키지 않습니다.
+
+```bash
+# 레포 루트에서. 베이스가 모델 이미지라 ECR 로그인이 먼저 필요합니다 (infra/README.md "모델 교체").
+docker build --platform linux/amd64 -t accentury-ai:dev ai
+docker run --rm --platform linux/amd64 -v "$PWD/ai:/src" -w /src \
+    -e ACCENTURY_AI_ANALYSIS_TIMEOUT_SECONDS=600 accentury-ai:dev \
+    sh -c "pip install -q --user pytest httpx && \
+           python -m pytest tests/contract --contract-audio=/src/samples/1-5.wav"
+```
+
+운영 이미지에는 pytest가 없어서 컨테이너 안에서 `--user`로 한 번 깔고 돕니다 (비루트라 시스템
+site-packages에는 못 씁니다). 마운트한 체크아웃의 `app/`이 임포트되므로 지금 고치고 있는 코드가
+검사 대상이고, 모델과 참조는 이미지의 `/app/src`에서 옵니다. 상한을 600초로 올린 것은 x86
+에뮬레이션(애플 실리콘)에서 추론 1건이 40초대이기 때문입니다 - 실제 x86 호스트에서는 기본값이면 됩니다.
+
+둘을 맞추지 않으면 계약과 무관한 이유로 항목이 깨집니다.
+
+- `--contract-audio`에 **실제 발화 WAV**를 줍니다. 기본 픽스처는 합성 사인파라 내용 게이트가
+  판정 실패로 끊고, 그러면 성공 경로 항목이 통째로 오탐합니다. 녹음은 스위트가 쓰는
+  `scriptKey`("1|5")의 대본을 읽은 것이어야 합니다.
+- `ACCENTURY_AI_ANALYSIS_TIMEOUT_SECONDS`가 정상 추론과 워커 재적재보다 넉넉해야
+  합니다. 기본값 75초는 c7i.xlarge 기준(KAN-172, 배포 중 backend 태스크 6개분과 워커 재적재를 덮는 값)이라 느린 기계(에뮬레이션 등)에서는 올립니다. 스위트는 나머지 설정도
+  `Settings.from_env()`로 읽습니다 (내부 토큰만 끕니다 - 인증은 KAN-36의 전용 테스트가 봅니다).
+
+503 항목은 서버를 하나 더 띄우지 않고 그 항목 동안만 `app.state.settings`의 상한을 바꿉니다
+(`conftest.budget`). 두 번째 `TestClient`는 자기 이벤트 루프를 돌리는데 실모델 엔진은 워커
+파이프를 처음 띄운 루프에 묶어 두기 때문입니다. 그리고 **이 항목이 도는 동안 워커가 죽습니다** -
+취소가 실제로 닿는다는 것이 계약이라서, 뒤이은 항목의 첫 요청은 재적재를 기다렸다가 돌아옵니다.
+
 ## 아직 없는 것
 
 | 항목 | 담당 |
 | --- | --- |
-| 실제 추론 (F0 추출, guideF0 정렬, 점수 산출) - `AnalysisEngine` 구현 하나로 들어옵니다 | KAN-22 |
-| `GET /internal/v0/models` (모델 버전) | KAN-22 |
-| `correlationId` 기반 멱등 캐시 (§4.1) | KAN-22 - 지금은 스텁이 무상태이고 결정적이라 재요청 결과가 같습니다 |
-| 실모델 컨테이너 이미지 (`accentury/ai-model` 베이스) | KAN-22 (전용 EC2 배치는 KAN-36 A단계 완료, GPU는 KAN-57 판정 후) |
+| `GET /internal/v0/models` (모델 버전) | 미정 - 지금은 응답의 `modelVersion`이 같은 값을 싣습니다 |
+| 지연 예산 재확정 (P95) | KAN-57 판정, KAN-172 재조정. 08-30 실측은 1건 14~30초입니다 |
+| GPU 전환 | KAN-57 판정 후 |
+
+`correlationId` 기반 멱등 캐시는 **범위 밖입니다** (2026-09-01 정정). BE가 일시 장애 뒤 같은
+`correlationId`로 재전송하는 설계이고(KAN-24, KAN-28), AI는 무상태이며 오디오를 남기지
+않으므로 자체 멱등 저장소를 두지 않습니다.
 
 ## 실행
 
@@ -130,8 +245,17 @@ AI 서버는 backend와 다른 EC2에서 돕니다 (KAN-36 A단계). 같은 comp
 cd ai
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
-uvicorn app.main:app --port 8000     # BE의 accentury.analysis.ai-base-url과 맞춥니다
-pytest
+pytest                               # 계약 스위트는 전달본이 없으면 건너뜁니다
+```
+
+`uvicorn app.main:app`을 개발 기계에서 그냥 띄우면 워밍업이 실패해 health가 `STARTING`에
+머뭅니다 - 전달본 모듈(`/app/src`)이 없기 때문입니다. 실모델을 실제로 돌리려면 모델 이미지를
+베이스로 한 컨테이너로 띄웁니다 (`docker build -t accentury-ai:dev ai`, amd64). 앱과 웹의
+흐름만 보려면 가짜 엔진으로 띄웁니다 - 전달본 없이 뜨고 점수는 해시입니다.
+
+```bash
+ACCENTURY_AI_ANALYSIS_ENGINE=fake .venv/bin/uvicorn app.main:app --port 8000
+# 또는 루트에서 docker compose up -d --build  (DB + 가짜 AI + BE)
 ```
 
 ## 설정 (환경 변수)
@@ -141,13 +265,17 @@ pytest
 | `ACCENTURY_AI_TEMP_DIR` | `<시스템 임시 디렉터리>/accentury-ai-tmp` | 임시파일 전용 디렉터리 |
 | `ACCENTURY_AI_TEMP_RETENTION_SECONDS` | `1800` | 잔존 파일 삭제 기준 (30분) |
 | `ACCENTURY_AI_SWEEP_INTERVAL_SECONDS` | `300` | 청소 잡 주기 |
-| `ACCENTURY_AI_ANALYSIS_TIMEOUT_SECONDS` | `30` | 분석 1건의 상한 - BE 읽기 타임아웃(10초) 뒤의 방어선 |
+| `ACCENTURY_AI_ANALYSIS_TIMEOUT_SECONDS` | `75` | 분석 1건의 상한 (lock 대기와 재적재 대기 포함) - 넘기면 503이고 워커가 죽습니다 (재적재가 뒤따릅니다). backend의 읽기 타임아웃 85초보다 짧아야 합니다 (KAN-172) |
 | `ACCENTURY_AI_MAX_AUDIO_BYTES` | `1048576` | 오디오 파트 상한 (§3.3과 동일) |
 | `ACCENTURY_AI_MAX_REQUEST_BYTES` | `2097152` | 요청 본문 전체 상한 - multipart 파싱 전에 끊습니다 |
-| `ACCENTURY_AI_ANALYSIS_ENGINE` | `stub` | 붙일 분석 엔진 - 모르는 이름이면 기동이 실패합니다 |
-| `ACCENTURY_AI_STUB_SCORE_MODE` | `hashed` | 스텁 점수 산출 방식 - `hashed`는 `correlationId` 해시, `fixed`는 아래 고정값. 모르는 값이면 기동이 실패합니다 |
-| `ACCENTURY_AI_STUB_SCORE` | `75` | `fixed` 모드의 억양 점수 (0~100, 문항 20점 환산은 BE). 범위 밖이면 기동이 실패합니다 |
-| `ACCENTURY_AI_STUB_DELAY_MS` | `1500` | 추론 지연 흉내 |
-| `ACCENTURY_AI_STUB_FAIL_ITEM` | (없음) | 이 itemId면 422 판정 실패를 돌려줍니다 |
+| `ACCENTURY_AI_ANALYSIS_ENGINE` | `track1` | 붙일 분석 엔진 - `track1`(실모델) 또는 `fake`(개발 기계용, 해시 점수). 모르는 이름이면 기동이 실패합니다 |
+| `ACCENTURY_AI_FAKE_FAIL_ITEM` | (없음) | `fake` 전용. 이 itemId면 재전송 가능한 판정 실패(`AUDIO_TOO_QUIET`)를 냅니다 - E2E 실패 갈래의 수단 |
+| `ACCENTURY_AI_FAKE_DELAY_MS` | `1500` | `fake` 전용. 응답 지연 - 앱의 대기 화면이 실제로 그려지는지 볼 수 있을 만큼 |
+| `ACCENTURY_AI_TRACK1_SRC_DIR` | `/app/src` | 전달본 모듈이 있는 디렉터리 (워커가 `sys.path`에 넣습니다) |
+| `ACCENTURY_AI_TRACK1_REF_DIR` | (없음) | 참조 분포 폴더. 비우면 전달본의 기본값 - 이미지 안에서는 같이 실린 참조입니다 |
+| `ACCENTURY_AI_TRACK1_SENTENCES` | (없음) | 서비스 문장 목록. 비우면 전달본의 기본값 |
+| `ACCENTURY_AI_TRACK1_DEVICE` | `auto` | Whisper를 올릴 장치 (`auto`면 cuda, mps, cpu 순) |
+| `ACCENTURY_AI_TRACK1_LOAD_TIMEOUT_SECONDS` | `600` | 가중치 적재의 상한 - 넘기면 워밍업 실패로 health가 `STARTING`에 머뭅니다 |
 | `ACCENTURY_AI_INTERNAL_TOKEN` | (없음) | backend와 나눠 갖는 내부 호출 시크릿 (KAN-36). 있으면 health를 뺀 모든 요청에 `X-Accentury-Internal-Token` 헤더를 요구합니다 |
+| `ACCENTURY_AI_LOG_LEVEL` | `INFO` | 앱 로그 수준. 기동 로그(`warmUp=있음`, 모델 버전)와 요청 종료 줄이 INFO입니다 |
 | `ACCENTURY_AI_INTERNAL_TOKEN_REQUIRED` | `false` | `true`면 위 토큰이 없을 때 기동이 실패합니다 (KAN-36). 운영 compose가 켭니다 |

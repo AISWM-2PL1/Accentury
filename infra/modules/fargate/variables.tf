@@ -175,3 +175,9 @@ variable "log_retention_days" {
   description = "CloudWatch Logs 보존 일수. EC2 시절 json-file 50MB 로테이션의 자리다."
   default     = 14
 }
+
+variable "training_bucket_arn" {
+  type        = string
+  description = "staging 전용 학습 데이터 S3 버킷 ARN (KAN-201). 값이 있으면 태스크 역할에 그 버킷 한 개로 한정한 s3:PutObject 문장이 생긴다 - Get, List, Delete는 없다 (backend는 쓰기만 한다). null이면 문장 자체가 없다 - prod는 반드시 null이다."
+  default     = null
+}

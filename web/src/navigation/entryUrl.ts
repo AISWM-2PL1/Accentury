@@ -19,25 +19,35 @@
  * 일이고 이 규칙과 섞을 이유가 없다.
  */
 
-/** 문항 진행 화면 (`?screen=test&testVersion=...&sessionId=...`) */
-export function buildTestUrl(search: string, session: { testVersion: string; sessionId: string }): string {
+/**
+ * 문항 진행 화면 (`?screen=test&testVersion=...&voiceSet=...&sessionId=...`).
+ *
+ * `voiceSet`을 함께 싣는 이유는 문항 조회가 그 값을 필요로 해서다 (KAN-205). 서버가 세션마다
+ * 세트를 고르므로 다음 문서의 문항 화면이 세트를 모르면 세트 1을 받아 제출이 전부 422가 된다.
+ */
+export function buildTestUrl(
+  search: string,
+  session: { testVersion: string; voiceSet: number; sessionId: string },
+): string {
   const params = new URLSearchParams(search)
   params.set('screen', 'test')
   params.set('testVersion', session.testVersion)
+  params.set('voiceSet', String(session.voiceSet))
   params.set('sessionId', session.sessionId)
   return toQuery(params)
 }
 
 /**
  * 결과 화면 (`?screen=result&sessionId=...`).
- * `testVersion`은 지운다 — 결과 화면이 읽지 않는 값이고, 남겨 두면 이 URL을 다시 연 사람이
- * 끝난 세션의 정의 버전을 물고 다닌다.
+ * `testVersion`과 `voiceSet`은 지운다 — 결과 화면이 읽지 않는 값이고, 남겨 두면 이 URL을 다시
+ * 연 사람이 끝난 세션의 정의 버전과 세트를 물고 다닌다.
  */
 export function buildResultUrl(search: string, sessionId: string): string {
   const params = new URLSearchParams(search)
   params.set('screen', 'result')
   params.set('sessionId', sessionId)
   params.delete('testVersion')
+  params.delete('voiceSet')
   return toQuery(params)
 }
 
@@ -47,6 +57,7 @@ export function buildIntroUrl(search: string): string {
   params.delete('screen')
   params.delete('sessionId')
   params.delete('testVersion')
+  params.delete('voiceSet')
   return toQuery(params)
 }
 

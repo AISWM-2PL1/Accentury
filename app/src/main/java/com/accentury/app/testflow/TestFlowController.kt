@@ -305,8 +305,9 @@ class TestFlowController private constructor(
      * 다시 시도하겠다는 뜻일 뿐이라, 여기서 앞 문항들의 대기 시도까지 버리면 이미 끝난 업로드의
      * 결과가 웹에 영영 도착하지 않는다.
      *
-     * 녹음 화면의 [나가기] 버튼은 KAN-147에서 없앴다 (2026-08-19 결정: 이탈 UX는 KAN-39
-     * 디자인 때 정한다).
+     * 녹음 화면의 [나가기] 버튼은 KAN-147에서 없앴고(2026-08-19), KAN-191이 그 뒤를 닫았다:
+     * 출구는 **막다른 실패 상태에만** 있고 그 자리는 웹의 분석 대기 화면이다 — 진행 중 화면인
+     * 여기에는 되살리지 않는다 (ux-ui.md §4-D·§4-F).
      */
     fun onRecordingExit() {
         if (phase !is TestFlowPhase.Recording) return

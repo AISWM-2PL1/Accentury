@@ -63,8 +63,8 @@ const HALFTONE_OPACITY = 0.5
 /** 폭을 아직 재지 못했을 때 쓸 값. 시안 기준 콘텐츠 폭(`--content-max-width`)이다 */
 const FALLBACK_WIDTH = 320
 
-/** 그리기 영역 높이 (px). 레인 높이 120에서 위 라벨 자리(16)와 아래 여백(4)을 뺀 값이다 */
-const DRAW_HEIGHT = 100
+/** 그리기 영역 높이 (px). 레인 높이 120에서 위 라벨 자리(24)와 아래 여백(4)을 뺀 값이다 */
+const DRAW_HEIGHT = 92
 
 export function CurveLane({ label, ariaLabel, segments, variant }: CurveLaneProps) {
   const svgRef = useRef<SVGSVGElement | null>(null)
@@ -187,7 +187,7 @@ export function CurveLane({ label, ariaLabel, segments, variant }: CurveLaneProp
 
 /**
  * 곡선 아래를 닫은 도형. 곡선 끝에서 바닥으로 내려가고, 바닥을 따라 시작점 아래까지 간 뒤
- * 닫는다 — 선분이 레인 폭 전체를 쓰지 않아도(녹음이 짧으면 왼쪽만 차 있다) 채운 면이
+ * 닫는다 — 선분이 레인 폭 전체를 쓰지 않아도(녹음 중이거나, 발화가 가이드보다 짧다) 채운 면이
  * 곡선 밑에만 남는다.
  */
 function fillPath(points: CurvePoint[], width: number): string {

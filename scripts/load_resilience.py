@@ -47,7 +47,7 @@ import threading
 import time
 import urllib.parse
 import uuid
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import e2e_smoke as smoke  # noqa: E402
@@ -211,7 +211,8 @@ class Load:
         self.session_bucket = TokenBucket(args.sessions_per_minute / 60.0, burst=1)
         self.upload_bucket = TokenBucket(args.uploads_per_minute / 60.0, burst=1)
         self.audio = smoke.wav_bytes()
-        self.definitions: Dict[str, smoke.Definition] = {}
+        #: (testVersion, voiceSet) -> 정의. 세트마다 문항이 다르다 (KAN-182, KAN-205).
+        self.definitions: Dict[Tuple[str, int], smoke.Definition] = {}
         self.definition_lock = threading.Lock()
         self.processing: Dict[int, int] = {}
         self.processing_lock = threading.Lock()
@@ -264,7 +265,10 @@ class Load:
 
 def get_worker(load: Load, worker_id: int) -> None:
     """정의 조회를 토큰 버킷 속도로 계속 보낸다. 조회 경로는 세션 없이도 열려 있다 (§3.2)."""
-    path = "/v0/tests/" + urllib.parse.quote(load.args.test_version)
+    # 세트를 명시한다 (KAN-205) - 조회 부하는 세션과 무관하지만, 캐시 키와 응답 크기를
+    # 실제 응시 경로와 같게 두려면 같은 세트를 읽어야 한다.
+    path = ("/v0/tests/" + urllib.parse.quote(load.args.test_version)
+            + "?voiceSet=" + str(smoke.SMOKE_VOICE_SET))
     name = "get-%d" % worker_id
     while load.get_bucket.acquire(load.stop):
         load.call("get", "GET", path, worker=name)
@@ -274,22 +278,29 @@ def create_session(load: Load, worker: str) -> Optional[smoke.Session]:
     headers = {smoke.ADMIN_TOKEN_HEADER: load.args.admin_token} if load.args.admin_token else None
     response = load.call(
         "session", "POST", "/v0/sessions", headers=headers,
-        body=json.dumps({"client": {"platform": "WEB", "appVersion": "load"}}).encode("utf-8"),
+        body=json.dumps({
+            "client": {"platform": "WEB", "appVersion": "load"},
+            # 세트를 못 박는다 (KAN-205). 생략하면 서버가 세션마다 고르므로 정의 캐시가
+            # 버전 하나당 하나로 끝나지 않고, 세트가 갈린 문항으로 업로드하면 422다.
+            "voiceSet": smoke.SMOKE_VOICE_SET,
+        }).encode("utf-8"),
         content_type="application/json", worker=worker,
     )
     if response is None or response.status != 201:
         return None
     body = response.json()
-    return smoke.Session(body["sessionId"], body["sessionToken"], body["testVersion"], body["scoreVersion"])
+    return smoke.Session(body["sessionId"], body["sessionToken"], body["testVersion"],
+                         body["scoreVersion"], body["voiceSet"])
 
 
 def definition_for(load: Load, session: smoke.Session) -> smoke.Definition:
-    """테스트 정의는 버전당 한 번만 읽는다 (계약 검사는 e2e_smoke의 것을 그대로 쓴다)."""
+    """테스트 정의는 버전과 세트당 한 번만 읽는다 (계약 검사는 e2e_smoke의 것을 그대로 쓴다)."""
+    key = (session.test_version, session.voice_set)
     with load.definition_lock:
-        cached = load.definitions.get(session.test_version)
+        cached = load.definitions.get(key)
         if cached is None:
             cached = smoke.fetch_definition(load.client, session)
-            load.definitions[session.test_version] = cached
+            load.definitions[key] = cached
         return cached
 
 

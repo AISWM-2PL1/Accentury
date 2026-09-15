@@ -26,6 +26,8 @@ const SESSION: WebSession = {
   sessionId: 's_1',
   sessionToken: 'st_1',
   testVersion: 'gn-2026.08.1',
+  // 서버가 골라 준 세트 (KAN-205). 웹은 요청에 싣지 않고 응답에서 받아 문항 조회에 넘긴다.
+  voiceSet: 7,
   expiresAt: '2026-08-26T03:30:00Z',
 }
 
@@ -124,6 +126,34 @@ describe('createWebSession — 요청 형태 (§3.1)', () => {
 
     expect(headersOf(fetchImpl)).not.toHaveProperty('Authorization')
   })
+
+  it('출신 지역 코드를 그대로 싣는다 (KAN-202, staging 선택 화면)', async () => {
+    const fetchImpl = createdFetch()
+
+    await createWebSession(API_BASE, { region: 'JEJU' }, fetchImpl)
+
+    expect(bodyOf(fetchImpl).region).toBe('JEJU')
+  })
+
+  // prod 번들은 이 티켓 전과 같은 본문을 보내야 한다 - 값이 없을 때 null이 아니라 키 자체가 없다
+  it('지역이 없거나 null이면 region 키 자체가 없다', async () => {
+    const omitted = createdFetch()
+    await createWebSession(API_BASE, {}, omitted)
+    expect('region' in bodyOf(omitted)).toBe(false)
+
+    const nulled = createdFetch()
+    await createWebSession(API_BASE, { region: null }, nulled)
+    expect('region' in bodyOf(nulled)).toBe(false)
+  })
+
+  it('형태가 어긋난 지역 값은 400을 부르는 대신 필드째 뺀다', async () => {
+    const fetchImpl = createdFetch()
+
+    // 소문자는 서버가 name().equals로 받지 않는다 - 학습 라벨 하나 때문에 응시가 막히면 안 된다
+    await createWebSession(API_BASE, { region: 'seoul' as never }, fetchImpl)
+
+    expect(bodyOf(fetchImpl)).not.toHaveProperty('region')
+  })
 })
 
 describe('createWebSession — 응답 해석', () => {
@@ -137,6 +167,21 @@ describe('createWebSession — 응답 해석', () => {
     const fetchImpl = createdFetch({ ...CREATED_BODY, sessionToken: '' })
 
     await expect(createWebSession(API_BASE, {}, fetchImpl)).rejects.toBeInstanceOf(WebSessionError)
+  })
+
+  /*
+   * 세트가 없으면 문항을 조회할 수 없다 (KAN-205). 세트 없이 조회하면 세트 1이 오는데 세션은
+   * 서버가 고른 다른 세트에 고정돼 있어 제출이 전부 422다 - 그 막다른 길로 들어가지 않는다.
+   */
+  it('201인데 세트가 없거나 세트 번호가 아니면 실패로 본다', async () => {
+    for (const bad of [undefined, 0, -1, 1.5, '1']) {
+      const body = { ...CREATED_BODY, voiceSet: bad }
+      if (bad === undefined) delete (body as Record<string, unknown>).voiceSet
+
+      await expect(createWebSession(API_BASE, {}, createdFetch(body))).rejects.toBeInstanceOf(
+        WebSessionError,
+      )
+    }
   })
 
   it('429면 봉투의 대기 시간을 실은 오류를 던진다 (§2.5)', async () => {
@@ -211,6 +256,20 @@ describe('세션 저장 — 탭 안에서만, 리로드는 견딘다', () => {
 
     expect(loadWebSession()).toBeNull()
     expect(getWebSessionToken()).toBe('')
+  })
+
+  /*
+   * 세트가 계약에 들어오기 전(KAN-205 배포 전)에 저장된 세션이다. 세션으로는 못 읽지만
+   * 토큰은 살아 있어야 한다 - 결과 화면으로 가는 전환이 문서를 다시 로드하므로, 여기서
+   * 토큰까지 버리면 응시를 마친 사람이 자기 결과를 열지 못한다.
+   */
+  it('세트가 없던 시절의 저장값에서도 토큰은 읽힌다', () => {
+    const legacy = { ...SESSION } as Record<string, unknown>
+    delete legacy.voiceSet
+    sessionStorage.setItem('accentury.webSession', JSON.stringify(legacy))
+
+    expect(loadWebSession()).toBeNull()
+    expect(getWebSessionToken()).toBe('st_1')
   })
 
   it('저장된 값이 깨져 있으면 세션이 없는 것과 같이 다룬다', () => {

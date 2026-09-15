@@ -119,6 +119,18 @@ export default defineConfig({
    * 10.0.2.2:8080을 찾다가 `ERR_CONNECTION_REFUSED`로 30초를 태우고 죽는다(리뷰에서 재현).
    * 포트를 가르면 두 서버가 공존하고, `--strictPort`는 5174가 막혀 있을 때 vite가 조용히
    * 다른 포트로 옮겨 앉아 `url` 대기가 실패하는 일을 막는다.
+   *
+   * `VITE_REGION_SELECT`는 **셸이 준 값만 켜고, 안 주면 빈 값으로 못 박는다** (KAN-202).
+   * Playwright는 여기 `env`를 부모 환경 위에 얹으므로(`...process.env, ...env`, 1.62 실측)
+   * 셸의 `VITE_REGION_SELECT=true npm run test:e2e`는 이 줄이 없어도 서버에 닿는다. 이 줄이
+   * 막는 것은 반대쪽이다 — Vite는 `process.env`에 있는 키를 `.env.local`보다 우선하므로
+   * (`loadEnv`), 개발자가 로컬 확인용으로 `web/.env.local`에 `VITE_REGION_SELECT=true`를 둔
+   * 채 E2E를 돌려도 여기서 `''`를 넘기면 그 파일이 무시되고 끈 빌드가 뜬다. 안 그러면 그
+   * 기계에서는 끈 판이 영영 돌지 않는다. `VITE_API_BASE: ''`가 기본값을 눌러 두는 것과 같은
+   * 모양이다. 빈 값은 `isRegionSelectEnabled()`가 false로 떨어져(정확히 `'true'`만 켠다,
+   * `regions.ts`) 이 티켓 전과 같은 흐름이고, 스펙은 어느 쪽이든 같은 코드로 돈다
+   * (`testFlow.ts`의 `startTest`). `E2E_BASE_URL`로 배포 환경을 겨눌 때는 워크플로가 빌드에
+   * 박은 값이 이미 정해져 있어 이 줄과 무관하다.
    */
   webServer: externalBaseUrl
     ? undefined
@@ -127,6 +139,9 @@ export default defineConfig({
         url: `http://localhost:${E2E_PORT}`,
         reuseExistingServer: false,
         timeout: 60_000,
-        env: { VITE_API_BASE: '' },
+        env: {
+          VITE_API_BASE: '',
+          VITE_REGION_SELECT: process.env.VITE_REGION_SELECT ?? '',
+        },
       },
 })

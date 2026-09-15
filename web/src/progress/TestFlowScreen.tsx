@@ -12,12 +12,14 @@
  * 실수로도 생기지 않는다.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnalysisWaitingScreen } from '../analysis/AnalysisWaitingScreen'
+import { track } from '../analytics/track'
 import type { CaptureFactory, Recording } from '../audio'
 import { uploadRecording } from '../audio/uploadRecording'
 import { getSessionToken, installItemResultReceiver, startVoiceItem } from '../bridge/bridge'
 import type { ItemResult } from '../bridge/itemResult'
+import { useRetest } from '../result/useRetest'
 import { fetchTestDefinition, type FetchLike } from './fetchTestDefinition'
 import type { SnapshotStorage } from './progressSnapshot'
 import { submitVocabAnswer } from './submitVocabAnswer'
@@ -32,6 +34,12 @@ export interface TestFlowScreenProps {
   apiBase: string
   /** 세션에 고정된 정의 버전. 네이티브가 진입 쿼리로 실어 준다 (App.tsx) */
   testVersion: string
+  /**
+   * 세션에 고정된 음성 문항 세트 (KAN-205). 서버가 세션 생성 때 골라 응답에 실어 주고, 그
+   * 값이 진입 쿼리를 거쳐 여기까지 온다. 정의 조회에 그대로 넘긴다 — 빠지면 세트 1의 문항으로
+   * 응시하게 되어 제출이 전부 422다.
+   */
+  voiceSet: string
   /** 진행 스냅샷을 세션별로 가르는 식별자. KAN-9 결선 전까지는 빈 문자열이 온다 */
   sessionId?: string
   /** 스냅샷 저장소. 기본값(localStorage)은 훅이 정한다 */
@@ -41,6 +49,18 @@ export interface TestFlowScreenProps {
    * 진입 쿼리 계약은 App이 들고 있고, 이 화면이 URL을 알 필요가 없다.
    */
   onAnalysisReady?: () => void
+  /**
+   * 재응시가 브리지로 갈 수 없을 때 대신 탈 길 (KAN-191). 결과 화면이 쓰는 것과 **같은
+   * 폴백**이다 — App의 `backToIntro`가 그것이고, 여기서도 인트로로 되돌아간다.
+   *
+   * 전환을 이 화면이 직접 하지 않는 이유는 `onAnalysisReady`와 같다: 진입 쿼리 계약은 App이
+   * 들고 있고, 이 화면은 URL을 알 필요가 없다.
+   *
+   * **없으면 분석 대기 화면에 [다시 테스트하기]를 그리지 않는다.** 브라우저 단독 실행에서
+   * 폴백까지 없으면 눌러도 아무 일이 없는 버튼이 되는데, 그런 버튼은 두지 않는다는 것이
+   * `onRetake`에서 이미 내린 판단이다.
+   */
+  retestFallback?: () => void
   /**
    * 브리지가 없는 환경(웹 단독 실행)의 세션 토큰 출처 (KAN-56 Stage 3 → KAN-31).
    *
@@ -72,9 +92,11 @@ type LoadState =
 export function TestFlowScreen({
   apiBase,
   testVersion,
+  voiceSet,
   sessionId = '',
   storage,
   onAnalysisReady,
+  retestFallback,
   webSessionToken,
   capture,
   userCurveCenterHz = null,
@@ -89,7 +111,7 @@ export function TestFlowScreen({
     // 재시도로 요청이 겹칠 때 먼저 뜬 응답이 뒤늦게 화면을 덮지 않도록 버린다.
     let cancelled = false
     setLoad({ status: 'loading' })
-    fetchTestDefinition(apiBase, testVersion, fetchImpl)
+    fetchTestDefinition(apiBase, testVersion, voiceSet, fetchImpl)
       .then((definition) => {
         if (!cancelled) setLoad({ status: 'ready', definition })
       })
@@ -99,7 +121,7 @@ export function TestFlowScreen({
     return () => {
       cancelled = true
     }
-  }, [apiBase, testVersion, fetchImpl, attempt])
+  }, [apiBase, testVersion, voiceSet, fetchImpl, attempt])
 
   const retry = useCallback(() => setAttempt((n) => n + 1), [])
 
@@ -134,6 +156,7 @@ export function TestFlowScreen({
       sessionId={sessionId}
       storage={storage}
       onAnalysisReady={onAnalysisReady}
+      retestFallback={retestFallback}
       webSessionToken={webSessionToken}
       capture={capture}
       userCurveCenterHz={userCurveCenterHz}
@@ -148,6 +171,7 @@ function TestRunner({
   sessionId,
   storage,
   onAnalysisReady,
+  retestFallback,
   webSessionToken,
   capture,
   userCurveCenterHz,
@@ -158,6 +182,7 @@ function TestRunner({
   sessionId: string
   storage?: SnapshotStorage
   onAnalysisReady?: () => void
+  retestFallback?: () => void
   webSessionToken?: () => string
   capture?: CaptureFactory
   userCurveCenterHz: number | null
@@ -189,15 +214,54 @@ function TestRunner({
    * 들어온다. 두 경로가 만드는 것이 같은 [ItemResult]라 받는 쪽을 나눌 이유가 없고, 나누면
    * 진행을 미는 규칙이 두 벌이 되어 언젠가 어긋난다.
    */
+  /*
+   * 계측이 문항을 찾을 자리. 콜백 의존성에 `state.items`를 넣지 않으려고 ref로 든다 —
+   * 넣으면 문항이 바뀔 때마다 [receiveResult]가 새로 만들어지고, 그러면 아래 수신 지점이
+   * 문항마다 다시 설치된다 (전환 도중 결과가 들어왔을 때 받을 사람이 없는 순간이 생긴다).
+   */
+  const itemsRef = useRef(state.items)
+  itemsRef.current = state.items
+
   const receiveResult = useCallback(
     (result: ItemResult) => {
-      submit(result.itemId)
+      /*
+       * **진행이 실제로 밀렸을 때만 센다** (KAN-33). 재녹음 결과도 이 경로로 들어오는데,
+       * 그 문항은 이미 제출된 것이라 상태 머신이 거부한다 — 거부까지 세면 문항 제출 수가
+       * 재녹음 횟수만큼 부풀어 오른다. 재녹음은 `recording_retake`가 따로 센다.
+       */
+      if (submit(result.itemId)) {
+        const index = itemsRef.current.findIndex((item) => item.itemId === result.itemId)
+        const item = itemsRef.current[index]
+        if (item !== undefined) {
+          track({ name: 'item_submitted', item_seq: index + 1, item_type: item.type })
+        }
+      }
       setResultNonce((n) => n + 1)
     },
     [submit],
   )
 
   useEffect(() => installItemResultReceiver(receiveResult), [receiveResult])
+
+  /*
+   * 문항 노출 계측 (KAN-33 퍼널). 문항이 바뀔 때 한 번이다 — 의존성이 itemId라 리렌더로는
+   * 다시 나가지 않는다 (AC "중복 화면 노출로 이벤트가 과다 발생하지 않는다").
+   *
+   * 이 자리에서 세는 이유: 유형별 화면 둘이 각자 세면 규칙이 두 벌이 되고, 한쪽에 화면이
+   * 하나 늘 때 조용히 어긋난다. 진행을 아는 것은 여기 하나뿐이다.
+   *
+   * 개발 빌드의 StrictMode는 이펙트를 일부러 두 번 돌린다 — 배포 빌드에는 그 재실행이 없다.
+   */
+  const shownItemId = current?.itemId
+  const shownSeq = progress.current
+  const shownType = current?.type
+  useEffect(() => {
+    if (shownItemId === undefined || shownType === undefined) return
+    track({ name: 'item_shown', item_seq: shownSeq, item_type: shownType })
+    // 순번·유형은 문항이 정하는 값이라 itemId 하나가 바뀌면 함께 바뀐다. 셋 다 의존성에
+    // 두면 같은 문항에서 진행률만 다시 계산돼도 노출이 한 번 더 세어진다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shownItemId])
 
   /**
    * 이 화면이 서버로 나갈 때 쓰는 세션 토큰 — **녹음 업로드·어휘 제출·분석 폴링이 전부 이
@@ -258,6 +322,24 @@ function TestRunner({
   )
 
   /*
+   * 막다른 분석 상태의 [다시 테스트하기] (KAN-191).
+   *
+   * **수신자 설치가 이 자리인 이유가 §8이다.** 재응시 실패 회신(`onRetestFailed`)은 부모가
+   * 받아 자식에게 값으로 내려보낸다 — 대기 화면이 스스로 걸면, 자식 effect가 먼저 도는 React
+   * 마운트 순서상 나중에 설치되는 부모 수신자가 그것을 덮는다. 문항 결과 수신자
+   * (`installItemResultReceiver`)를 여기 둔 것과 같은 판단이라 두 수신자가 한 자리에 모인다.
+   *
+   * 결과 화면(App의 `ResultRoute`)도 같은 슬롯에 수신자를 설치하지만 **두 화면은 동시에 서지
+   * 않는다** — App의 진입 쿼리 분기가 `screen=test`와 `screen=result`로 갈라 둘 중 하나만
+   * 마운트한다. 겹치더라도 슬롯 단위 교체라 다른 수신자를 지우지는 않지만
+   * (`installReceiver`), 같은 회신을 두 곳이 듣는 상태가 되므로 그 우연에 기대지 않는다.
+   *
+   * 훅은 폴백이 없어도 항상 부른다 — 조건부 호출은 훅 규칙 위반이다. 값을 화면에 넘길지
+   * 말지만 아래에서 가른다.
+   */
+  const retest = useRetest(retestFallback ?? noop, 'waiting')
+
+  /*
    * 대기 화면이 그릴 음성 문항. 순번은 **전체 문항 기준**으로 매겨서 넘긴다 — 음성 안에서
    * 몇 번째인지(1~5)로 부르면, 그 줄의 [다시 녹음]을 눌렀을 때 네이티브 녹음 화면이 그리는
    * 번호("7 / 10")와 어긋난다. 사용자에게는 다른 문항으로 간 것처럼 보인다.
@@ -291,6 +373,12 @@ function TestRunner({
          * 통로와 같은 판정).
          */
         onRetake={window.AccenturyBridge === undefined ? undefined : retake}
+        /*
+         * 폴백을 주지 않은 호출자에게는 재응시 버튼도 주지 않는다 (KAN-191). 앱 안에서는
+         * 브리지가 받아 가므로 폴백이 쓰일 일이 없지만, 폴백이 없다는 것은 곧 "이 호출자는
+         * 화면 전환 계약을 들고 있지 않다"는 뜻이라 브라우저 단독 실행에서 죽은 버튼이 된다.
+         */
+        retest={retestFallback === undefined ? undefined : retest}
         refreshNonce={resultNonce}
         fetchImpl={fetchImpl}
       />
@@ -354,7 +442,12 @@ function TestRunner({
               fetchImpl,
             )
           }
-          onSubmitted={() => submit(current.itemId)}
+          onSubmitted={() => {
+            // 음성 경로(`receiveResult`)와 같은 규칙이다 — 상태 머신이 받아들인 제출만 센다
+            if (submit(current.itemId)) {
+              track({ name: 'item_submitted', item_seq: progress.current, item_type: 'VOCABULARY' })
+            }
+          }}
         />
       )}
     </main>

@@ -22,11 +22,11 @@ class DeploymentConfigGuardTest {
             "jdbc:aws-wrapper:postgresql://db.internal:5432/accentury?secretsManagerSecretId=arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:rds!db-x";
 
     @Test
-    void 아무것도_없으면_필수값_일곱_가지를_SSM_이름과_함께_전부_나열한다() {
+    void 아무것도_없으면_필수값_여덟_가지를_SSM_이름과_함께_전부_나열한다() {
         // 한 번에 다 나와야 한다 - 하나씩 고치고 다시 띄우는 왕복이 배포마다 반복되면 안 된다.
         List<String> missing = DeploymentConfigGuard.missing(new MockEnvironment());
 
-        assertEquals(7, missing.size(), missing.toString());
+        assertEquals(8, missing.size(), missing.toString());
         assertTrue(missing.get(0).contains("SPRING_DATASOURCE_URL"));
         assertTrue(missing.get(1).contains("ACCENTURY_ANALYSIS_AIBASEURL"));
         assertTrue(missing.get(2).contains("ACCENTURY_ANALYSIS_AITOKEN"));
@@ -34,6 +34,7 @@ class DeploymentConfigGuardTest {
         assertTrue(missing.get(4).contains("ACCENTURY_ADMIN_TOKEN"));
         assertTrue(missing.get(5).contains("ACCENTURY_RESULT_WEBTESTURL"));
         assertTrue(missing.get(6).contains("ACCENTURY_RESULT_ASSETBASEURL"));
+        assertTrue(missing.get(7).contains("ACCENTURY_SHARE_KAKAOADMINKEY"));
     }
 
     @Test
@@ -105,6 +106,7 @@ class DeploymentConfigGuardTest {
                 .withProperty("accentury.trusted-proxies", "10.1.0.0/16")
                 .withProperty("accentury.admin.token", "0123456789abcdef0123456789abcdef")
                 .withProperty("accentury.result.web-test-url", "https://staging.accentury.app/t?c=kko_share")
-                .withProperty("accentury.result.asset-base-url", "https://staging.accentury.app/share");
+                .withProperty("accentury.result.asset-base-url", "https://staging.accentury.app/share")
+                .withProperty("accentury.share.kakao-admin-key", "0123456789abcdef0123456789abcdef");
     }
 }

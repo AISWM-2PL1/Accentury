@@ -1,17 +1,20 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createFakeCapture, sineChunk, type FakeCapture } from '../audio/testing/fakeCapture'
 import type { Recording } from '../audio'
 import { UploadError, type UploadAccepted } from '../audio/uploadRecording'
 import type { ItemResult } from '../bridge/itemResult'
+import { REAL_GUIDE_F0 } from '../recording/guideF0Fixture'
 import { WebVoiceRecorder } from './WebVoiceRecorder'
 import type { VoiceItem } from './testDefinition'
 
 const MAX_MS = 10_000
 
 /**
- * 1초짜리 가이드 곡선(10ms × 101점). 실제 시드 문항과 같은 규격이라 사용자 창이 그 두 배인
- * 2초가 된다 — 곡선 테스트가 실제와 같은 창에서 돌아야 "창이 미끄러진다"를 검사할 수 있다.
+ * 1초짜리 가이드 곡선(10ms × 101점). 사용자 창이 그 두 배인 2초라 이 파일의 곡선 케이스가
+ * 1~3초짜리 발화로 "창이 미끄러진다"를 검사할 수 있다 — 창 길이가 여기에 물려 있어서
+ * 발행본 실데이터(7.6초 창)로 갈아끼우면 그 케이스들이 검사하던 것이 사라진다.
+ * 실데이터는 아래 곡선 describe에 별도 케이스로 태운다 (KAN-194).
  */
 const GUIDE_VALUES: (number | null)[] = Array.from({ length: 101 }, (_, i) =>
   Math.sin((2 * Math.PI * i) / 100) * 3,
@@ -49,6 +52,7 @@ function renderRecorder(upload: UploadMock = okUpload(), item: VoiceItem = voice
   render(
     <WebVoiceRecorder
       item={item}
+      itemNumber={3}
       upload={upload}
       onUploaded={onUploaded}
       capture={capture.factory}
@@ -58,6 +62,21 @@ function renderRecorder(upload: UploadMock = okUpload(), item: VoiceItem = voice
 }
 
 const click = (name: string) => fireEvent.click(screen.getByRole('button', { name }))
+
+/** GA4 태그 자리의 대역 (KAN-33). 도착한 이벤트를 순서대로 모은다 */
+function stubGtag(): Record<string, unknown>[] {
+  const events: Record<string, unknown>[] = []
+  window.gtag = (...args: unknown[]) => {
+    if (args[0] !== 'event') return
+    events.push({ event: args[1] as string, ...(args[2] as Record<string, unknown>) })
+  }
+  return events
+}
+
+afterEach(() => {
+  delete window.gtag
+})
+
 
 /** [녹음] → 지정한 길이만큼 발화 → [정지]. 검토 단계에서 돌아온다 */
 async function recordFor(capture: FakeCapture, durationMs: number) {
@@ -317,6 +336,7 @@ describe('캡처 실패', () => {
     render(
       <WebVoiceRecorder
         item={voiceItem()}
+        itemNumber={3}
         upload={okUpload()}
         onUploaded={onUploaded}
         capture={async () => {
@@ -348,6 +368,14 @@ describe('억양 곡선 (KAN-56 Stage 5)', () => {
   const commandCount = (name: string) =>
     (lanePath(name)?.getAttribute('d') ?? '').split(/(?=[MLQ] )/).filter(Boolean).length
 
+  /**
+   * 레인의 **선** path. `lanePath`가 집는 첫 path는 곡선 아래를 닫은 채움 도형이라
+   * (`CurveLane.fillPath`) 좌표 끝이 시작점으로 되돌아간다 — 곡선의 오른쪽 끝을 재려면
+   * `stroke`가 색을 가진 쪽을 봐야 한다.
+   */
+  const strokePath = (name: string) =>
+    [...lane(name).querySelectorAll('path')].find((p) => p.getAttribute('stroke') !== 'none')!
+
   it('가이드 레인은 문항 정의의 곡선을 그린다', () => {
     renderRecorder()
 
@@ -355,6 +383,14 @@ describe('억양 곡선 (KAN-56 Stage 5)', () => {
     expect(d.startsWith('M ')).toBe(true)
     // 101점짜리 가이드라 곡선 조각(Q)이 그만큼 들어간다
     expect(d).toContain('Q ')
+  })
+
+  it('발행본 실문항 곡선도 한 점도 빠짐없이 그려진다 (KAN-194)', () => {
+    // 무성 null 14개가 섞인 240점짜리 실데이터다. 명령은 점 개수보다 하나 많다 -
+    // 첫 반 구간의 L과 마지막 점의 L이 양 끝에 붙는다 (`curvePath.ts`)
+    renderRecorder(okUpload(), voiceItem({ guideF0: REAL_GUIDE_F0 }))
+
+    expect(commandCount('가이드 억양 곡선')).toBe(REAL_GUIDE_F0.values.length + 1)
   })
 
   it('단위가 semitone이 아니면 가이드 레인을 비워 둔다', () => {
@@ -398,7 +434,9 @@ describe('억양 곡선 (KAN-56 Stage 5)', () => {
 
   it('Review에서는 라이브 창을 넘긴 발화도 통째로 남는다', async () => {
     // 라이브 창은 가이드(1초)의 두 배인 2초라, 3초 발화는 녹음 중에 앞부분이 창 밖으로 밀린다.
-    // 정지하면 창이 녹음 전체 길이로 늘어나 밀렸던 앞부분이 돌아온다 (pitch-curve.md §4).
+    // 정지하면 창이 **발화 구간**에 맞춰 다시 잡혀 밀렸던 앞부분이 돌아온다 (KAN-195,
+    // pitch-curve.md §4). 창이 녹음 전체 길이로 늘어나서가 아니다 — 이제는 앞뒤 침묵을
+    // 잘라 내고 그 구간을 창으로 삼는다.
     const { capture } = renderRecorder()
 
     click('녹음')
@@ -412,6 +450,36 @@ describe('억양 곡선 (KAN-56 Stage 5)', () => {
     await act(async () => {})
 
     expect(commandCount('내 억양 곡선')).toBeGreaterThan(live)
+  })
+
+  it('라이브 창이 이 문항의 녹음 상한에서 잘린다 - 클램프 배선 (KAN-195)', async () => {
+    /*
+     * `userCurve.test.ts`는 클램프 **계산**을 덮지만, 화면이 그 계산에 상한을 실제로 넘기는지는
+     * 못 본다 — 상한 인자를 0이나 엉뚱한 상수로 바꿔도 순수 함수 테스트는 전부 통과한다.
+     * 그래서 여기서는 **렌더된 곡선의 x 좌표**로 창 길이를 되짚는다.
+     *
+     * 상한을 10초가 아닌 1초로 주는 것이 이 검사의 핵심이다. 화면이 `item.maxDurationMs`를
+     * 쓰지 않고 10초를 박아 두면 창이 2초(가이드 1초 × 2)로 남아 x가 절반으로 줄어든다.
+     *
+     *   상한 1초 + 클램프 → 창 1000ms → 마지막 점 x ≈ 0.9 → 288px
+     *   클램프를 지우거나 상한을 안 쓰면 → 창 2000ms → x ≈ 0.45 → 144px
+     *
+     * 레인 폭은 jsdom에서 `CurveLane`의 폴백 320px다.
+     */
+    const { capture } = renderRecorder(okUpload(), voiceItem({ maxDurationMs: 1_000 }))
+
+    click('녹음')
+    await act(async () => {})
+    await act(async () => {
+      // 상한(1초)에 닿기 직전까지만 흘린다 - 닿으면 자동 종료돼 Review 창 규칙으로 넘어간다
+      capture.emit(sineChunk(900, { sampleRate: capture.sampleRate, frequency: 220 }))
+    })
+
+    const d = strokePath('내 억양 곡선').getAttribute('d')!
+    const numbers = d.match(/-?\d+(\.\d+)?/g)!.map(Number)
+    const lastX = numbers[numbers.length - 2] // 마지막 명령은 `L x y`라 뒤에서 둘째가 x다
+    expect(lastX).toBeGreaterThan(200)
+    expect(lastX).toBeLessThanOrEqual(320)
   })
 
   it('[재녹음]은 앞 녹음의 곡선을 지운다', async () => {
@@ -432,6 +500,7 @@ describe('억양 곡선 (KAN-56 Stage 5)', () => {
     const { container } = render(
       <WebVoiceRecorder
         item={voiceItem()}
+        itemNumber={3}
         upload={okUpload()}
         onUploaded={vi.fn()}
         capture={createFakeCapture().factory}
@@ -441,5 +510,28 @@ describe('억양 곡선 (KAN-56 Stage 5)', () => {
     expect(container.querySelector('.item-screen__body .curve-card')).not.toBeNull()
     expect(container.querySelector('.item-screen__footer .curve-card')).toBeNull()
     expect(container.querySelector('.item-screen__footer .btn')).not.toBeNull()
+  })
+})
+
+describe('재녹음 계측 (KAN-33)', () => {
+  it('검토 화면의 [재녹음]은 사용자 사유로 센다 — 서버 시도는 만들어지지 않았다', async () => {
+    const events = stubGtag()
+    const { capture } = renderRecorder()
+    await recordFor(capture, 2_000)
+
+    click('재녹음')
+
+    expect(events).toEqual([{ event: 'recording_retake', item_seq: 3, reason: 'USER' }])
+  })
+
+  it('품질 게이트에 막혀 다시 읽으면 품질 사유로 센다 (KAN-28 임계치 튜닝 근거)', async () => {
+    const events = stubGtag()
+    const { capture } = renderRecorder()
+    // 1초 미만 = TOO_SHORT. [다음]이 없고 [재녹음]만 남는 자리다
+    await recordFor(capture, 300)
+
+    click('재녹음')
+
+    expect(events).toEqual([{ event: 'recording_retake', item_seq: 3, reason: 'QUALITY' }])
   })
 })

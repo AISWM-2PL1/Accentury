@@ -14,10 +14,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * sv-0.3 집계식과 등급 판정의 단위 명세 (KAN-21 AC).
+ * sv-0.3 집계식과 등급 판정(KAN-21 AC), sv-0.4 억양 전처리(KAN-200 AC)의 단위 명세.
  * <p>
- * 실제 발행 seed(score-versions/sv-0.3.json)를 로드한 레지스트리로 검증한다 -
- * 코드가 아니라 설정 파일의 가중치와 경계가 실제로 쓰임을 함께 확인하기 위해서다.
+ * 실제 발행 seed(score-versions/sv-0.3.json, sv-0.4.json)를 로드한 레지스트리로 검증한다 -
+ * 코드가 아니라 설정 파일의 가중치와 경계, 계수 규칙이 실제로 쓰임을 함께 확인하기 위해서다.
  */
 class ScoreAggregatorTest {
 
@@ -124,6 +124,117 @@ class ScoreAggregatorTest {
         assertEquals("WANNABE", score.tier().code());
     }
 
+    // === KAN-200 - sv-0.4 억양 전처리: 5문항 평균에 구간별 계수를 1회 곱한다 ===
+
+    @Test
+    void sv04_구간_경계에서_전처리_억양_점수가_계수표와_같다() {
+        // 티켓 AC의 (5문항 합 → 전처리 억양 점수) 표. 소수는 반올림 전 값이라 100배 정수로 대조한다.
+        assertPreprocessed(500, 10000);    // 100
+        assertPreprocessed(480, 9600);     // 96
+        assertPreprocessed(476, 9520);     // 95.2 - 96~100 구간이라 계수 1
+        assertPreprocessed(475, 9025);     // 90.25 - 95는 91~95 구간이라 계수 0.95 (상한 포함)
+        assertPreprocessed(455, 8645);     // 86.45
+        assertPreprocessed(450, 8100);     // 81
+        assertPreprocessed(425, 7225);     // 72.25
+        assertPreprocessed(25, 25);        // 0.25
+        assertPreprocessed(1, 1);          // 0.01
+        assertPreprocessed(0, 0);          // 0
+    }
+
+    @Test
+    void sv04_합_0부터_500까지_전처리_억양_점수는_단조_비감소다() {
+        ScorePolicy policy = policies().get("sv-0.4");
+        long previous = -1;
+        for (int sum = 0; sum <= 500; sum++) {
+            long numerator = sum * (long) policy.intonationCoefficientPercent(sum, 5);
+            assertTrue(numerator >= previous, "합 " + sum + "에서 전처리 억양 점수가 내려갔다");
+            previous = numerator;
+        }
+    }
+
+    @Test
+    void sv04_억양_원점수만_오르면_종합_점수와_등급이_내려가지_않는다() {
+        int previousOverall = -1;
+        int previousRank = -1;
+        for (int raw = 0; raw <= 100; raw++) {
+            AggregateScore score = aggregator.aggregate("sv-0.4", definition("sv-0.4"),
+                    voiceScores(raw, 50, 50, 50, 50), answersWithCorrect(2));
+            assertTrue(score.overall() >= previousOverall,
+                    "원점수 " + raw + "에서 종합 점수가 내려갔다: " + previousOverall + " → " + score.overall());
+            assertTrue(score.tier().rank() >= previousRank,
+                    "원점수 " + raw + "에서 등급이 내려갔다: " + previousRank + " → " + score.tier().rank());
+            previousOverall = score.overall();
+            previousRank = score.tier().rank();
+        }
+    }
+
+    @Test
+    void sv04에서_원점수_95_다섯_개와_단어_60은_억양90_종합80_경남_토박이다() {
+        // 같은 입력이 sv-0.3에서는 억양 95, 종합 83이다 - 전처리(95 x 0.95 = 90.25 → 90)만 다르다.
+        AggregateScore sv04 = aggregator.aggregate("sv-0.4", definition("sv-0.4"),
+                voiceScores(95, 95, 95, 95, 95), answersWithCorrect(3));
+        assertEquals("sv-0.4", sv04.scoreVersion());
+        assertEquals(90, sv04.intonation());
+        assertEquals(60, sv04.vocabulary());
+        assertEquals(80, sv04.overall());    // (90 x 2 + 60) / 3
+        assertEquals("NATIVE", sv04.tier().code());
+
+        AggregateScore sv03 = aggregator.aggregate("sv-0.3", definition(),
+                voiceScores(95, 95, 95, 95, 95), answersWithCorrect(3));
+        assertEquals(95, sv03.intonation());
+        assertEquals(83, sv03.overall());    // (95 x 2 + 60) / 3 = 83.33
+    }
+
+    @Test
+    void sv04_계수는_문항별이_아니라_5문항_평균에_1회_곱한다() {
+        // 100, 100, 100, 100, 75: 평균 95 x 0.95 = 90.25 → 90. 문항별로 곱하면
+        // (100 x 4 + 75 x 0.75) / 5 = 91.25 → 91이라 이 테스트가 적용 단위를 고정한다 (2026-09-08 확정).
+        AggregateScore score = aggregator.aggregate("sv-0.4", definition("sv-0.4"),
+                voiceScores(100, 100, 100, 100, 75), answersWithCorrect(5));
+        assertEquals(90, score.intonation());
+    }
+
+    @Test
+    void sv04_전처리_결과는_표시_단계에서_1회만_반올림한다() {
+        // 합 455 → 평균 91 x 0.95 = 86.45 → 86. 합 453 → 평균 90.6 x 0.95 = 86.07 → 86.
+        // 합 452 → 평균 90.4 x 0.95 = 85.88 → 86 - 평균을 먼저 90으로 반올림하면 구간이 내려가
+        // 90 x 0.90 = 81이 되므로, 이 값이 중간 반올림이 없음을 고정한다.
+        assertEquals(86, aggregator.aggregate("sv-0.4", definition("sv-0.4"),
+                voiceScores(91, 91, 91, 91, 91), answersWithCorrect(0)).intonation());
+        assertEquals(86, aggregator.aggregate("sv-0.4", definition("sv-0.4"),
+                voiceScores(91, 91, 91, 90, 90), answersWithCorrect(0)).intonation());
+        assertEquals(86, aggregator.aggregate("sv-0.4", definition("sv-0.4"),
+                voiceScores(91, 91, 90, 90, 90), answersWithCorrect(0)).intonation());
+    }
+
+    @Test
+    void sv04_최저점과_최고점은_sv03과_같다() {
+        AggregateScore lowest = aggregator.aggregate("sv-0.4", definition("sv-0.4"),
+                voiceScores(0, 0, 0, 0, 0), answersWithCorrect(0));
+        assertEquals(0, lowest.intonation());
+        assertEquals("OUTSIDER", lowest.tier().code());
+
+        AggregateScore highest = aggregator.aggregate("sv-0.4", definition("sv-0.4"),
+                voiceScores(100, 100, 100, 100, 100), answersWithCorrect(5));
+        assertEquals(100, highest.intonation());
+        assertEquals(100, highest.overall());
+        assertEquals("NATIVE", highest.tier().code());
+    }
+
+    @Test
+    void sv03_세션의_결과는_전처리_없이_현행과_같다() {
+        // sv-0.3.json 무변경 - 계수 100%를 거쳐도 합 / 5 반올림과 같은 값이어야 한다 (KAN-200 AC).
+        for (int sum = 0; sum <= 500; sum++) {
+            int expected = (2 * sum + 5) / 10;
+            int v = sum / 5;
+            int rest = sum - v * 5;
+            AggregateScore score = aggregator.aggregate("sv-0.3", definition(),
+                    voiceScores(v + (rest > 0 ? 1 : 0), v + (rest > 1 ? 1 : 0), v + (rest > 2 ? 1 : 0),
+                            v + (rest > 3 ? 1 : 0), v), answersWithCorrect(2));
+            assertEquals(expected, score.intonation(), "합 " + sum);
+        }
+    }
+
     // === §4.3 - 어휘는 AI 없이 정의의 정답표와 대조한다 ===
 
     @Test
@@ -225,6 +336,17 @@ class ScoreAggregatorTest {
 
     // === 픽스처 ===
 
+    private static ScorePolicyRegistry policies() {
+        return new ScorePolicyRegistry(JsonMapper.builder().build());
+    }
+
+    /** sv-0.4 전처리 억양 점수를 100배 정수(반올림 전)로 대조한다: 합 x 계수% = 기대값 x 5. */
+    private static void assertPreprocessed(int sum, long expectedHundredths) {
+        ScorePolicy policy = policies().get("sv-0.4");
+        assertEquals(expectedHundredths * 5, sum * (long) policy.intonationCoefficientPercent(sum, 5),
+                "합 " + sum);
+    }
+
     /** 모든 음성 원점수와 정답 수를 같은 값 계열로 맞춰 종합 점수가 정확히 그 값이 되게 한다. */
     private String tierCodeAt(int overall) {
         AggregateScore score = aggregator.aggregate("sv-0.3", definition(),
@@ -254,6 +376,10 @@ class ScoreAggregatorTest {
 
     /** 정본 구성과 같은 음성 5 + 어휘 5. 어휘 정답은 항상 a 선택지다. */
     private static TestDefinition definition() {
+        return definition("sv-0.3");
+    }
+
+    private static TestDefinition definition(String scoreVersion) {
         List<TestDefinition.Item> items = new ArrayList<>();
         for (int i = 1; i <= 5; i++) {
             items.add(new TestDefinition.Item("v" + i, i * 2 - 1, TestDefinition.ItemType.VOICE, "밥 뭇나?",
@@ -269,6 +395,6 @@ class ScoreAggregatorTest {
                             new TestDefinition.Choice(w + "d", "시금치")),
                     w + "a"));
         }
-        return new TestDefinition("gn-2026.08.1", "sv-0.3", "GYEONGNAM", 240, items);
+        return new TestDefinition("gn-2026.08.1", scoreVersion, "GYEONGNAM", 240, items);
     }
 }

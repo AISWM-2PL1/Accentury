@@ -23,6 +23,16 @@ variable "target_group_arn_suffix" {
   description = "대상 그룹의 CloudWatch 차원 값 (aws_lb_target_group.arn_suffix, targetgroup/이름/id 형태)"
 }
 
+variable "ai_alb_arn_suffix" {
+  type        = string
+  description = "AI 호스트 앞 내부 ALB의 CloudWatch 차원 값 (ai-host 모듈 alb_arn_suffix, KAN-201)"
+}
+
+variable "ai_target_group_arn_suffix" {
+  type        = string
+  description = "AI 대상 그룹의 CloudWatch 차원 값 (ai-host 모듈 target_group_arn_suffix, KAN-201)"
+}
+
 variable "db_instance_identifier" {
   type        = string
   description = "RDS 인스턴스 식별자 (DBInstanceIdentifier 차원)"
@@ -112,7 +122,7 @@ variable "backend_memory_evaluation_periods" {
 
 variable "ai_metric_namespace" {
   type        = string
-  description = "AI 호스트가 Healthy 지표를 올리는 CloudWatch 네임스페이스 (KAN-36). ai-host 모듈의 metric_namespace와 같아야 한다."
+  description = "AI 호스트가 Healthy, RootDiskUsedPercent, MemoryUsedPercent 등을 올리는 CloudWatch 네임스페이스 (KAN-36). ai-host 모듈의 metric_namespace와 같아야 한다."
   default     = "accentury/ai"
 }
 
@@ -130,5 +140,97 @@ variable "ai_unhealthy_evaluation_periods" {
   validation {
     condition     = var.ai_unhealthy_evaluation_periods >= 1
     error_message = "ai_unhealthy_evaluation_periods는 1 이상이어야 합니다."
+  }
+}
+
+# ---- KAN-36 B단계: AI 호스트 자원 경보의 임계치 ----
+
+variable "ai_disk_threshold" {
+  type        = number
+  description = "AI 호스트 루트 볼륨 사용률(%) 상한 (KAN-36 B단계). 정상 reload의 순간 최대치(이미지 7GB x 2 + pull 임시 공간)가 40GiB의 약 51%라 80이면 정상 경로는 닿지 않고 pull 실패(100%) 전에 사람이 본다."
+  default     = 80
+
+  validation {
+    condition     = var.ai_disk_threshold > 0 && var.ai_disk_threshold <= 100
+    error_message = "ai_disk_threshold는 0 초과 100 이하의 퍼센트여야 합니다."
+  }
+}
+
+variable "ai_disk_evaluation_periods" {
+  type        = number
+  description = "ai-disk-high가 요구하는 연속 위반 분 수. reload 중 두 이미지가 공존하는 1~2분을 넘길 만큼."
+  default     = 3
+
+  validation {
+    condition     = var.ai_disk_evaluation_periods >= 1
+    error_message = "ai_disk_evaluation_periods는 1 이상이어야 합니다."
+  }
+}
+
+variable "ai_memory_threshold" {
+  type        = number
+  description = "AI 호스트 메모리 사용률(%, 호스트 대비) 상한 (KAN-36 B단계). 컨테이너 mem_limit 7GiB가 호스트 7.6GiB의 92%라 90이면 컨테이너가 상한에 닿기 전에 운다. KAN-57 RSS 재실측(지금 6.19GB = 81%)으로 재확정한다."
+  default     = 90
+
+  validation {
+    condition     = var.ai_memory_threshold > 0 && var.ai_memory_threshold <= 100
+    error_message = "ai_memory_threshold는 0 초과 100 이하의 퍼센트여야 합니다."
+  }
+}
+
+variable "ai_memory_evaluation_periods" {
+  type        = number
+  description = "ai-mem-high가 요구하는 연속 위반 분 수. 추론 1건(약 11초)이 도는 동안 잠깐 오르는 것은 넘기고, 워커가 재적재를 반복하는 상태를 보려는 값이다."
+  default     = 2
+
+  validation {
+    condition     = var.ai_memory_evaluation_periods >= 1
+    error_message = "ai_memory_evaluation_periods는 1 이상이어야 합니다."
+  }
+}
+
+# ---- KAN-38 관측성 경보의 임계치 ----
+
+variable "ai_temp_residue_threshold" {
+  type        = number
+  description = "AI 임시 디렉터리의 잔존 파일 수 상한 (KAN-38). 이 지표는 처리 중인 파일도 세는데 동시 추론이 구조적으로 3건을 넘지 못하므로(워커 1 x 태스크 3, KAN-172), 정상 부하가 닿지 않는 20을 유지한다."
+  default     = 20
+
+  validation {
+    condition     = var.ai_temp_residue_threshold >= 1
+    error_message = "ai_temp_residue_threshold는 1 이상이어야 합니다."
+  }
+}
+
+variable "analysis_backlog_threshold" {
+  type        = number
+  description = "전 인스턴스의 진행 중 분석 건수 상한 (KAN-38). 폴링 혼잡 임계치(application.yml의 congestion-threshold, 기본 6 - KAN-172)의 두 배 - 서버가 폴링 간격을 올려 압력을 뺀 뒤에도 그만큼 쌓였다면 사람이 볼 일이다. 12건은 AI 처리량(분당 6건) 기준 대기열 2분이다."
+  default     = 12
+
+  validation {
+    condition     = var.analysis_backlog_threshold >= 1
+    error_message = "analysis_backlog_threshold는 1 이상이어야 합니다."
+  }
+}
+
+variable "analysis_backlog_evaluation_periods" {
+  type        = number
+  description = "analysis-backlog-high가 요구하는 연속 위반 분 수. 다섯 문항을 몰아 제출하는 순간으로는 서지 않을 만큼."
+  default     = 5
+
+  validation {
+    condition     = var.analysis_backlog_evaluation_periods >= 1
+    error_message = "analysis_backlog_evaluation_periods는 1 이상이어야 합니다."
+  }
+}
+
+variable "analysis_timeout_threshold" {
+  type        = number
+  description = "5분 동안 허용하는 분석 타임아웃 건수 (KAN-38). 실행 잔류와 큐 유실의 합이고, 정상 운영에서는 0이다 - 배포 중 태스크 교체로 나는 한두 건 위에 선을 긋는다."
+  default     = 5
+
+  validation {
+    condition     = var.analysis_timeout_threshold >= 0
+    error_message = "analysis_timeout_threshold는 0 이상이어야 합니다."
   }
 }

@@ -1,9 +1,9 @@
 """FastAPI AI 분석 서버.
 
 이 서버는 BE만 호출할 수 있는 사설망 서비스다 (§1.1, §4, NFR-SC-04) - 퍼블릭 인터넷에
-노출하지 않는다. KAN-27 범위는 **원본 음성이 이 서버에 남지 않는 것**이고, 실제 추론과
-``/internal/v0/models``는 KAN-22가 채운다. 추론은 :mod:`app.engine`의 어댑터 뒤에 있어
-기동 시 한 번 고르면 라우트는 그것이 무엇인지 모른다 (KAN-135).
+노출하지 않는다. KAN-27 범위는 **원본 음성이 이 서버에 남지 않는 것**이다. 추론은
+:mod:`app.engine`의 어댑터 뒤에 있어 기동 시 한 번 고르면 라우트는 그것이 무엇인지
+모른다 (KAN-135) - 지금 꽂히는 것은 실모델이다 (:mod:`app.track1`, KAN-22).
 """
 
 from __future__ import annotations
@@ -11,20 +11,29 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
 import tempfile
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app import analyze
 from app.auth import HEALTH_PATH, InternalTokenMiddleware
 from app.config import Settings
 from app.engine import AnalysisEngine, create_engine, require_reportable_version
 from app.limits import MaxBodySizeMiddleware
+from app.stages import StageMetrics
 from app.tempstore import VoiceTempStore
 
 log = logging.getLogger(__name__)
+
+#: 이 앱의 로그 수준. 기본이 INFO인 이유는 운영에서 읽어야 하는 줄이 대부분 INFO이기 때문이다 -
+#: 기동 시 어떤 엔진과 모델 버전이 올라왔는지(``warmUp=있음``), 요청마다의 종료 상태와 소요가
+#: 그렇다 (KAN-38의 조사 경로). uvicorn은 자기 로거만 설정하므로 이것이 없으면 루트가 WARNING에
+#: 머물러 그 줄들이 컨테이너 로그에 아예 나오지 않는다.
+LOG_LEVEL = os.environ.get("ACCENTURY_AI_LOG_LEVEL", "INFO").upper()
+logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
 
 def create_app(settings: Settings | None = None, engine: AnalysisEngine | None = None) -> FastAPI:
@@ -68,7 +77,7 @@ def create_app(settings: Settings | None = None, engine: AnalysisEngine | None =
         # 준비 상태 게이트 (KAN-36). 엔진이 워밍업을 선언하면(가중치 적재 등, KAN-22) 그것이 끝난
         # 뒤에야 health가 UP이 된다. 워밍업은 lifespan을 붙들지 않고 뒤에서 돈다 - uvicorn은 lifespan
         # 기동이 끝나야 포트를 여는데, 그 안에서 기다리면 그동안 health는 503이 아니라 연결 거부이고
-        # 문서의 STARTING은 영영 나가지 않는다 (리뷰 지적). 스텁은 워밍업이 없어 곧바로 UP이다
+        # 문서의 STARTING은 영영 나가지 않는다 (리뷰 지적). 실모델은 가중치 적재가 끝나야 UP이다
         readiness = asyncio.create_task(_become_ready(started, resolved_engine))
         try:
             if resolved.internal_token is None:
@@ -89,6 +98,9 @@ def create_app(settings: Settings | None = None, engine: AnalysisEngine | None =
             sweeper.cancel()
             with suppress(asyncio.CancelledError):
                 await sweeper
+            # 엔진이 프로세스 밖에 쥔 것을 놓게 한다 (KAN-22의 워커 프로세스). 놓지 않으면
+            # 워커가 별도 세션이라 부모를 따라 죽지 않고 RSS 7GB대짜리 고아로 남는다
+            await _close_engine(resolved_engine)
             tempfile.tempdir = previous_tempdir
 
     app = FastAPI(title="Accentury AI", version="0.1.0", lifespan=lifespan)
@@ -100,6 +112,8 @@ def create_app(settings: Settings | None = None, engine: AnalysisEngine | None =
     app.state.settings = resolved
     app.state.temp_store = store
     app.state.engine = resolved_engine
+    # 단계별 소요 시간 표본 (KAN-204). 앱 1개에 하나이고 호스트 타이머가 훑어 간다
+    app.state.stage_metrics = StageMetrics()
     # lifespan이 워밍업을 마치기 전까지 False - health가 503을 낸다 (KAN-36 준비 상태 게이트)
     app.state.ready = False
     app.include_router(analyze.router)
@@ -120,6 +134,19 @@ def create_app(settings: Settings | None = None, engine: AnalysisEngine | None =
     async def metrics(request: Request) -> dict[str, float | int]:
         """잔존 임시파일 수와 최장 잔존 시간 (KAN-27 AC, KAN-38이 소비)."""
         return request.app.state.temp_store.metrics()
+
+    @app.get("/internal/v0/metrics/stages", response_class=PlainTextResponse)
+    async def stage_metrics(request: Request) -> str:
+        """추론 단계별 소요 시간 표본 (KAN-204, 호스트 타이머가 소비).
+
+        **읽으면 비워진다.** 소비자는 ``ai-health-metric.sh`` 하나이고 그것이 CloudWatch에
+        올린다 - 두 곳에서 읽으면 표본이 갈려 어느 쪽도 온전하지 않다. 못 올린 회차의 표본은
+        사라진다 (:class:`app.stages.StageMetrics`).
+
+        JSON이 아니라 줄 단위 텍스트다. 소비자가 jq 없이 ``read``로 뽑아 그대로
+        ``Values=[...]``에 넣기 때문이다 - 옮겨 적는 코드가 없으면 어긋날 자리도 없다.
+        """
+        return request.app.state.stage_metrics.drain()
 
     return app
 
@@ -145,6 +172,25 @@ async def _become_ready(app: FastAPI, engine: AnalysisEngine) -> None:
         raise
     except Exception:  # noqa: BLE001 - 어떤 실패든 준비 전으로 남기는 것이 목적이다
         log.exception("엔진 워밍업 실패 - health는 STARTING에 머문다")
+
+
+async def _close_engine(engine: AnalysisEngine) -> None:
+    """엔진의 선택 메서드 ``close``를 부른다 (KAN-22).
+
+    ``warm_up``과 대칭이다 - 없으면 아무것도 하지 않고, 코루틴이면 await, 동기면 스레드다.
+    여기서 나는 예외는 삼킨다. 종료 경로라 되살릴 것이 없고, 예외를 올리면 lifespan의
+    나머지 정리(임시 디렉터리 원복)가 건너뛰어진다.
+    """
+    close = getattr(engine, "close", None)
+    if not callable(close):
+        return
+    try:
+        if inspect.iscoroutinefunction(close):
+            await close()
+        else:
+            await asyncio.to_thread(close)
+    except Exception:  # noqa: BLE001 - 종료 중 실패로 정리를 멈추지 않는다
+        log.exception("엔진 정리 실패")
 
 
 async def _sweep_forever(store: VoiceTempStore, interval_seconds: float) -> None:

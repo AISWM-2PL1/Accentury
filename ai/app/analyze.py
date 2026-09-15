@@ -1,9 +1,8 @@
 """``POST /internal/v0/analyze`` (API 명세서 §4.1).
 
 이 엔드포인트에서 완성된 것은 **오디오의 수명 관리와 응답 봉투**다. 점수를 만드는 일은
-:mod:`app.engine`의 어댑터 뒤에 있고, 지금 꽂혀 있는 것은 고정 점수 스텁이다. 실제
-추론(F0 추출, guideF0 정렬, 점수 산출)은 KAN-22가 엔진 구현 하나로 들어오며, 그때
-이 파일은 고치지 않는다 (KAN-135).
+:mod:`app.engine`의 어댑터 뒤에 있다. 실모델(전사, 정렬, 참조 거리, 점수)이 엔진 구현
+하나로 들어올 때 이 파일은 한 줄도 고치지 않았다 (KAN-135, KAN-22).
 
 경로는 엔진 종류와 무관하게 같다 - 받은 오디오를 파일로 한 번 내려놓고, 엔진에 상한을
 걸어 넘기고, 응답을 만들고, 그 파일을 지운다. "무잔존", 추론 상한, 오디오 상한(413)이
@@ -23,6 +22,7 @@ from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from app.engine import AnalysisOutcome, AnalysisRequest
+from app.stages import StageRecord
 
 log = logging.getLogger(__name__)
 
@@ -49,6 +49,11 @@ async def analyze(
     settings = request.app.state.settings
     store = request.app.state.temp_store
     engine = request.app.state.engine
+    stage_metrics = request.app.state.stage_metrics
+
+    # 엔진이 채우는 단계별 소요 시간 (KAN-204). 라우트가 쥐고 있어야 시간 초과처럼 결과가 없는
+    # 경로에서도 "어디까지 갔다가 끊겼는가"가 남는다
+    stages = StageRecord()
 
     try:
         parsed = json.loads(meta)
@@ -92,10 +97,13 @@ async def analyze(
             # (app.engine.AnalysisEngine.analyze)
             async with asyncio.timeout(settings.analysis_timeout_seconds):
                 # 추적 ID는 라우트가 정한 것 하나만 쓴다 - 엔진이 meta에서 따로 뽑으면
-                # 헤더만 보내는 호출자에게 로그의 ID와 스텁 점수의 씨앗이 갈린다 (KAN-136)
+                # 헤더만 보내는 호출자에게 로그의 ID와 엔진이 본 ID가 갈린다 (§2.2)
                 outcome = await engine.analyze(
                     AnalysisRequest(
-                        audio_path=path, meta=parsed, correlation_id=correlation_id
+                        audio_path=path,
+                        meta=parsed,
+                        correlation_id=correlation_id,
+                        stages=stages,
                     )
                 )
             # 프로토콜은 구조만 보므로 반환 타입은 런타임에 강제되지 않고, CI에도 타입
@@ -108,15 +116,23 @@ async def analyze(
                     f"엔진이 AnalysisOutcome이 아닌 것을 돌려줬다: {type(outcome).__name__}"
                 )
             engine_ms = round((time.monotonic() - engine_started) * 1000)
+            # 합계는 엔진 호출 전체다 - 어댑터 안쪽 단계들의 합보다 크고, 그 차이가 어댑터가
+            # 아직 재지 못하는 구간이다 (KAN-204)
+            stages.put("total", engine_ms)
         except TimeoutError:
             processing_ms = round((time.monotonic() - started) * 1000)
+            # 끊긴 요청도 단계를 남긴다 - 끝난 단계까지가 곧 "어디에서 예산을 다 썼는가"다.
+            # 합계는 적지 않는다 (그 값은 언제나 상한이라 분포만 오염시킨다)
             log.warning(
-                "분석 시간 초과 correlationId=%s itemId=%s bytes=%d ms=%d",
+                "분석 시간 초과 correlationId=%s itemId=%s bytes=%d ms=%d warm=%s stages=%s",
                 correlation_id,
                 item_id,
                 size,
                 processing_ms,
+                stages.warm,
+                stages.as_log(),
             )
+            stage_metrics.record(stages)
             # 5xx는 BE가 일시 장애로 보고 재전송 예산 안에서 다시 시도한다 (§4.1) -
             # 추론에 GPU를 이미 썼으므로 과부하 셰딩(429)이 아니다
             return JSONResponse(
@@ -139,15 +155,25 @@ async def analyze(
             engine_ms,
             round(limit_ms),
         )
-    # 오디오 바이트도, 점수도 로그에 남기지 않는다 (§2.6, NFR-SC-07) - 크기와 추적 ID만이다
+    # 오디오 바이트도, 점수도 로그에 남기지 않는다 (§2.6, NFR-SC-07) - 크기와 추적 ID만이다.
+    # 두 버전은 싣는다 (KAN-22 AC6 "버전이 모든 결과와 로그에") - 응답 봉투와 같은 값이라
+    # 로그만으로도 어느 모델과 점수 규칙이 그 결과를 냈는지 추적된다
+    # 단계 시간과 콜드/웜도 같은 줄에 싣는다 (KAN-204) - 요청 하나의 시간이 어디로 갔는지를
+    # 추적 ID 하나로 되찾을 수 있어야 한다. 값은 전부 소요 시간이라 발화 내용과 무관하다
     log.info(
-        "분석 종료 correlationId=%s itemId=%s bytes=%d status=%s ms=%d",
+        "분석 종료 correlationId=%s itemId=%s bytes=%d status=%s ms=%d scoreVersion=%s "
+        "modelVersion=%s warm=%s stages=%s",
         correlation_id,
         item_id,
         size,
         outcome.status,
         processing_ms,
+        score_version,
+        engine.model_version,
+        stages.warm,
+        stages.as_log(),
     )
+    stage_metrics.record(stages)
 
     # 봉투 조립은 엔진 밖이다 (KAN-135) - scoreVersion과 processingMs는 엔진이 알 바가
     # 아니고, modelVersion은 설정이 아니라 엔진이 자기 정체로 보고한 값을 그대로 싣는다
@@ -172,7 +198,7 @@ async def analyze(
             "quality": {"code": outcome.quality_code},
             "segments": list(outcome.segments),
             # 세션이 고정한 점수 버전을 그대로 되돌려준다 - BE가 불일치를 계약 위반으로
-            # 끊으므로(§5.4), 스텁이 제 버전을 지어내면 전 요청이 INTERNAL_ERROR가 된다
+            # 끊으므로(§5.4), 엔진이 제 버전을 지어내면 전 요청이 INTERNAL_ERROR가 된다
             "scoreVersion": score_version,
             "modelVersion": engine.model_version,
             "processingMs": processing_ms,

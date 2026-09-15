@@ -63,7 +63,7 @@ fi
 
 ENV_NAME="$1"
 case "$ENV_NAME" in
-  staging) DOMAIN="staging.accentury.app" ;;
+  staging) DOMAIN="xxa4wqi37strbf.accentury.app" ;;
   prod) DOMAIN="accentury.app" ;;
   *)
     echo "오류: 환경은 staging 또는 prod다 (받은 값: $ENV_NAME)" >&2

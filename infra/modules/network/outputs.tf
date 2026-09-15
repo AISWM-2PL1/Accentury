@@ -25,12 +25,17 @@ output "rds_sg_id" {
 
 output "ai_sg_id" {
   value       = aws_security_group.ai.id
-  description = "AI 호스트 SG - backend-sg에서 오는 8000만 허용 (KAN-36, KAN-165)"
+  description = "AI 호스트 SG - ai-alb-sg에서 오는 8000만 허용 (KAN-36, KAN-165, KAN-201)"
+}
+
+output "ai_alb_sg_id" {
+  value       = aws_security_group.ai_alb.id
+  description = "AI 호스트 앞 내부 ALB의 SG - backend-sg에서 오는 8000만 허용 (KAN-201)"
 }
 
 output "private_zone_id" {
   value       = aws_route53_zone.private.zone_id
-  description = "내부 호출용 프라이빗 호스팅 영역. AI 인스턴스가 부팅 시 자기 A 레코드를 UPSERT한다 (KAN-36)"
+  description = "내부 호출용 프라이빗 호스팅 영역. ai-host 모듈이 여기에 ALB alias 레코드를 만든다 (KAN-36, KAN-201)"
 }
 
 output "ai_dns_name" {

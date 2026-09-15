@@ -19,6 +19,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
@@ -36,8 +37,20 @@ class SsmEnvironmentBindingTest {
     /** Terraform이 만드는 파라미터 이름 - `"${var.ssm_prefix}/NAME"` 자리. */
     private static final Pattern TERRAFORM_NAME = Pattern.compile("\\$\\{var\\.ssm_prefix}/([A-Z0-9_]+)\"");
 
-    /** 가드 정본 밖에서 Terraform이 추가로 만드는 이름 - 프로파일 스위치는 검증 대상이 아니라 검증을 켜는 값이다. */
-    private static final Set<String> TERRAFORM_ONLY = Set.of("SPRING_PROFILES_ACTIVE");
+    /**
+     * 가드 정본 밖에서 Terraform이 추가로 만드는 이름.
+     * <p>
+     * 프로파일 스위치는 검증 대상이 아니라 검증을 켜는 값이고, 분석 시간 예산 셋(KAN-22)은 없어도
+     * 기동이 되는 조정값이다 - 없으면 application.yml의 기본값으로 뜬다. 가드에 넣으면 "없으면
+     * 기동을 세운다"가 되어, 값 하나 지웠다고 배포가 멎는다. 학습 데이터 버킷(KAN-201)은 staging에만
+     * 만들어지는 optional 파라미터라 역시 가드 밖이다 - prod에는 이름 자체가 없어야 한다.
+     */
+    private static final Set<String> TERRAFORM_ONLY = Set.of(
+            "SPRING_PROFILES_ACTIVE",
+            "ACCENTURY_ANALYSIS_AITIMEOUT",
+            "ACCENTURY_ANALYSIS_PROCESSINGTIMEOUT",
+            "ACCENTURY_ANALYSIS_DISPATCHCONCURRENCY",
+            "ACCENTURY_TRAINING_BUCKET");
 
     /** 가드 정본에는 있지만 Terraform이 만들지 않는 이름 - 자격 증명은 Secrets Manager에서 온다. */
     private static final Set<String> GUARD_ONLY = Set.of(
@@ -56,6 +69,7 @@ class SsmEnvironmentBindingTest {
         ssm.put(DeploymentConfigGuard.ADMIN_TOKEN.ssmName(), "0123456789abcdef0123456789abcdef");
         ssm.put(DeploymentConfigGuard.WEB_TEST_URL.ssmName(), "https://staging.accentury.app/t?c=kko_share");
         ssm.put(DeploymentConfigGuard.ASSET_BASE_URL.ssmName(), "https://staging.accentury.app/share");
+        ssm.put(DeploymentConfigGuard.KAKAO_ADMIN_KEY.ssmName(), "0123456789abcdef0123456789abcdef");
 
         // OS 환경 변수와 같은 종류의 소스다 - 진짜 셸 값보다 앞에 둔다. 이름이 "-systemEnvironment"로
         // 끝나야 Boot가 환경 변수용 이름 규칙(대시 제거)을 적용한다 - 타입만 맞고 이름이 다르면 일반
@@ -73,10 +87,38 @@ class SsmEnvironmentBindingTest {
                 assertEquals(ssm.get(name.ssmName()), binder.bind(name.property(), String.class).get(), name.label());
             }
         }
+        // 가드 밖의 조정값(KAN-22, KAN-172)도 이름 그대로의 환경 변수로 닿아야 한다 - 여기가 아니면
+        // 이름이 한 글자 틀려도 아무 데서도 드러나지 않고, 배포는 코드 기본값(85초 / 300초 / 1)으로 뜬다.
+        // 값은 기본값과 다른 것으로 둔다 - 기본값과 같으면 바인딩이 안 돼도 통과한다.
+        StandardEnvironment tuned = new StandardEnvironment();
+        tuned.getPropertySources().addFirst(new SystemEnvironmentPropertySource("tuned-systemEnvironment",
+                Map.of("ACCENTURY_ANALYSIS_AITIMEOUT", "100s",
+                        "ACCENTURY_ANALYSIS_PROCESSINGTIMEOUT", "400s",
+                        "ACCENTURY_ANALYSIS_DISPATCHCONCURRENCY", "2",
+                        "ACCENTURY_TRAINING_BUCKET", "accentury-staging-training-123456789012")));
+        Binder tunedBinder = Binder.get(tuned);
+        assertEquals("100s", tunedBinder.bind("accentury.analysis.ai-timeout", String.class).get());
+        assertEquals("400s", tunedBinder.bind("accentury.analysis.processing-timeout", String.class).get());
+        assertEquals(2, tunedBinder.bind("accentury.analysis.dispatch-concurrency", Integer.class).get());
+        // 학습 데이터 버킷 (KAN-201) - staging에만 오는 optional 값. 이름이 어긋나면 staging에서 샘플이 조용히 안 쌓인다.
+        assertEquals("accentury-staging-training-123456789012",
+                tunedBinder.bind("accentury.training.bucket", String.class).get());
+
         // 목록 프로퍼티는 쉼표 한 줄이 원소로 갈라져야 한다 (ClientIps가 List<String>으로 받는다).
         assertEquals(List.of("10.1.0.0/16"),
                 binder.bind(DeploymentConfigGuard.TRUSTED_PROXIES.property(), Bindable.listOf(String.class)).get());
         assertEquals(List.of(), DeploymentConfigGuard.missing(environment));
+    }
+
+    @Test
+    void 카카오_웹훅_키의_자리_표시_값이_Terraform과_같다() throws IOException {
+        // backend는 이 값으로 뜨면 모든 웹훅을 거부한다 (KakaoWebhookAuth). 두 쪽이 어긋나면 자리 표시 값이
+        // 유효한 키로 통과해 위조 콜백이 카운터를 올린다.
+        Path main = Path.of("..", "infra", "modules", "config", "main.tf");
+        assumeTrue(Files.exists(main), "infra/modules/config/main.tf 없음 - 모노레포 밖 실행");
+        assertTrue(Files.readString(main).contains("value_wo         = \""
+                        + app.accentury.backend.share.KakaoWebhookAuth.PLACEHOLDER + "\""),
+                "main.tf의 kakao_admin_key 자리 표시 값이 backend의 KakaoWebhookAuth.PLACEHOLDER와 다르다");
     }
 
     @Test

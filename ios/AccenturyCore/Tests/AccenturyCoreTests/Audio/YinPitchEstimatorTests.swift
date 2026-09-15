@@ -124,7 +124,13 @@ final class YinPitchEstimatorTests: XCTestCase {
     ///
     /// 상한이 구성별로 갈리는 이유: 이 계산은 스칼라 부동소수점 루프라 최적화 유무에 100배가 걸린다.
     /// 이 맥 실측으로 디버그 2.5s(26ms/프레임), 릴리스 0.023s(0.23ms/프레임)다. 한 상한으로 묶으면
-    /// 디버그에 맞춘 순간 릴리스 회귀를 100배까지 놓치므로 각자에 맞는 선을 둔다(각 2~5배 여유).
+    /// 디버그에 맞춘 순간 릴리스 회귀를 100배까지 놓치므로 각자에 맞는 선을 둔다
+    /// (릴리스는 실측에 4배 남짓, 디버그 쪽 여유는 아래 문단).
+    ///
+    /// 디버그 상한은 6.0s로 출발했다가 15.0s로 올렸다. GitHub 호스티드 macos-26 러너가 6.14s로
+    /// 재서(2026-09-08, PR #91의 첫 ios-test) 이 맥의 2.4배였고, 6.0s에 남겨 둔 여유가 그대로
+    /// 사라졌다 — 러너가 느린 것이지 코드가 느려진 것이 아니다. 15s면 러너 기준 2.4배,
+    /// 이 맥 기준 6배가 남고, 잡으려는 사고는 100배 급이라 감시 기능은 줄지 않는다.
     /// **`swift test`는 디버그다** — 릴리스 쪽 선을 보려면 `swift test -c release`.
     func testEstimating100FramesStaysWellUnderTheBudget() {
         // 프레임마다 다른 주파수를 줘서 전부 유성 경로(CMNDF 전체 계산)를 타게 한다 —
@@ -137,7 +143,7 @@ final class YinPitchEstimatorTests: XCTestCase {
         let elapsedNs = DispatchTime.now().uptimeNanoseconds - started
 
         #if DEBUG
-        let budgetSeconds = 6.0
+        let budgetSeconds = 15.0
         let configuration = "디버그(-Onone)"
         #else
         let budgetSeconds = 0.1

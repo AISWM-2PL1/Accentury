@@ -8,6 +8,7 @@ import { snapshotKey, type SnapshotStorage } from './progressSnapshot'
 import type { TestDefinition, TestItem } from './testDefinition'
 
 const TEST_VERSION = 'gn-2026.08.1'
+const VOICE_SET = '1'
 const API_BASE = 'http://localhost:8080'
 /** 웹 단독 실행의 세션 토큰. 실물 출처는 `session/webSession`이고 여기서는 값만 흉내 낸다 */
 const WEB_TOKEN = 'web-token'
@@ -91,6 +92,16 @@ function okFetch(): ReturnType<typeof vi.fn<FetchLike>> {
   })
 }
 
+/** GA4 태그 자리의 대역 (KAN-33). 도착한 이벤트를 순서대로 모은다 */
+function stubGtag(): Record<string, unknown>[] {
+  const events: Record<string, unknown>[] = []
+  window.gtag = (...args: unknown[]) => {
+    if (args[0] !== 'event') return
+    events.push({ event: args[1] as string, ...(args[2] as Record<string, unknown>) })
+  }
+  return events
+}
+
 /** 대역이 실제로 받은 URL들. 요청 "종류"를 세는 단언에 쓴다 */
 function urls(fetchImpl: ReturnType<typeof vi.fn<FetchLike>>): string[] {
   return fetchImpl.mock.calls.map(([input]) => String(input))
@@ -117,6 +128,8 @@ interface RenderOptions {
   strict?: boolean
   /** 분석 대기 화면이 결과 확정을 알릴 자리 (KAN-14) */
   onAnalysisReady?: () => void
+  /** 막다른 분석 상태의 재응시가 브리지 없이 탈 길 (KAN-191). 주지 않으면 버튼이 그려지지 않는다 */
+  retestFallback?: () => void
   /**
    * 웹 단독 실행의 세션 토큰. 주지 않으면 App과 같은 규칙으로 정한다 — 브리지가 있으면
    * 주입하지 않고(앱은 브리지에서 읽는다), 없으면 [WEB_TOKEN]을 준다. 빈 값을 명시하면
@@ -134,6 +147,7 @@ function renderScreen(
     sessionId = 'sess-1',
     strict,
     onAnalysisReady,
+    retestFallback,
     webSessionToken,
     userCurveCenterHz,
   }: RenderOptions = {},
@@ -144,9 +158,11 @@ function renderScreen(
     <TestFlowScreen
       apiBase={API_BASE}
       testVersion={TEST_VERSION}
+      voiceSet={VOICE_SET}
       sessionId={sessionId}
       storage={storage ?? memoryStorage()}
       onAnalysisReady={onAnalysisReady}
+      retestFallback={retestFallback}
       webSessionToken={
         webSessionToken ?? (window.AccenturyBridge === undefined ? () => WEB_TOKEN : undefined)
       }
@@ -289,6 +305,47 @@ function waitingFetch(handlers: {
   })
 }
 
+/**
+ * 분석이 **막다른 상태**로 끝나는 대역 (KAN-191). 음성 5문항은 전부 끝났는데 서버가 어휘
+ * 문항 미제출로 422를 준다 — 대기 화면 목록에는 음성만 있으므로 손댈 줄이 하나도 없다.
+ */
+function deadEndFetch(): ReturnType<typeof vi.fn<FetchLike>> {
+  const res = (status: number, body: unknown) =>
+    ({
+      ok: status >= 200 && status < 300,
+      status,
+      headers: { get: (name: string) => (name === '' ? '' : null) },
+      json: async () => body,
+    }) as Response
+
+  return vi.fn<FetchLike>(async (input) => {
+    const url = String(input)
+    if (url.endsWith('/analyses')) {
+      return res(200, {
+        pollAfterMs: 800,
+        items: [1, 3, 5, 7, 9].map((seq) => ({
+          itemId: `item-${seq}`,
+          status: 'COMPLETED',
+          quality: 'OK',
+        })),
+      })
+    }
+    if (url.endsWith('/complete')) {
+      return res(422, {
+        code: 'RESULT_INCOMPLETE',
+        message: '아직 완료하지 않은 문항이 있습니다.',
+        retryable: false,
+        retryAfterMs: null,
+        correlationId: 'c_test',
+        missingItems: ['item-10'],
+      })
+    }
+    if (url.endsWith('/answer')) return res(200, { accepted: true })
+    if (url.endsWith('/recording')) return res(202, { analysisJobId: 'job-web' })
+    return res(200, tenItemDefinition())
+  })
+}
+
 afterEach(() => {
   delete window.AccenturyBridge
   delete window.AccenturyWeb
@@ -303,7 +360,7 @@ describe('정의 로딩', () => {
 
     expect(await screen.findByText('음성 문항 1')).toBeInTheDocument()
     expect(fetchImpl).toHaveBeenCalledTimes(1)
-    expect(fetchImpl.mock.calls[0][0]).toBe(`${API_BASE}/v0/tests/${TEST_VERSION}`)
+    expect(fetchImpl.mock.calls[0][0]).toBe(`${API_BASE}/v0/tests/${TEST_VERSION}?voiceSet=${VOICE_SET}`)
   })
 
   it('로딩에 실패하면 안내와 [다시 시도]를 보이고, 재시도가 성공하면 진행으로 넘어간다', async () => {
@@ -747,7 +804,9 @@ describe('폴링 부재 — 문항 진행 중에는 요청이 없다 (KAN-14 규
       for (let i = 0; i < 9; i += 1) await advance(capture)
 
       const requested = urls(fetchImpl)
-      expect(requested.filter((url) => url.endsWith(`/v0/tests/${TEST_VERSION}`))).toHaveLength(1)
+      expect(
+        requested.filter((url) => url.endsWith(`/v0/tests/${TEST_VERSION}?voiceSet=${VOICE_SET}`)),
+      ).toHaveLength(1)
       // 음성 5문항 × 업로드 1건, 어휘 4문항 × 답안 1건. 둘 다 [다음]이 부른 일회성 요청이다
       expect(requested.filter((url) => url.endsWith('/recording'))).toHaveLength(5)
       expect(requested.filter((url) => url.endsWith('/answer'))).toHaveLength(4)
@@ -866,6 +925,35 @@ describe('분석 대기 결선 (KAN-14)', () => {
     })
   })
 
+  it('막다른 상태에서는 [다시 테스트하기]가 서고, 브리지가 없으면 폴백이 돈다 (KAN-191)', async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const retestFallback = vi.fn()
+    // 브리지 없음 = 브라우저 단독 실행. 재녹음 버튼이 없어 되살릴 방법이 하나도 없는 자리다
+    const { capture } = renderScreen(deadEndFetch(), { sessionId: 'sess-1', retestFallback })
+    await findRecordButton()
+
+    await finishAllItems(capture)
+
+    expect(screen.getByText('여기서는 더 진행할 수 없어요')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '다시 테스트하기' }))
+
+    // 브리지가 없으면 `startRetest`가 false를 돌려주고 훅이 곧바로 폴백을 부른다
+    expect(retestFallback).toHaveBeenCalledTimes(1)
+    errorLog.mockRestore()
+  })
+
+  it('폴백을 주지 않은 호출자에게는 그 버튼이 없다 — 눌러도 아무 일 없는 버튼은 두지 않는다', async () => {
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { capture } = renderScreen(deadEndFetch(), { sessionId: 'sess-1' })
+    await findRecordButton()
+
+    await finishAllItems(capture)
+
+    expect(screen.getByText('여기서는 더 진행할 수 없어요')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '다시 테스트하기' })).not.toBeInTheDocument()
+    errorLog.mockRestore()
+  })
+
   it('재녹음 결과가 돌아오면 폴링을 다시 세운다', async () => {
     stubBridge()
     const fetchImpl = waitingFetch({})
@@ -879,5 +967,67 @@ describe('분석 대기 결선 (KAN-14)', () => {
 
     const after = fetchImpl.mock.calls.filter(([url]) => String(url).endsWith('/analyses')).length
     expect(after).toBe(before + 1)
+  })
+})
+
+describe('문항 퍼널 계측 (KAN-33)', () => {
+  afterEach(() => {
+    delete window.gtag
+  })
+
+  it('문항이 뜰 때와 제출될 때를 순번·유형과 함께 센다', async () => {
+    const events = stubGtag()
+    const { capture } = renderScreen(okFetch())
+    await findRecordButton()
+
+    // 첫 문항은 1번 음성이다 (정의가 홀수 자리에 음성을 둔다)
+    expect(events).toEqual([{ event: 'item_shown', item_seq: 1, item_type: 'VOICE' }])
+
+    await recordAndSend(capture)
+
+    /*
+     * 제출과 다음 노출이 잇따라 나간다. 둘을 다 세야 "문항을 보고 그만둔 사람"과 "제출까지
+     * 한 사람"이 갈린다 — 노출만 세면 이탈 지점이 문항 단위로 보이지 않는다.
+     */
+    expect(events).toEqual([
+      { event: 'item_shown', item_seq: 1, item_type: 'VOICE' },
+      { event: 'item_submitted', item_seq: 1, item_type: 'VOICE' },
+      { event: 'item_shown', item_seq: 2, item_type: 'VOCABULARY' },
+    ])
+
+    answerVocabulary()
+    await act(async () => {})
+
+    expect(events).toContainEqual({ event: 'item_submitted', item_seq: 2, item_type: 'VOCABULARY' })
+  })
+
+  it('재녹음 결과가 다시 들어와도 제출은 한 번만 센다', async () => {
+    const events = stubGtag()
+    stubBridge()
+    // 앱 안이라 브리지로 나간다 — 계측까지 아는 브리지여야 이벤트가 gtag 대역에 잡히지 않는다
+    window.AccenturyBridge!.logEvent = (name: string, paramsJson: string) => {
+      events.push({ event: name, ...(JSON.parse(paramsJson) as Record<string, unknown>) })
+    }
+    try {
+      renderScreen(okFetch())
+      await findRecordingWait()
+
+      deliverResult('item-1')
+      await act(async () => {})
+      // 같은 문항의 결과가 한 번 더 온다 = 대기 화면에서 재녹음한 경우다
+      deliverResult('item-1')
+      await act(async () => {})
+
+      /*
+       * 상태 머신이 두 번째를 거부하므로 제출도 한 번이다. 거부까지 세면 문항 제출 수가
+       * 재녹음 횟수만큼 부풀어 오르고, 재녹음은 `recording_retake`가 따로 센다.
+       */
+      expect(events.filter((event) => event.event === 'item_submitted')).toEqual([
+        { event: 'item_submitted', item_seq: 1, item_type: 'VOICE' },
+      ])
+    } finally {
+      delete window.AccenturyBridge
+      delete window.AccenturyWeb
+    }
   })
 })

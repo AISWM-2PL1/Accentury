@@ -6,11 +6,11 @@ import org.springframework.stereotype.Service;
 import java.util.Map;
 
 /**
- * sv-0.3 확정 집계식의 구현 (KAN-21, API 명세서 §4.3).
+ * 확정 집계식의 구현 (sv-0.3 KAN-21, sv-0.4 KAN-200, API 명세서 §4.3).
  * <p>
  * 순수 산술이다 - AI 호출, DB 조회, 상태가 없다. 같은 입력이면 언제나 같은 점수와
- * 등급이 나온다 (KAN-21 AC - 결정성). 가중치와 경계값은 {@link ScorePolicy} seed가
- * 정본이고, 여기는 식의 뼈대만 안다.
+ * 등급이 나온다 (KAN-21 AC - 결정성). 가중치와 경계값, 억양 전처리 계수는
+ * {@link ScorePolicy} seed가 정본이고, 여기는 식의 뼈대만 안다.
  * <p>
  * 입력 완전성을 강제한다: 음성 문항 하나라도 성공 점수가 없으면 종합 점수를 만들지
  * 않는다 (KAN-21 AC - KAN-25 복구 경로). 완주 검증과 사용자 오류 응답(RESULT_INCOMPLETE,
@@ -29,16 +29,21 @@ public class ScoreAggregator {
     /**
      * 세션 전체 문항 결과를 종합 점수와 등급으로 접는다. {@code /complete} 시점에 1회 호출된다 (§4.3).
      * <ul>
-     *   <li>억양 점수 = 음성 5문항 점수의 합. 문항 점수는 AI 원점수(0~100) ÷ 5(20점 만점)라
-     *       합은 원점수 평균과 같은 값이다 (2026-08-09 확정 - AI 계약 무변경, KAN-22).</li>
+     *   <li>억양 점수 = 음성 5문항 점수의 합 x 계수. 문항 점수는 AI 원점수(0~100) ÷ 5(20점 만점)라
+     *       합은 원점수 평균과 같은 값이다 (2026-08-09 확정 - AI 계약 무변경, KAN-22). 계수는
+     *       정책의 전처리 규칙이 그 <b>평균</b>의 구간으로 정한다 (sv-0.4, KAN-200) - 문항별로
+     *       곱하지 않고, 규칙이 없는 정책(sv-0.3)은 계수 1이다. 원점수는 {@code analysis_job}에
+     *       그대로 남고 전처리 값은 저장되지 않는다 - 재현과 감사는 scoreVersion 하나로 한다.</li>
      *   <li>단어 점수 = 정답 수 x 100 ÷ 문항 수. 어휘는 AI를 거치지 않고 정의의 정답표와
      *       대조한다 (§4.3, §5.7).</li>
      *   <li>종합 점수 = 가중 평균, 등급 = {@link ScorePolicy#tierFor}</li>
      * </ul>
      * 사용자에게 보이는 세 점수는 모두 반올림한 정수이고, 등급은 그 정수 종합 점수로
      * 판정한다 - 표시 점수로 검산한 결과와 등급이 어긋나지 않게 하기 위해서다
-     * (KAN-21 - 검산 가능성: 억양 78, 단어 60 → 72 → 명예주민). 반올림은 값을 내리지
-     * 않으므로 억양 점수가 오르면 종합 점수와 등급도 절대 내려가지 않는다 (AC - 단조성).
+     * (KAN-21 - 검산 가능성: 억양 78, 단어 60 → 72 → 명예주민). 전처리 결과(90.25 같은
+     * 소수)도 중간에 반올림하지 않고 억양 점수를 정수로 만드는 자리에서 1회만 반올림한다.
+     * 반올림은 값을 내리지 않고 전처리 함수는 단조 비감소(발행 검증)라, 억양 원점수가
+     * 오르면 종합 점수와 등급도 절대 내려가지 않는다 (AC - 단조성).
      *
      * @param scoreVersion           세션이 생성 시점에 고정한 점수 버전 (§5.4)
      * @param definition             세션의 세트 정의 (음성 5 + 어휘 5) - 문항 구성과 어휘 정답표의
@@ -103,7 +108,10 @@ public class ScoreAggregator {
         require(voiceCount > 0, "음성 문항이 없는 정의다: " + definition.testVersion());
         require(vocabularyCount > 0, "어휘 문항이 없는 정의다: " + definition.testVersion());
 
-        int intonation = roundHalfUp(intonationSum, voiceCount);
+        // 전처리 억양 점수 = 합 x 계수% / (문항 수 x 100). 분자를 정수로 두고 1회 반올림한다 -
+        // 평균과 계수 곱을 실수로 거치지 않아야 플랫폼과 무관하게 같은 값이 나온다 (KAN-21 AC).
+        int coefficientPercent = policy.intonationCoefficientPercent(intonationSum, voiceCount);
+        int intonation = roundHalfUp((long) intonationSum * coefficientPercent, voiceCount * 100L);
         int vocabulary = roundHalfUp(correctCount * 100, vocabularyCount);
         int overall = roundHalfUp(
                 (long) intonation * policy.intonationWeight() + (long) vocabulary * policy.vocabularyWeight(),

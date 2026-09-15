@@ -122,6 +122,8 @@ export function VoiceItemScreen({
         */
         <WebVoiceRecorder
           item={item}
+          /* 재녹음 계측의 집계 축 (KAN-33). 카드 배지·네이티브 녹음 화면과 같은 번호다 */
+          itemNumber={itemNumber}
           upload={(recording, attemptId) => webRecording.upload(item.itemId, recording, attemptId)}
           onUploaded={onWebUploaded}
           capture={webRecording.capture}

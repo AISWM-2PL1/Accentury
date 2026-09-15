@@ -1,6 +1,9 @@
 package com.accentury.app.web
 
+import com.accentury.app.ads.AdConsent
+import com.accentury.app.analytics.EventParam
 import com.accentury.app.bridge.GuideF0
+import com.accentury.app.recording.GuideF0Fixture
 import com.accentury.app.bridge.SharePayload
 import com.accentury.app.bridge.VoiceItemStart
 import org.junit.Assert.assertEquals
@@ -45,6 +48,11 @@ class AccenturyBridgeTest {
             onStartVoiceItem = { received = it },
             onStartRetest = {},
             onShareResult = {},
+            onLogEvent = { _, _ -> },
+            onOpenExternalUrl = {},
+            readAdConsent = { AdConsent.Unknown },
+            onSetAdConsent = {},
+            onShowInterstitialAd = {},
         )
         bridge.startVoiceItem(payloadJson)
         queue.drain()
@@ -64,6 +72,11 @@ class AccenturyBridgeTest {
             onStartVoiceItem = {},
             onStartRetest = {},
             onShareResult = {},
+            onLogEvent = { _, _ -> },
+            onOpenExternalUrl = {},
+            readAdConsent = { AdConsent.Unknown },
+            onSetAdConsent = {},
+            onShowInterstitialAd = {},
         )
         bridge.requestMicPermission()
         queue.drain()
@@ -83,6 +96,11 @@ class AccenturyBridgeTest {
             onStartVoiceItem = {},
             onStartRetest = {},
             onShareResult = {},
+            onLogEvent = { _, _ -> },
+            onOpenExternalUrl = {},
+            readAdConsent = { AdConsent.Unknown },
+            onSetAdConsent = {},
+            onShowInterstitialAd = {},
         )
         bridge.requestMicPermission()
         queue.drain()
@@ -105,6 +123,11 @@ class AccenturyBridgeTest {
             onStartVoiceItem = {},
             onStartRetest = {},
             onShareResult = {},
+            onLogEvent = { _, _ -> },
+            onOpenExternalUrl = {},
+            readAdConsent = { AdConsent.Unknown },
+            onSetAdConsent = {},
+            onShowInterstitialAd = {},
         )
         bridge.requestMicPermission() // 호출 시점엔 허용 상태
         allowedNow = false // 실행 전에 allowlist 밖으로 이동
@@ -125,6 +148,11 @@ class AccenturyBridgeTest {
             onStartVoiceItem = {},
             onStartRetest = { fired++ },
             onShareResult = {},
+            onLogEvent = { _, _ -> },
+            onOpenExternalUrl = {},
+            readAdConsent = { AdConsent.Unknown },
+            onSetAdConsent = {},
+            onShowInterstitialAd = {},
         )
         bridge.startRetest()
         queue.drain()
@@ -157,6 +185,11 @@ class AccenturyBridgeTest {
             onStartVoiceItem = {},
             onStartRetest = { fired++ },
             onShareResult = {},
+            onLogEvent = { _, _ -> },
+            onOpenExternalUrl = {},
+            readAdConsent = { AdConsent.Unknown },
+            onSetAdConsent = {},
+            onShowInterstitialAd = {},
         )
         bridge.startRetest() // 호출 시점엔 허용 상태
         allowedNow = false // 실행 전에 allowlist 밖으로 이동
@@ -183,6 +216,11 @@ class AccenturyBridgeTest {
             onStartVoiceItem = {},
             onStartRetest = { fired++ },
             onShareResult = {},
+            onLogEvent = { _, _ -> },
+            onOpenExternalUrl = {},
+            readAdConsent = { AdConsent.Unknown },
+            onSetAdConsent = {},
+            onShowInterstitialAd = {},
         )
         bridge.startRetest()
         bridge.startRetest()
@@ -202,6 +240,11 @@ class AccenturyBridgeTest {
             onStartVoiceItem = {},
             onStartRetest = {},
             onShareResult = {},
+            onLogEvent = { _, _ -> },
+            onOpenExternalUrl = {},
+            readAdConsent = { AdConsent.Unknown },
+            onSetAdConsent = {},
+            onShowInterstitialAd = {},
         )
         assertEquals(BRIDGE_CONTRACT_VERSION, bridge.getContractVersion())
     }
@@ -216,6 +259,11 @@ class AccenturyBridgeTest {
         onStartVoiceItem = {},
         onStartRetest = {},
         onShareResult = {},
+        onLogEvent = { _, _ -> },
+            onOpenExternalUrl = {},
+            readAdConsent = { AdConsent.Unknown },
+            onSetAdConsent = {},
+            onShowInterstitialAd = {},
     )
 
     @Test
@@ -270,14 +318,14 @@ class AccenturyBridgeTest {
 
     @Test
     fun `guideF0가 실려 있으면 무성 null까지 값 그대로 파싱된다`() {
-        val start = startVoiceItem(
-            payload(extra = ""","guideF0":{"unit":"semitone","frameIntervalMs":10,"values":[0.5,null,-1.2]}"""),
-        )
+        // 발행본 실문항(v102)의 원문 조각을 그대로 끼운다 (KAN-194). 장난감 3점 배열로는
+        // 240점·무성 14개짜리 실제 곡선이 통째로 살아 오는지를 말해 줄 수 없다 - 실데이터에서
+        // 곡선이 버려지지 않는다는 것이 이 티켓이 보는 것이다.
+        val start = startVoiceItem(payload(extra = "," + GuideF0Fixture.JSON))
 
-        assertEquals(
-            GuideF0(unit = "semitone", frameIntervalMs = 10, values = listOf(0.5, null, -1.2)),
-            start?.guideF0,
-        )
+        assertEquals(GuideF0Fixture.REAL, start?.guideF0)
+        assertEquals(240, start?.guideF0?.values?.size)
+        assertEquals(14, start?.guideF0?.values?.count { it == null })
     }
 
     @Test
@@ -342,6 +390,11 @@ class AccenturyBridgeTest {
             onStartVoiceItem = { received = it },
             onStartRetest = {},
             onShareResult = {},
+            onLogEvent = { _, _ -> },
+            onOpenExternalUrl = {},
+            readAdConsent = { AdConsent.Unknown },
+            onSetAdConsent = {},
+            onShowInterstitialAd = {},
         )
         bridge.startVoiceItem(payload()) // 호출 시점엔 허용 상태
         allowedNow = false // 실행 전에 allowlist 밖으로 이동
@@ -363,6 +416,11 @@ class AccenturyBridgeTest {
             onStartVoiceItem = {},
             onStartRetest = {},
             onShareResult = { received = it },
+            onLogEvent = { _, _ -> },
+            onOpenExternalUrl = {},
+            readAdConsent = { AdConsent.Unknown },
+            onSetAdConsent = {},
+            onShowInterstitialAd = {},
         )
         bridge.shareResult(payloadJson)
         queue.drain()
@@ -404,6 +462,71 @@ class AccenturyBridgeTest {
         )
     }
 
+    /** logEvent를 한 번 호출하고 창구가 받은 이벤트를 돌려준다. 버려졌으면 null. */
+    private fun logEvent(
+        name: String,
+        paramsJson: String,
+        allowed: Boolean = true,
+    ): Pair<String, Map<String, EventParam>>? {
+        val queue = FakeMainQueue()
+        var received: Pair<String, Map<String, EventParam>>? = null
+        val bridge = AccenturyBridge(
+            postToMain = queue::post,
+            isCurrentUrlAllowed = { allowed },
+            isOriginAllowedNow = { false },
+            sessionToken = { "" },
+            onRequestMicPermission = {},
+            onStartVoiceItem = {},
+            onStartRetest = {},
+            onShareResult = {},
+            onLogEvent = { eventName, params -> received = eventName to params },
+            onOpenExternalUrl = {},
+            readAdConsent = { AdConsent.Unknown },
+            onSetAdConsent = {},
+            onShowInterstitialAd = {},
+        )
+        bridge.logEvent(name, paramsJson)
+        queue.drain()
+        return received
+    }
+
+    @Test
+    fun `허용된 origin이면 계측 이벤트가 타입을 살린 채 창구로 온다`() {
+        // 숫자가 숫자로 남아야 GA4에서 평균·P95를 낼 수 있다 (KAN-33 AC). 변환 규칙 자체는
+        // EventParamsTest가 못박고, 여기서는 브리지가 그 결과를 그대로 넘기는지만 본다.
+        assertEquals(
+            "analysis_wait_duration" to mapOf(
+                "duration_ms" to EventParam.Count(8_200L),
+                "pending_item_count" to EventParam.Count(2L),
+            ),
+            logEvent("analysis_wait_duration", """{"duration_ms":8200,"pending_item_count":2}"""),
+        )
+    }
+
+    @Test
+    fun `allowlist 밖 origin에서는 계측 이벤트도 무시한다`() {
+        // 계측은 집계 축이라 한 번 쌓이면 지울 수 없다 - allowlist 밖 페이지가 우리 대시보드에
+        // 값을 남기는 통로가 되면 안 된다.
+        assertNull(logEvent("item_shown", """{"item_seq":1}""", allowed = false))
+    }
+
+    @Test
+    fun `불량 JSON이나 규격 밖 이벤트명은 조용히 버린다`() {
+        // 이벤트 하나를 잃는 편이 낫다 - 웹은 오류를 돌려줄 상대가 아니고(§8), 규격 밖 이름이
+        // 흘러가면 GA4에 지울 수 없는 축이 생긴다. 버렸다는 사실은 Crashlytics로만 남는다.
+        assertNull(logEvent("item_shown", "{oops"))
+        assertNull(logEvent("item_shown", "[]"))
+        assertNull(logEvent("Item_Shown", """{"item_seq":1}"""))
+        assertNull(logEvent("item-shown", """{"item_seq":1}"""))
+        assertNull(logEvent("firebase_item_shown", """{"item_seq":1}"""))
+        assertNull(logEvent("", """{"item_seq":1}"""))
+    }
+
+    @Test
+    fun `파라미터 없는 이벤트도 그대로 지나간다`() {
+        assertEquals("retest_started" to emptyMap<String, EventParam>(), logEvent("retest_started", "{}"))
+    }
+
     @Test
     fun `프롬프트의 따옴표나 유니코드가 값 그대로 전달된다`() {
         val start = startVoiceItem(
@@ -412,5 +535,185 @@ class AccenturyBridgeTest {
         )
 
         assertEquals("\"밥은\" 뭇나?\n마!", start?.prompt)
+    }
+
+    /** openExternalUrl을 한 번 호출하고 창구가 받은 URL을 돌려준다. 거절됐으면 null. */
+    private fun openExternalUrl(url: String, allowed: Boolean = true): String? {
+        val queue = FakeMainQueue()
+        var received: String? = null
+        val bridge = AccenturyBridge(
+            postToMain = queue::post,
+            isCurrentUrlAllowed = { allowed },
+            isOriginAllowedNow = { false },
+            sessionToken = { "" },
+            onRequestMicPermission = {},
+            onStartVoiceItem = {},
+            onStartRetest = {},
+            onShareResult = {},
+            onLogEvent = { _, _ -> },
+            onOpenExternalUrl = { received = it },
+            readAdConsent = { AdConsent.Unknown },
+            onSetAdConsent = {},
+            onShowInterstitialAd = {},
+        )
+        bridge.openExternalUrl(url)
+        queue.drain()
+        return received
+    }
+
+    @Test
+    fun `방침 URL은 창구로 그대로 넘어간다`() {
+        assertEquals(
+            "https://accentury.app/privacy.html",
+            openExternalUrl("https://accentury.app/privacy.html"),
+        )
+    }
+
+    @Test
+    fun `allowlist 밖 페이지가 부르면 열지 않는다`() {
+        assertNull(openExternalUrl("https://accentury.app/privacy.html", allowed = false))
+    }
+
+    @Test
+    fun `우리 도메인 밖은 열지 않는다`() {
+        // WebView에 실린 스크립트가 앱더러 아무 주소나 열게 시키는 경로다
+        assertNull(openExternalUrl("https://evil.example.com/phish.html"))
+    }
+
+    @Test
+    fun `http와 앱 스킴은 열지 않는다`() {
+        assertNull(openExternalUrl("http://accentury.app/privacy.html"))
+        assertNull(openExternalUrl("javascript:alert(1)"))
+        assertNull(openExternalUrl("intent://accentury.app/privacy.html#Intent;end"))
+    }
+
+    /** 광고 브리지 세 메서드용 (KAN-196). 저장소는 값 하나짜리 가짜다. */
+    private class AdHarness(originAllowedNow: Boolean = true, allowed: Boolean = true) {
+        val queue = FakeMainQueue()
+        var stored: AdConsent = AdConsent.Unknown
+        var setCalls = 0
+        var interstitialShown = 0
+        val bridge = AccenturyBridge(
+            postToMain = queue::post,
+            isCurrentUrlAllowed = { allowed },
+            isOriginAllowedNow = { originAllowedNow },
+            sessionToken = { "" },
+            onRequestMicPermission = {},
+            onStartVoiceItem = {},
+            onStartRetest = {},
+            onShareResult = {},
+            onLogEvent = { _, _ -> },
+            onOpenExternalUrl = {},
+            readAdConsent = { stored },
+            onSetAdConsent = {
+                stored = it
+                setCalls++
+            },
+            onShowInterstitialAd = { interstitialShown++ },
+        )
+    }
+
+    @Test
+    fun `허용된 origin이면 저장된 동의를 계약 문자열로 돌려준다`() {
+        val h = AdHarness()
+        assertEquals("unknown", h.bridge.getAdConsent())
+        h.stored = AdConsent.Granted
+        assertEquals("granted", h.bridge.getAdConsent())
+        h.stored = AdConsent.Denied
+        assertEquals("denied", h.bridge.getAdConsent())
+    }
+
+    @Test
+    fun `allowlist 밖 origin에서는 동의 대신 빈 문자열이다`() {
+        // unknown이 아니다 — unknown은 "물어야 한다"는 진짜 상태라 남의 페이지에 시트를 띄우라는
+        // 답이 된다. 빈 문자열은 계약 밖이라 웹 래퍼가 null(광고 동의 개념 없음)로 접는다 —
+        // 토큰 거부(getSessionToken)와 같은 규칙이다.
+        val h = AdHarness(originAllowedNow = false)
+        h.stored = AdConsent.Granted
+        assertEquals("", h.bridge.getAdConsent())
+    }
+
+    @Test
+    fun `허용된 origin이면 granted·denied가 저장된다`() {
+        val h = AdHarness()
+        h.bridge.setAdConsent("granted")
+        h.queue.drain()
+        assertEquals(AdConsent.Granted, h.stored)
+        h.bridge.setAdConsent("denied")
+        h.queue.drain()
+        assertEquals(AdConsent.Denied, h.stored)
+        assertEquals(2, h.setCalls)
+    }
+
+    @Test
+    fun `unknown과 계약 밖 값은 저장하지 않는다`() {
+        // unknown은 고를 수 있는 값이 아니다 — 받아 적으면 이미 고른 동의를 되돌리는 통로가 된다.
+        val h = AdHarness()
+        h.stored = AdConsent.Granted
+        listOf("unknown", "", "Granted", "true", "{oops").forEach { h.bridge.setAdConsent(it) }
+        h.queue.drain()
+        assertEquals(AdConsent.Granted, h.stored)
+        assertEquals(0, h.setCalls)
+    }
+
+    @Test
+    fun `allowlist 밖 origin에서는 동의를 적지 않는다`() {
+        val h = AdHarness(allowed = false)
+        h.bridge.setAdConsent("granted")
+        h.queue.drain()
+        assertEquals(AdConsent.Unknown, h.stored)
+        assertEquals(0, h.setCalls)
+    }
+
+    @Test
+    fun `동의 저장도 실행 시점 origin으로 판정한다`() {
+        val queue = FakeMainQueue()
+        var allowedNow = true
+        var setCalls = 0
+        val bridge = AccenturyBridge(
+            postToMain = queue::post,
+            isCurrentUrlAllowed = { allowedNow },
+            isOriginAllowedNow = { false },
+            sessionToken = { "" },
+            onRequestMicPermission = {},
+            onStartVoiceItem = {},
+            onStartRetest = {},
+            onShareResult = {},
+            onLogEvent = { _, _ -> },
+            onOpenExternalUrl = {},
+            readAdConsent = { AdConsent.Unknown },
+            onSetAdConsent = { setCalls++ },
+            onShowInterstitialAd = {},
+        )
+        bridge.setAdConsent("granted") // 호출 시점엔 허용 상태
+        allowedNow = false // 실행 전에 allowlist 밖으로 이동
+        queue.drain()
+        assertEquals(0, setCalls)
+    }
+
+    @Test
+    fun `허용된 origin이면 전면 광고 콜백이 실행된다`() {
+        val h = AdHarness()
+        h.bridge.showInterstitialAd()
+        h.queue.drain()
+        assertEquals(1, h.interstitialShown)
+    }
+
+    @Test
+    fun `allowlist 밖 origin에서는 전면 광고를 띄우지 않는다`() {
+        val h = AdHarness(allowed = false)
+        h.bridge.showInterstitialAd()
+        h.queue.drain()
+        assertEquals(0, h.interstitialShown)
+    }
+
+    @Test
+    fun `전면 광고 횟수는 브리지가 세지 않는다 - 받은 만큼 넘긴다`() {
+        // 세션당 한 번은 웹이 센다 (ads/interstitial.ts). 횟수 방어를 두 곳에 두지 않는다 (§8.3).
+        val h = AdHarness()
+        h.bridge.showInterstitialAd()
+        h.bridge.showInterstitialAd()
+        h.queue.drain()
+        assertEquals(2, h.interstitialShown)
     }
 }

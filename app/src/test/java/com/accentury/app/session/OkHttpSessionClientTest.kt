@@ -18,9 +18,9 @@ class OkHttpSessionClientTest {
 
     private lateinit var server: MockWebServer
 
-    /** 계약대로 5필드를 모두 담은 201 본문 (§3.1). */
+    /** 계약대로 6필드를 모두 담은 201 본문 (§3.1). voiceSet은 서버가 고른 값이다 (KAN-205). */
     private val createdBody = """
-        {"sessionId":"s_abc","sessionToken":"st_xyz","testVersion":"gn-2026.08.1",
+        {"sessionId":"s_abc","sessionToken":"st_xyz","testVersion":"gn-2026.08.1","voiceSet":7,
          "scoreVersion":"sv-1","expiresAt":"2026-08-24T10:30:00Z"}
     """.trimIndent()
 
@@ -39,7 +39,7 @@ class OkHttpSessionClientTest {
     private fun client() = OkHttpSessionClient(server.url("/").toString())
 
     @Test
-    fun `201 응답의 5필드를 그대로 Session으로 담는다`() = runTest {
+    fun `201 응답의 6필드를 그대로 Session으로 담는다`() = runTest {
         server.enqueue(MockResponse().setResponseCode(201).setBody(createdBody))
 
         val result = client().create(appVersion = "1.0")
@@ -50,6 +50,7 @@ class OkHttpSessionClientTest {
                     sessionId = "s_abc",
                     sessionToken = "st_xyz",
                     testVersion = "gn-2026.08.1",
+                    voiceSet = 7,
                     scoreVersion = "sv-1",
                     expiresAt = "2026-08-24T10:30:00Z",
                 ),
@@ -207,7 +208,9 @@ class OkHttpSessionClientTest {
         // sessionToken은 이 응답에서 한 번만 오는 값이라 없으면 세션 자체를 쓸 수 없다.
         server.enqueue(
             MockResponse().setResponseCode(201)
-                .setBody("""{"sessionId":"s_abc","testVersion":"gn-2026.08.1","scoreVersion":"sv-1","expiresAt":"z"}"""),
+                .setBody(
+                    """{"sessionId":"s_abc","testVersion":"gn-2026.08.1","voiceSet":1,"scoreVersion":"sv-1","expiresAt":"z"}""",
+                ),
         )
 
         val result = client().create(appVersion = "1.0")
@@ -220,13 +223,33 @@ class OkHttpSessionClientTest {
     fun `2xx인데 sessionId가 빈 문자열이면 받아들이지 않는다`() = runTest {
         server.enqueue(
             MockResponse().setResponseCode(201).setBody(
-                """{"sessionId":"","sessionToken":"st_xyz","testVersion":"v","scoreVersion":"s","expiresAt":"z"}""",
+                """{"sessionId":"","sessionToken":"st_xyz","testVersion":"v","voiceSet":1,"scoreVersion":"s","expiresAt":"z"}""",
             ),
         )
 
         val result = client().create(appVersion = "1.0")
 
         assertTrue(result is SessionResult.Rejected)
+    }
+
+    /**
+     * 세트는 서버가 고르는 값이라 응답에 반드시 있다 (KAN-205). 없거나 세트가 아닌 값이면 웹이
+     * 조회할 정의가 없어 응시가 성립하지 않으므로, 반쪽짜리 세션을 들고 가지 않고 거절한다.
+     */
+    @Test
+    fun `2xx인데 voiceSet이 없거나 1 미만이면 받아들이지 않는다`() = runTest {
+        val bodies = listOf(
+            """{"sessionId":"s_abc","sessionToken":"st_xyz","testVersion":"v","scoreVersion":"s","expiresAt":"z"}""",
+            """{"sessionId":"s_abc","sessionToken":"st_xyz","testVersion":"v","voiceSet":0,"scoreVersion":"s","expiresAt":"z"}""",
+        )
+        for (body in bodies) {
+            server.enqueue(MockResponse().setResponseCode(201).setBody(body))
+
+            val result = client().create(appVersion = "1.0")
+
+            assertTrue(result is SessionResult.Rejected)
+            assertTrue((result as SessionResult.Rejected).retryable)
+        }
     }
 
     @Test

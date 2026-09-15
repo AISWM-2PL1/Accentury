@@ -16,14 +16,30 @@
  * 폴링이 멈춰 있으므로(요구 4항) 그 시간은 예산을 쓰지 않는다 — 벽시계로 재면 알림을 보고
  * 5분 뒤 돌아온 사용자가 화면을 보자마자 [다시 시도]를 만나게 되는데, 그동안 우리는 요청을
  * 한 번도 보내지 않았다. 상한이 막으려는 것은 요청 폭증이지 사용자의 부재가 아니다.
+ *
+ * ## 운영 지표 넷을 이 훅이 센다 (KAN-33)
+ *
+ * 대기 시간·폴링 횟수·중단·문항 종결 상태는 전부 이 루프 안에만 있는 사실이다. 화면에서
+ * 세려면 같은 시계와 같은 회차 계산을 한 벌 더 만들어야 하는데, 그 사본은 폴링 규칙이 바뀔
+ * 때마다 조용히 어긋난다.
+ *
+ * 재는 시간은 **포그라운드 누적**이다 — 예산과 같은 시계를 그대로 쓴다. KAN-24 트리거가 보는
+ * 것은 "대기 화면 체류 시간"인데 벽시계로 재면 앱을 내려둔 시간까지 세어져, 트리거가 서버
+ * 지연이 아니라 사람의 부재로 켜진다.
+ *
+ * 종결 이벤트는 **훅 인스턴스당 한 번**이다. [restart]로 루프가 다시 서도 이어서 세고, 한 번
+ * 보낸 뒤에는 다시 보내지 않는다 — 사용자에게는 재녹음을 사이에 낀 한 번의 기다림이라, 세대별로
+ * 끊으면 대기 시간이 실제보다 짧게, 폴링 횟수는 여러 건으로 쪼개져 잡힌다.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { TerminalItemStatus } from '../analytics/events'
+import { track } from '../analytics/track'
 import type { FetchLike } from '../progress/fetchTestDefinition'
 import { newIdempotencyKey } from '../progress/submitVocabAnswer'
 import { completeSession, RESULT_INCOMPLETE, RESULT_RETAKE_REQUIRED } from './completeSession'
 import { AnalysisApiError } from './errorEnvelope'
-import { fetchAnalysisStatuses, type AnalysisItem } from './fetchAnalysisStatuses'
+import { fetchAnalysisStatuses, type AnalysisItem, type AnalysisItemStatus } from './fetchAnalysisStatuses'
 import { planNextPoll, type Random } from './pollSchedule'
 
 /**
@@ -40,6 +56,18 @@ export type WaitingStatus =
   | { kind: 'EXHAUSTED' }
   | { kind: 'ACTION_REQUIRED'; reason: 'RETAKE' | 'MISSING'; itemIds: string[] }
   | { kind: 'FAILED'; message: string }
+
+/**
+ * 더 바뀌지 않는 문항 상태 (KAN-33 `analysis_item_terminal`).
+ *
+ * `NOT_SUBMITTED`·`PROCESSING`은 지나가는 상태라 뺀다 — 최종 분포에 세면 폴링 회차가 많은
+ * 세션일수록 표본이 부풀어 오른다.
+ */
+const TERMINAL_STATUSES: readonly AnalysisItemStatus[] = ['COMPLETED', 'RETRYABLE_FAILED', 'FAILED']
+
+function isTerminal(status: AnalysisItemStatus): status is TerminalItemStatus {
+  return TERMINAL_STATUSES.includes(status)
+}
 
 export interface UseAnalysisPollingOptions {
   apiBase: string
@@ -98,6 +126,22 @@ export function useAnalysisPolling(options: UseAnalysisPollingOptions): UseAnaly
   const keyRef = useRef('')
   if (keyRef.current === '') keyRef.current = newIdempotencyKey()
 
+  /*
+   * 계측용 누적값 — 훅 인스턴스 하나가 대기 화면 한 번이다 (헤더 "운영 지표 넷" 참고).
+   * 상태가 아니라 ref인 이유는 렌더에 보이지 않는 값이라서다: 이 값들이 바뀐다고 화면이
+   * 다시 그려질 이유가 없고, 이펙트가 다시 서도 살아남아야 한다.
+   */
+  /** 이미 끝난 세대들의 포그라운드 누적 시간. 지금 세대의 몫은 잴 때 더한다 */
+  const waitedMsRef = useRef(0)
+  /** 나간 조회 회차 총합 (요구 검증용 — 정상 범위는 3~6회다) */
+  const pollCountRef = useRef(0)
+  /** 이미 센 `문항:종결상태` 조합. 재녹음으로 같은 문항이 다시 종결되면 그건 새 사실이다 */
+  const terminalSeenRef = useRef(new Set<string>())
+  /** 종결 이벤트를 보냈는가. 대기 한 번에 한 벌만 나간다 */
+  const endedRef = useRef(false)
+  /** 마지막으로 성공한 조회 기준 미완료 문항 수. 한 번도 성공하지 못했으면 0이다 */
+  const pendingRef = useRef(0)
+
   const restart = useCallback(() => setGeneration((n) => n + 1), [])
 
   useEffect(() => {
@@ -124,6 +168,55 @@ export function useAnalysisPolling(options: UseAnalysisPollingOptions): UseAnaly
     setLastError(null)
 
     const elapsedMs = () => activeMs + (paused ? 0 : now() - segmentStart)
+
+    /**
+     * 기다림이 끝났다 — 대기 한 번에 한 벌만 보낸다 (KAN-33).
+     *
+     * 두 결말을 한 함수로 묶은 이유는 함께 나가야 하는 값이 같기 때문이다: 얼마나 기다렸고
+     * 몇 번 두드렸는가. 나눠 두면 한쪽에만 폴링 횟수를 붙이는 식으로 어긋난다.
+     *
+     * `EXHAUSTED` 뒤 [다시 시도]로 결국 결과가 나온 세션은 대기 시간을 보내지 않는다.
+     * 그 시간은 사용자가 언제 다시 눌렀는지에 달린 값이라, 평균에 섞으면 KAN-24 트리거가
+     * 서버 지연이 아니라 사용자의 망설임으로 켜진다 — 그 세션이 남기는 사실은 이미 보낸
+     * `poll_abandoned`다.
+     */
+    function finishWait(outcome: 'READY' | 'ABANDONED') {
+      if (endedRef.current) return
+      endedRef.current = true
+
+      const elapsed = Math.round(waitedMsRef.current + elapsedMs())
+      const pending = pendingRef.current
+      if (outcome === 'READY') {
+        track({ name: 'analysis_wait_duration', duration_ms: elapsed, pending_item_count: pending })
+      } else {
+        track({ name: 'poll_abandoned', elapsed_ms: elapsed, pending_item_count: pending })
+      }
+      track({ name: 'analysis_poll_count', count: pollCountRef.current, total_elapsed_ms: elapsed })
+    }
+
+    /**
+     * 조회 결과에서 **처음 보는 종결**을 센다 (KAN-33 `analysis_item_terminal`).
+     *
+     * 중복 방지 키가 문항 id가 아니라 `문항:상태`인 이유: 재녹음으로 되살아난 문항은
+     * `RETRYABLE_FAILED` → `COMPLETED`로 두 번 종결한다. 둘은 다른 사실이고("어떤 품질
+     * 오류가 났나"와 "그래서 복구됐나"), 문항 id로만 막으면 뒤엣것이 통째로 사라진다.
+     */
+    function countTerminal(statuses: AnalysisItem[]) {
+      pendingRef.current = statuses.filter((item) => item.status !== 'COMPLETED').length
+
+      for (const item of statuses) {
+        if (!isTerminal(item.status)) continue
+        const key = `${item.itemId}:${item.status}`
+        if (terminalSeenRef.current.has(key)) continue
+        terminalSeenRef.current.add(key)
+        track({
+          name: 'analysis_item_terminal',
+          status: item.status,
+          // 실패에만 붙는 값이다. COMPLETED에 코드가 없는 것은 정상이라 null로 보낸다
+          error_code: item.error?.code ?? null,
+        })
+      }
+    }
 
     function clearTimer() {
       if (timer !== undefined) {
@@ -159,6 +252,8 @@ export function useAnalysisPolling(options: UseAnalysisPollingOptions): UseAnaly
 
       if (plan.kind === 'EXHAUSTED') {
         setStatus({ kind: 'EXHAUSTED' })
+        // 60초 상한 도달 = GPU 밀림의 조기 신호 (KAN-33)
+        finishWait('ABANDONED')
         return
       }
       round += 1
@@ -203,12 +298,18 @@ export function useAnalysisPolling(options: UseAnalysisPollingOptions): UseAnaly
       if (cancelled || inFlight) return
       clearTimer()
       inFlight = true
+      /*
+       * 회차는 **보내기 직전에** 센다. 성공한 조회만 세면 폴링 규칙 위반(요구 2항)을 잡으려는
+       * 목적을 놓친다 — 실패한 요청도 서버를 두드린 횟수이고, 그 폭증이 바로 보려는 것이다.
+       */
+      pollCountRef.current += 1
       try {
         let statusesFailed = false
         try {
           const statuses = await fetchAnalysisStatuses({ apiBase, sessionId, sessionToken }, fetchImpl)
           if (cancelled) return
           setItems(statuses.items)
+          countTerminal(statuses.items)
           serverPollAfterMs = statuses.pollAfterMs
           setLastError(null)
         } catch (error) {
@@ -237,6 +338,8 @@ export function useAnalysisPolling(options: UseAnalysisPollingOptions): UseAnaly
           if (cancelled) return
           if (result.status === 'READY') {
             setStatus({ kind: 'READY' })
+            // KAN-24 트리거("대기 화면 평균 체류 10초 초과")가 읽을 값이 여기서 나간다
+            finishWait('READY')
             return
           }
           // 두 응답이 서로 다른 간격을 주면 느린 쪽을 따른다 — 둘 다 "이만큼 기다려라"는
@@ -268,6 +371,11 @@ export function useAnalysisPolling(options: UseAnalysisPollingOptions): UseAnaly
 
     return () => {
       cancelled = true
+      /*
+       * 이 세대가 실제로 기다린 시간을 이어 담는다. [restart]는 루프를 통째로 다시 세우므로
+       * 여기서 넘기지 않으면 재녹음 앞에서 기다린 시간이 통째로 사라진다.
+       */
+      waitedMsRef.current += elapsedMs()
       clearTimer()
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
