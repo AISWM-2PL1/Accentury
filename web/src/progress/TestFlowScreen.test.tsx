@@ -1,8 +1,9 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { StrictMode } from 'react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createFakeCapture, sineChunk, type FakeCapture } from '../audio/testing/fakeCapture'
 import { START_COUNTDOWN_SECONDS, TestFlowScreen } from './TestFlowScreen'
+import { START_SCREEN_SUBTITLE } from './TestStartScreen'
 import type { FetchLike } from './fetchTestDefinition'
 import { snapshotKey, type SnapshotStorage } from './progressSnapshot'
 import type { TestDefinition, TestItem } from './testDefinition'
@@ -1076,5 +1077,131 @@ describe('문항 퍼널 계측 (KAN-33)', () => {
       delete window.AccenturyBridge
       delete window.AccenturyWeb
     }
+  })
+})
+
+/*
+ * 시작 대기 카운트다운 (KAN-216). 위 describe들은 `skipStartCountdown`으로 이 구간을 건너뛰고
+ * 시작하는데, 여기서는 그 구간 자체가 검증 대상이다 — 3초를 세는 동안 무엇이 보이고 무엇이
+ * 나가지 않는가.
+ *
+ * 가짜 시계(setTimeout·clearTimeout만)는 **이 describe 안에서만** 산다. 파일 전역에 깔면 RTL
+ * findBy*의 마무리 `setTimeout(0)`이 가짜에 걸려 effect flush와 레이스가 난다(`skipStartCountdown`
+ * 헤더의 플레이크 기록). 그래서 여기서는 findBy*를 쓰지 않고 `await act(async () => {})`로
+ * 정의 fetch(microtask)를 흘린 뒤 getBy*·queryBy*로만 본다. 켜는 시점이 render보다 앞이어야
+ * TestRunner의 첫 setTimeout이 가짜로 잡힌다 — beforeEach가 그 자리다.
+ */
+describe('시작 대기 카운트다운 (KAN-216)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    delete window.gtag
+  })
+
+  /** 가짜 시계를 1초 민다 — 체인이라 한 틱씩 렌더를 거쳐야 다음 틱이 잡힌다 */
+  function tick() {
+    act(() => {
+      vi.advanceTimersByTime(1_000)
+    })
+  }
+
+  /**
+   * 지금 보이는 초. `.test-start__count`는 `aria-hidden` 블록 안이라 role·text 조회 대신
+   * 셀렉터로 집는다 — 숨긴 숫자를 접근성 트리에서 찾으면 그 자체가 구조를 잘못 읽는 것이다.
+   */
+  function shownCount(container: HTMLElement): string | null {
+    return container.querySelector('.test-start__count')?.textContent ?? null
+  }
+
+  it('새 세션은 3→2→1을 센 뒤에야 첫 문항이 선다', async () => {
+    const { container } = renderScreen(okFetch())
+    await act(async () => {})
+
+    // 정의가 온 직후는 문항이 아니라 대기 화면이다 — 제목·status 문구·초 셋이 함께 서고 문항은 없다
+    expect(screen.getByRole('heading', { name: '곧 시작합니다' })).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent(START_SCREEN_SUBTITLE)
+    expect(shownCount(container)).toBe('3')
+    expect(screen.queryByText('음성 문항 1')).toBeNull()
+
+    // 1초마다 한 칸 — 한 번에 3000을 밀면 체인의 첫 틱만 돌아 2에서 멈춘다
+    tick()
+    expect(shownCount(container)).toBe('2')
+    tick()
+    expect(shownCount(container)).toBe('1')
+
+    // 마지막 틱에서 대기 화면이 내려가고 첫 문항이 같은 커밋에 선다 — 그 사이에 빈 화면은 없다
+    tick()
+    expect(screen.queryByRole('heading', { name: '곧 시작합니다' })).toBeNull()
+    expect(shownCount(container)).toBeNull()
+    expect(screen.getByText('음성 문항 1')).toBeInTheDocument()
+  })
+
+  it('item_shown은 카운트다운 동안 나가지 않고 첫 문항에서 정확히 한 번 나간다 (KAN-33)', async () => {
+    const events = stubGtag()
+    renderScreen(okFetch())
+    await act(async () => {})
+    tick()
+    tick()
+
+    // 대기 화면을 문항 노출로 세면 퍼널의 1번 문항 노출이 실제보다 3초 이르게, 이탈 없이 잡힌다
+    expect(events).toEqual([])
+
+    tick()
+
+    // 전환은 countingDown true→false 한 번뿐이라 노출도 한 번이다 — "노출 1회" AC 그대로
+    expect(events).toEqual([{ event: 'item_shown', item_seq: 1, item_type: 'VOICE' }])
+  })
+
+  it('브리지가 있어도 네이티브 녹음 화면은 카운트다운이 끝난 뒤에 열린다', async () => {
+    const startVoiceItem = stubBridge()
+    renderScreen(okFetch())
+    await act(async () => {})
+    tick()
+    tick()
+
+    // VoiceItemScreen 마운트가 곧 startVoiceItem이다 — 먼저 불리면 네이티브 화면이 카운트다운을 덮는다
+    expect(startVoiceItem).not.toHaveBeenCalled()
+
+    tick()
+
+    expect(startVoiceItem).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(startVoiceItem.mock.calls[0][0])).toMatchObject({ itemId: 'item-1', itemNumber: 1 })
+  })
+
+  it('복원 세션은 카운트다운 없이 그 문항에서 바로 이어진다', async () => {
+    // "진행 중 저장된 스냅샷으로 다시 열면" 케이스와 같은 모양의 스냅샷 — 1·2번을 마친 상태
+    const storage = memoryStorage()
+    storage.setItem(
+      snapshotKey('sess-1'),
+      JSON.stringify({ testVersion: TEST_VERSION, submittedItemIds: ['item-1', 'item-2'] }),
+    )
+
+    renderScreen(okFetch(), { storage })
+    await act(async () => {})
+
+    // 시계를 밀지 않았는데도 문항이다 — 이미 하던 시험에 "곧 시작합니다"가 다시 뜨면 처음부터인 줄 안다
+    expect(screen.queryByRole('heading', { name: '곧 시작합니다' })).toBeNull()
+    expect(screen.getByText('음성 문항 3')).toBeInTheDocument()
+    expect(screen.getByText('3 / 10 · 음성')).toBeInTheDocument()
+    // 0초에서 시작하면 이펙트가 타이머를 아예 잡지 않는다 — 안 보이는 것이 아니라 안 도는 것이다
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('카운트다운 중에 언마운트하면 타이머가 남지 않는다', async () => {
+    const { unmount } = renderScreen(okFetch())
+    await act(async () => {})
+    // 첫 틱이 잡혀 있는 상태에서 화면을 내린다
+    expect(vi.getTimerCount()).toBe(1)
+
+    unmount()
+
+    /*
+     * 타이머 수로 본다. "advance 뒤 콘솔 경고 0건"은 React 18+가 언마운트 뒤 setState 경고를
+     * 이미 걷어내 어차피 조용하므로 아무것도 증명하지 못한다 — 남은 타이머가 0이어야
+     * cleanup(clearTimeout)이 실제로 돌았다는 증거다.
+     */
+    expect(vi.getTimerCount()).toBe(0)
   })
 })
