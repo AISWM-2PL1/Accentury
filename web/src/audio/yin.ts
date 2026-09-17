@@ -26,9 +26,24 @@
 import { FULL_SCALE, QUIET_RMS_THRESHOLD } from './quality'
 import { TARGET_SAMPLE_RATE } from './pcm'
 
-/** 사람 목소리 F0 탐색 대역. 대역 밖(예: 50Hz 험 노이즈)은 무성음 취급된다 */
-export const MIN_F0_HZ = 80
-export const MAX_F0_HZ = 400
+/**
+ * 사람 목소리 F0 탐색 대역. 대역 밖(예: 50Hz 험 노이즈)은 무성음 취급된다.
+ *
+ * 처음엔 표준 설정인 80~400Hz였는데(`ondevice-f0.md`), 곡선 화면에서 **대역 끝이 곧 곡선이
+ * 사라지는 자리**가 됐다. 사용자 레인은 화자 중심 ±7 semitone 창 밖을 천장·바닥에 눌러 담는데
+ * (`userCurve.ts`), 추정기가 먼저 대역 밖을 무성으로 돌려보내면 눌러 담을 값 자체가 없다 —
+ * 중심 120Hz인 화자가 낮게 깔면 80Hz 아래에서 선이 끊기고, 400Hz를 넘는 고음은 τ 탐색이
+ * 2주기 골에서 멈춰 **한 옥타브 아래로 뒤집혀** 올라가야 할 선이 아래로 꺾였다(450→225).
+ * 60~800Hz면 낮은 남성음의 vocal fry부터 여성의 감탄·고성까지 들어와, 창 밖 값은 추정기가
+ * 아니라 표시 쪽 clamp가 천장·바닥에 붙여 둔다.
+ *
+ * 하한을 내리면 τmax가 200→266이 되는데 2048 창에서 적분 창이 1782라 여유가 있고, 상한을
+ * 올리면 τmin이 40→20이 되어 반주기 골(옥타브 위 오류)을 먼저 만날 위험이 생기지만 CMNDF의
+ * 누적 정규화가 그 골을 임계값 위로 띄운다 — 2·3배음이 기음보다 큰 합성 신호(60~800Hz,
+ * 10Hz 간격)에서도 옥타브 오류 0건이었다 (2026-09-17 실측).
+ */
+export const MIN_F0_HZ = 60
+export const MAX_F0_HZ = 800
 
 /**
  * CMNDF 절대 임계값. 원 논문 권장은 0.1~0.2지만 0.25로 느슨하게 잡았다 — 우리 용도가
@@ -54,8 +69,8 @@ export const VOICED_MIN_RMS = QUIET_RMS_THRESHOLD
  * @param chunk 16kHz -1..+1 실수 샘플 (모노)
  */
 export function estimatePitchHz(chunk: Float32Array, sampleRate = TARGET_SAMPLE_RATE): number | null {
-  const tauMin = Math.floor(sampleRate / MAX_F0_HZ) // 16kHz 기준 40샘플
-  const tauMax = Math.floor(sampleRate / MIN_F0_HZ) // 16kHz 기준 200샘플
+  const tauMin = Math.floor(sampleRate / MAX_F0_HZ) // 16kHz 기준 20샘플
+  const tauMax = Math.floor(sampleRate / MIN_F0_HZ) // 16kHz 기준 266샘플
   const window = chunk.length - tauMax // 적분 창: x[j+τ]가 조각을 벗어나지 않는 범위
   if (window <= tauMax) return null
 
@@ -90,7 +105,7 @@ export function estimatePitchHz(chunk: Float32Array, sampleRate = TARGET_SAMPLE_
   if (tau > tauMax) return null
   while (tau + 1 <= tauMax && cmndf[tau + 1] < cmndf[tau]) tau++
 
-  // 4단계 - 포물선 보간. 대역 경계 τ에서 보간이 대역을 살짝 벗어날 수 있어(예: τ=40 → 400Hz 초과)
+  // 4단계 - 포물선 보간. 대역 경계 τ에서 보간이 대역을 살짝 벗어날 수 있어(예: τ=20 → 800Hz 초과)
   //         결과를 탐색 대역으로 clamp한다.
   const f0 = sampleRate / parabolicInterpolation(cmndf, tau)
   return Math.min(MAX_F0_HZ, Math.max(MIN_F0_HZ, f0))

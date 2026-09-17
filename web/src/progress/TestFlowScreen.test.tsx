@@ -633,7 +633,9 @@ describe('VOICE 문항 — 목소리 점검이 잰 중심 (KAN-31 4단계)', () 
 
   it('받은 중심이 곡선의 y축 중심이 된다', async () => {
     // 발화(200Hz)가 중심보다 한 옥타브(12 semitone) 위다. 레인이 담는 폭은 ±7이라
-    // 곡선이 위 끝에 눌린다(y=0) — 중심이 실제로 쓰였을 때만 나오는 그림이다.
+    // 곡선이 위 끝에 눌린다 — 중심이 실제로 쓰였을 때만 나오는 그림이다. 위 끝은 y=0이
+    // 아니라 선 굵기 절반(1.5px)만큼 아래다: 캔버스 가장자리에 놓으면 선의 절반이 잘린다
+    // (`CurveLane.tsx`의 insetY).
     const { capture } = renderScreen(okFetch(), { userCurveCenterHz: 100 })
     await findRecordButton()
 
@@ -641,7 +643,7 @@ describe('VOICE 문항 — 목소리 점검이 잰 중심 (KAN-31 4단계)', () 
 
     const ys = userCurveYs()
     expect(ys.length).toBeGreaterThan(0)
-    expect(Math.max(...ys)).toBe(0)
+    expect(Math.max(...ys)).toBe(1.5)
   })
 
   it('중심이 없으면 이 녹음에서 잡는 폴백으로 내려간다 — 곡선이 사라지지 않는다', async () => {
