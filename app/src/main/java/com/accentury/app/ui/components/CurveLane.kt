@@ -146,17 +146,17 @@ internal fun CurveLane(
             // 유성 선분끼리는 x 구간이 겹치지 않으므로 addPath로 이어 붙이면 그대로 합집합이
             // 된다 (기본 NonZero) - Path.op(Union)까지 갈 일이 아니다.
             val fillArea = if (isUser) Path() else null
-            // 창 밖을 기는 구간(y=0·y=1)은 선 굵기 절반만큼 안으로 들인다 - 웹·iOS와 같은 규칙
-            // (KAN-218, [insetY]). 채움의 바닥(closeAtY)은 들이지 않고 캔버스 바닥 그대로다.
+            // 창 밖을 기는 구간(y=0·y=1)은 안으로 들인다 - 웹·iOS와 같은 규칙(KAN-218, [insetY]).
+            // 선은 굵기 절반만큼, 고립점은 반지름(= 굵기)만큼 - 원이 선보다 커서 절반만 들이면
+            // 지름의 1/4이 여전히 밖이다. 채움의 바닥(closeAtY)은 들이지 않고 캔버스 바닥 그대로다.
             segments.forEach { rawPoints ->
-                val points = insetY(rawPoints, stroke, size.height)
-                if (points.size >= 2) {
-                    val commands = smoothPathCommands(points, size.width, size.height)
+                if (rawPoints.size >= 2) {
+                    val commands = smoothPathCommands(insetY(rawPoints, stroke, size.height), size.width, size.height)
                     outlines += commands.toPath()
                     fillArea?.addPath(commands.toPath(closeAtY = size.height))
-                } else if (points.size == 1) {
+                } else if (rawPoints.size == 1) {
                     // 점이 하나뿐인 선분 - 선은 못 그리니 그 시각에 점 하나로 남긴다
-                    val p = points.single()
+                    val p = insetY(rawPoints, 2f * stroke, size.height).single()
                     dots += Offset(p.x * size.width, p.y * size.height)
                 }
             }

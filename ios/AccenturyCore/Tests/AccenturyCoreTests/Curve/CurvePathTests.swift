@@ -1,7 +1,7 @@
 import XCTest
 @testable import AccenturyCore
 
-/// 안드로이드 `recording/CurvePathTest.kt`의 1:1 이식본 (9개).
+/// 안드로이드 `recording/CurvePathTest.kt`의 1:1 이식본 (10개).
 final class CurvePathTests: XCTestCase {
 
     private let width: Float = 100
@@ -114,6 +114,17 @@ final class CurvePathTests: XCTestCase {
         XCTAssertEqual(stroke / 2, inset[0].y * height, accuracy: 1e-4)
         XCTAssertEqual(height / 2, inset[1].y * height, accuracy: 1e-4)
         XCTAssertEqual(height - stroke / 2, inset[2].y * height, accuracy: 1e-4)
+    }
+
+    /// `고립점은 굵기의 2배를 넘겨 반지름만큼 들인다 - 경계 점의 중심이 반지름 자리에 온다`
+    func testIsolatedDotIsInsetByTheRadiusWhenGivenTwiceTheStroke() throws {
+        // CurvePathBuilder가 점에 넘기는 값은 2·stroke다. 굵기 3 → 천장 점의 중심 y_px = 3, 바닥은 height − 3.
+        let stroke: Float = 3
+        let top = try XCTUnwrap(insetY([CurvePoint(x: 0.5, y: 0)], strokeWidth: 2 * stroke, height: height).first)
+        let bottom = try XCTUnwrap(insetY([CurvePoint(x: 0.5, y: 1)], strokeWidth: 2 * stroke, height: height).first)
+
+        XCTAssertEqual(stroke, top.y * height, accuracy: 1e-4)
+        XCTAssertEqual(height - stroke, bottom.y * height, accuracy: 1e-4)
     }
 
     /// `인셋은 x를 건드리지 않는다`

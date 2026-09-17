@@ -129,7 +129,7 @@ describe('YIN F0 추정 (앱 YinPitchEstimatorTest 이식)', () => {
   })
 
   it('탐색 대역 밖 저주파는 무성음으로 판정한다', () => {
-    // 50Hz(주기 320샘플)는 τmax=200 안에서 겹치는 지점이 없다.
+    // 50Hz(주기 320샘플)는 τmax=266 안에서 겹치는 지점이 없다.
     expect(estimatePitchHz(sine(50))).toBeNull()
   })
 

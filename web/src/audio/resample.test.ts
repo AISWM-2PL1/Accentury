@@ -72,9 +72,10 @@ describe('resampleTo16k — 통과대역 보존', () => {
     expect(amplitudeAt(trimEdges(out), 200, TARGET_SAMPLE_RATE)).toBeCloseTo(1, 1)
   })
 
-  it('F0 상한(400Hz)까지 5% 안쪽으로 보존한다', () => {
-    const out = resampleTo16k(sine(400, 48000, 1), 48000)
-    expect(amplitudeAt(trimEdges(out), 400, TARGET_SAMPLE_RATE)).toBeGreaterThan(0.95)
+  it('F0 상한(800Hz)까지 5% 안쪽으로 보존한다', () => {
+    // KAN-218로 탐색 대역 상한이 400→800Hz가 됐다. 리샘플러가 새 상한까지 진폭을 지켜야 고음이 추정기에 닿는다.
+    const out = resampleTo16k(sine(800, 48000, 1), 48000)
+    expect(amplitudeAt(trimEdges(out), 800, TARGET_SAMPLE_RATE)).toBeGreaterThan(0.95)
   })
 
   it('차단 주파수는 두 나이퀴스트 중 낮은 쪽의 90%다', () => {

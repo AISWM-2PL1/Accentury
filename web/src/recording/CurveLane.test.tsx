@@ -67,6 +67,16 @@ describe('CurveLane', () => {
     expect(guide.getAttribute('d')!.startsWith('M 0 1 ')).toBe(true)
   })
 
+  it('경계의 고립점은 반지름만큼 들인다 - 선 굵기 절반으로는 지름의 1/4이 여전히 잘린다', () => {
+    // 원 반지름이 굵기(3)라 굵기 절반(1.5)만 들이면 위로 1.5px가 viewBox 밖이다. 반지름만큼 들여
+    // 천장 점의 중심은 3, 바닥 점의 중심은 92 − 3 = 89.
+    const top = renderLane([[{ x: 0.5, y: 0 }]]).querySelector('circle')!
+    expect(top.getAttribute('r')).toBe('3')
+    expect(top.getAttribute('cy')).toBe('3')
+    const bottom = renderLane([[{ x: 0.5, y: 1 }]]).querySelector('circle')!
+    expect(bottom.getAttribute('cy')).toBe('89')
+  })
+
   it('선분이 갈리면 곡선도 따로 그린다 - 쉼 구간을 가로지르는 가짜 사선이 없다', () => {
     const container = renderLane([points(3), points(4)])
 

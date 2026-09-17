@@ -74,7 +74,8 @@ const DRAW_HEIGHT = 92
  * `<svg>`는 기본이 overflow hidden이라 3px 선이 1.5px 조각으로 남고, 아래쪽은 망점 채움의
  * 면적까지 0이 되어 곡선이 사라진 것처럼 보였다. 그래서 y=0은 선 굵기 절반만큼 아래,
  * y=1은 그만큼 위에 놓아 천장·바닥을 기는 구간도 온전한 굵기로 남긴다. 가운데(0.5)는
- * 들이기 전과 같은 자리라 나머지 곡선의 모양은 바뀌지 않는다.
+ * 제자리지만 모든 y가 중앙 쪽으로 균일하게 (h − 2·inset)/h 만큼 압축된다 — 내 억양(굵기 3)은
+ * 89/92 ≈ 3.3%, 가이드(굵기 2)는 90/92 ≈ 2.2%. 세 플랫폼이 같은 규칙이라 비교에는 영향 없다.
  */
 function insetY(points: CurvePoint[], strokeWidth: number): CurvePoint[] {
   const inset = strokeWidth / 2
@@ -186,11 +187,12 @@ export function CurveLane({ label, ariaLabel, segments, variant }: CurveLaneProp
               vectorEffect="non-scaling-stroke"
             />
           ) : points.length === 1 ? (
-            // 점이 하나뿐인 선분 - 선은 못 그리니 그 시각에 점 하나로 남긴다 (앱과 같다)
+            // 점이 하나뿐인 선분 - 선은 못 그리니 그 시각에 점 하나로 남긴다 (앱과 같다).
+            // 선은 굵기 절반만큼 들이지만 점은 반지름(= 굵기)만큼 들인다 - 원이 선보다 크다
             <circle
               key={index}
               cx={points[0].x * width}
-              cy={insetY(points, strokeWidth)[0].y * DRAW_HEIGHT}
+              cy={insetY(points, 2 * strokeWidth)[0].y * DRAW_HEIGHT}
               r={strokeWidth}
               fill={color}
             />
