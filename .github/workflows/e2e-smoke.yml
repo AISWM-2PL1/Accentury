@@ -6,7 +6,9 @@
 #   1. workflow_call     다른 워크플로가 부를 수 있는 입구. 배포 파이프라인(deploy.yml, KAN-128)은
 #                        이 입구 대신 같은 job에서 scripts/e2e_smoke.py를 직접 부른다 - SSM에서
 #                        읽은 관리자 토큰을 job output으로 넘기면 GitHub이 마스킹 값이라며 버려서다.
-#   2. workflow_dispatch 사람이 staging이나 prod에 손으로 한 번 돌린다 (prod 승격 직후).
+#   2. workflow_dispatch 사람이 staging이나 prod에 손으로 한 번 돌린다. 배포 파이프라인이 두 환경
+#                        모두 반영 직후 스모크를 돌리므로(prod는 KAN-217부터) 승격 절차의 일부가
+#                        아니라, 배포와 무관한 재실행(경보 확인, 장애 뒤 점검)에 쓴다.
 #
 # PR에서 로컬 풀스택으로 돌리던 세 번째 갈래는 2026-09-05에 없앴다 (KAN-22). AI 서버의 베이스가
 # 채점 모델 전달본이 되면서 러너에서 스택을 띄울 수 없게 됐고, 스텁도 함께 사라졌다. 이제 이
