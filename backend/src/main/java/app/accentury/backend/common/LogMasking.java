@@ -82,6 +82,11 @@ public final class LogMasking {
      * {@code ACCENTURY_SHARE_KAKAOADMINKEY}/{@code ACCENTURY_SHARE_KAKAO_ADMIN_KEY}. 헤더로 오는 형태
      * ({@code Authorization: KakaoAK ...})는 {@link #AUTHORIZATION}과 {@link #KAKAO_AK}가 잡는다.
      * <p>
+     * 후기 슬랙 알림의 웹훅 URL(KAN-211)도 같은 네 갈래다 - 바인딩된 필드 {@code slackWebhookUrl},
+     * 설정 키 {@code slack-webhook-url}과 {@code accentury.feedback.slack-webhook-url}, 환경 변수
+     * {@code ACCENTURY_FEEDBACK_SLACKWEBHOOKURL}. URL 자체가 시크릿이다 - 아는 사람은 누구나 그
+     * 채널에 글을 쓸 수 있다. 이름 없이 값만 찍힌 형태는 {@link #SLACK_WEBHOOK}이 잡는다.
+     * <p>
      * 따옴표로 열린 값은 <b>닫는 따옴표까지</b> 통째로 받는다 - 공백을 만나면 멈추게 두면
      * {@code "opaque value"} 같은 값의 뒷부분이 로그에 그대로 남고, 열린 따옴표만 닫혀
      * JSON 한 줄이 깨진다. 따옴표가 없으면 예전처럼 공백에서 끊는다 -
@@ -93,8 +98,38 @@ public final class LogMasking {
                     + "|X-Accentury-Internal-Token|aiToken|ai-token|accentury\\.analysis\\.ai-token"
                     + "|ACCENTURY_ANALYSIS_AI_?TOKEN|ACCENTURY_AI_INTERNAL_?TOKEN"
                     + "|kakaoAdminKey|kakao-admin-key|accentury\\.share\\.kakao-admin-key"
-                    + "|ACCENTURY_SHARE_KAKAO_?ADMIN_?KEY)\\b"
+                    + "|ACCENTURY_SHARE_KAKAO_?ADMIN_?KEY"
+                    + "|slackWebhookUrl|slack-webhook-url|accentury\\.feedback\\.slack-webhook-url"
+                    + "|ACCENTURY_FEEDBACK_SLACK_?WEBHOOK_?URL)\\b"
                     + "(\"?\\s*[=:]\\s*)(?:\"([^\"\\r\\n]*)\"|([^\\s\",;}]+))");
+
+    /**
+     * 슬랙 Incoming Webhook URL (KAN-211) - 이름 없이 값만 찍힌 경우다.
+     * <p>
+     * {@link #NAMED_SECRET}은 설정 키나 필드 이름이 앞에 붙은 형태만 잡는데, 이 URL은 전송 실패
+     * 예외 메시지에 통째로 박히는 경로가 따로 있다 - {@code RestClient}가 연결에 실패하면
+     * {@code ResourceAccessException} 메시지에 요청 URI가 들어간다. 호스트까지만 남기면 "슬랙으로
+     * 나가다 실패했다"는 진단은 그대로 서고, 채널에 글을 쓸 수 있게 하는 부분(경로의 토큰 세 조각)만
+     * 사라진다.
+     * <p>
+     * 값의 끝을 {@code \S+}가 아니라 구분자 목록으로 잡는 것은 {@link #BEARER}와 같은 이유다 -
+     * 예외 메시지는 보통 URI를 따옴표로 감싸 싣는데({@code for "https://..."}), 닫는 따옴표까지
+     * 먹으면 마스킹이 JSON 로그 한 줄을 깨뜨린다.
+     */
+    private static final Pattern SLACK_WEBHOOK = Pattern.compile(
+            "https://hooks\\.slack\\.com/[^\\s\",;}]+");
+
+    /**
+     * 이메일 주소 (KAN-211) - 이용 후기의 선택 입력인 회신 주소가 이 서비스가 받는 유일한
+     * 개인 식별 정보다. 코드가 로그에 넣지 않는 것이 1차 방어이고({@code FeedbackService}는
+     * 연락처 유무만 찍는다) 여기는 그 규약이 깨졌을 때의 마지막 관문이다.
+     * <p>
+     * 지역부와 도메인을 통째로 지운다 - 도메인만 남겨도 후기 본문과 묶이면 사람이 좁혀진다.
+     * 점 뒤에 글자 두 개 이상을 요구하므로 객체 식별자({@code Foo@1a2b3c})나 호스트 포트
+     * 표기에는 걸리지 않는다.
+     */
+    private static final Pattern EMAIL = Pattern.compile(
+            "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}");
 
     /**
      * 오디오처럼 긴 이진 덩어리 - base64나 hex로 찍힌 200자 이상의 연속 블록.
@@ -160,6 +195,8 @@ public final class LogMasking {
             return Matcher.quoteReplacement(matchResult.group(1) + matchResult.group(2)
                     + (quoted ? "\"***\"" : "***"));
         });
+        masked = SLACK_WEBHOOK.matcher(masked).replaceAll("https://hooks.slack.com/***");
+        masked = EMAIL.matcher(masked).replaceAll("***@***");
         masked = LONG_BLOB.matcher(masked)
                 .replaceAll(matchResult -> "***(" + matchResult.group().length() + "자 생략)");
         masked = NUMERIC_BLOB.matcher(masked)

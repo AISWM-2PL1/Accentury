@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { shareResult } from './shareResult'
+import { shareResult, systemShareText } from './shareResult'
 import type { ResultShare } from '../result/testResult'
 
 const share: ResultShare = {
@@ -101,15 +101,16 @@ describe('shareResult — 앱 안 (브리지 채널)', () => {
 })
 
 describe('shareResult — 브라우저 (공유 시트 채널)', () => {
-  it('브리지가 없으면 navigator.share로 점수 없이 문구와 URL만 넘긴다', () => {
-    const systemShare = vi.fn(async () => {})
+  it('브리지가 없으면 navigator.share로 점수 없이 문구와 URL을 한 항목으로 넘긴다', () => {
+    const systemShare = vi.fn<(data: ShareData) => Promise<void>>(async () => {})
     stubNavigatorShare(systemShare)
 
     expect(shareResult(share)).toBe('system')
     expect(systemShare).toHaveBeenCalledWith({
-      text: '나는 명예주민! 너도 시도해볼래?',
-      url: 'https://accentury.app/t?c=kko_share',
+      text: '나는 명예주민! 너도 시도해볼래?\nhttps://accentury.app/t?c=kko_share',
     })
+    // `url`을 따로 실으면 카톡 같은 수신 앱이 항목마다 메시지를 만들어 두 번 나간다.
+    expect(systemShare.mock.calls[0][0]).not.toHaveProperty('url')
   })
 
   it('사용자가 시트를 닫아 reject가 와도 예외로 새지 않는다 (KAN-30 AC)', async () => {
@@ -118,6 +119,12 @@ describe('shareResult — 브라우저 (공유 시트 채널)', () => {
     expect(shareResult(share)).toBe('system')
     // 처리되지 않은 rejection이 남으면 이 microtask 비우기 지점에서 드러난다.
     await Promise.resolve()
+  })
+
+  it('시트 본문은 문구 다음 줄에 링크가 오고 점수는 없다 (Android 폴백과 같은 모양)', () => {
+    expect(systemShareText(share)).toBe(
+      '나는 명예주민! 너도 시도해볼래?\nhttps://accentury.app/t?c=kko_share',
+    )
   })
 })
 

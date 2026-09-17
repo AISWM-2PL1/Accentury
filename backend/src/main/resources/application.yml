@@ -159,6 +159,26 @@ accentury:
     rate-limit-per-minute: 120   # 세션당 분당 /complete 상한 (KAN-16 AC) - pollAfterMs 800ms를 그대로 따르는
                                  # 합법 폴링(약 75회/분)이 60초 분석 대기 중에도 걸리지 않는 여유 배수.
                                  # 임계치는 부하 테스트 후 확정 (명세서 §5.3, §7, KAN-40)
+  # 결과 화면의 이용 후기 (KAN-211, 2026-09-15 결정) - 응시자가 개발팀에 보내는 서술 후기다.
+  feedback:
+    rate-limit-per-minute: 10    # 세션당 분당 후기 제출 상한 (명세서 §2.5, KAN-28) - 세션당 후기는
+                                 # 하나뿐이라 정상은 1건이다. 고쳐 다시 보내는 경로가 없으므로
+                                 # 어휘 답안(60)만큼 여유를 둘 이유가 없다.
+    retention: 365d              # 후기 보존 기간 - 세션과 결과의 24시간(명세서 §5.5)과 독립이다.
+                                 # 후기는 세션의 부속물이 아니라 제품 개선의 입력이라 세션이 파기된
+                                 # 뒤에도 남아야 한다 (session_feedback에 FK가 없는 이유). 무한이
+                                 # 아닌 것은 선택 입력인 회신 이메일이 개인 식별 정보이기 때문이다.
+    # slack-webhook-url은 개발팀이 후기를 읽는 슬랙 채널(#feedback)의 Incoming Webhook URL이다
+    # (KAN-211 2단계). 없거나 자리 표시 값이면 알림만 꺼지고 저장은 그대로다 - 슬랙은 후기 저장의
+    # 부수 기능이라 admin.token이나 kakao-admin-key처럼 경로를 없애는 쪽이 아니다. 로컬과 테스트는
+    # 이 상태로 뜬다. 운영에서는 환경 변수로 주입한다 (ACCENTURY_FEEDBACK_SLACKWEBHOOKURL, SSM
+    # SecureString). 두 환경이 채널 하나를 함께 쓰므로 값도 같고, staging과 prod의 구분은 메시지
+    # 머리의 환경 라벨이 한다 (FeedbackSlackNotifier). URL 자체가 시크릿이다 - 아는 사람은 누구나
+    # 그 채널에 글을 쓸 수 있으므로 레포에도 티켓에도 적지 않는다.
+    #
+    # 값이 아니라 블록째 주석인 것은 admin, share, training과 같은 이유다 - 키만 남기고 값을 비우면
+    # YAML이 빈 스칼라를 만들어, 환경 변수나 @TestPropertySource로 준 값이 그 null에 막힌다.
+    # slack-webhook-url: https://hooks.slack.com/services/...
   # 요청 제한의 기준 IP를 정할 때 신뢰할 프록시 대역 (명세서 §2.5, KAN-28).
   # 비어 있으면 X-Forwarded-For를 아예 읽지 않는다 - 프록시 없이 뜬 서버에서 헤더 위조로
   # IP 제한을 우회하지 못하게 하는 기본값이다. ALB 뒤에 배포하면 반드시 그 서브넷을 넣어야

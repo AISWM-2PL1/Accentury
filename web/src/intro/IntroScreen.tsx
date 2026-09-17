@@ -5,6 +5,7 @@ import { requestMicrophonePermission, type MicPermission } from '../audio/microp
 import { detectStorePlatform } from '../audio/storeLink'
 import { requestMicPermission } from '../bridge/bridge'
 import { PrivacyNotice } from '../legal/PrivacyNotice'
+import { SupportNotice } from '../legal/SupportNotice'
 import { Button } from '../ui'
 import { TextHero } from '../ui/TextHero'
 import {
@@ -222,6 +223,16 @@ export function IntroScreen({
            */
           onAdConsentSettings={consent === null ? undefined : () => setConsentSheetOpen(true)}
         />
+        {/*
+          AI·SW마에스트로 지원 표기 (운영 매뉴얼 제18조 2항). 위의 고지와 달리 이건 사용자에게
+          알리는 말이 아니라 **지원 기관에 대한 의무 표기**다 — 그래서 「셋째 줄을 만들면 하단이
+          흐려진다」는 `PrivacyNotice` 안의 판단보다 규정이 앞선다. 배치를 재느라 표기를 빼는
+          선택지는 없다.
+
+          대신 무게로 자리를 정리한다: 캡션보다 한 단계 작고 흐린 글자라(`.support-notice`)
+          주버튼과도, 바로 위 고지와도 겹쳐 읽히지 않고 맨 아래 판권 줄처럼 가라앉는다.
+        */}
+        <SupportNotice />
       </div>
 
       {/*

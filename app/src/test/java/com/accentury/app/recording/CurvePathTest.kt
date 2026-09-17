@@ -90,4 +90,56 @@ class CurvePathTest {
         assertEquals(PathCommand.MoveTo(px(0) * 2f, py(0) * 2f), scaled.first())
         assertEquals(PathCommand.LineTo(px(2) * 2f, py(2) * 2f), scaled.last())
     }
+
+    // KAN-218 - 천장·바닥 인셋. 웹 CurveLane.test.tsx의 인셋 케이스와 같은 값이다.
+
+    @Test
+    fun `천장과 바닥은 선 굵기 절반만큼 안으로 들어온다 - 가운데는 그대로`() {
+        val stroke = 3f
+        val inset = insetY(
+            listOf(CurvePoint(0f, 0f), CurvePoint(0.5f, 0.5f), CurvePoint(1f, 1f)),
+            strokeWidthPx = stroke,
+            heightPx = height,
+        )
+
+        // 픽셀로 옮겨 보면 y=0 → 1.5, y=0.5 → 20(불변), y=1 → 38.5다.
+        assertEquals(stroke / 2f, inset[0].y * height, 1e-4f)
+        assertEquals(height / 2f, inset[1].y * height, 1e-4f)
+        assertEquals(height - stroke / 2f, inset[2].y * height, 1e-4f)
+    }
+
+    @Test
+    fun `고립점은 굵기의 2배를 넘겨 반지름만큼 들인다 - 경계 점의 중심이 반지름 자리에 온다`() {
+        // CurveLane.kt가 점에 넘기는 값은 2·stroke다. 굵기 3 → 천장 점의 중심 y_px = 3, 바닥은 height − 3.
+        val stroke = 3f
+        val top = insetY(listOf(CurvePoint(0.5f, 0f)), strokeWidthPx = 2f * stroke, heightPx = height).single()
+        val bottom = insetY(listOf(CurvePoint(0.5f, 1f)), strokeWidthPx = 2f * stroke, heightPx = height).single()
+
+        assertEquals(stroke, top.y * height, 1e-4f)
+        assertEquals(height - stroke, bottom.y * height, 1e-4f)
+    }
+
+    @Test
+    fun `인셋은 x를 건드리지 않는다`() {
+        val original = points(6)
+        val inset = insetY(original, strokeWidthPx = 2f, heightPx = height)
+
+        assertEquals(original.size, inset.size)
+        assertEquals(original.map { it.x }, inset.map { it.x })
+    }
+
+    @Test
+    fun `인셋한 점을 그대로 명령으로 옮기면 천장 선의 중심이 캔버스 안에 놓인다`() {
+        // 웹의 실제 호출 순서(insetY → smoothPathCommands)를 그대로 따라간다.
+        val stroke = 3f
+        val ceiling = listOf(CurvePoint(0f, 0f), CurvePoint(1f, 0f))
+        val commands = smoothPathCommands(insetY(ceiling, stroke, height), width, height)
+
+        val first = commands.first() as PathCommand.MoveTo
+        val last = commands.last() as PathCommand.LineTo
+        assertEquals(0f, first.x, 0f)
+        assertEquals(stroke / 2f, first.y, 1e-4f)
+        assertEquals(width, last.x, 0f)
+        assertEquals(stroke / 2f, last.y, 1e-4f)
+    }
 }

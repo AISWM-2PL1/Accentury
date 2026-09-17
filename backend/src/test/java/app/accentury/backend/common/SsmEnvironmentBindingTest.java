@@ -19,7 +19,6 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
@@ -44,13 +43,20 @@ class SsmEnvironmentBindingTest {
      * 기동이 되는 조정값이다 - 없으면 application.yml의 기본값으로 뜬다. 가드에 넣으면 "없으면
      * 기동을 세운다"가 되어, 값 하나 지웠다고 배포가 멎는다. 학습 데이터 버킷(KAN-201)은 staging에만
      * 만들어지는 optional 파라미터라 역시 가드 밖이다 - prod에는 이름 자체가 없어야 한다.
+     * <p>
+     * 후기 슬랙 웹훅 URL(KAN-211)도 가드 밖이다. 카카오 검증 키와 모양은 같지만(콘솔이 발급하는
+     * 값, Terraform은 자리만 만든다) 위험이 다르다 - 카카오 키가 없으면 웹훅 경로가 인증 없이
+     * 조용히 사라져 전송 완료가 통째로 새므로 없으면 기동을 세워야 하지만, 슬랙 URL이 없으면
+     * 알림만 조용해질 뿐 후기는 그대로 저장된다 ({@code FeedbackSlackNotifier}). 그래서 값을 넣는
+     * 순서에 배포 제약이 없다.
      */
     private static final Set<String> TERRAFORM_ONLY = Set.of(
             "SPRING_PROFILES_ACTIVE",
             "ACCENTURY_ANALYSIS_AITIMEOUT",
             "ACCENTURY_ANALYSIS_PROCESSINGTIMEOUT",
             "ACCENTURY_ANALYSIS_DISPATCHCONCURRENCY",
-            "ACCENTURY_TRAINING_BUCKET");
+            "ACCENTURY_TRAINING_BUCKET",
+            "ACCENTURY_FEEDBACK_SLACKWEBHOOKURL");
 
     /** 가드 정본에는 있지만 Terraform이 만들지 않는 이름 - 자격 증명은 Secrets Manager에서 온다. */
     private static final Set<String> GUARD_ONLY = Set.of(
@@ -95,7 +101,9 @@ class SsmEnvironmentBindingTest {
                 Map.of("ACCENTURY_ANALYSIS_AITIMEOUT", "100s",
                         "ACCENTURY_ANALYSIS_PROCESSINGTIMEOUT", "400s",
                         "ACCENTURY_ANALYSIS_DISPATCHCONCURRENCY", "2",
-                        "ACCENTURY_TRAINING_BUCKET", "accentury-staging-training-123456789012")));
+                        "ACCENTURY_TRAINING_BUCKET", "accentury-staging-training-123456789012",
+                        "ACCENTURY_FEEDBACK_SLACKWEBHOOKURL",
+                        "https://hooks.slack.com/services/T000/B000/binding-check")));
         Binder tunedBinder = Binder.get(tuned);
         assertEquals("100s", tunedBinder.bind("accentury.analysis.ai-timeout", String.class).get());
         assertEquals("400s", tunedBinder.bind("accentury.analysis.processing-timeout", String.class).get());
@@ -103,6 +111,10 @@ class SsmEnvironmentBindingTest {
         // 학습 데이터 버킷 (KAN-201) - staging에만 오는 optional 값. 이름이 어긋나면 staging에서 샘플이 조용히 안 쌓인다.
         assertEquals("accentury-staging-training-123456789012",
                 tunedBinder.bind("accentury.training.bucket", String.class).get());
+        // 후기 슬랙 웹훅 URL (KAN-211) - 이름이 어긋나면 값을 넣어도 알림이 조용히 꺼진 채로 뜬다.
+        // 대시가 셋이라(slack-web-hook이 아니라 slack-webhook-url) relaxed binding 이름이 특히 헷갈린다.
+        assertEquals("https://hooks.slack.com/services/T000/B000/binding-check",
+                tunedBinder.bind("accentury.feedback.slack-webhook-url", String.class).get());
 
         // 목록 프로퍼티는 쉼표 한 줄이 원소로 갈라져야 한다 (ClientIps가 List<String>으로 받는다).
         assertEquals(List.of("10.1.0.0/16"),
@@ -111,14 +123,20 @@ class SsmEnvironmentBindingTest {
     }
 
     @Test
-    void 카카오_웹훅_키의_자리_표시_값이_Terraform과_같다() throws IOException {
-        // backend는 이 값으로 뜨면 모든 웹훅을 거부한다 (KakaoWebhookAuth). 두 쪽이 어긋나면 자리 표시 값이
-        // 유효한 키로 통과해 위조 콜백이 카운터를 올린다.
+    void 자리_표시_값이_Terraform의_두_자원_모두와_같다() throws IOException {
+        // 자리 표시 값으로 뜬 backend는 카카오 웹훅을 전부 거부하고(KakaoWebhookAuth) 후기 슬랙 알림을
+        // 끈다(FeedbackSlackNotifier). 어느 쪽이든 리터럴이 어긋나면 그 판정이 통째로 뒤집힌다 -
+        // 카카오는 자리 표시 값이 유효한 키로 통과해 위조 콜백이 카운터를 올리고, 슬랙은 알림이 켜진
+        // 줄 알고 매번 자리 표시 URL로 요청을 내보낸다.
         Path main = Path.of("..", "infra", "modules", "config", "main.tf");
         assumeTrue(Files.exists(main), "infra/modules/config/main.tf 없음 - 모노레포 밖 실행");
-        assertTrue(Files.readString(main).contains("value_wo         = \""
-                        + app.accentury.backend.share.KakaoWebhookAuth.PLACEHOLDER + "\""),
-                "main.tf의 kakao_admin_key 자리 표시 값이 backend의 KakaoWebhookAuth.PLACEHOLDER와 다르다");
+
+        String literal = "value_wo         = \"" + SsmPlaceholder.UNSET + "\"";
+        assertEquals(2, Files.readString(main).split(Pattern.quote(literal), -1).length - 1,
+                "main.tf에서 자리 표시 값을 쓰는 자원이 둘(kakao_admin_key, feedback_slack_webhook_url)이"
+                        + " 아니다 - backend의 SsmPlaceholder.UNSET와 글자가 같은지 확인한다");
+        // 카카오 쪽 상수가 같은 리터럴을 가리키는지도 못박는다 - 옮기면서 갈라지면 여기서 드러난다.
+        assertEquals(SsmPlaceholder.UNSET, app.accentury.backend.share.KakaoWebhookAuth.PLACEHOLDER);
     }
 
     @Test

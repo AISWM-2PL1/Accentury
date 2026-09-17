@@ -103,7 +103,7 @@ final class CurveShapeCache {
     private var cachedSegments: [[CurvePoint]]?
     private var cachedSize: CGSize = .zero
     private var cachedFilled = false
-    private var cachedDotRadius: CGFloat = 0
+    private var cachedStrokeWidth: CGFloat = 0
     private var cachedShapes = CurveShapes()
 
     /// 도형을 실제로 다시 만든 횟수. **테스트용 창구다** — 캐시가 통째로 죽어 있어도 화면은
@@ -112,18 +112,21 @@ final class CurveShapeCache {
 
     /// 이 좌표·이 크기로 그릴 도형. 지난 호출과 입력이 같으면 만들지 않고 그대로 돌려준다.
     ///
-    /// - Parameter dotRadius: 고립점 원의 반지름. 키에 넣는 이유는 이 값이 레인 성격에 따라
-    ///   달라서다(가이드 2 · 사용자 3) — 빼 두면 한 캐시를 두 레인이 나눠 쓸 때 점 크기가 샌다.
+    /// - Parameter strokeWidth: 선 굵기. 둘에 쓴다 — 천장·바닥 인셋(``AccenturyCore/insetY(_:strokeWidth:height:)``,
+    ///   KAN-218)의 절반값이고, 고립점 원의 반지름이기도 하다(안드로이드 `drawCircle(radius = stroke)`,
+    ///   웹 `r={strokeWidth}`와 같은 규칙 — 반지름을 따로 받으면 언젠가 둘이 어긋난다). 키에 넣는
+    ///   이유는 이 값이 레인 성격에 따라 달라서다(가이드 2 · 사용자 3) — 빼 두면 한 캐시를 두 레인이
+    ///   나눠 쓸 때 점 크기와 인셋이 샌다.
     func shapes(
         for segments: [[CurvePoint]],
         size: CGSize,
         filled: Bool,
-        dotRadius: CGFloat
+        strokeWidth: CGFloat
     ) -> CurveShapes {
         if let cachedSegments,
            cachedSize == size,
            cachedFilled == filled,
-           cachedDotRadius == dotRadius,
+           cachedStrokeWidth == strokeWidth,
            cachedSegments == segments {
             return cachedShapes
         }
@@ -136,15 +139,21 @@ final class CurveShapeCache {
         // (SwiftUI `fill`의 기본이 안드로이드와 같은 non-zero 규칙이다).
         var fill = filled ? Path() : nil
 
-        for points in segments {
-            if points.count >= 2 {
+        let dotRadius = strokeWidth
+        for rawPoints in segments {
+            // 창 밖을 기는 구간(y=0·y=1)은 안으로 들인다 — 웹·안드로이드와 같은 규칙(KAN-218).
+            // 선은 굵기 절반만큼, 고립점은 반지름(= 굵기)만큼 — 원이 선보다 커서 절반만 들이면
+            // 지름의 1/4이 여전히 밖이다. 채움의 바닥(closeAtY)은 들이지 않고 캔버스 바닥 그대로다.
+            if rawPoints.count >= 2 {
+                let points = insetY(rawPoints, strokeWidth: Float(strokeWidth), height: Float(size.height))
                 // 명령은 한 번만 만든다 — 선과 채움이 같은 목록을 나눠 쓴다.
                 let commands = smoothPathCommands(points, width: Float(size.width), height: Float(size.height))
                 shapes.outlines.append(curvePath(commands))
                 if fill != nil {
                     fill?.addPath(curvePath(commands, closeAtY: size.height))
                 }
-            } else if let point = points.first, dotRadius > 0 {
+            } else if dotRadius > 0,
+                      let point = insetY(rawPoints, strokeWidth: Float(2 * dotRadius), height: Float(size.height)).first {
                 let centre = CGPoint(x: CGFloat(point.x) * size.width, y: CGFloat(point.y) * size.height)
                 if dots == nil { dots = Path() }
                 dots?.addEllipse(
@@ -163,7 +172,7 @@ final class CurveShapeCache {
         cachedSegments = segments
         cachedSize = size
         cachedFilled = filled
-        cachedDotRadius = dotRadius
+        cachedStrokeWidth = strokeWidth
         cachedShapes = shapes
         return shapes
     }

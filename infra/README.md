@@ -65,7 +65,7 @@ Route 53 호스팅 영역 ── Porkbun에서 NS 위임 ── ACM 인증서 2�
   │   서비스 backend  태스크 1~3개(요청 수 목표 추적, KAN-168), 롤링 배포, 회로 차단기 + 자동 롤백 │
   │   태스크 정의 accentury-{env}-backend  0.5 vCPU / 2 GB, x86_64   │
   │   ┌──────────────┐  awsvpc ENI + 퍼블릭 IP                      │
-  │   │ backend :8080│ Spring Boot, secrets = SSM 12개, 로그 → CloudWatch │
+  │   │ backend :8080│ Spring Boot, secrets = SSM 13개, 로그 → CloudWatch │
   │   └──┬───────┬───┘  stopTimeout 120초 (KAN-166), 회로 상태 지표    │
   └──────┼───────┼───────────────────────────────────────────────┘
          │       │ http://ai.accentury.internal:8000 (= 내부 ALB alias, KAN-201)
@@ -93,7 +93,7 @@ Route 53 호스팅 영역 ── Porkbun에서 NS 위임 ── ACM 인증서 2�
   └──────────────────────────────────────────────────────────┘
 
 밖으로 거는 연결 (퍼블릭 서브넷 + 퍼블릭 IP라 NAT도 VPC 엔드포인트도 없다)
-  ├─ backend 태스크, 실행 역할: ECR pull, CloudWatch Logs, SSM /accentury/{env}/* 12개 → secrets  KAN-165
+  ├─ backend 태스크, 실행 역할: ECR pull, CloudWatch Logs, SSM /accentury/{env}/* 13개 → secrets  KAN-165
   │    (태스크가 시작할 때 ECS 에이전트가 읽어 컨테이너 env로 준다. 정본은 config 모듈 KAN-129)
   ├─ backend 태스크, 태스크 역할: Secrets Manager RDS 마스터 시크릿(연결 시점, 7일 회전 추종)  KAN-129
   │    CloudWatch PutMetricData accentury/backend (Micrometer, 회로 상태)                    KAN-36
@@ -109,8 +109,8 @@ Route 53 호스팅 영역 ── Porkbun에서 NS 위임 ── ACM 인증서 2�
     Dev 병합     → 이미지 빌드 → ECR push(SHA) → SSM IMAGE_TAG 갱신
                    → ai 호스트 Run Command reload → healthy
                    → backend 태스크 정의 리비전 등록 → ecs update-service → rolloutState COMPLETED
-                   → 실패 시 역순 롤백(backend 직전 태스크 정의, ai 직전 SHA) → E2E 스모크 KAN-138
-    Release 병합 → 재빌드 없이 Dev 이력의 최신 빌드 SHA → (environment 승인) → prod
+                   → 실패 시 역순 롤백(backend 직전 태스크 정의, ai 직전 SHA) → E2E 스모크 KAN-138 → verified 태그
+    Release 병합 → 재빌드 없이 Dev 이력의 최신 빌드 SHA(verified 필수) → (environment 승인) → prod 반영 → E2E 스모크 (KAN-217)
     롤백         → 수동 실행에 이전 SHA 입력, 같은 절차
   웹 번들 web-deploy.yml → S3 업로드 + CloudFront 무효화            KAN-127
 
@@ -448,17 +448,22 @@ KAN-36의 내부 호출 토큰이 그랬고, staging은 2026-09-03에 apply를 �
 | 트리거 | 하는 일 |
 | --- | --- |
 | Dev 푸시 (`backend/**`, `ai/**`) | `scripts/push-images.sh`로 두 이미지를 commit SHA 7자리 태그로 ECR에 push (이미 있으면 건너뜀) → staging 반영 → E2E 스모크 |
-| Release 푸시 | 빌드 없음. merge commit의 2번째 부모(Dev 끝)부터 거슬러 **처음 만나는 빌드된 SHA**가 후보다. 그 SHA에 `verified-<sha>` 태그(staging 반영과 스모크 통과 표시)가 없으면 더 오래된 것으로 건너뛰지 않고 실패한다 (서버 변경이 조용히 빠지는 것을 막는다). environment `prod`에 required reviewers가 있으면 승인 대기 |
+| Release 푸시 | 빌드 없음. merge commit의 2번째 부모(Dev 끝)부터 거슬러 **처음 만나는 빌드된 SHA**가 후보다. 그 SHA에 `verified-<sha>` 태그(staging 반영과 스모크 통과 표시)가 없으면 더 오래된 것으로 건너뛰지 않고 실패한다 (서버 변경이 조용히 빠지는 것을 막는다). environment `prod`에 required reviewers가 있으면 승인 대기 → prod 반영 → E2E 스모크 (KAN-217) |
 | 수동 실행 | 환경과 `image_tag` 선택. 비우면 staging은 현재 커밋 빌드, prod는 위 승격 규칙. **롤백 = 이전 SHA를 `image_tag`에 넣는 것** (같은 절차, 재빌드 없음) |
 
 반영 한 번은 SSM `/accentury/{env}/IMAGE_TAG`를 새 SHA로 바꾸고(직전 값과 backend 서비스의
 현재 태스크 정의를 기억), 두 갈래로 간다 (KAN-165).
 
-1. ai 호스트: SSM Run Command(`AWS-RunShellScript`, 대상은 인스턴스 ID가 아니라
-   `tag:Name=accentury-{env}-ai`)로 `systemctl reload accentury`(첫 기동이면 `start`)를 부른 뒤
-   ai 컨테이너의 docker healthcheck가 healthy가 될 때까지 최대 5분 기다린다. ASG 교체 중이라
-   대상이 없으면 130초(SSM 전달 창 120초보다 길게 - 에이전트 등록 실측 1.5분에서 2분) 뒤
-   실패로 끝나므로 교체가 끝난 뒤 다시 실행한다.
+1. ai 호스트: ASG `accentury-{env}-ai`의 InService 인스턴스 ID를 조회해 한 대씩 순차로
+   reload한다 (KAN-201, 아래 "내부 ALB와 오토스케일링"). 시작 전에 ASG 프로세스 `HealthCheck`,
+   `ReplaceUnhealthy`, `AlarmNotification`을 멈추고 끝나면 어느 경로로든 되살린다. 대당 순서는
+   SSM 에이전트 등록 대기(최대 130초 - 실측 1.5분에서 2분) → SSM Run Command(`AWS-RunShellScript`,
+   인스턴스 ID 대상, 원격 실행 상한 1500초)로 `systemctl reload accentury`(첫 기동이면 `start`)를
+   부르고 원격에서 compose.env의 IMAGE_TAG를 대조한 뒤 ai 컨테이너의 docker healthcheck가 healthy가
+   될 때까지 최대 600초 → 파이프라인은 그 명령의 완료를 최대 1560초 기다린다 → 그 인스턴스가 ALB
+   대상 그룹에서 healthy가 될 때까지 최대 10분 → 다음 인스턴스. InService 인스턴스가 없으면(ASG
+   교체 중) 실패로 끝나므로 교체가 끝난 뒤 다시 실행한다. job이 취소나 timeout으로 reload 도중
+   죽으면 정리 스텝(`always()`)이 멈춘 ASG 프로세스를 되살린다 (KAN-212).
 2. backend 서비스: 서비스가 도는 태스크 정의를 `describe-task-definition`으로 읽어 image
    태그만 바꾼 리비전을 `register-task-definition`하고 `update-service`로 롤링 배포한다
    (새 태스크가 healthy가 된 뒤 옛 태스크를 뺀다 - 무중단). 완료 판정은 docker healthcheck가
@@ -494,13 +499,14 @@ staging 반영과 스모크가 모두 통과하면 같은 이미지에 ECR 태�
 없다. 표시는 prod 역할의 ECR 조회 권한만으로 확인되므로 환경 간 SSM 교차 읽기가 없다.
 
 테스트는 파이프라인에서 다시 돌리지 않는다 - PR의 `backend-test`, `ai-test` required
-check가 게이트다. E2E 스모크는 staging 반영 직후 같은 job에서 `scripts/e2e_smoke.py`를
-직접 부르고, 관리자 토큰은 그 환경 SSM에서 읽어 합성 트래픽으로 표시한다. `e2e-smoke.yml`의
-`workflow_call`을 쓰지 않는 이유는 토큰을 job output으로 넘기면 GitHub이 마스킹된 값이라며
-output을 버리기 때문이다. prod는 승격 직후 사람이 `e2e-smoke.yml`을 workflow_dispatch로
-돌린다 (아래 "원격 스모크 수동 실행"). 스모크 실패는 실행을 실패로 만들지만 반영을
-되돌리지는 않는다 - 스모크가 보는 것은 이미지가 아니라 전 구간이라, 원인이 이미지가
-아닐 수 있다.
+check가 게이트다. E2E 스모크는 두 환경 모두 반영 직후 같은 job에서 `scripts/e2e_smoke.py`를
+직접 부르고(prod는 KAN-217부터, 그 전에는 사람이 `e2e-smoke.yml`을 따로 돌렸다), 관리자
+토큰은 그 환경 SSM에서 읽어 합성 트래픽으로 표시한다. `e2e-smoke.yml`의 `workflow_call`을
+쓰지 않는 이유는 토큰을 job output으로 넘기면 GitHub이 마스킹된 값이라며 output을 버리기
+때문이다. 스모크 실패는 실행을 실패로 만들지만 반영을 되돌리지는 않는다 (두 환경 같음) -
+스모크가 보는 것은 이미지가 아니라 전 구간이라, 원인이 이미지가 아닐 수 있다. 되돌리려면
+수동 실행에 직전 SHA를 넣는다. staging에서는 스모크까지 통과해야 `verified-<sha>`가 붙고,
+prod에서는 붙일 표시가 없어 그 스텝이 skipped다.
 
 권한은 `infra/modules/deploy`의 `image-deploy` 정책이다. staging 역할만 ECR push를
 갖고(`ci_image_push`, 환경 간 tfvars 차이) prod 역할은 조회뿐이다. Run Command는
@@ -574,9 +580,9 @@ backend는 `modules/fargate`가 만드는 ECS Fargate 서비스다. EC2 위 dock
 | 구성 | 값 | 비고 |
 | --- | --- | --- |
 | 클러스터 | `accentury-{env}`, 용량 공급자 `FARGATE`만 | `FARGATE_SPOT`은 연결하지 않는다 (2026-09-01 결정). Container Insights 끔 |
-| 태스크 정의 | 패밀리 `accentury-{env}-backend`, 0.5 vCPU / 2 GB, `X86_64`, 컨테이너 `backend` 1개 | image = ECR `accentury/backend:<SSM IMAGE_TAG>`, secrets = SSM 파라미터 12개 (아래 표), `stopTimeout` 120초, awslogs `/accentury/{env}/backend`(14일), 컨테이너 healthCheck = compose와 같은 bash `/dev/tcp` 검사 |
+| 태스크 정의 | 패밀리 `accentury-{env}-backend`, 0.5 vCPU / 2 GB, `X86_64`, 컨테이너 `backend` 1개 | image = ECR `accentury/backend:<SSM IMAGE_TAG>`, secrets = SSM 파라미터 13개 (아래 표), `stopTimeout` 120초, awslogs `/accentury/{env}/backend`(14일), 컨테이너 healthCheck = compose와 같은 bash `/dev/tcp` 검사 |
 | 서비스 | `backend`, 처음 desired 1, 용량 공급자 전략 `FARGATE` weight 1 | 롤링 배포(min 100% / max 200%), 회로 차단기 + 자동 롤백, `health_check_grace_period_seconds` 150초(실측 기반, 아래), 퍼블릭 서브넷 + 퍼블릭 IP, `backend-sg`, 대상 그룹 ip:8080. 태스크 수는 그 뒤 오토스케일링이 1~3에서 조절하고 Terraform은 `desired_count`를 다시 보지 않는다 (다음 절, KAN-168) |
-| 실행 역할 | `accentury-{env}-backend-execution` | `AmazonECSTaskExecutionRolePolicy`(ECR pull, 로그) + 이 환경 config 파라미터 12개의 `ssm:GetParameters`. ECS 에이전트 몫이라 컨테이너 안에서는 보이지 않는다 |
+| 실행 역할 | `accentury-{env}-backend-execution` | `AmazonECSTaskExecutionRolePolicy`(ECR pull, 로그) + 이 환경 config 파라미터 13개의 `ssm:GetParameters`. ECS 에이전트 몫이라 컨테이너 안에서는 보이지 않는다 |
 | 태스크 역할 | `accentury-{env}-backend-task` | RDS 마스터 시크릿 `GetSecretValue` + `cloudwatch:PutMetricData`(네임스페이스 `accentury/backend` 조건). 애플리케이션이 SDK 기본 체인으로 받는다 - IMDS hop limit 조정이 없다 |
 
 **이미지 태그의 정본은 SSM `IMAGE_TAG` 하나다.** Terraform은 그 값을 data 소스로 읽어 태스크
@@ -830,10 +836,14 @@ healthy가 될 때까지 대기, 다음 인스턴스. 여러 대에 한꺼번에
 3대면 배포가 그만큼 길어진다(대당 약 2분에서 4분). reload 동안에는 ASG 프로세스 `HealthCheck`,
 `ReplaceUnhealthy`, `AlarmNotification`을 멈춘다 (Codex 리뷰 P1) - ELB 상태 검사를 보는 ASG는 컨테이너가 내려간
 인스턴스를 유예 기간이 지난 뒤 unhealthy로 교체해 버려, 정상 배포가 "인스턴스 사라짐"으로 실패하고 롤백한다.
-어느 경로로 끝나든 파이프라인이 resume하지만 job이 중간에 죽으면(취소, 러너 소실) 멈춘 채 남는다 - 그때는
-손으로 되돌린다. 멈춘 채 두면 죽은 인스턴스가 교체되지 않고 스케일링도 서지 않으며, `terraform apply`의
-instance refresh도 시작되지 않거나 취소된다 (refresh가 Cancelled나 Failed면 먼저 SuspendedProcesses를 본다).
-같은 이유로 배포 파이프라인이 도는 동안에는 apply를 걸지 않는다.
+어느 경로로 끝나든 스크립트가 resume하고, job이 중간에 죽어도(수동 취소, `timeout-minutes` 초과) 그 뒤의
+"ASG 프로세스 정리" 스텝(`always()`)이 마커 파일 `$RUNNER_TEMP/asg-suspended`에 적힌 ASG를 되살린다 (KAN-212).
+마커는 파이프라인의 suspend가 성공했을 때만 쓰이고 resume이 성공하면 지워지므로, 반영 전에 실패한 실행이나 정상
+완료에서는 "재개할 ASG 없음"으로 끝나고 누가 손으로 멈춘 프로세스는 건드리지 않는다. 정지 뒤 1시간이 지나
+역할 세션이 만료된 경우(timeout)를 위해 재개할 것이 있을 때만 세션을 다시 받는다. 러너 자체가 사라지면 어떤
+스텝도 돌지 않으므로 그때만 아래 명령으로 손으로 되돌린다. 멈춘 채 두면 죽은 인스턴스가 교체되지 않고 스케일링도
+서지 않으며, `terraform apply`의 instance refresh도 시작되지 않거나 취소된다 (refresh가 Cancelled나 Failed면 먼저
+SuspendedProcesses를 본다). 같은 이유로 배포 파이프라인이 도는 동안에는 apply를 걸지 않는다.
 
 ```
 aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$(terraform output -raw ai_asg_name)" \
@@ -919,7 +929,7 @@ docker compose exec ai python -c "import urllib.request; urllib.request.urlopen(
 | --- | --- | --- |
 | `IMAGE_TAG` | ai 호스트 compose.env, backend 태스크 정의 image (Terraform data 소스) | 두 서비스가 같은 SHA 태그를 쓴다. **없으면 ai 기동 실패, plan 실패.** 파이프라인(KAN-128)이 쓴다 |
 | `ai/*` (하위 경로 전부) | ai.env (ai 호스트만) | ai 컨테이너 환경 변수. 지금은 내부 호출 토큰 하나 (KAN-36). 실모델 설정은 KAN-22가 이 경로 아래 어떤 이름으로든 더한다 - 이 호스트가 읽는 것은 이 경로뿐이라 이름 규칙이 없다 |
-| 그 외 전부 (`modules/config` 출력 12개) | backend 태스크 정의 secrets (KAN-165) | backend 컨테이너 환경 변수. 태스크 시작 시 실행 역할이 읽는다 (아래 표, KAN-129) |
+| 그 외 전부 (`modules/config` 출력 13개 - 13번째가 KAN-211의 슬랙 웹훅 URL이다) | backend 태스크 정의 secrets (KAN-165) | backend 컨테이너 환경 변수. 태스크 시작 시 실행 역할이 읽는다 (아래 표, KAN-129) |
 
 backend 환경 변수는 전부 Terraform `modules/config`가 만든다 - 값이 다른 모듈의
 출력(RDS 주소, 시크릿 ARN, VPC CIDR, 도메인)이라 손으로 넣으면 재구축 때 어긋난다.
@@ -939,6 +949,7 @@ fargate 모듈이 config의 파라미터 이름 목록을 그대로 태스크 �
 | `ACCENTURY_RESULT_ASSETBASEURL` | `https://<도메인>/share` (KAN-132). backend가 등급 code를 붙여 `share.imageUrl`을 만든다. 이미지는 웹 버킷 `share/<code>.png` (`scripts/publish-share-assets.sh`) | String |
 | `ACCENTURY_ADMIN_TOKEN` | `random_password` 48자 영숫자. 관리자 API(§6)와 E2E 스모크(KAN-138)가 쓴다 | SecureString |
 | `ACCENTURY_SHARE_KAKAOADMINKEY` | 카카오디벨로퍼스 콘솔의 앱 Admin 키 (KAN-164). Terraform은 자리 표시 값으로 만들고(write-only `value_wo`라 state에 값이 남지 않는다) apply 뒤 `put-parameter --overwrite`로 넣는다 (아래 "카카오 공유 웹훅" 절). 두 환경 같은 값 | SecureString |
+| `ACCENTURY_FEEDBACK_SLACKWEBHOOKURL` | 이용 후기 알림이 나가는 슬랙 채널(`#feedback`)의 Incoming Webhook URL (KAN-211). 카카오 키와 같이 자리 표시 값으로 만들고 apply 뒤 `put-parameter`로 넣는다 (아래 "이용 후기 슬랙 알림" 절). **선택 값이다 - 없거나 자리 표시 값이면 backend가 알림만 끄고 그대로 기동한다** (`DeploymentConfigGuard` 밖이라 apply와 배포의 순서 제약이 없다). 채널이 하나라 두 환경 같은 값 | SecureString |
 | `ai/ACCENTURY_AI_INTERNAL_TOKEN` | `ACCENTURY_ANALYSIS_AITOKEN`과 같은 난수. ai 서버가 health를 뺀 모든 요청에서 대조한다 (KAN-36). ai 호스트 역할만 읽는다 | SecureString |
 | `ACCENTURY_TRAINING_BUCKET` | **staging에만 있다** (KAN-201). 학습 데이터 버킷 이름(`accentury-staging-training-<계정>`). tfvars `training_bucket_enabled`가 true인 환경에만 파라미터가 생기고, 그래서 prod 태스크 정의에는 이 변수가 없어 backend가 S3 클라이언트를 만들지 않는다 (아래 "staging 전용 학습 데이터 S3" 절) | String |
 
@@ -1033,10 +1044,53 @@ WAF의 AWS 관리 규칙(KAN-149)은 `/recording`만 제외하고 이 경로에�
 그룹(아래 "WAF 웹 ACL" 절)에서 `/v0/share/kakao/webhook`의 BLOCK을 찾고, 있으면 그 규칙에
 `rule_action_override`(Count)나 scope-down 제외를 더한다.
 
+### 이용 후기 슬랙 알림 (KAN-211)
+
+결과 화면에서 받은 이용 후기(`POST /v0/sessions/{sessionId}/feedback`)는 DB에 저장되고, 저장이
+커밋된 뒤 슬랙 채널 `#feedback`으로 한 줄씩 올라간다. 개발팀이 후기를 읽는 곳이 그 채널 하나이고
+무료 플랜이라 수단도 Incoming Webhook 하나다 - 그래서 staging과 prod가 채널을 나누지 않고,
+구분은 메시지 머리의 환경 라벨(결과 URL의 호스트)이 한다. 웹훅 URL은 슬랙 콘솔이 발급하는
+값이라 Terraform이 만들 수 없어 `modules/config`가 자리 표시 값으로 파라미터만 만든다
+(카카오 검증 키와 같은 write-only `value_wo` 방식이다).
+
+**카카오 키와 달리 apply와 배포의 순서 제약이 없다.** 이 파라미터는 `DeploymentConfigGuard`의
+필수 목록 밖이라, 값을 아직 안 넣었거나 자리 표시 값인 채로 뜬 backend는 알림만 끄고 후기는
+그대로 저장한다 (기동 로그에 `후기 슬랙 알림 꺼짐`이 남는다). 코드가 먼저 배포돼도 멈추는 것이
+없으므로 아래 순서는 아무 때나 밟으면 된다.
+
+1. 슬랙 앱을 만들고 웹훅 URL을 받는다. api.slack.com/apps > **Create New App** > **From scratch**
+   (앱 이름과 워크스페이스 선택) > 좌측 **Incoming Webhooks** 켜기 > **Add New Webhook to
+   Workspace** > 채널로 `#feedback` 선택 > 발급된 URL 복사
+   (`https://hooks.slack.com/services/...`).
+2. 환경마다 값을 넣고 backend 태스크를 새로 띄운다 (secrets는 태스크 시작 시 한 번 읽힌다).
+   두 환경이 같은 채널을 쓰므로 같은 값이다.
+
+   ```
+   aws ssm put-parameter --overwrite --type SecureString \
+     --name /accentury/staging/ACCENTURY_FEEDBACK_SLACKWEBHOOKURL --value '<웹훅 URL>'
+   aws ssm put-parameter --overwrite --type SecureString \
+     --name /accentury/prod/ACCENTURY_FEEDBACK_SLACKWEBHOOKURL --value '<웹훅 URL>'
+   aws ecs update-service --cluster accentury-staging --service backend --force-new-deployment
+   aws ecs update-service --cluster accentury-prod    --service backend --force-new-deployment
+   ```
+
+3. 확인 - backend 로그에 `후기 슬랙 알림 켜짐 - 채널 라벨 <도메인>`이 뜨는지 보고, staging 웹에서
+   테스트를 한 번 완주해 후기를 1건 보낸 뒤 채널에 도착하는지 본다. 도착한 메시지에 **회신 이메일
+   값은 없다** - 유무만 적고 답장할 후기는 세션 id 앞자리로 DB에서 찾는다.
+4. 재발급과 끄기 - 슬랙에서 URL을 다시 발급했으면 2번을 그대로 반복한다. 알림을 끄려면 값을 자리
+   표시 리터럴로 되돌린다(`--value 'unset-put-parameter-after-apply'`). 어느 쪽이든 후기 저장에는
+   영향이 없다.
+
+**이 URL은 시크릿이다.** 값을 아는 사람은 누구나 그 채널에 아무 메시지나 쓸 수 있으므로
+(별도 인증이 없다) 레포, 노션, 지라 티켓, 스크린샷 어디에도 적지 않는다. backend 로그도 이 값을
+지운다 (`LogMasking`) - 켜짐 로그는 URL이 아니라 채널 라벨만 찍는다.
+
 ### 원격 스모크 수동 실행 (KAN-138)
 
-이미 떠 있는 환경을 도메인 경유로 두드린다. 토큰은 job이 SSM에서, 대상 주소는 그 environment의
-변수 `APP_DOMAIN`에서 읽으므로 넣을 입력이 환경 이름뿐이다.
+이미 떠 있는 환경을 도메인 경유로 두드린다. 배포 파이프라인이 두 환경 모두 반영 직후 같은
+스모크를 돌리므로(KAN-217) 승격 절차의 일부는 아니고, 배포와 무관하게 한 바퀴 확인하고 싶을
+때(경보 확인, 장애 뒤 점검, `--voice-wav` 검산 전 정상 흐름 확인) 쓴다. 토큰은 job이 SSM에서,
+대상 주소는 그 environment의 변수 `APP_DOMAIN`에서 읽으므로 넣을 입력이 환경 이름뿐이다.
 
 ```
 gh workflow run e2e-smoke.yml --ref Dev     -f environment=staging
@@ -1159,7 +1213,7 @@ aws s3 cp "s3://$(terraform output -raw training_bucket)/<키>.json" -          
 따옴표, `#`, 공백)는 그대로 컨테이너에 들어간다 - ai 호스트는 env_file을 `format: raw`로
 읽어 Compose의 보간과 따옴표 처리를 끄고, ECS secrets는 값을 그대로 env로 준다. 시크릿은
 SecureString으로 두면 되고(AWS 관리 키라 별도 kms 권한 불요), 실행 역할은 자기 환경의
-파라미터 12개만, ai 호스트 역할은 자기 하위 경로만 읽는다. ai 호스트의 env 파일은 tmpfs라
+파라미터 13개만, ai 호스트 역할은 자기 하위 경로만 읽는다. ai 호스트의 env 파일은 tmpfs라
 재부팅 시 사라졌다가 다시 만들어진다 (낡은 사본이 쌓이지 않는다). docker 자체는 컨테이너
 환경 변수를 `/var/lib/docker/containers/*/config.v2.json`(암호화된 루트 볼륨, root 전용)에
 기록하므로 호스트 디스크에 평문이 전혀 없는 것은 아니다. Fargate 태스크는 호스트가 없어
@@ -1730,13 +1784,13 @@ Terraform 입력의 차이는 `diff -r infra/envs/staging infra/envs/prod`가 �
 | VPC CIDR | `10.1.0.0/16` | `10.0.0.0/16` | 서브넷 4개, `ACCENTURY_TRUSTEDPROXIES` |
 | RDS 엔드포인트 | `accentury-staging.<id>.ap-northeast-2.rds.amazonaws.com` | `accentury-prod.<id>...` | `SPRING_DATASOURCE_URL` (apply 후 output `rds_endpoint`) |
 | RDS 마스터 시크릿 | `rds!db-<staging uuid>` | `rds!db-<prod uuid>` | `SPRING_DATASOURCE_URL`의 `secretsManagerSecretId`, backend 태스크 역할 정책 |
-| SSM 경로 | `/accentury/staging/*` | `/accentury/prod/*` | backend 실행 역할 정책(secrets 12개), ai 호스트 역할 정책과 기동 스크립트, backend 태스크 정의의 `IMAGE_TAG` 조회 |
+| SSM 경로 | `/accentury/staging/*` | `/accentury/prod/*` | backend 실행 역할 정책(secrets 13개), ai 호스트 역할 정책과 기동 스크립트, backend 태스크 정의의 `IMAGE_TAG` 조회 |
 | backend 태스크 (KAN-165) | 0.5 vCPU / 2 GB, desired 1 | 같은 값 | `modules/fargate` 기본값 (tfvars 아님) |
 | 관리자 토큰 | 환경별 난수 | 환경별 난수 | `ACCENTURY_ADMIN_TOKEN` |
 | 내부 호출 토큰 (KAN-36) | 환경별 난수 | 환경별 난수 | `ACCENTURY_ANALYSIS_AITOKEN`, `ai/ACCENTURY_AI_INTERNAL_TOKEN` |
 | AI 호스트 (KAN-36) | c7i.xlarge, 루트 40GiB | 같은 값 | `ai_instance_type`, `ai_root_volume_size` (B단계 2026-09-10에 20에서 40으로) |
 | AI 호스트 오토스케일링 (KAN-201) | max 3 | 같은 값 | `ai_max_size` - ai-host 모듈 ASG `max_size`. min 1은 모듈 기본값 |
-| 학습 데이터 S3 (KAN-201) | 켬 | 끔 | `training_bucket_enabled` - 버킷, 태스크 역할 PutObject, SSM `ACCENTURY_TRAINING_BUCKET`(secrets 13개째) |
+| 학습 데이터 S3 (KAN-201) | 켬 | 끔 | `training_bucket_enabled` - 버킷, 태스크 역할 PutObject, SSM `ACCENTURY_TRAINING_BUCKET`(secrets 14개째) |
 | RDS 삭제 보호, 최종 스냅샷 | 없음, 생략 | 켬, 남김 | RDS |
 | 배포 역할 ECR push | 허용 | 불가 | `modules/deploy` image-deploy 정책 (KAN-128 승격 모델) |
 
@@ -1882,7 +1936,7 @@ terraform destroy
   롤링 배포와 회로 차단기 판정이 2분 30초씩 늦다).
 - **실행 역할과 태스크 역할 분리 (KAN-165)**: EC2 시절 인스턴스 역할 하나가 ECR pull, SSM,
   Secrets Manager, CloudWatch를 다 가졌다. 실행 역할(ECS 에이전트 몫: ECR pull, awslogs,
-  secrets 주입용 `ssm:GetParameters` 12개)은 컨테이너 안에서 보이지 않고, 태스크 역할
+  secrets 주입용 `ssm:GetParameters` 13개)은 컨테이너 안에서 보이지 않고, 태스크 역할
   (애플리케이션 몫: RDS 시크릿, PutMetricData)만 SDK 기본 체인으로 흘러간다. 신뢰 정책에
   `aws:SourceAccount`, `aws:SourceArn` 조건을 둔다 (AWS 문서의 혼동된 대리인 방지).
   SecureString은 AWS 관리 키라 kms 권한이 따로 없다.

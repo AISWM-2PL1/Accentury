@@ -66,6 +66,7 @@ vitest가 못 보는 것을 실제 Chromium에서 본다 — `getUserMedia`·`Au
 |---|---|---|
 | `e2e/smoke.spec.ts` | 인트로 숫자 카드 → 시작 게이트 통과 → `?screen=test` | 스택 |
 | `e2e/full-run.spec.ts` | 10문항 완주 → 분석 대기 → 결과 등급·점수 | 스택, `E2E_FAIL_ITEM` **없음** |
+| `e2e/feedback.spec.ts` | 완주 → 결과 화면 후기 시트 → 실패·재시도(같은 멱등 키)·저장·리로드 후 409 | 스택, `E2E_FAIL_ITEM` **없음** |
 | `e2e/retake.spec.ts` | 음성 문항 분석 실패 → 막다른 길 안내 | 스택, `E2E_FAIL_ITEM` **있음** |
 | `e2e/mic-blocked.spec.ts` | 마이크 거부·점유 안내, 세션 미생성 | 없음 (BE를 부르지 않는다) |
 
@@ -194,7 +195,7 @@ E2E_BASE_URL=https://<staging 도메인> npm run test:e2e   # 도메인은 infra
 - 대상 버킷, 배포 ID, IAM 역할은 GitHub environment 변수다 (infra/README.md "GitHub 설정").
 - `VITE_PLAY_STORE_URL` 같은 빌드 시점 값은 아직 주입하지 않는다 (코드 기본값). 필요해지면
   environment 변수로 넘긴다 - 두 환경이 같은 값이면 저장소 변수로 둔다.
-- 예외가 둘 있다. 하나는 `VITE_GA4_MEASUREMENT_ID`(KAN-33). GitHub environment 변수
+- 예외가 셋 있다. 하나는 `VITE_GA4_MEASUREMENT_ID`(KAN-33). GitHub environment 변수
   `GA4_MEASUREMENT_ID`를 워크플로가 빌드에 넘긴다. staging과 prod가 **다른 스트림**이어야
   우리 확인 트래픽이 실사용 집계에 섞이지 않는다. 비워 두면 계측 없이 빌드된다 -
   로컬 개발도 그 상태이고, 이벤트가 실제로 도는지는 콘솔의 `[track]` 로그로 본다.
@@ -205,3 +206,11 @@ E2E_BASE_URL=https://<staging 도메인> npm run test:e2e   # 도메인은 infra
   정확히 문자열 `true`일 때만 켜지고 비어 있으면 화면도 요청 필드도 없는 것이 정상이다
   (`src/region/regions.ts`). 로컬에서 보려면 `web/.env.local`에 `VITE_REGION_SELECT=true`를
   둔다 (`.env.*`는 gitignore 대상).
+- 셋째는 `VITE_STORE_LISTING_READY`(사용자 요청 2026-09-15). GitHub environment 변수
+  `STORE_LISTING_READY`를 넘기며, **기본은 꺼짐**이다 - 앱이 아직 Play 스토어에도 App Store에도
+  등록되지 않아 스토어 URL이 "앱을 찾을 수 없습니다"로 끝나기 때문이다. 꺼진 빌드는 결과 화면의
+  [앱 다운로드]와 마이크 차단 화면의 [앱으로 테스트하기]를 **비활성 버튼 + "앱 스토어 등록을
+  준비하고 있어요"** 안내로 그린다. 등록이 끝나면 prod·staging **각각**에 변수를 `true`로
+  등록하고 재배포하면 켜진다 - 코드는 고치지 않는다. 정확히 문자열 `true`일 때만 켜지고
+  나머지는 전부 꺼짐이다 (`src/audio/storeLink.ts`). 로컬에서 켜 보려면 `web/.env.local`에
+  `VITE_STORE_LISTING_READY=true`를 둔다.

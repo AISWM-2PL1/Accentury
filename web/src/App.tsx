@@ -579,6 +579,15 @@ function ResultRoute({
                 platform: storePlatform,
               })
       }
+      /*
+       * 후기 퍼널 (KAN-211). [공유]와 같은 방식으로 여기서 센다 — 화면은 "무슨 일이 일어났다"만
+       * 올리고 그것을 어느 이름으로 세는지는 이 자리가 정한다.
+       *
+       * 실은 것은 별점 하나뿐이다. 후기 본문과 답변용 이메일은 계측에 닿는 길 자체가 없다
+       * (`analytics/events.ts`의 익명 규칙) — 그 값들은 슬랙 알림과 DB에만 남는다.
+       */
+      onFeedbackOpen={() => track({ name: 'feedback_opened' })}
+      onFeedbackSubmitted={(rating) => track({ name: 'feedback_submitted', rating })}
     />
   )
 }

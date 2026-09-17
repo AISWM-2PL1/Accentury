@@ -26,9 +26,26 @@
 import { FULL_SCALE, QUIET_RMS_THRESHOLD } from './quality'
 import { TARGET_SAMPLE_RATE } from './pcm'
 
-/** 사람 목소리 F0 탐색 대역. 대역 밖(예: 50Hz 험 노이즈)은 무성음 취급된다 */
-export const MIN_F0_HZ = 80
-export const MAX_F0_HZ = 400
+/**
+ * 사람 목소리 F0 탐색 대역. 대역 밖(예: 50Hz 험 노이즈)은 무성음 취급된다.
+ *
+ * 처음엔 표준 설정인 80~400Hz였는데(`ondevice-f0.md`), 곡선 화면에서 **대역 끝이 곧 곡선이
+ * 사라지는 자리**가 됐다. 사용자 레인은 화자 중심 ±7 semitone 창 밖을 천장·바닥에 눌러 담는데
+ * (`userCurve.ts`), 추정기가 먼저 대역 밖을 무성으로 돌려보내면 눌러 담을 값 자체가 없다 —
+ * 중심 120Hz인 화자가 낮게 깔면 80Hz 아래에서 선이 끊기고, 400Hz를 넘는 고음은 τ 탐색이
+ * 2주기 골에서 멈춰 **한 옥타브 아래로 뒤집혀** 올라가야 할 선이 아래로 꺾였다(450→225).
+ * 60~800Hz면 낮은 남성음의 vocal fry부터 여성의 감탄·고성까지 들어와, 창 밖 값은 추정기가
+ * 아니라 표시 쪽 clamp가 천장·바닥에 붙여 둔다.
+ *
+ * 하한을 내리면 τmax가 200→266이 되는데 2048 창에서 적분 창이 1782라 여유가 있다. 상한을
+ * 올리면 τmin이 40→20이 되어 반주기 골(옥타브 위 오류)을 먼저 만날 수 있는데, 2·3배음이
+ * 기음보다 큰 정도면 CMNDF의 누적 정규화가 그 골을 임계값 위로 띄우지만 **2배음이 기음보다
+ * 훨씬 강하면(예: 3000 대 8000) 반주기 골이 0.25 아래로 내려온다** — 옛 대역은 τmin=40이라
+ * 기음 200Hz 이상의 반주기(τ<40)가 탐색 밖이어서 우연히 보호됐다. 그 구멍을 [OCTAVE_CHECK_MARGIN]의
+ * 2τ 골 검사가 막는다.
+ */
+export const MIN_F0_HZ = 60
+export const MAX_F0_HZ = 800
 
 /**
  * CMNDF 절대 임계값. 원 논문 권장은 0.1~0.2지만 0.25로 느슨하게 잡았다 — 우리 용도가
@@ -36,6 +53,22 @@ export const MAX_F0_HZ = 400
  * 임계값별 유성 판정률 실측표는 `ondevice-f0.md`에 있다.
  */
 const CMNDF_THRESHOLD = 0.25
+
+/**
+ * 2τ 골 검사 마진 (Codex 리뷰 반영). 첫 골 τ를 잡은 뒤 2τ 근처의 골이 이보다 더 깊으면 τ를
+ * 반주기 골로 보고 2τ 쪽을 택한다.
+ *
+ * 근거 — 진짜 주기 T의 골은 파형이 자기 자신과 겹치므로 CMNDF≈0이지만, 2배음이 우세해 생긴
+ * 반주기(T/2) 골은 홀수 배음(기음·3배음)이 반주기에서 어긋나므로 0.1~0.25 사이에 머문다. 그래서
+ * 2τ 쪽이 0.1 이상 더 깊으면 반주기 골이다. 진짜 고음(400~800Hz)은 2τ 골도 ≈0이라 차이가 0.1을
+ * 못 넘어 뒤집히지 않는다.
+ *
+ * 마진 실측(2026-09-17, 5개 배음 프로파일 × 70~780Hz 10Hz 간격 × 프레임 내 5% pitch drift
+ * 유무): 0.05는 2·4배음 우세 780Hz에서 옥타브 아래 3건, 0.15는 2배음 4배 우세 프로파일을
+ * 전부 놓침, 0.1은 0건. 실제 음성(50대 여성 2.5초, 75프레임)에서는 57 유성 프레임 중 원래
+ * 애매하던 1프레임(199→99, 이웃 98·197)만 바뀌고 나머지 동일.
+ */
+const OCTAVE_CHECK_MARGIN = 0.1
 
 /**
  * 유성 판정을 시도할 최소 RMS. **정규화 전 16-bit 원 스케일 기준**이라 -1..+1 샘플의 RMS에
@@ -54,8 +87,8 @@ export const VOICED_MIN_RMS = QUIET_RMS_THRESHOLD
  * @param chunk 16kHz -1..+1 실수 샘플 (모노)
  */
 export function estimatePitchHz(chunk: Float32Array, sampleRate = TARGET_SAMPLE_RATE): number | null {
-  const tauMin = Math.floor(sampleRate / MAX_F0_HZ) // 16kHz 기준 40샘플
-  const tauMax = Math.floor(sampleRate / MIN_F0_HZ) // 16kHz 기준 200샘플
+  const tauMin = Math.floor(sampleRate / MAX_F0_HZ) // 16kHz 기준 20샘플
+  const tauMax = Math.floor(sampleRate / MIN_F0_HZ) // 16kHz 기준 266샘플
   const window = chunk.length - tauMax // 적분 창: x[j+τ]가 조각을 벗어나지 않는 범위
   if (window <= tauMax) return null
 
@@ -90,7 +123,19 @@ export function estimatePitchHz(chunk: Float32Array, sampleRate = TARGET_SAMPLE_
   if (tau > tauMax) return null
   while (tau + 1 <= tauMax && cmndf[tau + 1] < cmndf[tau]) tau++
 
-  // 4단계 - 포물선 보간. 대역 경계 τ에서 보간이 대역을 살짝 벗어날 수 있어(예: τ=40 → 400Hz 초과)
+  // 3.5단계 - 2τ 골 검사: 첫 골이 강한 2배음이 만든 반주기 골이면 2τ 근처에 진짜 주기의 더 깊은
+  //           골이 있다. ±2 이웃에서 최솟값을 잡고 국소 최솟값까지 내려간 뒤, 첫 골보다
+  //           OCTAVE_CHECK_MARGIN 이상 깊을 때만 옮긴다 ([OCTAVE_CHECK_MARGIN] 주석).
+  const doubleTau = 2 * tau
+  if (doubleTau + 2 <= tauMax) {
+    let best = doubleTau - 2
+    for (let k = doubleTau - 1; k <= doubleTau + 2; k++) if (cmndf[k] < cmndf[best]) best = k
+    while (best + 1 <= tauMax && cmndf[best + 1] < cmndf[best]) best++
+    while (best - 1 > tau && cmndf[best - 1] < cmndf[best]) best--
+    if (cmndf[best] < cmndf[tau] - OCTAVE_CHECK_MARGIN) tau = best
+  }
+
+  // 4단계 - 포물선 보간. 대역 경계 τ에서 보간이 대역을 살짝 벗어날 수 있어(예: τ=20 → 800Hz 초과)
   //         결과를 탐색 대역으로 clamp한다.
   const f0 = sampleRate / parabolicInterpolation(cmndf, tau)
   return Math.min(MAX_F0_HZ, Math.max(MIN_F0_HZ, f0))

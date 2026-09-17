@@ -81,7 +81,7 @@ export function RegionSelectScreen({ onDone }: RegionSelectScreenProps) {
           className="type-body-sm"
           style={{ color: 'var(--color-muted-foreground)', marginTop: 'var(--space-2)' }}
         >
-          본인이 사용한다고 생각하는 억양의 지역을 골라주시면 됩니다. 
+          본인이 사용한다고 생각하는 억양의 지역을 골라주시면 됩니다.
           결과에는 영향이 없어요.
         </p>
       </div>

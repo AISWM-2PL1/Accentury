@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { STORE_PENDING_CAPTION } from '../audio/storeText'
 import type { FetchLike } from '../progress/fetchTestDefinition'
 import { ResultScreen, type ResultScreenProps } from './ResultScreen'
 import { tierImageFor } from './tierAssets'
@@ -448,9 +449,23 @@ describe('[다시 테스트하기] 잠금과 안내 — KAN-34', () => {
   })
 })
 
+/** 만료 화면 대역. 브라우저에서 결과가 사라진 사람도 같은 CTA를 만나야 한다 */
+const EXPIRED = jsonFetch(410, envelope('RESULT_EXPIRED', '결과 보관 기간(24시간)이 지났습니다.', false))
+
 describe('[앱 다운로드] CTA — KAN-31 2단계', () => {
-  /** 만료 화면 대역. 브라우저에서 결과가 사라진 사람도 같은 CTA를 만나야 한다 */
-  const EXPIRED = jsonFetch(410, envelope('RESULT_EXPIRED', '결과 보관 기간(24시간)이 지났습니다.', false))
+  /*
+   * 이 블록은 **스토어에 앱이 올라간 뒤**의 화면을 본다 (사용자 요청 2026-09-15). 기본 빌드는
+   * 등록 전이라 링크가 아니라 비활성 버튼을 그리므로(`audio/storeLink.ts`의 storeListingReady),
+   * 여기 있는 "어느 스토어로 보내는가"는 변수를 켜야 비로소 물을 수 있는 질문이다. 끈 쪽은
+   * 바로 아래 블록이 본다.
+   */
+  beforeEach(() => {
+    vi.stubEnv('VITE_STORE_LISTING_READY', 'true')
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
 
   it('웹 단독 실행에서는 스토어로 가는 링크가 주버튼이고 공유가 보조로 내려간다', async () => {
     renderScreen({ storePlatform: 'android' })
@@ -530,6 +545,61 @@ describe('[앱 다운로드] CTA — KAN-31 2단계', () => {
   })
 })
 
+/**
+ * 스토어 등록 전 — 기본 빌드가 그리는 화면 (사용자 요청 2026-09-15).
+ *
+ * 변수를 켜지 않는다. 지금 배포되는 빌드가 바로 이 상태라, 여기서 `stubEnv`를 쓰면 테스트가
+ * "실제로 나가는 화면"이 아니라 "시킨 화면"을 보게 된다.
+ */
+describe('[앱 다운로드] CTA — 스토어 등록 전', () => {
+  it('링크가 아니라 비활성 버튼이고 준비 중임을 한 줄로 알린다', async () => {
+    renderScreen({ storePlatform: 'android' })
+
+    // 링크가 아예 없어야 한다 — 있으면 죽은 스토어 페이지로 가는 길이 남아 있다는 뜻이다
+    expect(await screen.findByText(STORE_PENDING_CAPTION)).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: '앱 다운로드' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/로 이동해요/)).not.toBeInTheDocument()
+
+    const download = screen.getByRole('button', { name: '앱 다운로드' })
+    expect(download).toBeDisabled()
+    // 주버튼 자리·크기를 그대로 지킨다 — 등록 전후로 배치가 흔들리면 비교할 화면이 없다
+    expect(download.className).toContain('btn--primary')
+    /*
+     * 표식 클래스. `.btn:disabled`의 불투명도만으로 충분해 지금 CSS에 규칙이 없지만, 등록 전
+     * CTA를 다른 버튼과 구별해 잡을 이름이 마크업에 하나는 있어야 한다 — 디자인이 이 자리에
+     * 손대는 날 선택자를 새로 지어 붙이면 그때 무엇이 대상인지가 다시 모호해진다.
+     */
+    expect(download.className).toContain('result-download--pending')
+  })
+
+  it('눌러도 계측이 나가지 않는다 — 비활성 CTA에는 이벤트가 없다', async () => {
+    const onDownloadClick = vi.fn()
+    renderScreen({ storePlatform: 'android', onDownloadClick })
+
+    const download = await screen.findByRole('button', { name: '앱 다운로드' })
+    fireEvent.click(download)
+
+    expect(onDownloadClick).not.toHaveBeenCalled()
+  })
+
+  it('만료 화면에서도 같은 규칙이다', async () => {
+    renderScreen({ storePlatform: 'android', fetchImpl: EXPIRED })
+
+    await screen.findByText('결과 보관 기간이 지났어요')
+    expect(screen.getByRole('button', { name: '앱 다운로드' })).toBeDisabled()
+    expect(screen.getByText(STORE_PENDING_CAPTION)).toBeInTheDocument()
+  })
+
+  it('앱 안에서는 비활성 버튼조차 없다 — 실행 판정이 먼저다', async () => {
+    // 이미 앱을 쓰고 있는 사람에게 "앱 스토어 등록 준비 중"은 아무 뜻이 없다
+    renderScreen()
+
+    await screen.findByText('명예주민')
+    expect(screen.queryByRole('button', { name: '앱 다운로드' })).not.toBeInTheDocument()
+    expect(screen.queryByText(STORE_PENDING_CAPTION)).not.toBeInTheDocument()
+  })
+})
+
 describe('결과 도착 통지 (KAN-33 계측 자리)', () => {
   it('성공한 첫 조회에 한 번 부른다 — 결과를 통째로 넘긴다', async () => {
     const onResultLoaded = vi.fn()
@@ -576,5 +646,121 @@ describe('결과 도착 통지 (KAN-33 계측 자리)', () => {
     await screen.findByRole('button', { name: '다시 시도' })
 
     expect(onResultLoaded).not.toHaveBeenCalled()
+  })
+})
+
+describe('개발팀에 후기 보내기 — KAN-211 3단계', () => {
+  /**
+   * 결과 조회(GET)와 후기 전송(POST)이 같은 `fetchImpl`로 나간다. 메서드로 갈라 주고, 후기
+   * 응답은 호출 순서대로 꺼낸다 — 재시도가 첫 요청과 무엇이 같고 무엇이 다른지를 이 순서로 본다.
+   */
+  function flow(...feedbackResponses: Response[]) {
+    const sent: RequestInit[] = []
+    let nth = 0
+    const fetchImpl: FetchLike = async (_url, init) => {
+      if (init?.method !== 'POST') return { ok: true, status: 200, json: async () => readyBody() } as Response
+      sent.push(init)
+      return feedbackResponses[Math.min(nth++, feedbackResponses.length - 1)]
+    }
+    return { fetchImpl, sent }
+  }
+
+  const ACCEPTED = { ok: true, status: 201, json: async () => ({ accepted: true }) } as Response
+  const SERVER_ERROR = {
+    ok: false,
+    status: 500,
+    json: async () => envelope('INTERNAL', '잠시 후 다시 시도해 주세요.', true),
+  } as Response
+
+  /** 시트를 열고 본문까지 적는다 */
+  async function openAndWrite(text = '화면이 예뻐요') {
+    fireEvent.click(await screen.findByRole('button', { name: '개발팀에 후기 보내기' }))
+    fireEvent.change(screen.getByLabelText(/테스트는 어땠나요/), { target: { value: text } })
+  }
+
+  it('결과가 떴을 때만 진입 자리가 있다', async () => {
+    renderScreen()
+
+    const open = await screen.findByRole('button', { name: '개발팀에 후기 보내기' })
+    // 글자 버튼이다 — 주 출구(공유·재응시)와 같은 무게를 주면 어디로 나가야 하는지가 흐려진다
+    expect(open.className).toContain('btn--text')
+    expect(open.className).not.toContain('btn--primary')
+    expect(open.className).not.toContain('btn--secondary')
+  })
+
+  it('조회 중에는 없다 — 아직 후기를 쓸 결과가 없다', () => {
+    renderScreen({ fetchImpl: () => new Promise(() => {}) })
+
+    expect(screen.queryByRole('button', { name: '개발팀에 후기 보내기' })).not.toBeInTheDocument()
+  })
+
+  it('조회에 실패한 화면에도 없다', async () => {
+    renderScreen({ fetchImpl: jsonFetch(500, envelope('INTERNAL', '문제가 생겼어요', true)) })
+
+    await screen.findByText('결과를 불러오지 못했어요')
+    expect(screen.queryByRole('button', { name: '개발팀에 후기 보내기' })).not.toBeInTheDocument()
+  })
+
+  it('누르면 시트가 뜨고 계측 훅이 불린다', async () => {
+    const onFeedbackOpen = vi.fn()
+    renderScreen({ onFeedbackOpen })
+
+    fireEvent.click(await screen.findByRole('button', { name: '개발팀에 후기 보내기' }))
+
+    expect(screen.getByRole('dialog', { name: '개발팀에 후기 보내기' })).toBeInTheDocument()
+    expect(onFeedbackOpen).toHaveBeenCalledTimes(1)
+  })
+
+  it('보내면 별점만 계측으로 올리고 진입 자리가 인사로 바뀐다', async () => {
+    const onFeedbackSubmitted = vi.fn()
+    const { fetchImpl } = flow(ACCEPTED)
+    renderScreen({ fetchImpl, onFeedbackSubmitted })
+
+    await openAndWrite()
+    fireEvent.click(screen.getByRole('radio', { name: '3점' }))
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }))
+
+    await screen.findByRole('heading', { name: '고마워요, 잘 받았어요' })
+    // 본문도 이메일도 계측에 닿는 길이 없다 — 올라가는 값은 별점 하나뿐이다
+    expect(onFeedbackSubmitted).toHaveBeenCalledWith(3)
+
+    fireEvent.click(screen.getByRole('button', { name: '닫기' }))
+    // 결과당 후기는 1건이고 수정 경로가 없다 — 다시 열 버튼을 남기면 「이미 보냈어요」를 받는다
+    expect(screen.queryByRole('button', { name: '개발팀에 후기 보내기' })).not.toBeInTheDocument()
+    expect(screen.getByText('후기를 보냈어요. 고마워요!')).toBeInTheDocument()
+  })
+
+  it('재시도가 첫 요청과 같은 멱등 키로 나간다', async () => {
+    const { fetchImpl, sent } = flow(SERVER_ERROR, ACCEPTED)
+    renderScreen({ fetchImpl })
+
+    await openAndWrite()
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }))
+    fireEvent.click(await screen.findByRole('button', { name: '다시 보내기' }))
+    await screen.findByRole('heading', { name: '고마워요, 잘 받았어요' })
+
+    expect(sent).toHaveLength(2)
+    const keyOf = (init: RequestInit) => (init.headers as Record<string, string>)['Idempotency-Key']
+    /*
+     * 새 키로 재시도하면 첫 요청이 실제로 저장됐던 경우(응답만 유실) 409를 받아 "이미
+     * 보냈어요"가 되고, 사용자는 방금 쓴 글이 어디로 갔는지 알 수 없게 된다.
+     */
+    expect(keyOf(sent[0])).toBe(keyOf(sent[1]))
+    expect(keyOf(sent[0])).not.toBe('')
+  })
+
+  it('후기 전송이 실패해도 결과 화면은 그대로다', async () => {
+    const { fetchImpl } = flow(SERVER_ERROR)
+    renderScreen({ fetchImpl })
+
+    await openAndWrite()
+    fireEvent.click(screen.getByRole('button', { name: '보내기' }))
+    await screen.findByRole('button', { name: '다시 보내기' })
+
+    // 후기는 부가 행동이다 — 실패가 등급·공유·재응시를 건드리는 길이 없어야 한다
+    expect(screen.getByRole('heading', { name: '명예주민' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '친구에게 공유하기' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '다시 테스트하기' })).toBeEnabled()
+    expect(screen.queryByText('결과를 불러오지 못했어요')).not.toBeInTheDocument()
   })
 })

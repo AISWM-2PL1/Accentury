@@ -34,12 +34,25 @@
         --sentences-from gn-2026.09.2 --published-at 2026-09-15T00:00:00Z \\
         --out ../../backend/src/main/resources/db/migration/V10__gn_2026_09_3_sentences.sql
 
+인계본 2차 (KAN-210 - gn-2026.09.4 = 문장 3개가 빠진 인계본 + 곡선 결측 문장 3개 복귀로 145 유지)
+    python3 build_definition.py --guide-f0 ~/Downloads/guide_f0_2026-09-04.json \\
+        --sentences ~/Desktop/handoff_sentences_2026-09-15-2.json \\
+        --include-excluded "2|43,2|71,2|79" \\
+        --test-version gn-2026.09.4 --score-version sv-0.4 --choice-seed gn-2026.09.1 \\
+        --sentences-from gn-2026.09.3 --published-at 2026-09-15T09:00:00Z \\
+        --out ../../backend/src/main/resources/db/migration/V11__gn_2026_09_4_sentences.sql
+
 --sentences는 KAN-159 전달본의 문장 목록 JSON이다. 가이드 곡선 문장의 대본을 script_key로
-찾은 인계본 대본으로 덮어쓴다. 가이드 문장 중 인계본에 없는 키가 있으면 멈춘다 - 인계본에서
-빠진 문장은 더 이상 채점하지 않으므로(인계본 규칙) 출시 문항에 남겨 둘 수 없다. 대본이 바뀌어도
+찾은 인계본 대본으로 덮어쓴다. 가이드 문장 중 인계본에 없는 키는 출시 문항에서 뺀다 - 인계본에서
+빠진 문장은 더 이상 채점하지 않으므로(인계본 규칙) 남겨 둘 수 없다. 대본이 바뀌어도
 scriptKey와 guideF0는 그대로다 - 인계본이 어절 수를 지키며 철자만 고쳤고 참조 본체도 그대로라서다.
 새 대본의 띄어쓰기 어절 수가 인계본의 "어절" 값과 다르면 표준출력에 경고를 남긴다 (가이드 곡선이
 어절당 20점 격자라 그 문장은 곡선과 대본의 어절 수가 어긋난다).
+
+--include-excluded는 "어절이 통째로 빈 문장" 가운데 출시 문항으로 되돌릴 키다. 인계본이 문장을
+빼서 음성 풀이 어휘 풀보다 작아졌을 때 두 풀을 같은 크기로 맞추는 용도다 (2026-09-15 결정). 그
+문장은 곡선에 어절 하나가 빈 채로 실리고 프론트가 끊어 그린다 (KAN-102 AC3). 목록에 없는 키는
+멈춘다. 자리는 가이드 곡선 파일의 순서다.
 
 --choice-seed는 어휘 선택지 섞기 시드다. 생략하면 testVersion이다. 대본만 바꾼 재발행은 원본의
 시드를 넘겨 어휘 문항(선택지 순서, 정답 choiceId)을 바이트 단위로 같게 한다 - e2e_smoke.py의
@@ -81,28 +94,35 @@ CHOICE_LABELS = "abcd"
 ESTIMATED_DURATION_SEC = 300
 
 
-def load_guide(path: Path) -> tuple[list[dict], list[str]]:
-    """가이드 곡선 파일에서 출시 대상 문장만 뽑는다."""
+def load_guide(path: Path, include_excluded: list[str] | None = None) -> tuple[list[dict], list[str]]:
+    """가이드 곡선 파일에서 출시 대상 문장만 뽑는다.
+
+    include_excluded는 "어절이 통째로 빈 문장" 가운데 출시 문항으로 되돌릴 키다 (모듈 주석 참고).
+    돌려주는 excluded는 되돌린 키를 뺀 나머지다.
+    """
     data = json.loads(path.read_text(encoding="utf-8"))
     excluded = list(data.get("어절이 통째로 빈 문장", []))
+    unknown = [k for k in (include_excluded or []) if k not in excluded]
+    if unknown:
+        raise SystemExit(f"--include-excluded의 키가 \"어절이 통째로 빈 문장\"에 없다: {' '.join(unknown)}")
+    excluded = [k for k in excluded if k not in set(include_excluded or [])]
     sentences = [s for s in data["문장"] if s["script_key"] not in set(excluded)]
     return sentences, excluded
 
 
-def apply_sentences(sentences: list[dict], path: Path) -> list[tuple[str, str, str]]:
+def apply_sentences(sentences: list[dict], path: Path) -> tuple[list[tuple[str, str, str]], list[str]]:
     """인계본(KAN-159 문장 목록)의 대본을 script_key로 덮어쓴다 (KAN-210).
 
-    돌려주는 것은 대본이 바뀐 문장의 (script_key, 이전 대본, 새 대본) 목록이다. 가이드 문장 중
-    인계본에 없는 키는 멈춘다 - 인계본 규칙상 그 키는 더 이상 채점하지 않는다. 어절 수가
-    인계본의 "어절" 값과 어긋나면 경고만 남긴다 - 곡선(어절당 20점)과 대본이 어긋나는 문장이라
-    사람이 봐야 하지만, 인계본이 정본이라 스크립트가 고치지 않는다.
+    sentences를 제자리에서 고치고, 대본이 바뀐 문장의 (script_key, 이전 대본, 새 대본) 목록과
+    인계본에 없어 뺀 키 목록을 돌려준다. 인계본 규칙상 인계본에 없는 키는 더 이상 채점하지
+    않으므로 출시 문항에서 뺀다. 어절 수가 인계본의 "어절" 값과 어긋나면 경고만 남긴다 -
+    곡선(어절당 20점)과 대본이 어긋나는 문장이라 사람이 봐야 하지만, 인계본이 정본이라
+    스크립트가 고치지 않는다.
     """
     handoff = json.loads(path.read_text(encoding="utf-8"))
     by_key = {s["script_key"]: s for s in handoff["문장"]}
-    missing = [s["script_key"] for s in sentences if s["script_key"] not in by_key]
-    if missing:
-        raise SystemExit(f"인계본에 없는 문장 {len(missing)}개: {' '.join(missing)} - "
-                         "인계본에서 빠진 키는 채점 대상이 아니라 출시 문항에 둘 수 없다")
+    dropped = [s["script_key"] for s in sentences if s["script_key"] not in by_key]
+    sentences[:] = [s for s in sentences if s["script_key"] in by_key]
     changed: list[tuple[str, str, str]] = []
     for s in sentences:
         entry = by_key[s["script_key"]]
@@ -113,7 +133,7 @@ def apply_sentences(sentences: list[dict], path: Path) -> list[tuple[str, str, s
         if new != s["대본"]:
             changed.append((s["script_key"], s["대본"], new))
             s["대본"] = new
-    return changed
+    return changed, dropped
 
 
 def build_items(sentences: list[dict], words: list[tuple], choice_seed: str) -> list[dict]:
@@ -194,7 +214,7 @@ def vocabulary_item(item_id: str, seq: int, word: tuple, rng: random.Random) -> 
 
 def migration_sql(definition: dict, published_at: str, previous_version: str,
                   same_content_as: str | None = None, sentences_from: str | None = None,
-                  changed: int = 0) -> str:
+                  sentences_note: str = "") -> str:
     """발행 마이그레이션 - 활성 전환은 담지 않는다 (2단계 롤아웃은 배포 순서로 지킨다).
 
     달러 인용($definition$)을 쓰는 것은 본문에 작은따옴표가 들어 있어서다 - 어휘 문항의
@@ -210,7 +230,7 @@ def migration_sql(definition: dict, published_at: str, previous_version: str,
     if same_content_as:
         header = reissue_header(definition, same_content_as, voices, vocabulary, sets)
     elif sentences_from:
-        header = sentences_header(definition, sentences_from, voices, vocabulary, sets, changed)
+        header = sentences_header(definition, sentences_from, voices, vocabulary, sets, sentences_note)
     else:
         header = first_content_header(previous_version, voices, vocabulary, sets)
 
@@ -243,17 +263,17 @@ def reissue_header(definition: dict, same_content_as: str, voices: int, vocabula
 
 
 def sentences_header(definition: dict, sentences_from: str, voices: int, vocabulary: int,
-                     sets: int, changed: int) -> str:
-    """대본만 바꾼 재발행의 머리말 (KAN-210)."""
+                     sets: int, note: str) -> str:
+    """음성 문장만 바꾼 재발행의 머리말 (KAN-210). note는 main이 만든 인계본 요약 줄이다."""
     return f"""\
--- KAN-210: {sentences_from}의 본문에 음성 문항 대본만 KAN-159 전달본의 09-01 갱신 목록
--- (handoff_sentences_2026-09-15.json, 사람 선별 + 읽기 쉬운 표준 철자)으로 바꾼 재발행 -
--- 음성 {voices}문항 + 어휘 {vocabulary}문항 = 세트 {sets}개. 대본이 바뀐 음성 문항은 {changed}개다.
+-- KAN-210: {sentences_from}의 본문에 음성 문항만 KAN-159 전달본의 갱신 문장 목록(사람 선별 +
+-- 읽기 쉬운 표준 철자)으로 바꾼 재발행 - 음성 {voices}문항 + 어휘 {vocabulary}문항 = 세트 {sets}개.
+-- {note}
 --
--- scriptKey, guideF0, 어휘 문항(선택지 순서와 정답 choiceId)은 {sentences_from}과 바이트 단위로
--- 같다. 인계본이 어절 수를 지키며 철자만 고쳤고 참조 본체(08-31b)도 그대로라 곡선과 참조는
--- 다시 내지 않는다. 선택지 섞기 시드를 원본으로 고정해 만들었다. 이 파일은 손으로 쓰지 않는다 -
--- tools/content/build_definition.py --sentences 가 만든다.
+-- 남은 문항의 scriptKey와 guideF0, 어휘 문항(선택지 순서와 정답 choiceId)은 {sentences_from}과
+-- 바이트 단위로 같다. 인계본이 어절 수를 지키며 철자만 고쳤고 참조 본체(08-31b)도 그대로라 곡선과
+-- 참조는 다시 내지 않는다. 선택지 섞기 시드를 원본으로 고정해 만들었다. 이 파일은 손으로 쓰지
+-- 않는다 - tools/content/build_definition.py --sentences 가 만든다.
 --
 -- 새 testVersion을 발행하는 이유는 정의가 발행 후 불변이라서다(KAN-26). 대본 한 글자를 고치는
 -- 것도 새 정의 발행이다. scoreVersion은 {definition["scoreVersion"]} 그대로다.
@@ -305,6 +325,9 @@ def main() -> None:
                              "덮어쓴다 (KAN-210)")
     parser.add_argument("--sentences-from", metavar="TEST_VERSION",
                         help="--sentences 재발행의 원본 testVersion - 머리말에 적는다 (KAN-210)")
+    parser.add_argument("--include-excluded", metavar="KEY[,KEY...]", default="",
+                        help="\"어절이 통째로 빈 문장\" 가운데 출시 문항으로 되돌릴 script_key - "
+                             "음성 풀을 어휘 풀 크기에 맞출 때 쓴다 (KAN-210)")
     parser.add_argument("--choice-seed", metavar="TEST_VERSION",
                         help="어휘 선택지 섞기 시드 (생략하면 testVersion). 대본만 바꾼 재발행은 "
                              "원본 testVersion을 넘겨 어휘 문항을 그대로 둔다 (KAN-210)")
@@ -312,7 +335,8 @@ def main() -> None:
     parser.add_argument("--json-out", type=Path, help="발행본 JSON도 따로 남길 경로")
     args = parser.parse_args()
 
-    sentences, excluded = load_guide(args.guide_f0)
+    included = [k.strip() for k in args.include_excluded.split(",") if k.strip()]
+    sentences, excluded = load_guide(args.guide_f0, included)
     if args.same_content_as == args.test_version:
         raise SystemExit("--same-content-as는 다른 testVersion이어야 한다 - 정의는 발행 후 불변이다 (KAN-26)")
     if args.same_content_as and args.sentences:
@@ -321,7 +345,13 @@ def main() -> None:
         raise SystemExit("--sentences와 --sentences-from은 같이 써야 한다 - 머리말이 원본 testVersion을 적는다")
     if args.sentences_from == args.test_version:
         raise SystemExit("--sentences-from은 다른 testVersion이어야 한다 - 정의는 발행 후 불변이다 (KAN-26)")
-    changed = apply_sentences(sentences, args.sentences) if args.sentences else []
+    changed, dropped = apply_sentences(sentences, args.sentences) if args.sentences else ([], [])
+    note = ""
+    if args.sentences:
+        stamp = json.loads(args.sentences.read_text(encoding="utf-8")).get("stamp", "?")
+        note = (f"인계본 {args.sentences.name}(stamp {stamp}): 대본이 바뀐 문항 {len(changed)}개, "
+                f"인계본에서 빠져 뺀 문항 {len(dropped)}개({' '.join(dropped) or '없음'}), "
+                f"곡선 결측이라 빼 뒀다가 되돌린 문항 {len(included)}개({' '.join(included) or '없음'}).")
     items = build_items(sentences, WORDS, args.choice_seed or args.same_content_as or args.test_version)
     definition = {
         "testVersion": args.test_version,
@@ -332,7 +362,7 @@ def main() -> None:
     }
 
     sql = migration_sql(definition, args.published_at, args.previous_version, args.same_content_as,
-                        args.sentences_from, len(changed))
+                        args.sentences_from, note)
     if args.out:
         args.out.write_text(sql, encoding="utf-8")
     else:
@@ -341,13 +371,15 @@ def main() -> None:
         args.json_out.write_text(json.dumps(definition, ensure_ascii=False, indent=2),
                                  encoding="utf-8")
 
-    report(sentences, excluded, definition, args, sql, changed)
+    report(sentences, excluded, definition, args, sql, changed, dropped, included)
 
 
-def report(sentences, excluded, definition, args, sql, changed) -> None:
+def report(sentences, excluded, definition, args, sql, changed, dropped, included) -> None:
     """반올림 오차와 크기를 표준출력에 남긴다 - 발행 전에 눈으로 확인할 값이다."""
     if args.sentences:
         print(f"[대본]   인계본으로 바뀐 음성 문항 {len(changed)}개 / {len(sentences)}", file=sys.stderr)
+        print(f"[삭제]   인계본에서 빠져 뺀 문항 {len(dropped)}개: {' '.join(dropped)}", file=sys.stderr)
+        print(f"[복귀]   곡선 결측 목록에서 되돌린 문항 {len(included)}개: {' '.join(included)}", file=sys.stderr)
         for key, old, new in changed:
             print(f"         {key}\n           전: {old}\n           후: {new}", file=sys.stderr)
     errors = []

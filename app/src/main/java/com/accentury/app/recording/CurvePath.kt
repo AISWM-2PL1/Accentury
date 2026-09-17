@@ -70,3 +70,32 @@ fun smoothPathCommands(points: List<CurvePoint>, width: Float, height: Float): L
     commands += PathCommand.LineTo(x(points.size - 1), y(points.size - 1))
     return commands
 }
+
+/**
+ * 0..1 비율 y를 위아래로 선 굵기의 절반씩 안으로 들인다 (KAN-218). 웹 `CurveLane.tsx`의
+ * `insetY`와 같은 규칙이고 3플랫폼이 같은 그림을 그리기 위한 것이다.
+ *
+ * `userCurveDisplayPoints`는 창(±7 semitone)을 벗어난 음높이를 y=0·y=1로 눌러 담는다. 그 점을
+ * 그대로 캔버스 가장자리에 놓으면 선의 중심이 경계 위라 **굵기의 절반이 캔버스 밖**에 걸린다.
+ * 웹은 SVG viewBox가 그 절반을 잘라 3px 선이 1.5px 조각으로 남고 아래쪽은 망점 면적까지 0이
+ * 되어 곡선이 사라진 것처럼 보였다. Compose `Canvas`는 `clipToBounds` 없이는 그리기를 자기
+ * 크기에 자르지 않아(레인의 `padding` 자리로 삐져나온다) 여기서는 잘리지 않았지만, 같은
+ * 목소리가 앱과 웹에서 다른 자리에 그려지면 안 되므로 같은 규칙을 둔다 — y=0은 선 굵기
+ * 절반만큼 아래, y=1은 그만큼 위에 놓아 천장·바닥을 기는
+ * 구간도 온전한 굵기로 레인 안에 남긴다. 가운데(0.5)는 제자리지만 모든 y가 중앙 쪽으로 균일하게
+ * (h − 2·inset)/h 만큼 압축된다(예: 높이 92px·굵기 3이면 89/92 ≈ 3.3%, 굵기 2면 90/92 ≈ 2.2%).
+ * 세 플랫폼이 같은 규칙이라 비교에는 영향 없다. x는 건드리지 않는다.
+ *
+ * [strokeWidthPx]는 "들일 총량"이다 - 선은 굵기를 넘겨 절반씩 들이고, 고립점은 굵기의 2배를 넘겨
+ * 반지름(= 굵기)만큼 들인다 (`CurveLane.kt` 호출부).
+ *
+ * [heightPx]를 받는 이유: 좌표가 비율이라 픽셀 인셋을 비율로 되돌려야 하는데, 웹은 그리기
+ * 높이가 상수(`DRAW_HEIGHT`)이고 여기는 `Canvas`의 `size.height`가 런타임 값이다.
+ * 픽셀로 옮기면 `y_px = inset + y * (height − 2·inset)`, `inset = strokeWidthPx / 2`다.
+ */
+fun insetY(points: List<CurvePoint>, strokeWidthPx: Float, heightPx: Float): List<CurvePoint> {
+    if (heightPx <= 0f) return points
+    val inset = strokeWidthPx / 2f
+    val innerHeight = heightPx - 2f * inset
+    return points.map { CurvePoint(it.x, (inset + it.y * innerHeight) / heightPx) }
+}

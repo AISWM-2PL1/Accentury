@@ -27,7 +27,7 @@
  */
 
 import { expect, test, type Page } from '@playwright/test'
-import { passAdConsentIfShown } from './helpers/testFlow'
+import { expectAppTestCta, passAdConsentIfShown } from './helpers/testFlow'
 
 /**
  * `getUserMedia`가 주어진 이름으로 거절하게 만든다.
@@ -79,11 +79,15 @@ test('마이크 거부 - 권한 안내 화면으로 갈리고 세션은 만들�
   ).toBeVisible()
 
   /*
-   * 스토어 링크는 버튼이 아니라 `<a>`다 — 이동이라 링크의 기본 동작(새 탭·길게 눌러 복사·
-   * 스크린 리더의 "링크" 안내)이 전부 의미를 갖는다는 것이 그 화면의 판단이고, 역할로 잡으면
-   * 그 판단이 지켜지는지까지 함께 확인된다.
+   * 스토어 CTA. 등록된 빌드에서는 버튼이 아니라 `<a>`다 — 이동이라 링크의 기본 동작(새 탭·
+   * 길게 눌러 복사·스크린 리더의 "링크" 안내)이 전부 의미를 갖는다는 것이 그 화면의 판단이고,
+   * 역할로 잡으면 그 판단이 지켜지는지까지 함께 확인된다.
+   *
+   * 아직 스토어에 앱이 없어 기본 빌드는 비활성 버튼과 안내 한 줄을 대신 세운다 (2026-09-15).
+   * 어느 쪽인지는 빌드가 정하므로 헬퍼가 갈라 단언한다 — 이 화면에서 특히 중요한 이유는
+   * 여기 CTA가 사유 둘(unsupported·unavailable)에서 유일한 출구이기 때문이다.
    */
-  await expect(page.getByRole('link', { name: '앱으로 테스트하기' })).toBeVisible()
+  await expectAppTestCta(page)
 
   /*
    * [다시 시도]는 `denied`·`unavailable`에만 있다. 눌러도 같은 화면으로 돌아오는

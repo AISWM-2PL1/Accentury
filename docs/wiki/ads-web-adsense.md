@@ -573,4 +573,3 @@ skip 1건은 `retake.spec.ts`다 — `E2E_FAIL_ITEM`이 없는 스택의 정상 
 
 확인은 켤 때와 같은 한 줄인데 기대가 뒤집힌다 — `curl https://accentury.app/ads.txt`가 404여야
 한다.
-

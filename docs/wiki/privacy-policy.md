@@ -11,7 +11,8 @@
 
 - 티켓: **KAN-176** (방침 본문 작성)
 - 본문 정본: [`infra/privacy/privacy.html`](../../infra/privacy/privacy.html) — 14개 절
-- 계약 테스트: [`infra/privacy/privacy.test.mjs`](../../infra/privacy/privacy.test.mjs) 19건 (1항 표 검사는 행 목록으로 확장한다 — KAN-164 행 포함. KAN-196 1단계에서 사업자 확정 3건, KAN-197 1단계에서 웹 사업자 1건 추가), CI `edge-test` 잡에 결선 (`.github/workflows/test.yml`)
+- 계약 테스트: [`infra/privacy/privacy.test.mjs`](../../infra/privacy/privacy.test.mjs) 21건 (1항 표 검사는 행 목록으로 확장한다 — KAN-164 행 포함. KAN-196 1단계에서 사업자 확정 3건, KAN-197 1단계에서 웹 사업자 1건, KAN-211 4단계에서 이용 후기 2건 추가), CI `edge-test` 잡에 결선 (`.github/workflows/test.yml`)
+- 이용 후기: **KAN-211** (2026-09-15) — 회신 이메일이 이 서비스가 받는 유일한 개인 식별 정보다. 구현 정본은 [`feedback.md`](feedback.md)
 - 호스팅과 게시 경로: **KAN-133** — `infra/privacy/README.md`, `scripts/publish-privacy.sh`
 - 앱 안 링크: **KAN-177** — 인트로 하단 한 줄, 구현 완료. 계약과 여는 방법은 [`webview-bridge.md` §4](webview-bridge.md), URL 정본은 `web/src/legal/privacyPolicy.ts` · 스토어 등록: **KAN-174**(Play) **KAN-175**(App Store)
 - 광고 도입: **KAN-196**(앱 SDK·동의 UI·ATT·스토어 신고) **KAN-197**(웹 광고). 사업자는 **앱이 Google LLC의 Google AdMob**(2026-09-11 팀장 결정, Firebase 프로젝트 공유), **브라우저 단독 실행이 같은 회사의 Google AdSense**(2026-09-13 팀장 결정 — AdMob은 웹을 지원하지 않는다, [`ads-web-adsense.md`](ads-web-adsense.md)). KAN-196은 전 단계 완료, KAN-197도 전 단계 완료(2026-09-13 — 1단계 방침·동의 문안·문서, 2단계 웹 동의 저장, 3단계 태그·슬롯, 4단계 배포 변수·`ads.txt`). 코드는 닫혔고 **광고가 실제로 나오기까지 남은 것은 사람 손의 절차**다 — AdSense 가입·사이트 심사·변수 등록이고, 그 표가 [`ads-web-adsense.md`](ads-web-adsense.md) §10이다
@@ -48,6 +49,10 @@
 | 보안 로그 | 7일, 인증 헤더는 가림 | `infra/modules/waf/variables.tf:21-24` (기본값 7), `infra/modules/waf/main.tf:286,313,319` (샘플 저장 끔 + `redacted_fields`) | `1항 표의 보유 기간이 행마다 코드와 맞는다` |
 | 이용 통계 이벤트 | 보존은 GA 설정에 따름 (기본값 2개월) | **미확인** — 콘솔 기본값이고 레포에 근거가 없다 (7항 참조) | — |
 | 비정상 종료 로그 | 90일 | **미확인** — Crashlytics 콘솔 기본값이고 레포에 근거가 없다 (7항 참조). 수집 항목 자체는 KAN-33, `docs/wiki/analytics.md` §8 | `1항 표의 보유 기간이 행마다 코드와 맞는다` (표기가 90일인지만 붙든다) |
+| 이용 후기 | 별점·본문·**회신 이메일(선택)**과 결과 스냅샷을 받고 **1년** 보관 | `backend/src/main/resources/db/migration/V12__session_feedback.sql` (컬럼 전부 — 입력 셋과 스냅샷 다섯. 5-9행 주석이 「test_session에 FK를 걸지 않는다」와 그 이유를 적었다), `backend/src/main/java/app/accentury/backend/common/AccenturyProperties.java`의 `Feedback.retention` (`@DefaultValue("365d")`), `backend/src/main/resources/application.yml:167` (같은 값과 주석), `backend/src/main/java/app/accentury/backend/feedback/FeedbackRetention.java:36-43` (60분 주기 `purgeExpired`가 `created_at` 기준으로 지운다), KAN-211 | `1항 표의 보유 기간이 행마다 코드와 맞는다` (「이용 후기」 행)·`이용 후기 절이 있고 이메일이 선택·회신 전용이라고 적혀 있다` |
+| 이용 후기 | 세션이 지워진 뒤에도 남고, 함께 남는 것은 **등급·테스트/점수 버전·이용 경로**뿐 | FK 없음 + 저장 시점 스냅샷 복사 (`V12__session_feedback.sql`의 `tier_code`·`test_version`·`score_version`·`platform`·`traffic`, `FeedbackService.submit`의 스냅샷 단계). 세션·결과는 24시간(§5.5)이고 후기는 1년이라 두 수명이 독립이다 | 위와 같음 |
+| 이용 후기 | **내부 알림에 이메일 주소를 싣지 않음** | `backend/src/main/java/app/accentury/backend/feedback/FeedbackSlackNotifier.java`의 `message` (연락처는 `있음`/`없음`만 붙인다 — javadoc이 「채널은 개발팀 전원이 보고 슬랙 무료 플랜은 지난 메시지를 지우지 않는다」를 근거로 적었다), 마지막 관문은 `backend/src/main/java/app/accentury/backend/common/LogMasking.java`의 `EMAIL` 패턴 | `후기 이메일이 내부 알림에 실리지 않는다고 적혀 있다` |
+| 이용 후기 | 본문·이메일을 **로그에 남기지 않음** | `FeedbackService` 클래스 javadoc (§2.6), `LogMasking`의 `EMAIL`이 경로와 무관하게 한 번 더 가린다 | 위와 같음 (11항 몫) |
 | 광고 | Google 개인정보처리방침에 따름 | 2026-09-07 팀 결정(광고 도입) + 2026-09-11 팀장 결정(사업자 = Google AdMob), KAN-196·KAN-197. 코드 배선은 KAN-196 2~4단계에서 완료 (`docs/wiki/ads-admob.md`) | `맞춤형 광고 절이 있고 동의·거부 방법이 적혀 있다` |
 
 같은 항의 산문 부분은 위 행들의 풀이다. 「재응시하면 이전 세션과 결과를 즉시 삭제」는
@@ -68,6 +73,7 @@
 | 3. 위탁 | Google LLC(Firebase Analytics·Crashlytics) | KAN-33, `docs/wiki/analytics.md` | — |
 | 4. 국외 이전 | 이전 대상은 이용 통계·오류 로그·광고 관련 항목이고 이전받는 자는 전부 Google LLC | 음성·세션·결과는 서울 리전 (`infra/envs/prod/terraform.tfvars:3`, `infra/envs/staging/terraform.tfvars:3`), Google(Firebase·GA·AdMob)만 국외 | `데이터 소재지가 서울 리전이라고 적혀 있다` |
 | 4. 국외 이전 | 광고 관련 항목은 기존 Google LLC `<dl>`에 합쳐 적었다 — 이전받는 자에 Google AdMob·Google AdSense, 이전되는 항목에 10항의 광고 항목(앱의 광고 식별자 또는 웹의 광고 쿠키), 이용 목적에 맞춤형 광고 표시·성과 측정 | AdMob도 AdSense도 Google LLC라 이전받는 자·국가·방법이 Firebase와 같다. 별도 행을 만들면 같은 사업자를 두 번 고지하게 된다 (2026-09-11 KAN-196 1단계, 웹 몫은 2026-09-13 KAN-197 1단계). 이 자리는 그 전까지 「확정 후 기재」였다 | `4항 국외 이전에 광고 항목이 들어 있다`·`브라우저 웹의 광고 사업자 Google AdSense가 2·4·8·10항에 적혀 있다` |
+| 4. 국외 이전 | **이용 후기는 Slack Technologies, LLC (미국)로 이전된다.** Google `<dl>`과 나란히 별도 `<dl>` 한 벌. 이전 항목은 후기 내용·별점·등급·테스트/점수 버전·이용 경로이고 **이메일 주소는 가지 않는다**. 보유는 Slack 워크스페이스 보존 정책(무료 플랜 기준 최근 90일 열람) | `FeedbackSlackNotifier`가 커밋 뒤 채널 `#feedback`으로 올린다. **국외 이전으로 분류한 판단**: 후기 본문은 이용자가 자유 서술한 내용이라 개인정보가 섞일 수 있고(이름·연락처를 본문에 적는 사람이 있다), 받는 쪽이 미국 사업자다. 「가능성」만으로 고지하는 쪽을 고른 것은 안 적었다가 실제로 섞인 날 되돌릴 방법이 없기 때문이다 — 무료 플랜은 지난 메시지를 지우지 않는다. **대안(3항 위탁에 두는 안)을 쓰지 않은 이유**: 위탁은 우리 목적의 처리를 맡기는 것이고 Slack은 메시지를 우리 대신 처리하는 것이 아니라 **전달·보관할 뿐**이다. 게다가 3항에 두면 「처리 장소: 미국 등 국외」 한 줄로 끝나 이전 항목·목적·기간이 드러나지 않는다 — Firebase가 3항과 4항에 **둘 다** 적힌 것과 같은 이유로 4항이 본 자리다. Google 행과 합치지 않은 것은 사업자가 다르기 때문이다(AdMob·AdSense를 합친 근거가 「둘 다 Google LLC」였다). 2026-09-15 결정, KAN-211 | `이용 후기 절이 있고 이메일이 선택·회신 전용이라고 적혀 있다` (4항 Slack 조각) |
 | 4. 이용 통계 이벤트 | 수집 항목 목록 | `web/src/analytics/events.ts:71` (`AnalyticsEvent` 유니온이 이름·파라미터의 정본), `docs/wiki/analytics.md` §1 | — |
 | 4. 이용 통계 이벤트 | 응시 구분 무작위 키는 탭을 닫으면 사라짐 | `web/src/analytics/testId.ts:21-23,93` (`sessionStorage`) | — |
 | 4. 이용 통계 이벤트 | 세션 id·토큰·문항·점수 원값을 싣지 않음 | `docs/wiki/analytics.md` §3 「익명 규칙」, `web/src/analytics/events.ts` | — |
@@ -76,6 +82,7 @@
 | 5. 파기 | 파기 시점 여섯 가지 | 1항의 근거를 그대로 반복한다 (음성 즉시·30분, 미완주 세션 30분, 완주 세션 완료 후 24시간, 재응시 즉시, 공유 전송 알림 식별값 7일, 로그 14일/7일) | `음성은 분석 직후…`·`임시 파일 청소 기준 30분…`·`세션·결과 보유 기간 24시간…` |
 | 6. 정보주체 권리 | 특정 이용자의 정보를 지목할 수단이 없음 | 계정 없음, 세션은 익명 (`backend/src/main/java/app/accentury/backend/session/TestSession.java` — 사람을 가리키는 컬럼 없음) | — |
 | 6. 정보주체 권리 | 탭을 닫으면 세션 토큰·응시 키는 사라지고, 진행 기록은 결과 화면 진입에서 지워진다 | `web/src/session/webSession.ts`·`web/src/analytics/testId.ts:21-23` (`sessionStorage`) 대 `web/src/progress/progressSnapshot.ts` (`localStorage`, 키 `accentury:progress:<sessionId>`). 삭제 배선은 `web/src/App.tsx`의 `ResultRoute`(`clearSnapshot`)와 `IntroRoute`(`sweepSnapshots` — 결과까지 못 간 응시의 잔여 키) 두 자리다 (KAN-198) | `진행 기록의 삭제 시점이 적혀 있다` |
+| 6. 정보주체 권리 | **후기에 이메일을 적은 경우에는 그 주소로 13항 문의처에 열람·삭제를 요청할 수 있다** | 첫 문단의 전제(「개인을 알아볼 수 있는 값이 없습니다」)를 이 티켓이 부분적으로 깬다 — 회신 이메일이 계정 없는 서비스에서 이용자를 **지목할 수 있는 유일한 값**이다. 전제를 지우지 않고 예외를 목록 뒤에 더한 것은 나머지 데이터(세션·결과·통계)에는 여전히 지목 수단이 없기 때문이다. **처리 절차는 운영자 수작업이다**: 요청받은 주소로 `session_feedback.contact_email`을 조회해 해당 행을 삭제한다. 관리자 조회 API가 없어 DB 직접 조회이고, 자동화는 이월했다 ([`feedback.md`](feedback.md) §10). 2026-09-15 결정, KAN-211 | `이용 후기 절이 있고 이메일이 선택·회신 전용이라고 적혀 있다` (6항 「삭제」·「13항」 조각) |
 | 7. 만 14세 미만 | 아동 대상 아님, 마켓에도 그렇게 등록 | `docs/wiki/play-store-listing.md` §6 (타겟 연령 13세 이상) — **KAN-174 브랜치에만 있는 파일** | — |
 | 7. 만 14세 미만 | 아동에게 맞춤형 광고 미표시 | 2026-09-07 팀 결정. 아동 대상 아님을 유지하고 AdMob SDK의 아동 대상 플래그는 off — KAN-196 3단계(Android `AdsController.initialize`, `TAG_FOR_CHILD_DIRECTED_TREATMENT_FALSE`)·4단계(iOS `AdsController.start`, `tagForChildDirectedTreatment = false`)에서 완료, `docs/wiki/ads-admob.md` §6·§7.1 | — |
 | 8. 자동 수집 장치 | 웹에는 GA4 태그가 쿠키를 저장 | `web/src/analytics/ga4.ts:75-81` — `config`에 쿠키를 끄는 옵션이 없다(기본 동작이 쿠키 설정) | — |
@@ -97,7 +104,9 @@
 | 10. 광고 | 거부 시 맞춤형이 아닌 일반 광고만. 이때 광고 식별자는 관심사 추정에는 쓰지 않고 빈도 제한·집계 보고·부정 사용 방지에만 쓴다. iOS ATT 거부 시 IDFA 미사용 | AdMob 비개인화 광고 요청(npa) — KAN-196 3단계(Android `AdRequests.kt`)·4단계(iOS `AdRequests.swift`)에서 배선 완료. npa=1은 식별자 전송을 막는 플래그가 아니다 — Google 「맞춤 광고 및 맞춤 설정되지 않은 광고」: 비맞춤 광고도 빈도 제한·집계 광고 보고·사기 및 악용 방지에 쿠키·모바일 광고 식별자를 쓴다 (https://support.google.com/admob/answer/7676680). 1단계 초안의 「광고 식별자 대신 IP 주소와 기기 정보」는 그래서 거짓이었고 리뷰 P1-4(2026-09-11)에서 고쳤다 | `맞춤형 광고 절이 있고 동의·거부 방법이 적혀 있다`·`비맞춤 광고에서 「광고 식별자 대신」이라고 적지 않는다` |
 | 10. 광고 | 보유 기간은 Google 개인정보처리방침, 국외 이전은 4항 | Google LLC는 국외 사업자. 방침 링크는 4항의 `https://policies.google.com/privacy`와 같다 | — |
 | 11. 안전성 확보 | HTTPS, 토큰 해시, 임시 파일 최소 권한, 로그 비식별, WAF, 관리자 토큰 | `backend/src/main/java/app/accentury/backend/session/TestSession.java:45-46`, `ai/app/tempstore.py:6-16`, `infra/modules/waf/main.tf:313,319`, `backend/src/main/java/app/accentury/backend/common/AccenturyProperties.java:29` (admin 시크릿) | — |
+| 11. 안전성 확보 | 후기의 이메일은 로그와 내부 알림에 남기지 않음 | `FeedbackService` javadoc (§2.6), `FeedbackSlackNotifier.message` (연락처는 유무만), `LogMasking`의 `EMAIL` 패턴이 마지막 관문 | `후기 이메일이 내부 알림에 실리지 않는다고 적혀 있다` |
 | 12. 동의 방식 | 동의 화면을 따로 두지 않되 광고는 별도 동의 | KAN-2 「동의 화면 범위 제외」 결정 + 2026-09-07 광고 결정의 부분 번복 (6항 참조) | — |
+| 12. 동의 방식 | **후기의 회신 이메일은 이용자가 직접 적는 선택 입력이고, 시트 안내 + 방침 링크를 읽은 뒤의 [보내기]를 동의로 본다** | 수집 고지는 입력칸 옆에 있다 — `web/src/feedback/feedbackText.ts`의 `FEEDBACK_EMAIL_HINT`(「답변을 원하시면 적어 주세요. 후기 확인에만 쓰고 다른 데 쓰지 않아요.」)와 그 아래 `FEEDBACK_DETAIL_LEAD` + `legal/PrivacyPolicyLink`. 광고 동의처럼 별도 시트를 세우지 않은 이유: 이메일은 **안 적으면 수집이 없는** 선택 입력이라, 적는 행위 자체가 의사 표시다. 12항 첫 문단의 「동의 화면을 따로 두지 않는다」와 어긋나지 않는다 | — |
 | 13. 보호책임자 | 이성주, team2pl1@gmail.com | 2026-09-07 팀 결정 | `연락처가 있다 (Play·App Store 심사가 요구하는 항목)` |
 | 14. 시행일 | 정식 게시일에 기재 | prod 게이트 (102·587행) | — |
 | 전 절 | 법정 필수 절이 빠지지 않음 | 「개인정보 보호법」 제30조 + 실제 처리(국외 이전, 자동 수집 장치, 광고) | `법정 필수 절이 모두 있다` |
@@ -187,6 +196,7 @@ prod 게시(`scripts/publish-privacy.sh prod`) 전에는 아래를 전부 닫는
 | 2026-09-07 | 위 결정으로 KAN-2의 「동의 화면 범위 제외」가 부분 번복됐다 — 개인정보 수집·이용 동의 화면은 여전히 두지 않지만, **맞춤형 광고 동의 UI는 별도로 둔다** | 12항 「다만 맞춤형 광고는 별도로 동의를 받습니다」 |
 | 2026-09-11 | **광고 사업자는 Google LLC의 Google AdMob** (Firebase 프로젝트 공유, KAN-196 팀장 결정). 광고 자리는 분석 대기 화면 전면 광고와 결과 화면 「다시 테스트하기」 보상형 광고 둘. 동의는 인트로 첫 실행 동의 시트, 철회는 인트로 하단 방침 링크(KAN-177) 옆 링크. 거부 시 비맞춤 광고(npa)만, iOS ATT 거부 시 IDFA 미사용. 아동 대상 아님 유지 | 1항 광고 행, 2항 제3자 제공 표, 4항 Google LLC `<dl>`, 10항 도입·거부와 철회·보유 기간과 국외 이전 |
 | 2026-09-13 | **브라우저 단독 실행의 광고 사업자는 Google LLC의 Google AdSense** (KAN-197 팀장 결정 — AdMob은 웹을 지원하지 않는다). 자리는 분석 대기 화면 배너 1개이고 웹의 재응시에는 광고가 없다. 동의는 웹이 묻고 브라우저 저장소에 두며, 앱 WebView 안에서는 이 웹 광고 태그를 설치하지 않는다 (정책). 정본은 `docs/wiki/ads-web-adsense.md` | 2·4·8·10항 |
+| 2026-09-15 | **결과 화면에서 이용 후기를 받는다 (KAN-211).** 별점(선택)·본문(1~500자, 필수)·회신 이메일(선택)을 세션당 1건, **1년** 보관하고 저장 시점 등급·테스트/점수 버전·플랫폼·트래픽을 함께 복사한다(세션과 FK 없음). 저장이 커밋되면 슬랙 `#feedback`으로 알림이 나가되 **이메일은 싣지 않는다**. 계측은 `feedback_opened`·`feedback_submitted(rating)` 둘뿐. **회신 이메일이 이 서비스가 받는 유일한 개인 식별 정보라**, 6항의 「개인을 알아볼 수 있는 값이 없다」 전제에 예외를 더하고 그 주소로 삭제·열람을 요청할 경로를 적었다. Slack은 3항 위탁이 아니라 **4항 국외 이전**으로 분류했다(위 4항 행의 근거). 정본은 [`feedback.md`](feedback.md) | 1항 표와 그 아래 「이용 후기」 절, 4항 Slack `<dl>`, 5항 파기 목록, 6항 권리 마지막 문단, 11항 목록, 12항 |
 | 2026-09-11 | KAN-196 리뷰 반영. (P1-4) 비맞춤 광고 문장에서 「광고 식별자 대신」을 뺐다 — npa는 식별자를 빈도 제한·집계·부정 방지에 계속 쓴다(위 10항 근거 행). (P2-1) 10항 「앱과 웹에」 → 「앱에」 — 웹 광고는 KAN-197에서 사업자·형식이 정해지면 그때 적는다. 2026-09-07 「앱과 웹 모두」 결정 자체는 유효하고 웹 몫의 고지만 미룬 것이다 | 10항 도입 문장, 10항 「동의」 문단, `privacy.test.mjs` 「광고 식별자 대신」 가드 |
 
 ## 6. 팀 확인이 필요한 것
@@ -195,4 +205,7 @@ prod 게시(`scripts/publish-privacy.sh prod`) 전에는 아래를 전부 닫는
 - **운영 주체 표기** — 지금은 「Accentury 팀(이박이일)」이다. 사업자 등록이 없어 상호·대표자·주소를 적지 않았다. 광고 수익이 생기면 사업자 표기가 필요한지 확인해야 한다.
 - **App Store 연령 등급** — Play는 13세 이상으로 정했으나(`docs/wiki/play-store-listing.md` §6) App Store 쪽 등급은 아직 정하지 않았다. 7항의 「만 14세 미만 대상 아님」과 어긋나지 않게 맞춘다.
 - **광고 사업자** — 2026-09-11 앱은 Google AdMob, 2026-09-13 브라우저 웹은 Google AdSense로 확정돼 3절의 자리표시자 1~5를 닫았다. 남은 게이트는 시행일(6), 스토어 답안 일치(7), 웹 광고 배선 일치(8)다.
+- **Slack을 국외 이전으로 분류한 것이 맞는지 최종 확인** (KAN-211) — 후기 본문에 개인정보가 섞일 **가능성**을 근거로 4항에 적었다. 위탁(3항)으로 보는 해석도 성립하고, 그 경우 4항 `<dl>`을 3항 표의 한 행으로 옮긴다. 둘 다 적는 길(Firebase처럼)도 있다. 고지가 빠지는 쪽이 아니라 **어느 절에 적는가**의 문제라 게시 전까지 바꿀 수 있다.
+- **prod 게시 전 시행일** (KAN-211과 무관하게 열려 있는 3절 게이트 6번) — 본문 머리와 14항 두 자리를 게시 당일 날짜로 바꾼다. 이 티켓이 본문을 늘렸어도 그 게이트는 그대로다.
+- **후기 삭제 요청의 처리 주체** — 6항이 약속한 「지체 없이 삭제」는 지금 운영자 수작업이다(DB 직접 조회). 요청이 실제로 오기 시작하면 누가 받고 얼마 안에 처리하는지를 정해야 한다.
 - **웹 광고와 스토어 신고의 관계** — 2절의 확정 답안은 앱(AdMob) 기준이다. AdSense는 웹 전용이라 Play·App Store 신고가 달라지지 않지만, 스토어 문서를 갱신할 때 「광고 ID 수집」 답이 앱 몫이라는 것을 흐리지 않게 적는다.

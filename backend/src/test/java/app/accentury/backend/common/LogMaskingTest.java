@@ -148,6 +148,46 @@ class LogMaskingTest extends IntegrationTest {
     }
 
     @Test
+    void 후기_슬랙_웹훅_URL을_이름으로_지운다() {
+        // URL 자체가 시크릿이다 (KAN-211) - 아는 사람은 누구나 그 채널에 글을 쓸 수 있다.
+        // 카카오 키와 같은 네 갈래로 샐 수 있어 전부 본다.
+        // 더미 URL을 실제 웹훅 형식(T·B 8자+토큰 24자)으로 두면 GitHub push protection이
+        // 시크릿으로 잡는다 - 짧은 자리표시로 둔다(2026-09-15).
+        String url = "https://hooks.slack.com/services/T000/B000/not-a-real-webhook";
+        assertEquals("accentury.feedback.slack-webhook-url=***",
+                LogMasking.mask("accentury.feedback.slack-webhook-url=" + url),
+                "설정 키로 찍힌 경우");
+        assertEquals("""
+                {"slackWebhookUrl": "***"}""",
+                LogMasking.mask("""
+                        {"slackWebhookUrl": "%s"}""".formatted(url)),
+                "바인딩된 필드로 찍힌 경우");
+        assertEquals("ACCENTURY_FEEDBACK_SLACKWEBHOOKURL=***",
+                LogMasking.mask("ACCENTURY_FEEDBACK_SLACKWEBHOOKURL=" + url),
+                "환경 변수(대시 제거형)로 찍힌 경우");
+        assertEquals("slack-webhook-url=***",
+                LogMasking.mask("slack-webhook-url=" + url),
+                "설정 키 마지막 마디로 찍힌 경우");
+    }
+
+    @Test
+    void 이름_없이_박힌_슬랙_웹훅_URL도_호스트까지만_남긴다() {
+        // 전송이 실패하면 RestClient의 예외 메시지에 요청 URI가 통째로 들어간다 - 이름이 앞에
+        // 붙지 않으므로 위 규칙에 걸리지 않는다. 호스트는 남겨 "슬랙으로 나가다 실패했다"는
+        // 진단을 살리고, 채널에 글을 쓸 수 있게 하는 경로 부분만 지운다.
+        //
+        // 값의 끝을 따옴표에서 끊는지도 함께 본다 - 공백까지 달려가 닫는 따옴표를 먹으면
+        // 가린 줄이 JSON으로 읽히지 않는다 (sessionToken 규칙과 같은 이유).
+        String masked = LogMasking.mask("""
+                {"message": "I/O error on POST request for https://hooks.slack.com/services/T0/B0/zzzz", "feedbackId": "fb_1"}""");
+
+        assertFalse(masked.contains("zzzz"), masked);
+        assertEquals("""
+                {"message": "I/O error on POST request for https://hooks.slack.com/***", "feedbackId": "fb_1"}""",
+                masked, "가린 뒤에도 JSON으로 읽혀야 한다 - 닫는 따옴표와 뒤 필드가 살아 있다");
+    }
+
+    @Test
     void 값에_공백이_있어도_따옴표_끝까지_지운다() {
         // 공백에서 끊으면 뒷부분이 로그에 그대로 남고, 열린 따옴표만 닫혀 JSON 한 줄이
         // 깨진다 - 마스킹이 유출과 로그 수집 실패를 동시에 만드는 자리다.
@@ -233,6 +273,27 @@ class LogMaskingTest extends IntegrationTest {
                 LogMasking.mask("스풀 실패 path=/tmp/upload_3b7e21a0.tmp"));
         assertEquals("AI 오류 detail=***",
                 LogMasking.mask("AI 오류 detail=audio-7fk2p9.wav"));
+    }
+
+    @Test
+    void 이메일_주소를_지운다() {
+        // 후기의 선택 입력인 회신 주소(KAN-211)가 이 서비스가 받는 유일한 개인 식별 정보다.
+        // 도메인만 남겨도 후기 본문과 묶이면 사람이 좁혀지므로 통째로 지운다.
+        String line = "후기 저장 sessionId=s_1 contactEmail=tester.name+tag@example.co.kr";
+
+        String masked = LogMasking.mask(line);
+
+        assertFalse(masked.contains("example.co.kr"), masked);
+        assertTrue(masked.contains("***@***"), masked);
+        assertTrue(masked.contains("sessionId=s_1"), "세션 ID는 남아야 한다: " + masked);
+    }
+
+    @Test
+    void 이메일이_아닌_골뱅이_표기는_건드리지_않는다() {
+        // 객체 식별자(Foo@1a2b3c)까지 지우면 디버깅을 못 한다 - 점 뒤 글자 두 개 이상을 요구하는 이유다.
+        String line = "예상치 못한 상태 handler=app.accentury.backend.Foo@1a2b3c attempt=2";
+
+        assertEquals(line, LogMasking.mask(line));
     }
 
     @Test

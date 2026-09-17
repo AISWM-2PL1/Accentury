@@ -149,6 +149,22 @@ final class ResultSharerTests: XCTestCase {
         XCTAssertNil(template.content.imageHeight)
     }
 
+    // MARK: 시트 본문
+
+    /// 세 플랫폼(안드로이드 `ResultSharerTest.kt`·웹 `shareResult.test.ts`)이 같은 조립 결과를
+    /// 못박는다 (KAN-214). 한쪽만 `URL` 항목을 따로 싣거나 줄바꿈 규칙이 달라지면 카톡 공유
+    /// 확장에서 메시지가 둘로 쪼개지거나, 같은 공유가 플랫폼마다 다른 모양으로 도착한다 — 그
+    /// 드리프트를 단위 테스트 수준에서 잡으려고 있는 테스트다.
+    func testSystemShareTextJoinsTextAndLinkWithOneNewline() {
+        let body = systemShareText(payload)
+
+        XCTAssertEqual("나 사투리 3등급 나왔다\nhttps://accentury.app/t?c=kko_share", body)
+        XCTAssertEqual(1, body.filter { $0 == "\n" }.count, "줄바꿈은 문구와 링크 사이 하나뿐이어야 한다")
+        // 위 등호가 곧 점수 미포함의 증거다(KAN-30 요구) — 본문이 문구와 링크로만 이뤄져 있고
+        // 이미지 URL도 시트에는 실리지 않는다(`ShareSheet` 주석).
+        XCTAssertFalse(body.contains(payload.imageUrl), "이미지 URL이 시트 본문에 실렸다")
+    }
+
     // MARK: 비동기 수명 (Codex 검증에서 잡힌 결함, 2026-09-04)
 
     /// **아무도 sharer를 붙들지 않은 채로** 콜백이 나중에 도착해도 카톡이 열려야 한다.

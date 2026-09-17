@@ -1,7 +1,8 @@
 /**
  * 문항 진행 화면 (KAN-99 Stage 3). 무디자인 — 인트로·업데이트 안내와 같은 최소 인라인 스타일 톤이다.
  *
- * 화면은 네 상태를 가진다: 정의 로딩 중 / 로딩 실패(다시 시도) / 문항 진행 / 분석 대기(KAN-14).
+ * 화면은 다섯 상태를 가진다: 정의 로딩 중 / 로딩 실패(다시 시도) / 시작 대기(KAN-216, 첫 응시의
+ * 3초 카운트다운) / 문항 진행 / 분석 대기(KAN-14).
  * 로딩과 진행을 컴포넌트 두 개로 나눈 이유: 진행 훅은 정의가 있어야 초기화되는데, 같은
  * 컴포넌트에 두면 정의가 오기 전 렌더에서 훅을 부를 수 없어 조건부 훅이 된다. 정의가 확정된
  * 뒤에 `TestRunner`를 마운트하면 훅이 항상 유효한 입력으로 시작한다.
@@ -24,10 +25,18 @@ import { fetchTestDefinition, type FetchLike } from './fetchTestDefinition'
 import type { SnapshotStorage } from './progressSnapshot'
 import { submitVocabAnswer } from './submitVocabAnswer'
 import type { TestDefinition, VoiceItem } from './testDefinition'
+import { START_COUNTDOWN_SECONDS, TestStartScreen } from './TestStartScreen'
 import { useTestProgress } from './useTestProgress'
 import { VocabularyItemScreen } from './VocabularyItemScreen'
 import { VoiceItemScreen } from './VoiceItemScreen'
 import { Button, ProgressIndicator, StatusBlock } from '../ui'
+
+/*
+ * 값은 시작 대기 화면이 든다 (링의 분모라 그쪽이 주인). 여기서 다시 내보내는 이유는 이 화면이
+ * 시계를 돌리는 곳이고, 테스트가 "카운트다운을 건너뛰려면 몇 초를 밀어야 하는가"를 이 화면
+ * 기준으로 묻기 때문이다.
+ */
+export { START_COUNTDOWN_SECONDS }
 
 export interface TestFlowScreenProps {
   /** 백엔드 오리진. 출처 결정은 호출자 몫이다 (fetchTestDefinition 헤더 주석의 열린 질문) */
@@ -188,7 +197,28 @@ function TestRunner({
   userCurveCenterHz: number | null
   fetchImpl?: FetchLike
 }) {
-  const { state, current, progress, submit } = useTestProgress(definition, storage, sessionId)
+  const { state, current, progress, submit, resumed } = useTestProgress(definition, storage, sessionId)
+  /*
+   * 시작 대기 카운트다운의 남은 초 (KAN-216). 정의가 와서 이 컴포넌트가 선 뒤에 시작하므로
+   * 정의 fetch와 겹치지 않는다 — 순차다. **첫 응시에만** 센다: 스냅샷에서 이어진 마운트
+   * (뒤로가기 복귀·앱 재개)는 0에서 시작해 대기 화면을 건너뛰고 바로 그 문항이다. 이미 하던
+   * 시험에 "곧 시작합니다"가 다시 뜨면 처음부터 다시 하는 줄 안다.
+   *
+   * 시계는 JS 타이머다. CSS로 재면 reduced-motion 설정(`tokens.css`)에서 3초가 사라진다.
+   */
+  const [secondsLeft, setSecondsLeft] = useState(resumed ? 0 : START_COUNTDOWN_SECONDS)
+  useEffect(() => {
+    if (secondsLeft <= 0) return
+    /*
+     * setInterval이 아니라 setTimeout 체인이다. 백그라운드 탭에서 브라우저가 타이머를 스로틀했다
+     * 돌아오면 interval은 밀린 틱을 한꺼번에 쏟아 3→0이 한 프레임에 지나가는데, 체인은 한 틱이
+     * 돌아야 다음이 잡히므로 복귀 뒤에도 초마다 한 칸이다. cleanup의 clearTimeout은 언마운트와
+     * 재녹음 경로(이 화면이 내려간 뒤 타이머가 살아남아 죽은 컴포넌트의 상태를 만지는 것)를 막는다.
+     */
+    const timer = setTimeout(() => setSecondsLeft((n) => n - 1), 1_000)
+    return () => clearTimeout(timer)
+  }, [secondsLeft])
+  const countingDown = secondsLeft > 0
   /*
    * 네이티브가 문항 결과를 돌려줄 때마다 오른다. 대기 화면은 이 값의 변화를 재녹음 완료
    * 신호로 읽어 폴링을 다시 세운다 — 진행 중에 오르는 것은 무해하다. 그때는 대기 화면이
@@ -257,11 +287,19 @@ function TestRunner({
   const shownType = current?.type
   useEffect(() => {
     if (shownItemId === undefined || shownType === undefined) return
+    /*
+     * 카운트다운 중에는 문항이 아직 안 보인다 (KAN-216) — 그때 세면 시작 대기 화면을 문항
+     * 노출로 세는 셈이다. 의존성은 `secondsLeft`가 아니라 `countingDown`이다: 초마다 이펙트를
+     * 다시 돌릴 이유가 없고, `countingDown`은 true→false로 **한 번만** 바뀌므로 첫 문항의
+     * 노출은 그 전환에서 정확히 한 번 나간다. 복원 세션은 처음부터 false라 itemId 의존성만
+     * 남는다 — "문항이 바뀔 때 한 번"이라는 위 보장이 그대로다 (AC "노출 1회" 유지).
+     */
+    if (countingDown) return
     track({ name: 'item_shown', item_seq: shownSeq, item_type: shownType })
     // 순번·유형은 문항이 정하는 값이라 itemId 하나가 바뀌면 함께 바뀐다. 셋 다 의존성에
     // 두면 같은 문항에서 진행률만 다시 계산돼도 노출이 한 번 더 세어진다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shownItemId])
+  }, [shownItemId, countingDown])
 
   /**
    * 이 화면이 서버로 나갈 때 쓰는 세션 토큰 — **녹음 업로드·어휘 제출·분석 폴링이 전부 이
@@ -383,6 +421,20 @@ function TestRunner({
         fetchImpl={fetchImpl}
       />
     )
+  }
+
+  /*
+   * 시작 대기 화면 (KAN-216). 분석 대기 분기 **뒤**에 둔다 — "문항이 있을 때만 대기 화면"이
+   * 의미상 맞다. 복원 세션은 secondsLeft가 0이라 이 분기를 타지 않고, 새 세션은 current가
+   * 항상 있어 순서가 어느 쪽이든 결과는 같지만, 앞에 두면 "문항이 없는데 곧 시작합니다"라는
+   * 조합을 코드가 허용하는 꼴이 된다.
+   *
+   * 첫 문항 마운트 **전에** 끝나야 하는 이유: `VoiceItemScreen`의 마운트가 곧 네이티브 녹음
+   * 화면 전환(`startVoiceItem`)이라, 겹치면 네이티브 화면이 카운트다운을 덮는다. 위 `item_shown`
+   * 이펙트도 같은 조건으로 잠겨 있다.
+   */
+  if (countingDown) {
+    return <TestStartScreen secondsLeft={secondsLeft} />
   }
 
   return (

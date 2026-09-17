@@ -23,7 +23,12 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { storeLabelFor, storeUrlFor, type StorePlatform } from '../audio/storeLink'
+import { storeLabelFor, storeListingReady, storeUrlFor, type StorePlatform } from '../audio/storeLink'
+import { STORE_PENDING_CAPTION } from '../audio/storeText'
+import { FeedbackSheet } from '../feedback/FeedbackSheet'
+import { FEEDBACK_DONE_CAPTION, FEEDBACK_OPEN } from '../feedback/feedbackText'
+import { sendFeedback, type FeedbackInput } from '../feedback/sendFeedback'
+import { newIdempotencyKey } from '../net/idempotencyKey'
 import type { FetchLike } from '../progress/fetchTestDefinition'
 import { Button, StatusBlock } from '../ui'
 import { ShareIcon } from '../ui/icons'
@@ -80,6 +85,17 @@ export interface ResultScreenProps {
    */
   onResultLoaded?: (result: TestResultView) => void
   /**
+   * 후기 시트를 열었다 (KAN-211 계측 자리). `onDownloadClick`과 같은 성격이다 — 이 화면은
+   * `track`을 모르고, 무엇을 세는지는 App이 정한다.
+   */
+  onFeedbackOpen?: () => void
+  /**
+   * 후기를 보냈다 (KAN-211 계측 자리). 올리는 값은 **별점 하나뿐이다** — 본문과 이메일은
+   * 개인을 특정할 수 있는 값이라 계측에 실리는 길 자체를 만들지 않는다
+   * (`analytics/events.ts`의 익명 규칙).
+   */
+  onFeedbackSubmitted?: (rating: number | null) => void
+  /**
    * 주입용 fetch (테스트용).
    *
    * **참조가 안정적이어야 한다** — 이 값이 조회 이펙트의 의존성이라, 렌더마다 새로 만든
@@ -103,6 +119,8 @@ export function ResultScreen({
   storePlatform,
   onDownloadClick,
   onResultLoaded,
+  onFeedbackOpen,
+  onFeedbackSubmitted,
   fetchImpl,
 }: ResultScreenProps) {
   const [load, setLoad] = useState<LoadState>({ status: 'loading' })
@@ -114,6 +132,20 @@ export function ResultScreen({
    * 발생하지 않는다").
    */
   const notified = useRef(false)
+
+  /*
+   * 후기 시트 (KAN-211). 열림과 「보냈는가」를 이 화면이 든다 — 시트는 자기 안의 상태기계만
+   * 알고, 같은 세션에 두 번 열 이유가 없다는 판단은 화면의 것이다 (후기는 결과당 1건이고
+   * 수정 경로가 없다).
+   */
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
+  const [feedbackDone, setFeedbackDone] = useState(false)
+  /*
+   * 멱등 키. **시트가 아니라 여기서 한 번 만들어** 재시도에 재사용한다 — 시트 안에서 만들면
+   * [다시 보내기]가 새 키로 나가고, 첫 요청이 실제로 저장됐던 경우(응답만 유실) 409를 받아
+   * "이미 보냈어요"가 된다. 방금 쓴 글이 어디로 갔는지 알 수 없어지는 것이 그 자리다.
+   */
+  const feedbackKey = useRef<string | null>(null)
 
   useEffect(() => {
     // 재시도로 요청이 겹칠 때 먼저 뜬 응답이 뒤늦게 화면을 덮지 않도록 버린다.
@@ -144,6 +176,30 @@ export function ResultScreen({
   }, [apiBase, sessionId, sessionToken, fetchImpl, attempt])
 
   const retry = useCallback(() => setAttempt((n) => n + 1), [])
+
+  /** 키를 만드는 자리는 하나뿐이다 — 열 때와 보낼 때가 서로 다른 키를 뽑으면 위 규칙이 깨진다 */
+  const idempotencyKey = useCallback(() => (feedbackKey.current ??= newIdempotencyKey()), [])
+
+  const openFeedback = useCallback(() => {
+    idempotencyKey()
+    setFeedbackOpen(true)
+    onFeedbackOpen?.()
+    /*
+     * `onFeedbackOpen`을 의존성에 두지 않는다. 부모가 렌더마다 새로 만드는 인라인 콜백이라
+     * 넣으면 이 핸들러의 참조가 매번 바뀌는데, 계측 한 번을 위해 그럴 값어치가 없다
+     * (조회 이펙트의 `onResultLoaded` 주석과 같은 판단이다).
+     */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idempotencyKey])
+
+  const submitFeedback = useCallback(
+    (input: FeedbackInput) =>
+      sendFeedback(
+        { apiBase, sessionId, sessionToken, idempotencyKey: idempotencyKey(), input },
+        fetchImpl,
+      ),
+    [apiBase, sessionId, sessionToken, fetchImpl, idempotencyKey],
+  )
 
   if (load.status === 'loading') {
     return (
@@ -204,7 +260,7 @@ export function ResultScreen({
   const { scores, tier } = result
 
   return (
-    <main className="screen">
+    <main className="screen screen--result">
       <div className="screen__body">
         {/*
           등급 캐릭터 (KAN-162). KAN-29 때는 등급이 무엇이든 깃발 꽂은 사람 한 그림이었다 —
@@ -279,9 +335,59 @@ export function ResultScreen({
           눌리는 것인지가 모양으로 드러나지 않는데, 이 자리는 결과를 다 본 사람이 실제로
           누르는 두 번째 출구다 — 테두리 1.5px 하나가 그 어포던스를 준다. 그림자는 여전히
           주 버튼만 갖는다 (정본 §8: 떠 있는 종이가 둘이면 어느 쪽을 눌러야 할지 흐려진다).
+
+          그 두 번째 출구를 이 화면의 유일한 포인트색 — 점수 링·억양 곡선의 벽돌색 — 으로
+          칠한다 (사용자 결정 2026-09-15). 테두리까지 잉크로 두면 주버튼인 공유와 같은 목소리로
+          서서 재응시가 공유의 그림자처럼 읽히는데, 색이 갈리면 무게를 겨루지 않고도 다른 길이라는
+          것이 보인다. 글자체는 주버튼과 같은 제목 글자체(Jua)로 맞춘다. 값은
+          `.result-retest__button`에 있고, 전 화면 `.btn--secondary`를 고치지 않는 이유도
+          거기 적었다 — 대기·오류 화면의 재응시는 실패 복구용이라 눈에 띄면 안 된다.
         */}
-        <RetestAction retest={retest} variant="secondary" />
+        <RetestAction retest={retest} variant="secondary" className="result-retest__button" />
+
+        {/*
+          개발팀에 후기 보내기 (KAN-211). **글자 버튼인 것이 판단이다.**
+
+          이 푸터에는 이미 주버튼 하나와 보조 둘이 서 있다. 후기는 결과를 다 본 사람의 세 번째
+          출구가 아니라 부가 행동이라, 보조 버튼의 무게(테두리)를 주면 주 출구인 공유·재응시와
+          같은 급으로 읽혀 어디로 나가야 하는지가 흐려진다 (ux-ui.md Hick's law — 화면당
+          Primary CTA 1개). 재응시를 글자 버튼에서 보조로 **올린** 것이 KAN-161 3단계였는데,
+          그 근거("결과를 다 본 사람이 실제로 누르는 두 번째 출구")가 여기에는 없다.
+
+          보낸 뒤에는 버튼을 한 줄짜리 인사로 바꾼다. 결과당 후기는 1건이고 수정 경로가 없어
+          (KAN-211 결정) 같은 세션에 두 번 열 이유가 없는데, 버튼을 남겨 두면 눌러 본 사람이
+          「이미 보냈어요」를 받는다 — 그건 실패로 읽힌다 (2단계 보고 권고).
+        */}
+        {feedbackDone ? (
+          <p className="type-caption result-feedback__done">{FEEDBACK_DONE_CAPTION}</p>
+        ) : (
+          <Button variant="text" className="result-feedback__open" onClick={openFeedback}>
+            {FEEDBACK_OPEN}
+          </Button>
+        )}
       </div>
+
+      {/*
+        시트는 `position: fixed`라 어느 자리에 두어도 화면을 덮는다. 푸터 밖에 두는 이유는
+        `.screen__footer`가 `sticky`로 쌓임 맥락을 만들기 때문이다 — 그 안에 넣으면 막이
+        푸터 안에 갇혀 본문 위로 올라가지 못한다 (`.ad-consent-sheet`의 `z-index` 주석).
+
+        완료(`sent`·`already`) 뒤에는 둘 다 진입 버튼을 치운다. `already`도 사용자가 하려던
+        일은 이미 되어 있는 상태라, 다시 쓰라고 칸을 내주면 쓴 글이 저장되지 않는다.
+      */}
+      <FeedbackSheet
+        open={feedbackOpen}
+        onClose={() => setFeedbackOpen(false)}
+        submit={submitFeedback}
+        onSubmitted={(sendResult, input) => {
+          setFeedbackDone(true)
+          /*
+           * `already`에는 계측을 보내지 않는다. 그 응답은 **이번에 저장된 것이 없다**는 뜻이라
+           * (새로고침 뒤 다시 보낸 경우) 세면 한 사람의 후기 하나가 둘로 쌓인다.
+           */
+          if (sendResult.status === 'saved') onFeedbackSubmitted?.(input.rating)
+        }}
+      />
     </main>
   )
 }
@@ -353,6 +459,9 @@ function TierCharacter({ code, name }: { code: string; name: string }) {
  *
  * 스토어 URL을 여기서 조립하지 않는다 — 규칙은 [storeUrlFor]가 소유한다. 하드코딩이 두 군데로
  * 갈리면 앱 패키지명이 바뀌는 날 한쪽만 고쳐진다.
+ *
+ * **스토어 등록 전에는 링크가 아니라 비활성 버튼이다** (사용자 요청 2026-09-15). 등록 여부는
+ * 빌드 변수 하나가 쥐고 있어([storeListingReady]) 등록되는 날 코드 수정 없이 켜진다.
  */
 function AppDownloadAction({
   platform,
@@ -362,6 +471,31 @@ function AppDownloadAction({
   onDownloadClick?: () => void
 }) {
   if (platform === undefined) return null
+
+  /*
+   * 아직 스토어에 없는 앱이라 누를 곳을 주지 않는다 — 자세한 사정은 [storeListingReady].
+   *
+   * CTA를 지우지 않고 흐리게 남기는 이유는 두 가지다. 하나는 배치 — 주버튼 자리가 통째로
+   * 비면 아래 버튼들이 위로 올라와 등록 전후의 화면이 서로 다른 모양이 되고, 그 차이를
+   * 검증할 눈이 없다. 다른 하나는 안내 — "앱이 곧 나온다"는 사실 자체가 이 화면에서 줄 수
+   * 있는 정보다. 그래서 `variant`는 주버튼 기본값 그대로 두고 `disabled`만 얹는다
+   * (`.btn:disabled`가 불투명도 0.6을 덮어 크기·색은 유지된다, `ui/components.css`).
+   *
+   * 계측(`onDownloadClick`)은 걸지 않는다. 눌리지 않는 버튼에서는 이벤트가 나갈 수 없으므로
+   * 붙여 봐야 죽은 코드이고, 붙어 있으면 "0건"이 계측 실패인지 비활성인지 구분되지 않는다.
+   */
+  if (!storeListingReady()) {
+    return (
+      <>
+        <Button disabled style={{ width: '100%' }} className="result-download--pending">
+          앱 다운로드
+        </Button>
+        <p className="type-caption" style={{ color: 'var(--color-muted-foreground)' }}>
+          {STORE_PENDING_CAPTION}
+        </p>
+      </>
+    )
+  }
 
   return (
     <>

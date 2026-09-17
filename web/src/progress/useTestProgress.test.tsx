@@ -88,6 +88,8 @@ describe('초기화 — 새 시작과 복원', () => {
     expect(result.current.current?.itemId).toBe('item-1')
     expect(result.current.progress).toEqual({ current: 1, total: 10 })
     expect(result.current.state.phase).toBe('IN_PROGRESS')
+    // 첫 응시다 — 시작 대기 카운트다운(KAN-216)이 이 값을 보고 선다
+    expect(result.current.resumed).toBe(false)
   })
 
   it('스냅샷이 있으면 그 다음 문항부터 이어진다 (백그라운드 복귀 AC)', () => {
@@ -99,6 +101,8 @@ describe('초기화 — 새 시작과 복원', () => {
 
     expect(result.current.current?.itemId).toBe('item-4')
     expect(result.current.progress).toEqual({ current: 4, total: 10 })
+    // 이어진 마운트다 — 시작 대기 카운트다운(KAN-216)이 이 값을 보고 건너뛴다
+    expect(result.current.resumed).toBe(true)
   })
 
   it('믿을 수 없는 스냅샷은 폐기하고 처음부터 시작한다', () => {

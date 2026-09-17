@@ -66,6 +66,23 @@ const FALLBACK_WIDTH = 320
 /** 그리기 영역 높이 (px). 레인 높이 120에서 위 라벨 자리(24)와 아래 여백(4)을 뺀 값이다 */
 const DRAW_HEIGHT = 92
 
+/**
+ * 0..1 비율 y를 그리기 영역 픽셀로 옮기되, 위아래를 선 굵기의 절반씩 안으로 들인다.
+ *
+ * `userCurveDisplayPoints`는 창(±7 semitone)을 벗어난 음높이를 y=0·y=1로 눌러 담는다.
+ * 그 점을 그대로 캔버스 가장자리에 놓으면 **선의 절반이 viewBox 밖에 걸려 잘린다** —
+ * `<svg>`는 기본이 overflow hidden이라 3px 선이 1.5px 조각으로 남고, 아래쪽은 망점 채움의
+ * 면적까지 0이 되어 곡선이 사라진 것처럼 보였다. 그래서 y=0은 선 굵기 절반만큼 아래,
+ * y=1은 그만큼 위에 놓아 천장·바닥을 기는 구간도 온전한 굵기로 남긴다. 가운데(0.5)는
+ * 제자리지만 모든 y가 중앙 쪽으로 균일하게 (h − 2·inset)/h 만큼 압축된다 — 내 억양(굵기 3)은
+ * 89/92 ≈ 3.3%, 가이드(굵기 2)는 90/92 ≈ 2.2%. 세 플랫폼이 같은 규칙이라 비교에는 영향 없다.
+ */
+function insetY(points: CurvePoint[], strokeWidth: number): CurvePoint[] {
+  const inset = strokeWidth / 2
+  const innerHeight = DRAW_HEIGHT - 2 * inset
+  return points.map(({ x, y }) => ({ x, y: (inset + y * innerHeight) / DRAW_HEIGHT }))
+}
+
 export function CurveLane({ label, ariaLabel, segments, variant }: CurveLaneProps) {
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [width, setWidth] = useState(FALLBACK_WIDTH)
@@ -148,7 +165,7 @@ export function CurveLane({ label, ariaLabel, segments, variant }: CurveLaneProp
             points.length >= 2 ? (
               <path
                 key={index}
-                d={fillPath(points, width)}
+                d={fillPath(insetY(points, strokeWidth), width)}
                 fill={`url(#${patternId})`}
                 opacity={HALFTONE_OPACITY}
                 stroke="none"
@@ -160,7 +177,7 @@ export function CurveLane({ label, ariaLabel, segments, variant }: CurveLaneProp
             <path
               // 선분은 무성 구간이 가른 조각이라 순서가 곧 정체성이다 - index가 안정된 키다
               key={index}
-              d={toSvgPath(smoothPathCommands(points, width, DRAW_HEIGHT))}
+              d={toSvgPath(smoothPathCommands(insetY(points, strokeWidth), width, DRAW_HEIGHT))}
               fill="none"
               stroke={color}
               strokeWidth={strokeWidth}
@@ -170,11 +187,12 @@ export function CurveLane({ label, ariaLabel, segments, variant }: CurveLaneProp
               vectorEffect="non-scaling-stroke"
             />
           ) : points.length === 1 ? (
-            // 점이 하나뿐인 선분 - 선은 못 그리니 그 시각에 점 하나로 남긴다 (앱과 같다)
+            // 점이 하나뿐인 선분 - 선은 못 그리니 그 시각에 점 하나로 남긴다 (앱과 같다).
+            // 선은 굵기 절반만큼 들이지만 점은 반지름(= 굵기)만큼 들인다 - 원이 선보다 크다
             <circle
               key={index}
               cx={points[0].x * width}
-              cy={points[0].y * DRAW_HEIGHT}
+              cy={insetY(points, 2 * strokeWidth)[0].y * DRAW_HEIGHT}
               r={strokeWidth}
               fill={color}
             />

@@ -1,7 +1,7 @@
 import XCTest
 @testable import AccenturyCore
 
-/// 안드로이드 `recording/CurvePathTest.kt`의 1:1 이식본 (6개).
+/// 안드로이드 `recording/CurvePathTest.kt`의 1:1 이식본 (10개).
 final class CurvePathTests: XCTestCase {
 
     private let width: Float = 100
@@ -97,5 +97,59 @@ final class CurvePathTests: XCTestCase {
 
         XCTAssertEqual(PathCommand.moveTo(x: px(0) * 2, y: py(0) * 2), scaled.first)
         XCTAssertEqual(PathCommand.lineTo(x: px(2) * 2, y: py(2) * 2), scaled.last)
+    }
+
+    // MARK: - KAN-218 천장·바닥 인셋. 웹 CurveLane.test.tsx의 인셋 케이스와 같은 값이다.
+
+    /// `천장과 바닥은 선 굵기 절반만큼 안으로 들어온다 - 가운데는 그대로`
+    func testCeilingAndFloorAreInsetByHalfTheStrokeAndTheMiddleStays() {
+        let stroke: Float = 3
+        let inset = insetY(
+            [CurvePoint(x: 0, y: 0), CurvePoint(x: 0.5, y: 0.5), CurvePoint(x: 1, y: 1)],
+            strokeWidth: stroke,
+            height: height
+        )
+
+        // 픽셀로 옮겨 보면 y=0 → 1.5, y=0.5 → 20(불변), y=1 → 38.5다.
+        XCTAssertEqual(stroke / 2, inset[0].y * height, accuracy: 1e-4)
+        XCTAssertEqual(height / 2, inset[1].y * height, accuracy: 1e-4)
+        XCTAssertEqual(height - stroke / 2, inset[2].y * height, accuracy: 1e-4)
+    }
+
+    /// `고립점은 굵기의 2배를 넘겨 반지름만큼 들인다 - 경계 점의 중심이 반지름 자리에 온다`
+    func testIsolatedDotIsInsetByTheRadiusWhenGivenTwiceTheStroke() throws {
+        // CurvePathBuilder가 점에 넘기는 값은 2·stroke다. 굵기 3 → 천장 점의 중심 y_px = 3, 바닥은 height − 3.
+        let stroke: Float = 3
+        let top = try XCTUnwrap(insetY([CurvePoint(x: 0.5, y: 0)], strokeWidth: 2 * stroke, height: height).first)
+        let bottom = try XCTUnwrap(insetY([CurvePoint(x: 0.5, y: 1)], strokeWidth: 2 * stroke, height: height).first)
+
+        XCTAssertEqual(stroke, top.y * height, accuracy: 1e-4)
+        XCTAssertEqual(height - stroke, bottom.y * height, accuracy: 1e-4)
+    }
+
+    /// `인셋은 x를 건드리지 않는다`
+    func testInsetLeavesXUntouched() {
+        let original = points(6)
+        let inset = insetY(original, strokeWidth: 2, height: height)
+
+        XCTAssertEqual(original.count, inset.count)
+        XCTAssertEqual(original.map(\.x), inset.map(\.x))
+    }
+
+    /// `인셋한 점을 그대로 명령으로 옮기면 천장 선의 중심이 캔버스 안에 놓인다`
+    func testInsetPointsPutTheCeilingLineInsideTheCanvas() throws {
+        // 실제 호출 순서(insetY → smoothPathCommands)를 그대로 따라간다.
+        let stroke: Float = 3
+        let ceiling = [CurvePoint(x: 0, y: 0), CurvePoint(x: 1, y: 0)]
+        let commands = smoothPathCommands(insetY(ceiling, strokeWidth: stroke, height: height), width: width, height: height)
+
+        guard case let .moveTo(firstX, firstY) = try XCTUnwrap(commands.first),
+              case let .lineTo(lastX, lastY) = try XCTUnwrap(commands.last) else {
+            return XCTFail("moveTo로 시작해 lineTo로 끝나야 한다")
+        }
+        XCTAssertEqual(0, firstX)
+        XCTAssertEqual(stroke / 2, firstY, accuracy: 1e-4)
+        XCTAssertEqual(width, lastX)
+        XCTAssertEqual(stroke / 2, lastY, accuracy: 1e-4)
     }
 }

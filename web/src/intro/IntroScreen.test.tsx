@@ -9,7 +9,9 @@ import {
 } from '../ads/adConsentText'
 import { resetWebAdConsentMemory } from '../ads/webAdConsentStore'
 import type { MicPermission } from '../audio/microphone'
+import { STORE_PENDING_CAPTION } from '../audio/storeText'
 import { REQUIRED_BRIDGE_VERSION, type AccenturyBridge } from '../bridge/bridge'
+import { SUPPORT_NOTICE_KO } from '../legal/supportNoticeText'
 import { IntroScreen } from './IntroScreen'
 
 const ANDROID_UA =
@@ -90,6 +92,8 @@ describe('IntroScreen — 마이크 게이트 (KAN-56)', () => {
   })
 
   it('권한이 거부되면 안내 화면으로 갈아치우고 스토어 링크를 준다', async () => {
+    // 스토어에 앱이 올라간 뒤의 화면이다 — 등록 전 기본 빌드는 아래 블록이 본다 (2026-09-15)
+    vi.stubEnv('VITE_STORE_LISTING_READY', 'true')
     const restoreUa = withUserAgent(ANDROID_UA)
     const onWebStart = vi.fn()
     render(<IntroScreen requestWebPermission={permissionStub('denied')} onWebStart={onWebStart} />)
@@ -107,6 +111,7 @@ describe('IntroScreen — 마이크 게이트 (KAN-56)', () => {
   })
 
   it('아이폰에서는 앱스토어로 보낸다', async () => {
+    vi.stubEnv('VITE_STORE_LISTING_READY', 'true')
     const restoreUa = withUserAgent(IPHONE_UA)
     render(<IntroScreen requestWebPermission={permissionStub('unavailable')} />)
 
@@ -117,6 +122,27 @@ describe('IntroScreen — 마이크 게이트 (KAN-56)', () => {
       'href',
       expect.stringContaining('apps.apple.com'),
     )
+    restoreUa()
+  })
+
+  /*
+   * 스토어 등록 전 — 지금 배포되는 빌드가 이 상태다 (사용자 요청 2026-09-15). 이 화면에서는
+   * 앱 링크가 유일한 출구인 사유가 둘이라(unsupported·unavailable), 죽은 링크를 남기는 것이
+   * 다른 화면보다 더 나쁘다. 변수를 켜지 않고 그대로 확인한다.
+   */
+  it('스토어 등록 전에는 앱 링크 대신 비활성 버튼과 준비 중 안내가 선다', async () => {
+    const restoreUa = withUserAgent(ANDROID_UA)
+    render(<IntroScreen requestWebPermission={permissionStub('denied')} />)
+
+    clickStart()
+
+    expect(await screen.findByText('마이크 권한이 필요해요')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: '앱으로 테스트하기' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '앱으로 테스트하기' })).toBeDisabled()
+    expect(screen.getByText(STORE_PENDING_CAPTION)).toBeInTheDocument()
+    expect(screen.queryByText(/로 이동해요/)).not.toBeInTheDocument()
+    // 권한 거부는 지금 되돌릴 수 있는 사유라 [다시 시도]는 스토어와 무관하게 남는다
+    expect(screen.getByRole('button', { name: '다시 시도' })).toBeEnabled()
     restoreUa()
   })
 
@@ -156,6 +182,28 @@ describe('IntroScreen — 인트로 히어로', () => {
     expect(screen.getByText('사투리 좀 치는지, 지금 확인해봐요.')).toBeInTheDocument()
     // 제목 자리를 넘겨받은 것이지 하나 더 생긴 것이 아니다 — h1은 여전히 하나다
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
+  })
+})
+
+describe('IntroScreen — AI·SW마에스트로 지원 표기', () => {
+  /*
+   * 운영 매뉴얼 제18조 2항이 요구하는 대외 표시다. 앱에 설정·About 화면이 없어
+   * 인트로 하단이 유일한 자리라, 이 줄이 조용히 사라지면 표기가 통째로 없어진다.
+   */
+  it('인트로 하단에 지원 표기가 눈에 보이게 선다', () => {
+    render(<IntroScreen requestWebPermission={permissionStub('granted')} />)
+
+    expect(screen.getByText(SUPPORT_NOTICE_KO)).toBeInTheDocument()
+  })
+
+  it('권한 안내 화면으로 갈아치우면 함께 걷힌다 — 인트로 하단의 줄이다', async () => {
+    render(<IntroScreen requestWebPermission={permissionStub('denied')} />)
+
+    clickStart()
+
+    // 인트로가 통째로 교체된 것을 먼저 확인한다 — 이게 없으면 아래 단언이 헛돈다
+    expect(await screen.findByText('마이크 권한이 필요해요')).toBeInTheDocument()
+    expect(screen.queryByText(SUPPORT_NOTICE_KO)).not.toBeInTheDocument()
   })
 })
 

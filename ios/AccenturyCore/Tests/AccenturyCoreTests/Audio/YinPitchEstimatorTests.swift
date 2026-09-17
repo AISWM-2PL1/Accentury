@@ -11,6 +11,15 @@ final class YinPitchEstimatorTests: XCTestCase {
         }
     }
 
+    /// 기음과 배음을 섞은 신호. `amplitudes[k]`가 (k+1)배음의 진폭이다
+    private func harmonics(_ f0Hz: Double, _ amplitudes: [Double], size: Int = chunkSize) -> [Int16] {
+        (0..<size).map { i -> Int16 in
+            let t = 2 * Double.pi * f0Hz * Double(i) / Double(sampleRate)
+            let sum = amplitudes.enumerated().reduce(0.0) { $0 + $1.element * sin(Double($1.offset + 1) * t) }
+            return Int16(truncatingIfNeeded: Int(sum))
+        }
+    }
+
     /// 220Hz 사인파의 F0를 추정한다
     func testEstimatesF0OfA220HzSine() throws {
         let f0 = YinPitchEstimator.estimate(sine(220.0))
@@ -35,30 +44,77 @@ final class YinPitchEstimatorTests: XCTestCase {
     /// 배음이 섞여도 기본 주파수를 잡는다 - 옥타브 오류 없음
     func testFindsTheFundamentalEvenWithHarmonicsNoOctaveError() throws {
         // 실제 목소리처럼 2, 3배음 포함. 단순 autocorrelation이 배음(240Hz)으로 튀던 케이스.
-        let f0Hz = 120.0
-        let chunk = (0..<chunkSize).map { i -> Int16 in
-            let t = 2 * Double.pi * f0Hz * Double(i) / Double(sampleRate)
-            return Int16(truncatingIfNeeded: Int(5000 * sin(t) + 3000 * sin(2 * t) + 2000 * sin(3 * t)))
-        }
-        let f0 = YinPitchEstimator.estimate(chunk)
+        let f0 = YinPitchEstimator.estimate(harmonics(120.0, [5000, 3000, 2000]))
         XCTAssertNotNil(f0)
         XCTAssertEqual(120, try XCTUnwrap(f0), accuracy: 3)
     }
 
-    /// 대역 상한 경계 396Hz도 400Hz를 넘기지 않는다
-    func testBandEdge396HzStaysAtOrBelow400Hz() throws {
-        let f0 = YinPitchEstimator.estimate(sine(396.0))
+    /// 대역 상한 경계 790Hz도 800Hz를 넘기지 않는다
+    func testBandEdge790HzStaysAtOrBelow800Hz() throws {
+        let f0 = YinPitchEstimator.estimate(sine(790.0))
         XCTAssertNotNil(f0)
         let value = try XCTUnwrap(f0)
-        XCTAssertEqual(396, value, accuracy: 4)
-        XCTAssertTrue(value <= 400)
+        XCTAssertEqual(790, value, accuracy: 8)
+        XCTAssertTrue(value <= Float(YinPitchEstimator.maxF0Hz))
     }
 
-    /// 대역 밖 410Hz는 400Hz 초과 값을 반환하지 않는다
-    func testOutOfBand410HzNeverReturnsAValueAbove400Hz() {
-        // τmin=40 경계에서 보간이 대역 밖으로 새는지 확인. nil(무성음) 또는 clamp된 값만 허용.
-        let f0 = YinPitchEstimator.estimate(sine(410.0))
-        XCTAssertTrue(f0 == nil || f0! <= 400)
+    /// 대역 밖 820Hz는 800Hz 초과 값을 반환하지 않는다
+    func testOutOfBand820HzNeverReturnsAValueAbove800Hz() {
+        // τmin=20 경계에서 보간이 대역 밖으로 새는지 확인. nil(무성음) 또는 clamp된 값만 허용.
+        let f0 = YinPitchEstimator.estimate(sine(820.0))
+        XCTAssertTrue(f0 == nil || f0! <= Float(YinPitchEstimator.maxF0Hz))
+    }
+
+    /// 옛 상한(400Hz) 위의 고음은 옥타브 아래로 뒤집히지 않는다 - 곡선이 천장으로 간다
+    func testHighPitchAboveTheOld400HzCeilingIsNotFlippedAnOctaveDown() throws {
+        // 80~400Hz 대역에서는 450Hz가 2주기 골(τ=71)에 잡혀 225Hz로 나왔다. 감탄·고성이 올라가야
+        // 할 선을 아래로 꺾던 원인이다 (KAN-218).
+        for hz in [450.0, 520.0, 600.0] {
+            let f0 = YinPitchEstimator.estimate(harmonics(hz, [5000, 3000, 2000]))
+            XCTAssertNotNil(f0, "\(hz) Hz")
+            XCTAssertEqual(Float(hz), try XCTUnwrap(f0), accuracy: Float(hz * 0.02), "\(hz) Hz")
+        }
+    }
+
+    /// 2배음이 기음보다 강해도 옥타브 위로 튀지 않는다 - 새 대역에서 노출된 반주기 골을 2τ 검사가 잡는다
+    func testStrongSecondHarmonicDoesNotFlipAnOctaveUp() throws {
+        // 기음 3000, 2배음 8000. 반주기 골의 CMNDF가 0.25 아래로 내려와 τ 탐색이 거기서 멈추면
+        // 250Hz가 503Hz로 읽힌다. 옛 대역(τmin=40)은 기음 200Hz 이상의 반주기가 탐색 밖이라 우연히
+        // 보호됐고, 120Hz 같은 남성 음역은 옛 코드도 같은 오류가 있었다 (Codex 리뷰 반영).
+        for hz in [120.0, 250.0, 350.0] {
+            let f0 = YinPitchEstimator.estimate(harmonics(hz, [3000, 8000]))
+            XCTAssertNotNil(f0, "\(hz) Hz")
+            XCTAssertEqual(Float(hz), try XCTUnwrap(f0), accuracy: Float(hz * 0.02), "\(hz) Hz")
+        }
+    }
+
+    /// 2·4배음 우세 프로파일도 기음을 잡는다
+    func testSecondAndFourthHarmonicDominantProfileStillFindsTheFundamental() throws {
+        for hz in [100.0, 200.0, 300.0] {
+            let f0 = YinPitchEstimator.estimate(harmonics(hz, [2000, 6000, 1500, 5000]))
+            XCTAssertNotNil(f0, "\(hz) Hz")
+            XCTAssertEqual(Float(hz), try XCTUnwrap(f0), accuracy: Float(hz * 0.02), "\(hz) Hz")
+        }
+    }
+
+    /// 진짜 고음은 2τ 검사에 뒤집히지 않는다
+    func testGenuineHighPitchIsNotFlippedByTheDoubleTauCheck() throws {
+        // 기음 우세 고음은 2τ 골도 ≈0이라 첫 골과의 차이가 마진(0.1)을 못 넘는다.
+        for hz in [450.0, 600.0, 780.0] {
+            let f0 = YinPitchEstimator.estimate(harmonics(hz, [5000, 3000, 2000]))
+            XCTAssertNotNil(f0, "\(hz) Hz")
+            XCTAssertEqual(Float(hz), try XCTUnwrap(f0), accuracy: Float(hz * 0.02), "\(hz) Hz")
+        }
+    }
+
+    /// 옛 하한(80Hz) 아래의 저음도 유성으로 잡는다 - 곡선이 바닥에 남는다
+    func testLowPitchBelowTheOld80HzFloorIsStillVoiced() throws {
+        // 80~400Hz 대역에서는 70Hz가 τmax=200 밖이라 무성(nil)이 되어 선이 끊겼다 (KAN-218).
+        for hz in [70.0, 62.0] {
+            let f0 = YinPitchEstimator.estimate(sine(hz))
+            XCTAssertNotNil(f0, "\(hz) Hz")
+            XCTAssertEqual(Float(hz), try XCTUnwrap(f0), accuracy: 2, "\(hz) Hz")
+        }
     }
 
     /// 무음은 무성음으로 판정한다
@@ -81,7 +137,7 @@ final class YinPitchEstimatorTests: XCTestCase {
 
     /// 탐색 대역 밖 저주파는 무성음으로 판정한다
     func testSubBandLowFrequencyIsJudgedUnvoiced() {
-        // 50Hz(주기 320샘플)는 τmax=200 안에서 겹치는 지점이 없다.
+        // 50Hz(주기 320샘플)는 τmax=266 안에서 겹치는 지점이 없다.
         XCTAssertNil(YinPitchEstimator.estimate(sine(50.0)))
     }
 

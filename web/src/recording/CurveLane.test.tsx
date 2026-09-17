@@ -42,6 +42,41 @@ describe('CurveLane', () => {
     expect(circle!.getAttribute('cy')).toBe('46')
   })
 
+  it('창을 벗어나 y=0·y=1로 눌린 구간도 선 굵기만큼 안쪽에 그린다 - 가장자리에서 잘리지 않는다', () => {
+    // userCurveDisplayPoints가 ±7 semitone 밖을 0·1로 클램프한 모양: 천장 평선 → 바닥 평선
+    const clamped: CurvePoint[] = [
+      { x: 0, y: 0 },
+      { x: 0.25, y: 0 },
+      { x: 0.5, y: 0.5 },
+      { x: 0.75, y: 1 },
+      { x: 1, y: 1 },
+    ]
+    const [path] = strokePaths(renderLane([clamped], 'user'))
+    const d = path.getAttribute('d')!
+    // 굵기 3 → 절반 1.5를 위아래로 들인다. 시작(천장)은 1.5, 끝(바닥)은 90.5, 가운데는 그대로 46
+    expect(d.startsWith('M 0 1.5 ')).toBe(true)
+    expect(d.endsWith('L 320 90.5')).toBe(true)
+    expect(d).toContain('Q 160 46 ')
+    // 어느 좌표도 그리기 영역 [1.5, 90.5] 밖에 없다
+    const ys = d.match(/-?\d+(\.\d+)?/g)!.map(Number).filter((_, i) => i % 2 === 1)
+    expect(Math.min(...ys)).toBeGreaterThanOrEqual(1.5)
+    expect(Math.max(...ys)).toBeLessThanOrEqual(90.5)
+
+    // 가이드(굵기 2)는 1씩 들인다
+    const [guide] = strokePaths(renderLane([clamped], 'guide'))
+    expect(guide.getAttribute('d')!.startsWith('M 0 1 ')).toBe(true)
+  })
+
+  it('경계의 고립점은 반지름만큼 들인다 - 선 굵기 절반으로는 지름의 1/4이 여전히 잘린다', () => {
+    // 원 반지름이 굵기(3)라 굵기 절반(1.5)만 들이면 위로 1.5px가 viewBox 밖이다. 반지름만큼 들여
+    // 천장 점의 중심은 3, 바닥 점의 중심은 92 − 3 = 89.
+    const top = renderLane([[{ x: 0.5, y: 0 }]]).querySelector('circle')!
+    expect(top.getAttribute('r')).toBe('3')
+    expect(top.getAttribute('cy')).toBe('3')
+    const bottom = renderLane([[{ x: 0.5, y: 1 }]]).querySelector('circle')!
+    expect(bottom.getAttribute('cy')).toBe('89')
+  })
+
   it('선분이 갈리면 곡선도 따로 그린다 - 쉼 구간을 가로지르는 가짜 사선이 없다', () => {
     const container = renderLane([points(3), points(4)])
 

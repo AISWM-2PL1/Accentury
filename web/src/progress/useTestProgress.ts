@@ -50,6 +50,17 @@ export interface UseTestProgressResult {
    * 같은 규칙이 두 벌이 된다.
    */
   submit: (itemId: string) => boolean
+  /**
+   * 이 마운트가 **저장된 스냅샷에서 이어진 것**인가 (KAN-216). 초기화 때 `restoreProgress`가
+   * 진행을 돌려줬으면 true, 새로 시작했으면 false다. 마운트당 한 번 정해지고 그 뒤 바뀌지
+   * 않는다 — 제출로 진행이 밀려도 "복원해서 시작했다"는 사실은 그대로다.
+   *
+   * 화면이 저장소를 직접 읽어 판정하지 않고 훅이 알려주는 이유: 어떤 스냅샷을 믿고 어떤 것을
+   * 버리는지(버전 대조·부분 복원 거부)는 `restoreProgress`의 규칙이고, 화면이 따로 읽으면 그
+   * 규칙이 두 벌이 된다. 스냅샷은 제출·백그라운드 진입 때만 저장되므로(아래 이펙트) 새 세션의
+   * 첫 응시는 언제나 false다. 시작 대기 화면(3초 카운트다운)을 첫 응시에만 세우는 데 쓴다.
+   */
+  resumed: boolean
 }
 
 /**
@@ -61,11 +72,17 @@ export function useTestProgress(
   storage: SnapshotStorage = defaultSnapshotStorage(),
   sessionId = '',
 ): UseTestProgressResult {
+  // 복원 여부는 아래 lazy initializer 안에서 한 번 정해 ref에 둔다. 별도 useState의
+  // initializer로 다시 재면 `restoreProgress`가 두 번 불리고(폐기 부수효과까지 두 번), 일반
+  // state로 두면 값이 리렌더에 흔들릴 이유가 없는데도 갱신 경로가 생긴다 (KAN-216).
+  const resumedRef = useRef(false)
   // lazy initializer — 마운트당 한 번만 복원을 시도한다. 매 렌더 복원하면 방금 진행한 상태를
   // 스냅샷으로 덮어써 되감기가 된다.
-  const [state, setState] = useState<ProgressState>(
-    () => restoreProgress(storage, definition, sessionId) ?? createProgressState(definition),
-  )
+  const [state, setState] = useState<ProgressState>(() => {
+    const restored = restoreProgress(storage, definition, sessionId)
+    resumedRef.current = restored !== null
+    return restored ?? createProgressState(definition)
+  })
 
   // 저장 시점(제출·화면 이탈)에 필요한 최신 값들. ref에 모아두는 이유: 상태가 바뀔 때마다
   // visibilitychange 리스너를 떼었다 붙였다 하지 않기 위해서다. 이탈 직전에 리스너가 없는
@@ -114,5 +131,6 @@ export function useTestProgress(
     current: currentItem(state),
     progress: progress(state),
     submit,
+    resumed: resumedRef.current,
   }
 }
