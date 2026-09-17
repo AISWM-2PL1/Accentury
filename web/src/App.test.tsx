@@ -791,8 +791,7 @@ describe('App — 결과 화면 진입 쿼리 (KAN-29)', () => {
     fireEvent.click(await screen.findByRole('button', { name: '친구에게 공유하기' }))
 
     expect(share).toHaveBeenCalledWith({
-      text: '나는 명예주민! 너도 시도해볼래?',
-      url: 'https://accentury.app/t?c=kko_share',
+      text: '나는 명예주민! 너도 시도해볼래?\nhttps://accentury.app/t?c=kko_share',
     })
     // 개인 결과가 공유 payload로 새어 나가지 않는다 (KAN-30 요구)
     expect(JSON.stringify(share.mock.calls[0])).not.toContain('78')
