@@ -14,6 +14,13 @@ class YinPitchEstimatorTest {
     private fun sine(freqHz: Double, amplitude: Double = 8000.0, size: Int = CHUNK_SIZE): ShortArray =
         ShortArray(size) { (amplitude * sin(2 * PI * freqHz * it / SAMPLE_RATE)).toInt().toShort() }
 
+    /** 기음과 배음을 섞은 신호. `amplitudes[k]`가 (k+1)배음의 진폭이다 */
+    private fun harmonics(f0Hz: Double, amplitudes: List<Double>, size: Int = CHUNK_SIZE): ShortArray =
+        ShortArray(size) {
+            val t = 2 * PI * f0Hz * it / SAMPLE_RATE
+            amplitudes.withIndex().sumOf { (k, amplitude) -> amplitude * sin((k + 1) * t) }.toInt().toShort()
+        }
+
     @Test
     fun `220Hz 사인파의 F0를 추정한다`() {
         val f0 = YinPitchEstimator.estimate(sine(220.0))
@@ -38,12 +45,7 @@ class YinPitchEstimatorTest {
     @Test
     fun `배음이 섞여도 기본 주파수를 잡는다 - 옥타브 오류 없음`() {
         // 실제 목소리처럼 2, 3배음 포함. 단순 autocorrelation이 배음(240Hz)으로 튀던 케이스.
-        val f0Hz = 120.0
-        val chunk = ShortArray(CHUNK_SIZE) {
-            val t = 2 * PI * f0Hz * it / SAMPLE_RATE
-            (5000 * sin(t) + 3000 * sin(2 * t) + 2000 * sin(3 * t)).toInt().toShort()
-        }
-        val f0 = YinPitchEstimator.estimate(chunk)
+        val f0 = YinPitchEstimator.estimate(harmonics(120.0, listOf(5000.0, 3000.0, 2000.0)))
         assertNotNull(f0)
         assertEquals(120f, f0!!, 3f)
     }
@@ -68,11 +70,38 @@ class YinPitchEstimatorTest {
         // 80~400Hz 대역에서는 450Hz가 2주기 골(τ=71)에 잡혀 225Hz로 나왔다. 감탄·고성이 올라가야
         // 할 선을 아래로 꺾던 원인이다 (KAN-218).
         for (hz in listOf(450.0, 520.0, 600.0)) {
-            val chunk = ShortArray(CHUNK_SIZE) {
-                val t = 2 * PI * hz * it / SAMPLE_RATE
-                (5000 * sin(t) + 3000 * sin(2 * t) + 2000 * sin(3 * t)).toInt().toShort()
-            }
-            val f0 = YinPitchEstimator.estimate(chunk)
+            val f0 = YinPitchEstimator.estimate(harmonics(hz, listOf(5000.0, 3000.0, 2000.0)))
+            assertNotNull("$hz Hz", f0)
+            assertEquals("$hz Hz", hz.toFloat(), f0!!, (hz * 0.02).toFloat())
+        }
+    }
+
+    @Test
+    fun `2배음이 기음보다 강해도 옥타브 위로 튀지 않는다 - 새 대역에서 노출된 반주기 골을 2τ 검사가 잡는다`() {
+        // 기음 3000, 2배음 8000. 반주기 골의 CMNDF가 0.25 아래로 내려와 τ 탐색이 거기서 멈추면
+        // 250Hz가 503Hz로 읽힌다. 옛 대역(τmin=40)은 기음 200Hz 이상의 반주기가 탐색 밖이라 우연히
+        // 보호됐고, 120Hz 같은 남성 음역은 옛 코드도 같은 오류가 있었다 (Codex 리뷰 반영).
+        for (hz in listOf(120.0, 250.0, 350.0)) {
+            val f0 = YinPitchEstimator.estimate(harmonics(hz, listOf(3000.0, 8000.0)))
+            assertNotNull("$hz Hz", f0)
+            assertEquals("$hz Hz", hz.toFloat(), f0!!, (hz * 0.02).toFloat())
+        }
+    }
+
+    @Test
+    fun `2·4배음 우세 프로파일도 기음을 잡는다`() {
+        for (hz in listOf(100.0, 200.0, 300.0)) {
+            val f0 = YinPitchEstimator.estimate(harmonics(hz, listOf(2000.0, 6000.0, 1500.0, 5000.0)))
+            assertNotNull("$hz Hz", f0)
+            assertEquals("$hz Hz", hz.toFloat(), f0!!, (hz * 0.02).toFloat())
+        }
+    }
+
+    @Test
+    fun `진짜 고음은 2τ 검사에 뒤집히지 않는다`() {
+        // 기음 우세 고음은 2τ 골도 ≈0이라 첫 골과의 차이가 마진(0.1)을 못 넘는다.
+        for (hz in listOf(450.0, 600.0, 780.0)) {
+            val f0 = YinPitchEstimator.estimate(harmonics(hz, listOf(5000.0, 3000.0, 2000.0)))
             assertNotNull("$hz Hz", f0)
             assertEquals("$hz Hz", hz.toFloat(), f0!!, (hz * 0.02).toFloat())
         }
