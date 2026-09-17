@@ -495,6 +495,100 @@
   text-align: center;
 }
 
+/* ── 시작 대기 화면 (KAN-216) ── */
+
+/*
+ * 점검과 첫 문항 사이의 3초 카운트다운. 히어로 한 줄 + 고정 문구 + 링 안의 숫자로, `.screen`
+ * 셸의 세로 가운데 정렬을 그대로 쓴다 — 로딩·오류 화면과 같은 "본문 하나짜리" 화면이다.
+ *
+ * 시간은 여기서 재지 않는다 (`TestStartScreen` 헤더). `tokens.css`의 reduced-motion 규칙이
+ * animation·transition을 0.01ms로 접으므로 CSS를 시계로 쓰면 그 설정에서 3초가 사라진다.
+ * 아래 전환·애니메이션은 전부 장식이고, 같은 이유로 **이 블록에 reduced-motion 미디어쿼리가
+ * 따로 없다** — 전역 규칙이 알아서 접고, 접힌 뒤에도 링과 숫자의 최종 상태는 같다.
+ */
+.test-start {
+  gap: var(--space-4);
+}
+
+/*
+ * 링과 숫자를 겹친다. `.score-donut`과 같은 수법(position + flex 가운데)인데 크기는 160이다 —
+ * 도넛의 96은 점수 카드 한 칸에 들어가는 근거의 크기고, 이것은 화면 가운데 혼자 서는 시계라
+ * 그보다 커야 한 눈에 "여기가 지금 바뀌는 자리"로 읽힌다.
+ */
+.test-start__dial {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 160px;
+  height: 160px;
+  margin-top: var(--space-4);
+}
+
+.test-start__ring {
+  width: 100%;
+  height: 100%;
+  /* 12시에서 시작해 감긴다 — SVG 기본 시작점은 3시다 (`.score-donut__ring`과 같다) */
+  transform: rotate(-90deg);
+}
+
+.test-start__track,
+.test-start__value {
+  fill: none;
+  stroke-linecap: round;
+}
+
+/*
+ * 아직 지나지 않은 자리와 지난 자리. 도넛과 같은 규칙이다 — 실선은 "남은 시간", 파선은 "이미
+ * 간 자리"라 색 없이도 갈린다. 잉크 한 색만 쓴다: 남은 시간을 빨강·경고색으로 말하지 않는다는
+ * 것이 `.record-countdown`에서 이미 내린 판단이고(팔레트에 빨강이 없다), 3초는 위급한 시간도
+ * 아니다. 도넛의 값 원호가 포인트색인 것과 달리 여기는 잉크인 이유: 결과 화면에서 색이 서는
+ * 자리는 "내 점수" 하나이고, 이 화면에는 그런 값이 없다.
+ */
+.test-start__track {
+  stroke: var(--color-primary);
+  stroke-width: 1;
+  stroke-dasharray: 3 5;
+}
+
+.test-start__value {
+  stroke: var(--color-primary);
+  stroke-width: 8;
+  /* 1초마다 한 칸씩 감기는 것을 잇는다 — `.score-donut__value`와 같은 전환 */
+  transition: stroke-dashoffset var(--duration-reveal) var(--ease-out);
+}
+
+/*
+ * 가운데 숫자. `.type-display`(Jua 40)를 달지만 크기는 여기서 덮는다 — 160px 링 안에서 40은
+ * 캡션처럼 작아 "3"이 화면의 주인공이 못 된다. 타이포 세트에 이 단이 없어 토큰 밖 값이다
+ * (KAN-215의 `.support-notice` 11px과 같은 판단: 세트에 없는 한 자리를 위해 토큰을 늘리지
+ * 않는다). 링 안지름이 ~104라 두 자리까지 들어가는 값으로 잡았다.
+ */
+.test-start__count {
+  position: absolute;
+  font-size: 64px;
+  color: var(--color-foreground);
+  animation: test-start-pop var(--duration-base) var(--ease-out);
+}
+
+/*
+ * 이 레포의 첫 `@keyframes`다. 지금까지의 모션은 전부 상태 변화의 transition이었는데(눌림·
+ * 채움), 여기 숫자는 초마다 **새 노드**로 서서(`key={secondsLeft}`) 이전 상태가 없다 —
+ * transition은 시작점이 있어야 돌므로 진입 자체를 그리려면 keyframes가 필요하다. 작아진
+ * 채로 흐리게 나타나 제자리에 앉는다: 숫자가 바뀌었다는 사실을 눈이 놓치지 않게 하는 정도지
+ * 튀어 오르지는 않는다.
+ */
+@keyframes test-start-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 /* ── 문항 화면 ── */
 
 /*

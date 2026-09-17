@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { StrictMode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createFakeCapture, sineChunk, type FakeCapture } from '../audio/testing/fakeCapture'
-import { TestFlowScreen } from './TestFlowScreen'
+import { START_COUNTDOWN_SECONDS, TestFlowScreen } from './TestFlowScreen'
 import type { FetchLike } from './fetchTestDefinition'
 import { snapshotKey, type SnapshotStorage } from './progressSnapshot'
 import type { TestDefinition, TestItem } from './testDefinition'
@@ -188,15 +188,62 @@ function stubBridge() {
 }
 
 /*
- * 첫 음성 문항이 브리지 판정까지 끝내기를 기다리는 두 입구.
+ * 시작 대기 카운트다운(KAN-216)을 건너뛴다. 정의가 온 뒤 첫 응시는 3초 카운트다운을 거쳐야
+ * 첫 문항이 서는데, 실제 3초를 기다리면 파일 전체가 분 단위로 늘어난다 — setTimeout만 가짜
+ * 시계로 바꿔 초를 손으로 민다.
+ *
+ * **가짜 시계는 이 함수 안에서만 산다.** 파일 전역 beforeEach로 깔아 두면(`shouldAdvanceTime`
+ * 으로 흘려도) 다른 테스트가 흔들린다: RTL의 findBy*는 통과 직후 `setTimeout(0)` 한 번을
+ * 기다리는데, 그 타이머가 가짜면 자동 진행 interval(타이머 단계)이 React의 passive effect
+ * flush(setImmediate, check 단계)보다 먼저 그것을 깨워 "문구는 떴는데 effect는 아직"인 순간에
+ * 단언이 돈다 — 실제로 `startVoiceItem` 호출 수 단언이 부하 아래서 간헐적으로 깨졌다.
+ * 여기서 켜고 끄면 나머지 구간은 예전처럼 진짜 시계다.
+ *
+ * 켜는 시점이 첫 `await`보다 앞이어야 한다: 정의 fetch 대역은 microtask로 끝나므로, 그 전에
+ * 가짜 시계를 깔아야 TestRunner의 첫 setTimeout이 가짜로 잡힌다. 1초씩 세 번 act로 나눠 미는
+ * 이유: 카운트다운은 setTimeout **체인**이라(한 틱이 렌더된 뒤에야 다음 틱이 잡힌다) 3000을
+ * 한 번에 밀면 첫 틱만 돌고 나머지는 아직 잡히지도 않은 상태다.
+ *
+ * 복원 세션(스냅샷에서 이어짐)은 카운트다운이 없어 시계를 밀어도 아무 일이 없다 — 그래서 모든
+ * 동기화 지점이 이 헬퍼를 거쳐도 무해하다. 카운트다운 자체의 검증(문구·초·계측 지연)은 2단계.
+ */
+async function skipStartCountdown() {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  try {
+    // 정의 fetch가 끝나 TestRunner가 서야 시계가 돈다 — 그 전에 밀면 헛돈다
+    await act(async () => {})
+    for (let i = 0; i < START_COUNTDOWN_SECONDS; i += 1) {
+      act(() => {
+        vi.advanceTimersByTime(1_000)
+      })
+    }
+  } finally {
+    vi.useRealTimers()
+  }
+}
+
+/*
+ * 첫 음성 문항이 브리지 판정까지 끝내기를 기다리는 두 입구. 둘 다 카운트다운을 먼저 건너뛴다 —
+ * 첫 문항은 카운트다운 뒤에야 마운트되므로(KAN-216) 그 전에는 기다릴 것이 없다.
  * 문항 문구만 기다리면 안 되는 이유: 정의 로딩과 전환 호출은 서로 다른 커밋이라, 문구가 뜬
  * 시점에는 아직 판정 결과(대기 뷰냐 폴백이냐)가 나오기 전이다.
  * 대기 문구가 아니라 재진입 버튼을 기다린다 — KAN-146으로 대기 문구가 판정 전후에 같아졌기 때문에,
  * 문구를 기다리면 판정이 나기 전 첫 프레임에서 이미 통과해 버려 동기화 지점 역할을 못 한다.
  */
-const findRecordingWait = () => screen.findByRole('button', { name: '녹음 화면 다시 열기' })
+const findRecordingWait = async () => {
+  await skipStartCountdown()
+  return screen.findByRole('button', { name: '녹음 화면 다시 열기' })
+}
 /** 브리지가 없는 실행의 동기화 지점 — 웹 녹음 패널이 서면 판정이 끝난 것이다 */
-const findRecordButton = () => screen.findByRole('button', { name: '녹음' })
+const findRecordButton = async () => {
+  await skipStartCountdown()
+  return screen.findByRole('button', { name: '녹음' })
+}
+/** 첫 문항 문구까지. 브리지 판정을 기다릴 필요가 없는 테스트의 동기화 지점이다 */
+const findFirstItem = async () => {
+  await skipStartCountdown()
+  return screen.findByText('음성 문항 1')
+}
 
 /** 네이티브가 녹음을 마치고 결과를 돌려주는 상황 */
 function deliverResult(itemId: string) {
@@ -358,7 +405,7 @@ describe('정의 로딩', () => {
 
     expect(screen.getByText('문항을 불러오는 중…')).toBeInTheDocument()
 
-    expect(await screen.findByText('음성 문항 1')).toBeInTheDocument()
+    expect(await findFirstItem()).toBeInTheDocument()
     expect(fetchImpl).toHaveBeenCalledTimes(1)
     expect(fetchImpl.mock.calls[0][0]).toBe(`${API_BASE}/v0/tests/${TEST_VERSION}?voiceSet=${VOICE_SET}`)
   })
@@ -377,7 +424,7 @@ describe('정의 로딩', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '다시 시도' }))
 
-    expect(await screen.findByText('음성 문항 1')).toBeInTheDocument()
+    expect(await findFirstItem()).toBeInTheDocument()
     expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 })
@@ -385,7 +432,7 @@ describe('정의 로딩', () => {
 describe('문항 진행', () => {
   it('진행바가 첫 문항을 1/10으로 보여준다 (endowed progress)', async () => {
     renderScreen(okFetch())
-    await screen.findByText('음성 문항 1')
+    await findFirstItem()
 
     const bar = screen.getByRole('progressbar', { name: '문항 진행률' })
     expect(bar).toHaveAttribute('aria-valuenow', '1')
@@ -777,7 +824,7 @@ describe('세션 격리 — 다른 세션의 진행을 이어받지 않는다', 
 
     renderScreen(okFetch(), { storage, sessionId: 'sess-2' })
 
-    expect(await screen.findByText('음성 문항 1')).toBeInTheDocument()
+    expect(await findFirstItem()).toBeInTheDocument()
     expect(screen.getByText('1 / 10 · 음성')).toBeInTheDocument()
     // 세션 1의 기록은 지워지지 않는다 — 남의 진행을 폐기할 권리가 없다는 것이 키 분리의 이유다
     expect(storage.getItem(snapshotKey('sess-1'))).not.toBeNull()

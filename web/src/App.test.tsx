@@ -5,6 +5,7 @@ import { clearTestId } from './analytics/testId'
 import { createFakeCapture, sineChunk, type FakeCapture } from './audio/testing/fakeCapture'
 import { REQUIRED_BRIDGE_VERSION } from './bridge/bridge'
 import { snapshotKey } from './progress/progressSnapshot'
+import { START_COUNTDOWN_SECONDS } from './progress/TestFlowScreen'
 import { clearWebSession, getWebSessionToken, loadWebSession, saveWebSession } from './session/webSession'
 
 function setSearch(search: string) {
@@ -53,8 +54,29 @@ function stubDefinitionFetch(item: unknown = VOICE_ITEM) {
   )
 }
 
-/** 어휘 문항을 한 칸 민다 — 보기를 고르고 [다음]으로 확정 */
+/*
+ * 진행 화면의 시작 대기 카운트다운(KAN-216)을 건너뛴다. 첫 응시는 정의가 온 뒤 3초를 세고
+ * 나서야 첫 문항이 서므로, `?screen=test`로 들어가는 테스트는 문항을 기다리기 전에 이걸
+ * 거친다. 가짜 시계(setTimeout만)는 이 함수 안에서만 살고, 시계는 setTimeout 체인이라 1초씩
+ * act로 나눠 민다 — 근거는 `TestFlowScreen.test.tsx`의 같은 이름 헬퍼.
+ */
+async function skipStartCountdown() {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  try {
+    await act(async () => {})
+    for (let i = 0; i < START_COUNTDOWN_SECONDS; i += 1) {
+      act(() => {
+        vi.advanceTimersByTime(1_000)
+      })
+    }
+  } finally {
+    vi.useRealTimers()
+  }
+}
+
+/** 어휘 문항을 한 칸 민다 — 보기를 고르고 [다음]으로 확정. 첫 문항 앞의 카운트다운도 넘긴다 */
 async function answerVocabulary() {
+  await skipStartCountdown()
   fireEvent.click(await screen.findByRole('radio', { name: '보기1' }))
   fireEvent.click(screen.getByRole('button', { name: '다음' }))
   // 제출은 비동기다(브라우저 단독 통로도 Promise) — 스냅샷이 쓰이기까지 microtask를 비운다
@@ -207,6 +229,7 @@ describe('App — 문항 진행 화면 진입 쿼리 (KAN-100: 네이티브가 �
     stubDefinitionFetch()
 
     render(<App />)
+    await skipStartCountdown()
 
     expect(await screen.findByText('어서 오이소')).toBeInTheDocument()
     expect(screen.getByText('1 / 1 · 음성')).toBeInTheDocument()
