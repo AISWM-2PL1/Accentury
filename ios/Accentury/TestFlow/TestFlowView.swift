@@ -694,14 +694,16 @@ private struct RecordingOverlay: View {
 /// 않는다 — `UIActivityViewController`에 원격 URL을 이미지로 주면 다운로드가 끝날 때까지
 /// 시트가 멈추고, 받는 쪽에서 무엇으로 보일지도 앱마다 갈린다. 카드 그림을 실어야 하는
 /// 정식 경로는 카카오 템플릿이고 그건 후속 티켓이다.
+///
+/// 문구와 링크를 `URL` 항목 없이 **한 문자열**로 싣는 이유는 `systemShareText` 주석에 있다
+/// (KAN-214) — 항목이 둘이면 카톡 공유 확장이 메시지를 둘로 쪼개 보낸다. 이걸로 안드로이드·웹·iOS
+/// 세 플랫폼의 시트 본문이 같은 모양이 된다.
 private struct ShareSheet: UIViewControllerRepresentable {
 
     let payload: SharePayload
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        var items: [Any] = [payload.text]
-        if let url = URL(string: payload.webTestUrl) { items.append(url) }
-        return UIActivityViewController(activityItems: items, applicationActivities: nil)
+        UIActivityViewController(activityItems: [systemShareText(payload)], applicationActivities: nil)
     }
 
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
