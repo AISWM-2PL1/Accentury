@@ -454,11 +454,16 @@ KAN-36의 내부 호출 토큰이 그랬고, staging은 2026-09-03에 apply를 �
 반영 한 번은 SSM `/accentury/{env}/IMAGE_TAG`를 새 SHA로 바꾸고(직전 값과 backend 서비스의
 현재 태스크 정의를 기억), 두 갈래로 간다 (KAN-165).
 
-1. ai 호스트: SSM Run Command(`AWS-RunShellScript`, 대상은 인스턴스 ID가 아니라
-   `tag:Name=accentury-{env}-ai`)로 `systemctl reload accentury`(첫 기동이면 `start`)를 부른 뒤
-   ai 컨테이너의 docker healthcheck가 healthy가 될 때까지 최대 5분 기다린다. ASG 교체 중이라
-   대상이 없으면 130초(SSM 전달 창 120초보다 길게 - 에이전트 등록 실측 1.5분에서 2분) 뒤
-   실패로 끝나므로 교체가 끝난 뒤 다시 실행한다.
+1. ai 호스트: ASG `accentury-{env}-ai`의 InService 인스턴스 ID를 조회해 한 대씩 순차로
+   reload한다 (KAN-201, 아래 "내부 ALB와 오토스케일링"). 시작 전에 ASG 프로세스 `HealthCheck`,
+   `ReplaceUnhealthy`, `AlarmNotification`을 멈추고 끝나면 어느 경로로든 되살린다. 대당 순서는
+   SSM 에이전트 등록 대기(최대 130초 - 실측 1.5분에서 2분) → SSM Run Command(`AWS-RunShellScript`,
+   인스턴스 ID 대상, 원격 실행 상한 1500초)로 `systemctl reload accentury`(첫 기동이면 `start`)를
+   부르고 원격에서 compose.env의 IMAGE_TAG를 대조한 뒤 ai 컨테이너의 docker healthcheck가 healthy가
+   될 때까지 최대 600초 → 파이프라인은 그 명령의 완료를 최대 1560초 기다린다 → 그 인스턴스가 ALB
+   대상 그룹에서 healthy가 될 때까지 최대 10분 → 다음 인스턴스. InService 인스턴스가 없으면(ASG
+   교체 중) 실패로 끝나므로 교체가 끝난 뒤 다시 실행한다. job이 취소나 timeout으로 reload 도중
+   죽으면 정리 스텝(`always()`)이 멈춘 ASG 프로세스를 되살린다 (KAN-212).
 2. backend 서비스: 서비스가 도는 태스크 정의를 `describe-task-definition`으로 읽어 image
    태그만 바꾼 리비전을 `register-task-definition`하고 `update-service`로 롤링 배포한다
    (새 태스크가 healthy가 된 뒤 옛 태스크를 뺀다 - 무중단). 완료 판정은 docker healthcheck가
@@ -830,10 +835,14 @@ healthy가 될 때까지 대기, 다음 인스턴스. 여러 대에 한꺼번에
 3대면 배포가 그만큼 길어진다(대당 약 2분에서 4분). reload 동안에는 ASG 프로세스 `HealthCheck`,
 `ReplaceUnhealthy`, `AlarmNotification`을 멈춘다 (Codex 리뷰 P1) - ELB 상태 검사를 보는 ASG는 컨테이너가 내려간
 인스턴스를 유예 기간이 지난 뒤 unhealthy로 교체해 버려, 정상 배포가 "인스턴스 사라짐"으로 실패하고 롤백한다.
-어느 경로로 끝나든 파이프라인이 resume하지만 job이 중간에 죽으면(취소, 러너 소실) 멈춘 채 남는다 - 그때는
-손으로 되돌린다. 멈춘 채 두면 죽은 인스턴스가 교체되지 않고 스케일링도 서지 않으며, `terraform apply`의
-instance refresh도 시작되지 않거나 취소된다 (refresh가 Cancelled나 Failed면 먼저 SuspendedProcesses를 본다).
-같은 이유로 배포 파이프라인이 도는 동안에는 apply를 걸지 않는다.
+어느 경로로 끝나든 스크립트가 resume하고, job이 중간에 죽어도(수동 취소, `timeout-minutes` 초과) 그 뒤의
+"ASG 프로세스 정리" 스텝(`always()`)이 마커 파일 `$RUNNER_TEMP/asg-suspended`에 적힌 ASG를 되살린다 (KAN-212).
+마커는 파이프라인의 suspend가 성공했을 때만 쓰이고 resume이 성공하면 지워지므로, 반영 전에 실패한 실행이나 정상
+완료에서는 "재개할 ASG 없음"으로 끝나고 누가 손으로 멈춘 프로세스는 건드리지 않는다. 정지 뒤 1시간이 지나
+역할 세션이 만료된 경우(timeout)를 위해 재개할 것이 있을 때만 세션을 다시 받는다. 러너 자체가 사라지면 어떤
+스텝도 돌지 않으므로 그때만 아래 명령으로 손으로 되돌린다. 멈춘 채 두면 죽은 인스턴스가 교체되지 않고 스케일링도
+서지 않으며, `terraform apply`의 instance refresh도 시작되지 않거나 취소된다 (refresh가 Cancelled나 Failed면 먼저
+SuspendedProcesses를 본다). 같은 이유로 배포 파이프라인이 도는 동안에는 apply를 걸지 않는다.
 
 ```
 aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$(terraform output -raw ai_asg_name)" \

@@ -433,22 +433,28 @@ jobs:
           # 워밍업은 수 분이다 - 유예 기간이 끝난 인스턴스는 unhealthy로 찍혀 교체된다. 그러면 파이프라인이 보던
           # 인스턴스 ID가 사라져 정상 배포가 실패와 롤백으로 끝난다. HealthCheck와 ReplaceUnhealthy를 멈추면 unhealthy
           # 판정 자체가 없고, AlarmNotification을 멈추면 배포 중 스케일 인이 reload 중인 인스턴스를 고르는 일이 없다.
-          # 어느 경로로 끝나든 resume한다 - 그래도 job 자체가 중간에 죽으면(취소, 러너 소실) 멈춘 채 남으므로
-          # README "내부 ALB와 오토스케일링"의 수동 resume 절차를 따른다.
+          # 어느 경로로 끝나든 resume한다. 그래도 job 자체가 중간에 죽으면(수동 취소, timeout-minutes 초과) 이 셸이
+          # 통째로 끊겨 resume이 돌지 않으므로, 정지한 ASG 이름을 마커 파일에 남기고 "ASG 프로세스 정리" 스텝
+          # (always())이 되살린다 (KAN-212). 마커는 suspend가 성공한 뒤 쓰고 resume이 성공한 뒤 지운다 - 파이프라인이
+          # 직접 멈춘 ASG만 가리키고, 누가 손으로 멈춘 프로세스는 건드리지 않는다. 러너 자체가 사라지면 어떤 스텝도
+          # 돌지 않으니 그때만 README "내부 ALB와 오토스케일링"의 수동 resume 절차를 따른다.
           ASG_PROCESSES="HealthCheck ReplaceUnhealthy AlarmNotification"
+          ASG_SUSPENDED_MARKER="$RUNNER_TEMP/asg-suspended"
           suspend_asg() {
-            aws autoscaling suspend-processes --auto-scaling-group-name "$1" --scaling-processes $ASG_PROCESSES \
-              && echo "ASG $1 프로세스 정지: $ASG_PROCESSES"
+            aws autoscaling suspend-processes --auto-scaling-group-name "$1" --scaling-processes $ASG_PROCESSES || return 1
+            echo "$1" > "$ASG_SUSPENDED_MARKER"
+            echo "ASG $1 프로세스 정지: $ASG_PROCESSES"
           }
           resume_asg() {
             local i
             for i in 1 2 3; do
               if aws autoscaling resume-processes --auto-scaling-group-name "$1" --scaling-processes $ASG_PROCESSES; then
+                rm -f "$ASG_SUSPENDED_MARKER"
                 echo "ASG $1 프로세스 재개: $ASG_PROCESSES"; return 0
               fi
               sleep 5
             done
-            echo "::error::ASG $1 프로세스 재개 실패 - 수동으로 aws autoscaling resume-processes --auto-scaling-group-name $1 --scaling-processes $ASG_PROCESSES"
+            echo "::error::ASG $1 프로세스 재개 실패 - 마커를 남겨 두므로 'ASG 프로세스 정리' 스텝이 다시 시도합니다. 그래도 안 되면 수동으로 aws autoscaling resume-processes --auto-scaling-group-name $1 --scaling-processes $ASG_PROCESSES"
             return 1
           }
           reload_host() {
@@ -686,6 +692,55 @@ jobs:
           else
             echo "::error::롤백도 실패했습니다. ai 호스트 컨테이너는 새 태그 $IMAGE_TAG 로, SSM IMAGE_TAG는 직전 태그 $PREVIOUS_TAG 로 어긋나 있을 수 있습니다. ECS 서비스 이벤트(aws ecs describe-services)와 ai 호스트의 journalctl -u accentury 를 확인하고 수동 실행으로 정리하세요."
           fi
+          exit 1
+
+      # ---- ASG 프로세스 정리 (KAN-212) ----
+      # 반영이나 롤백의 ai reload 도중 job이 죽으면(수동 취소, timeout-minutes 초과) apply.sh의 resume_asg가 돌지 못해
+      # ASG 프로세스 3개가 멈춘 채 남는다 - unhealthy 교체와 스케일링이 서고 terraform apply의 instance refresh도
+      # 시작되지 않는다. always()라 취소와 timeout에도 돈다(GitHub은 timeout도 취소로 처리한다). 되살리는 대상은
+      # suspend_asg가 마커에 적은 ASG뿐이다 - 반영 전에 실패한 실행(태그 결정 실패 등)과 정상 완료(resume_asg가
+      # 마커를 지움)에서는 "재개할 ASG 없음"으로 끝난다. 롤백 스텝 뒤에 두는 이유는 롤백도 같은 apply.sh로 reload를
+      # 돌려 ASG를 멈추기 때문이다. 러너 자체가 사라지면 이 스텝도 돌지 않으므로 그때는 README의 수동 절차다.
+      - name: ASG 프로세스 정리 (잔존 확인)
+        id: asg_leftover
+        if: always() && steps.gate.outputs.paused != 'true'
+        run: |
+          asg=""
+          if [ -f "$RUNNER_TEMP/asg-suspended" ]; then asg=$(cat "$RUNNER_TEMP/asg-suspended"); fi
+          echo "asg=$asg" >> "$GITHUB_OUTPUT"
+          if [ -z "$asg" ]; then
+            echo "재개할 ASG 없음"
+          else
+            echo "::warning::반영 중 정지한 ASG $asg 프로세스가 재개되지 않은 채 남았습니다 (취소, timeout 또는 resume 실패). 되살립니다."
+          fi
+
+      # 정지한 지 60분이 지났으면(timeout-minutes 110) 앞서 받은 역할 세션(기본 1시간)이 만료돼 있어 resume이
+      # ExpiredToken으로 실패한다 - 재개할 것이 있을 때만 세션을 다시 받는다. 정상 경로에는 스텝이 늘지 않는다.
+      - uses: aws-actions/configure-aws-credentials@v6
+        if: always() && steps.asg_leftover.outputs.asg != ''
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: ASG 프로세스 정리 (재개)
+        if: always() && steps.asg_leftover.outputs.asg != ''
+        env:
+          ASG: ${{ steps.asg_leftover.outputs.asg }}
+        run: |
+          processes="HealthCheck ReplaceUnhealthy AlarmNotification"
+          for i in 1 2 3; do
+            if aws autoscaling resume-processes --auto-scaling-group-name "$ASG" --scaling-processes $processes; then
+              rm -f "$RUNNER_TEMP/asg-suspended"
+              echo "ASG $ASG 프로세스 재개: $processes"
+              # 확인용 조회다 - 일시 오류가 성공한 재개를 실패로 찍으면 안 된다.
+              left=$(aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$ASG" \
+                --query 'AutoScalingGroups[0].SuspendedProcesses[].ProcessName' --output text 2>/dev/null || echo "조회 실패")
+              echo "남은 SuspendedProcesses: ${left:-(없음)}"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::ASG $ASG 프로세스 재개 실패 - 수동으로 aws autoscaling resume-processes --auto-scaling-group-name $ASG --scaling-processes $processes (infra/README.md '내부 ALB와 오토스케일링')"
           exit 1
 
       - name: 배포 기록
