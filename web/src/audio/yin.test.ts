@@ -61,16 +61,35 @@ describe('YIN F0 추정 (앱 YinPitchEstimatorTest 이식)', () => {
     expect(Math.abs(estimatePitchHz(chunk)! - 120)).toBeLessThanOrEqual(3)
   })
 
-  it('대역 상한 경계 396Hz도 400Hz를 넘기지 않는다', () => {
-    const f0 = estimatePitchHz(sine(396))!
-    expect(Math.abs(f0 - 396)).toBeLessThanOrEqual(4)
+  it('대역 상한 경계 790Hz도 800Hz를 넘기지 않는다', () => {
+    const f0 = estimatePitchHz(sine(790))!
+    expect(Math.abs(f0 - 790)).toBeLessThanOrEqual(8)
     expect(f0).toBeLessThanOrEqual(MAX_F0_HZ)
   })
 
-  it('대역 밖 410Hz는 400Hz 초과 값을 반환하지 않는다', () => {
-    // τmin=40 경계에서 보간이 대역 밖으로 새는지 확인. null 또는 clamp된 값만 허용.
-    const f0 = estimatePitchHz(sine(410))
+  it('대역 밖 820Hz는 800Hz 초과 값을 반환하지 않는다', () => {
+    // τmin=20 경계에서 보간이 대역 밖으로 새는지 확인. null 또는 clamp된 값만 허용.
+    const f0 = estimatePitchHz(sine(820))
     expect(f0 === null || f0 <= MAX_F0_HZ).toBe(true)
+  })
+
+  it('옛 상한(400Hz) 위의 고음은 옥타브 아래로 뒤집히지 않는다 - 곡선이 천장으로 간다', () => {
+    // 80~400Hz 대역에서는 450Hz가 2주기 골(τ=71)에 잡혀 225Hz로 나왔다. 감탄·고성이 올라가야
+    // 할 선을 아래로 꺾던 원인이다.
+    for (const hz of [450, 520, 600]) {
+      const chunk = new Float32Array(WINDOW_SIZE)
+      for (let i = 0; i < WINDOW_SIZE; i++) {
+        const t = (2 * Math.PI * hz * i) / TARGET_SAMPLE_RATE
+        chunk[i] = (5000 * Math.sin(t) + 3000 * Math.sin(2 * t) + 2000 * Math.sin(3 * t)) / FULL_SCALE
+      }
+      expect(Math.abs(estimatePitchHz(chunk)! - hz)).toBeLessThanOrEqual(hz * 0.02)
+    }
+  })
+
+  it('옛 하한(80Hz) 아래의 저음도 유성으로 잡는다 - 곡선이 바닥에 남는다', () => {
+    // 80~400Hz 대역에서는 70Hz가 τmax=200 밖이라 무성(null)이 되어 선이 끊겼다.
+    expect(Math.abs(estimatePitchHz(sine(70))! - 70)).toBeLessThanOrEqual(2)
+    expect(Math.abs(estimatePitchHz(sine(62))! - 62)).toBeLessThanOrEqual(2)
   })
 
   it('무음은 무성음으로 판정한다', () => {
