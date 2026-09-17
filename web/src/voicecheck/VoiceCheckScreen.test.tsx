@@ -9,7 +9,7 @@ import { VOICE_CHECK_MAX_DURATION_MS, VoiceCheckScreen } from './VoiceCheckScree
  */
 const SPEECH_MS = 600
 
-/** 발화의 음높이. 그대로 잠긴 중심이 되어야 한다 (80~400Hz 탐색 대역 안) */
+/** 발화의 음높이. 그대로 잠긴 중심이 되어야 한다 (60~800Hz 탐색 대역 안) */
 const SPEECH_HZ = 200
 
 interface Harness {

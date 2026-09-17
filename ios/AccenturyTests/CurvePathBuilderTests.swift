@@ -276,6 +276,23 @@ final class CurvePathBuilderTests: XCTestCase {
         XCTAssertTrue(fillLines.contains(CGPoint(x: 0, y: 40)))
     }
 
+    /// 경계의 고립점은 반지름만큼 들인다 — 선 굵기 절반으로는 지름의 1/4이 여전히 캔버스 밖이다.
+    func testIsolatedDotOnTheEdgeIsInsetByItsRadius() throws {
+        let cache = CurveShapeCache()
+        let shapes = cache.shapes(
+            for: [[CurvePoint(x: 0.5, y: 0)], [CurvePoint(x: 0.5, y: 1)]],
+            size: CGSize(width: 100, height: 40),
+            filled: false,
+            strokeWidth: 3
+        )
+        // 천장 점의 중심은 (50, 3), 바닥 점은 (50, 37) — 원(반지름 3)이 캔버스 [0, 40] 안에 온전히 든다.
+        let bounds = try XCTUnwrap(shapes.dots?.boundingRect)
+        XCTAssertEqual(47, bounds.minX, accuracy: 1e-3)
+        XCTAssertEqual(53, bounds.maxX, accuracy: 1e-3)
+        XCTAssertEqual(0, bounds.minY, accuracy: 1e-3)
+        XCTAssertEqual(40, bounds.maxY, accuracy: 1e-3)
+    }
+
     /// 가운데(y=0.5)는 인셋 전과 같은 자리다 — 곡선 모양은 천장·바닥 말고는 바뀌지 않는다.
     func testMiddleStaysWhereItWasAfterInset() {
         let cache = CurveShapeCache()

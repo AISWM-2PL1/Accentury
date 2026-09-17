@@ -141,17 +141,19 @@ final class CurveShapeCache {
 
         let dotRadius = strokeWidth
         for rawPoints in segments {
-            // 창 밖을 기는 구간(y=0·y=1)은 선 굵기 절반만큼 안으로 들인다 — 웹·안드로이드와 같은
-            // 규칙(KAN-218). 채움의 바닥(closeAtY)은 들이지 않고 캔버스 바닥 그대로다.
-            let points = insetY(rawPoints, strokeWidth: Float(strokeWidth), height: Float(size.height))
-            if points.count >= 2 {
+            // 창 밖을 기는 구간(y=0·y=1)은 안으로 들인다 — 웹·안드로이드와 같은 규칙(KAN-218).
+            // 선은 굵기 절반만큼, 고립점은 반지름(= 굵기)만큼 — 원이 선보다 커서 절반만 들이면
+            // 지름의 1/4이 여전히 밖이다. 채움의 바닥(closeAtY)은 들이지 않고 캔버스 바닥 그대로다.
+            if rawPoints.count >= 2 {
+                let points = insetY(rawPoints, strokeWidth: Float(strokeWidth), height: Float(size.height))
                 // 명령은 한 번만 만든다 — 선과 채움이 같은 목록을 나눠 쓴다.
                 let commands = smoothPathCommands(points, width: Float(size.width), height: Float(size.height))
                 shapes.outlines.append(curvePath(commands))
                 if fill != nil {
                     fill?.addPath(curvePath(commands, closeAtY: size.height))
                 }
-            } else if let point = points.first, dotRadius > 0 {
+            } else if dotRadius > 0,
+                      let point = insetY(rawPoints, strokeWidth: Float(2 * dotRadius), height: Float(size.height)).first {
                 let centre = CGPoint(x: CGFloat(point.x) * size.width, y: CGFloat(point.y) * size.height)
                 if dots == nil { dots = Path() }
                 dots?.addEllipse(

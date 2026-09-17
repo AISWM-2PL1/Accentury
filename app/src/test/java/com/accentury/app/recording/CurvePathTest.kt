@@ -109,6 +109,17 @@ class CurvePathTest {
     }
 
     @Test
+    fun `고립점은 굵기의 2배를 넘겨 반지름만큼 들인다 - 경계 점의 중심이 반지름 자리에 온다`() {
+        // CurveLane.kt가 점에 넘기는 값은 2·stroke다. 굵기 3 → 천장 점의 중심 y_px = 3, 바닥은 height − 3.
+        val stroke = 3f
+        val top = insetY(listOf(CurvePoint(0.5f, 0f)), strokeWidthPx = 2f * stroke, heightPx = height).single()
+        val bottom = insetY(listOf(CurvePoint(0.5f, 1f)), strokeWidthPx = 2f * stroke, heightPx = height).single()
+
+        assertEquals(stroke, top.y * height, 1e-4f)
+        assertEquals(height - stroke, bottom.y * height, 1e-4f)
+    }
+
+    @Test
     fun `인셋은 x를 건드리지 않는다`() {
         val original = points(6)
         val inset = insetY(original, strokeWidthPx = 2f, heightPx = height)
