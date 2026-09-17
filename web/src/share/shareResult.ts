@@ -39,6 +39,14 @@ const UNSUPPORTED_MESSAGE = '이 환경에서는 공유를 지원하지 않아�
  * 2. **`navigator.share`** — 브라우저 단독 실행의 정식 경로다. 다만 **보안 컨텍스트(HTTPS)에서만**
  *    존재한다: 개발 WebView가 로드하는 `http://10.0.2.2:5173`에는 없다(`crypto.randomUUID`가
  *    같은 이유로 없었던 것과 같은 상황, 2026-08-18 에뮬레이터 실증). 그래서 없을 때가 정상이다.
+ *
+ *    시트에 `url`을 따로 싣지 않고 문구와 링크를 한 문자열로 이어 `text` 하나만 넘긴다. Web Share
+ *    API는 `text`와 `url`을 별개 항목으로 올리는데, 카톡 공유 확장처럼 항목마다 메시지를 만드는
+ *    수신 앱에서는 이게 링크 버블 하나와 문구 버블 하나, 두 번 보낸 꼴이 된다. 받는 쪽에서는
+ *    한 번의 공유가 두 개로 쪼개져 도착한다. Android 폴백(`ResultSharer.systemShareText`)이
+ *    이미 `"문구\n링크"` 한 덩어리로 보내고 있으므로 형식도 그쪽에 맞춘다.
+ *    대신 `url`을 따로 읽어 미리보기 카드를 그리는 앱에서는 링크가 본문 텍스트로만 들어간다 —
+ *    링크가 두 번 가거나 메시지가 둘로 갈리는 것보다 이쪽이 낫다고 보고 감수한다.
  * 3. **클립보드 복사** — 시트가 없어도 링크는 건넬 수 있다. 붙여넣기 한 번을 사용자에게
  *    떠넘기는 셈이라 마지막에서 두 번째다.
  * 4. 그마저 없으면 안내만 남긴다.
@@ -71,7 +79,7 @@ export function shareResult(share: ResultShare): ShareChannel {
     if (typeof navigator.share === 'function') {
       // 취소는 실패가 아니다 — 사용자가 공유 시트를 닫으면 reject가 오는데, 그걸 오류로
       // 다루면 정상 행동에 오류 로그가 쌓인다. 결과 화면은 그대로 두는 것이 맞다 (KAN-30 AC).
-      navigator.share({ text: payload.text, url: payload.webTestUrl }).catch(() => {})
+      navigator.share({ text: systemShareText(payload) }).catch(() => {})
       return 'system'
     }
   } catch (error: unknown) {
@@ -99,6 +107,18 @@ export function shareResult(share: ResultShare): ShareChannel {
 
   warnUnsupported(payload)
   return 'unsupported'
+}
+
+/**
+ * 공유 시트에 실을 본문. Android의 `ResultSharer.systemShareText`와 같은 모양이고, 이름도
+ * 같게 두어 둘 중 하나만 바뀌면 눈에 띄게 한다 — 같은 공유가 앱에서와 브라우저에서 다른
+ * 모양으로 도착하는 것이 KAN-30이 피하려는 일이다.
+ *
+ * 점수는 싣지 않는다 (KAN-30 요구) — 재료가 서버가 준 문구와 캠페인 URL뿐이라는 것이
+ * 함수 하나로 보이는 편이 낫다.
+ */
+export function systemShareText(payload: SharePayload): string {
+  return `${payload.text}\n${payload.webTestUrl}`
 }
 
 /**
