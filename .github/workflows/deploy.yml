@@ -3,8 +3,8 @@
 # 승격 모델 (2026-08-17 확정): 이미지는 한 번만 빌드하고 staging에서 검증된 바로 그 SHA를 prod로
 # 올린다. prod에서 재빌드하면 staging 검증이 무의미해진다.
 #
-#   Dev 푸시     -> build(현재 커밋 SHA로 두 이미지를 ECR에 push) -> deploy(staging, ai 호스트 -> backend 서비스) -> smoke
-#   Release 푸시 -> deploy(prod): 재빌드 없이 Dev 이력에서 ECR에 실재하는 최신 SHA를 승격
+#   Dev 푸시     -> build(현재 커밋 SHA로 두 이미지를 ECR에 push) -> deploy(staging, ai 호스트 -> backend 서비스) -> smoke -> verified 태그
+#   Release 푸시 -> deploy(prod): 재빌드 없이 Dev 이력에서 ECR에 실재하는 최신 SHA를 승격 -> smoke
 #   수동 실행    -> environment와 image_tag를 고른다. 롤백 = 이전 SHA를 image_tag에 넣고 같은 절차
 #
 # 반영은 두 갈래다 (KAN-165). 먼저 SSM /accentury/{env}/IMAGE_TAG를 새 SHA로 바꾼다 - ai 호스트가 읽고,
@@ -779,13 +779,18 @@ jobs:
           echo "::error::6분 안에 $APP_DOMAIN 이 백엔드 응답을 돌려주지 않았습니다. 배포는 COMPLETED이므로 ALB 대상 그룹 상태와 보안 그룹 사슬을 확인하세요." >&2
           exit 1
 
-      # staging에만 E2E 스모크를 돌린다 (KAN-138). 관리자 토큰은 이 환경 SSM에서 읽어 합성 트래픽으로
-      # 표시한다 - 저장소 시크릿 하나로 두 환경 토큰을 못 담던 문제(README)가 여기서 해소된다.
-      # e2e-smoke.yml의 workflow_call을 쓰지 않는 이유: 토큰을 job output으로 넘기면 GitHub이 마스킹된
-      # 값이라며 output을 버린다. 그래서 같은 job 안에서 스크립트를 직접 부른다.
-      # prod는 승격 직후 사람이 e2e-smoke.yml을 workflow_dispatch로 돌린다 (README).
-      - name: E2E 스모크 (staging)
-        if: steps.gate.outputs.paused != 'true' && env.TARGET_ENV == 'staging'
+      # 두 환경 모두 반영 직후 같은 job에서 E2E 스모크를 돌린다 (KAN-138, prod는 KAN-217부터). 관리자 토큰은
+      # 대상 환경 SSM에서 읽어 합성 트래픽으로 표시한다 - 저장소 시크릿 하나로 두 환경 토큰을 못 담던
+      # 문제(README)가 여기서 해소되고, 두 환경 역할 모두 그 파라미터의 GetParameter 권한이 있다
+      # (infra/modules/deploy ReadAdminToken). e2e-smoke.yml의 workflow_call을 쓰지 않는 이유: 토큰을 job
+      # output으로 넘기면 GitHub이 마스킹된 값이라며 output을 버린다. 그래서 같은 job 안에서 스크립트를 직접
+      # 부른다. e2e-smoke.yml의 workflow_dispatch는 승격과 무관한 재실행용으로 남는다.
+      #
+      # 스모크 실패는 이 실행을 실패로 만들지만 반영을 되돌리지는 않는다 (두 환경 같음). 스모크가 보는 것은
+      # 이미지가 아니라 전 구간(CloudFront, WAF, ALB, backend, AI, RDS)이라 원인이 이미지가 아닐 수 있다.
+      # 되돌리려면 수동 실행에 직전 SHA를 넣는다 (헤더의 롤백 절차).
+      - name: E2E 스모크 (${{ env.TARGET_ENV }})
+        if: steps.gate.outputs.paused != 'true'
         env:
           APP_DOMAIN: ${{ vars.APP_DOMAIN }}
         run: |

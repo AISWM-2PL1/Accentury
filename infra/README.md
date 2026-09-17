@@ -109,8 +109,8 @@ Route 53 호스팅 영역 ── Porkbun에서 NS 위임 ── ACM 인증서 2�
     Dev 병합     → 이미지 빌드 → ECR push(SHA) → SSM IMAGE_TAG 갱신
                    → ai 호스트 Run Command reload → healthy
                    → backend 태스크 정의 리비전 등록 → ecs update-service → rolloutState COMPLETED
-                   → 실패 시 역순 롤백(backend 직전 태스크 정의, ai 직전 SHA) → E2E 스모크 KAN-138
-    Release 병합 → 재빌드 없이 Dev 이력의 최신 빌드 SHA → (environment 승인) → prod
+                   → 실패 시 역순 롤백(backend 직전 태스크 정의, ai 직전 SHA) → E2E 스모크 KAN-138 → verified 태그
+    Release 병합 → 재빌드 없이 Dev 이력의 최신 빌드 SHA(verified 필수) → (environment 승인) → prod 반영 → E2E 스모크 (KAN-217)
     롤백         → 수동 실행에 이전 SHA 입력, 같은 절차
   웹 번들 web-deploy.yml → S3 업로드 + CloudFront 무효화            KAN-127
 
@@ -448,7 +448,7 @@ KAN-36의 내부 호출 토큰이 그랬고, staging은 2026-09-03에 apply를 �
 | 트리거 | 하는 일 |
 | --- | --- |
 | Dev 푸시 (`backend/**`, `ai/**`) | `scripts/push-images.sh`로 두 이미지를 commit SHA 7자리 태그로 ECR에 push (이미 있으면 건너뜀) → staging 반영 → E2E 스모크 |
-| Release 푸시 | 빌드 없음. merge commit의 2번째 부모(Dev 끝)부터 거슬러 **처음 만나는 빌드된 SHA**가 후보다. 그 SHA에 `verified-<sha>` 태그(staging 반영과 스모크 통과 표시)가 없으면 더 오래된 것으로 건너뛰지 않고 실패한다 (서버 변경이 조용히 빠지는 것을 막는다). environment `prod`에 required reviewers가 있으면 승인 대기 |
+| Release 푸시 | 빌드 없음. merge commit의 2번째 부모(Dev 끝)부터 거슬러 **처음 만나는 빌드된 SHA**가 후보다. 그 SHA에 `verified-<sha>` 태그(staging 반영과 스모크 통과 표시)가 없으면 더 오래된 것으로 건너뛰지 않고 실패한다 (서버 변경이 조용히 빠지는 것을 막는다). environment `prod`에 required reviewers가 있으면 승인 대기 → prod 반영 → E2E 스모크 (KAN-217) |
 | 수동 실행 | 환경과 `image_tag` 선택. 비우면 staging은 현재 커밋 빌드, prod는 위 승격 규칙. **롤백 = 이전 SHA를 `image_tag`에 넣는 것** (같은 절차, 재빌드 없음) |
 
 반영 한 번은 SSM `/accentury/{env}/IMAGE_TAG`를 새 SHA로 바꾸고(직전 값과 backend 서비스의
@@ -499,13 +499,14 @@ staging 반영과 스모크가 모두 통과하면 같은 이미지에 ECR 태�
 없다. 표시는 prod 역할의 ECR 조회 권한만으로 확인되므로 환경 간 SSM 교차 읽기가 없다.
 
 테스트는 파이프라인에서 다시 돌리지 않는다 - PR의 `backend-test`, `ai-test` required
-check가 게이트다. E2E 스모크는 staging 반영 직후 같은 job에서 `scripts/e2e_smoke.py`를
-직접 부르고, 관리자 토큰은 그 환경 SSM에서 읽어 합성 트래픽으로 표시한다. `e2e-smoke.yml`의
-`workflow_call`을 쓰지 않는 이유는 토큰을 job output으로 넘기면 GitHub이 마스킹된 값이라며
-output을 버리기 때문이다. prod는 승격 직후 사람이 `e2e-smoke.yml`을 workflow_dispatch로
-돌린다 (아래 "원격 스모크 수동 실행"). 스모크 실패는 실행을 실패로 만들지만 반영을
-되돌리지는 않는다 - 스모크가 보는 것은 이미지가 아니라 전 구간이라, 원인이 이미지가
-아닐 수 있다.
+check가 게이트다. E2E 스모크는 두 환경 모두 반영 직후 같은 job에서 `scripts/e2e_smoke.py`를
+직접 부르고(prod는 KAN-217부터, 그 전에는 사람이 `e2e-smoke.yml`을 따로 돌렸다), 관리자
+토큰은 그 환경 SSM에서 읽어 합성 트래픽으로 표시한다. `e2e-smoke.yml`의 `workflow_call`을
+쓰지 않는 이유는 토큰을 job output으로 넘기면 GitHub이 마스킹된 값이라며 output을 버리기
+때문이다. 스모크 실패는 실행을 실패로 만들지만 반영을 되돌리지는 않는다 (두 환경 같음) -
+스모크가 보는 것은 이미지가 아니라 전 구간이라, 원인이 이미지가 아닐 수 있다. 되돌리려면
+수동 실행에 직전 SHA를 넣는다. staging에서는 스모크까지 통과해야 `verified-<sha>`가 붙고,
+prod에서는 붙일 표시가 없어 그 스텝이 skipped다.
 
 권한은 `infra/modules/deploy`의 `image-deploy` 정책이다. staging 역할만 ECR push를
 갖고(`ci_image_push`, 환경 간 tfvars 차이) prod 역할은 조회뿐이다. Run Command는
@@ -1086,8 +1087,10 @@ WAF의 AWS 관리 규칙(KAN-149)은 `/recording`만 제외하고 이 경로에�
 
 ### 원격 스모크 수동 실행 (KAN-138)
 
-이미 떠 있는 환경을 도메인 경유로 두드린다. 토큰은 job이 SSM에서, 대상 주소는 그 environment의
-변수 `APP_DOMAIN`에서 읽으므로 넣을 입력이 환경 이름뿐이다.
+이미 떠 있는 환경을 도메인 경유로 두드린다. 배포 파이프라인이 두 환경 모두 반영 직후 같은
+스모크를 돌리므로(KAN-217) 승격 절차의 일부는 아니고, 배포와 무관하게 한 바퀴 확인하고 싶을
+때(경보 확인, 장애 뒤 점검, `--voice-wav` 검산 전 정상 흐름 확인) 쓴다. 토큰은 job이 SSM에서,
+대상 주소는 그 environment의 변수 `APP_DOMAIN`에서 읽으므로 넣을 입력이 환경 이름뿐이다.
 
 ```
 gh workflow run e2e-smoke.yml --ref Dev     -f environment=staging
