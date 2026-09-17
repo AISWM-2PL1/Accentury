@@ -12,13 +12,31 @@ package com.accentury.app.audio
  * - 절대 임계값으로 무성음 프레임을 null로 판정해 곡선 튐을 막는다.
  *
  * 온디바이스 실시간 곡선용이므로 정확도보다 저지연 우선(architecture.md).
- * 2048샘플@16kHz 프레임 기준 시간영역 O(W·τmax) ≈ 37만 곱셈 - 예산 대비 미미.
+ * 2048샘플@16kHz 프레임 기준 시간영역 O(W·τmax) = 1782·266 ≈ 47만 곱셈 - 예산 대비 미미.
  */
 object YinPitchEstimator {
 
-    /** 사람 목소리 F0 탐색 대역. 대역 밖(예: 50Hz 험 노이즈)은 무성음 취급된다. */
-    const val MIN_F0_HZ = 80
-    const val MAX_F0_HZ = 400
+    /**
+     * 사람 목소리 F0 탐색 대역. 대역 밖(예: 50Hz 험 노이즈)은 무성음 취급된다.
+     *
+     * 처음엔 표준 설정인 80~400Hz였는데(`ondevice-f0.md`), 곡선 화면에서 **대역 끝이 곧 곡선이
+     * 사라지는 자리**가 됐다(KAN-218). 사용자 레인은 화자 중심 ±7 semitone 창 밖을 천장·바닥에
+     * 눌러 담는데(`UserCurve.kt`), 추정기가 먼저 대역 밖을 무성으로 돌려보내면 눌러 담을 값
+     * 자체가 없다 — 중심 120Hz인 화자가 낮게 깔면 80Hz 아래에서 선이 끊기고, 400Hz를 넘는
+     * 고음은 τ 탐색이 2주기 골에서 멈춰 **한 옥타브 아래로 뒤집혀** 올라가야 할 선이 아래로
+     * 꺾였다(450→225). 60~800Hz면 낮은 남성음의 vocal fry부터 여성의 감탄·고성까지 들어와,
+     * 창 밖 값은 추정기가 아니라 표시 쪽 clamp가 천장·바닥에 붙여 둔다.
+     *
+     * 하한을 내리면 τmax가 200→266이 되는데 2048 창에서 적분 창이 1782라 여유가 있고, 상한을
+     * 올리면 τmin이 40→20이 되어 반주기 골(옥타브 위 오류)을 먼저 만날 위험이 생기지만 CMNDF의
+     * 누적 정규화가 그 골을 임계값 위로 띄운다 — 2·3배음이 기음보다 큰 합성 신호(60~800Hz,
+     * 10Hz 간격)에서도 옥타브 오류 0건이었다 (웹 `yin.ts`, 2026-09-17 실측).
+     *
+     * 웹 `yin.ts`·iOS `YinPitchEstimator.swift`와 같은 값이다 — 같은 목소리가 앱과 웹에서
+     * 다른 곡선이 되면 안 된다.
+     */
+    const val MIN_F0_HZ = 60
+    const val MAX_F0_HZ = 800
 
     /**
      * CMNDF 절대 임계값. 원 논문 권장은 0.1~0.2지만 우리는 0.25로 느슨하게 잡았다.
@@ -51,8 +69,8 @@ object YinPitchEstimator {
      * 청크가 탐색에 필요한 최소 길이(τmax의 2배)보다 짧아도 null.
      */
     fun estimate(chunk: ShortArray, sampleRate: Int = SAMPLE_RATE): Float? {
-        val tauMin = sampleRate / MAX_F0_HZ // 16kHz 기준 40샘플
-        val tauMax = sampleRate / MIN_F0_HZ // 16kHz 기준 200샘플
+        val tauMin = sampleRate / MAX_F0_HZ // 16kHz 기준 20샘플
+        val tauMax = sampleRate / MIN_F0_HZ // 16kHz 기준 266샘플
         val window = chunk.size - tauMax // 적분 창: x[j+τ]가 청크를 벗어나지 않는 범위
         if (window <= tauMax) return null
 
@@ -92,7 +110,7 @@ object YinPitchEstimator {
         while (tau + 1 <= tauMax && cmndf[tau + 1] < cmndf[tau]) tau++
 
         // 4단계 - 포물선 보간: 정수 τ 이웃 3점으로 실수 주기를 근사해 양자화 오차를 줄인다.
-        //         대역 경계 τ에서 보간이 대역을 살짝 벗어날 수 있어(예: τ=40 → 400Hz 초과)
+        //         대역 경계 τ에서 보간이 대역을 살짝 벗어날 수 있어(예: τ=20 → 800Hz 초과)
         //         결과를 탐색 대역으로 clamp한다 (Codex 1R).
         val f0 = sampleRate / parabolicInterpolation(cmndf, tau)
         return f0.coerceIn(MIN_F0_HZ.toFloat(), MAX_F0_HZ.toFloat())

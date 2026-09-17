@@ -49,18 +49,43 @@ class YinPitchEstimatorTest {
     }
 
     @Test
-    fun `대역 상한 경계 396Hz도 400Hz를 넘기지 않는다`() {
-        val f0 = YinPitchEstimator.estimate(sine(396.0))
+    fun `대역 상한 경계 790Hz도 800Hz를 넘기지 않는다`() {
+        val f0 = YinPitchEstimator.estimate(sine(790.0))
         assertNotNull(f0)
-        assertEquals(396f, f0!!, 4f)
-        assertTrue(f0 <= 400f)
+        assertEquals(790f, f0!!, 8f)
+        assertTrue(f0 <= YinPitchEstimator.MAX_F0_HZ.toFloat())
     }
 
     @Test
-    fun `대역 밖 410Hz는 400Hz 초과 값을 반환하지 않는다`() {
-        // τmin=40 경계에서 보간이 대역 밖으로 새는지 확인. null(무성음) 또는 clamp된 값만 허용.
-        val f0 = YinPitchEstimator.estimate(sine(410.0))
-        assertTrue(f0 == null || f0 <= 400f)
+    fun `대역 밖 820Hz는 800Hz 초과 값을 반환하지 않는다`() {
+        // τmin=20 경계에서 보간이 대역 밖으로 새는지 확인. null(무성음) 또는 clamp된 값만 허용.
+        val f0 = YinPitchEstimator.estimate(sine(820.0))
+        assertTrue(f0 == null || f0 <= YinPitchEstimator.MAX_F0_HZ.toFloat())
+    }
+
+    @Test
+    fun `옛 상한(400Hz) 위의 고음은 옥타브 아래로 뒤집히지 않는다 - 곡선이 천장으로 간다`() {
+        // 80~400Hz 대역에서는 450Hz가 2주기 골(τ=71)에 잡혀 225Hz로 나왔다. 감탄·고성이 올라가야
+        // 할 선을 아래로 꺾던 원인이다 (KAN-218).
+        for (hz in listOf(450.0, 520.0, 600.0)) {
+            val chunk = ShortArray(CHUNK_SIZE) {
+                val t = 2 * PI * hz * it / SAMPLE_RATE
+                (5000 * sin(t) + 3000 * sin(2 * t) + 2000 * sin(3 * t)).toInt().toShort()
+            }
+            val f0 = YinPitchEstimator.estimate(chunk)
+            assertNotNull("$hz Hz", f0)
+            assertEquals("$hz Hz", hz.toFloat(), f0!!, (hz * 0.02).toFloat())
+        }
+    }
+
+    @Test
+    fun `옛 하한(80Hz) 아래의 저음도 유성으로 잡는다 - 곡선이 바닥에 남는다`() {
+        // 80~400Hz 대역에서는 70Hz가 τmax=200 밖이라 무성(null)이 되어 선이 끊겼다 (KAN-218).
+        for (hz in listOf(70.0, 62.0)) {
+            val f0 = YinPitchEstimator.estimate(sine(hz))
+            assertNotNull("$hz Hz", f0)
+            assertEquals("$hz Hz", hz.toFloat(), f0!!, 2f)
+        }
     }
 
     @Test
@@ -80,7 +105,7 @@ class YinPitchEstimatorTest {
 
     @Test
     fun `탐색 대역 밖 저주파는 무성음으로 판정한다`() {
-        // 50Hz(주기 320샘플)는 τmax=200 안에서 겹치는 지점이 없다.
+        // 50Hz(주기 320샘플)는 τmax=266 안에서 겹치는 지점이 없다.
         assertNull(YinPitchEstimator.estimate(sine(50.0)))
     }
 
