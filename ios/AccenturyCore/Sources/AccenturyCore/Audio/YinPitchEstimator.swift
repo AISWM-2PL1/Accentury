@@ -14,20 +14,38 @@ import Foundation
 /// - 절대 임계값으로 무성음 프레임을 null로 판정해 곡선 튐을 막는다.
 ///
 /// 온디바이스 실시간 곡선용이므로 정확도보다 저지연 우선(architecture.md).
-/// 2048샘플@16kHz 프레임 기준 시간영역 O(W·τmax) ≈ 37만 곱셈 - 예산 대비 미미.
+/// 2048샘플@16kHz 프레임 기준 시간영역 O(W·τmax) = 1782·266 ≈ 47만 곱셈 - 예산 대비 미미.
 ///
 /// Accelerate(vDSP)는 쓰지 않는다. 실기기 프로파일링에서 예산을 못 맞추는 게 확인되기 전까지는
 /// 안드로이드와 같은 스칼라 코드를 유지해야 값이 갈릴 여지가 없다.
 ///
-/// **디버그 빌드 속도에 놀라지 말 것.** 아래 차분 함수 이중 루프는 프레임 하나에 약 37만 회를
+/// **디버그 빌드 속도에 놀라지 말 것.** 아래 차분 함수 이중 루프는 프레임 하나에 약 47만 회를
 /// 도는데, `-Onone`에서는 지역 변수가 전부 스택을 거쳐 회당 ~68ns가 붙는다 — 맥에서 프레임당
-/// 약 26ms다. 같은 코드가 릴리스에서는 0.23ms/프레임으로, 갱신 주기(hop 512 = 32ms)에 100배
-/// 여유다. 생 포인터·버퍼 포인터로 바꿔 봐야 디버그에서 16%뿐이라 (측정치) 첨자를 그대로 둔다.
+/// 약 26ms였고(80~400Hz, 37만 회 시절), 60~800Hz로 넓힌 뒤(KAN-218, 회수 1.28배) 35ms다
+/// (2026-09-17 실측). 같은 코드가 릴리스에서는 0.23ms/프레임(80~400Hz 실측)으로, 갱신 주기
+/// (hop 512 = 32ms)에 100배 여유다. 생 포인터·버퍼 포인터로 바꿔 봐야 디버그에서 16%뿐이라
+/// (측정치) 첨자를 그대로 둔다.
 public enum YinPitchEstimator {
 
     /// 사람 목소리 F0 탐색 대역. 대역 밖(예: 50Hz 험 노이즈)은 무성음 취급된다.
-    public static let minF0Hz = 80
-    public static let maxF0Hz = 400
+    ///
+    /// 처음엔 표준 설정인 80~400Hz였는데(`ondevice-f0.md`), 곡선 화면에서 **대역 끝이 곧 곡선이
+    /// 사라지는 자리**가 됐다(KAN-218). 사용자 레인은 화자 중심 ±7 semitone 창 밖을 천장·바닥에
+    /// 눌러 담는데(`UserCurve.swift`), 추정기가 먼저 대역 밖을 무성으로 돌려보내면 눌러 담을 값
+    /// 자체가 없다 — 중심 120Hz인 화자가 낮게 깔면 80Hz 아래에서 선이 끊기고, 400Hz를 넘는
+    /// 고음은 τ 탐색이 2주기 골에서 멈춰 **한 옥타브 아래로 뒤집혀** 올라가야 할 선이 아래로
+    /// 꺾였다(450→225). 60~800Hz면 낮은 남성음의 vocal fry부터 여성의 감탄·고성까지 들어와,
+    /// 창 밖 값은 추정기가 아니라 표시 쪽 clamp가 천장·바닥에 붙여 둔다.
+    ///
+    /// 하한을 내리면 τmax가 200→266이 되는데 2048 창에서 적분 창이 1782라 여유가 있고, 상한을
+    /// 올리면 τmin이 40→20이 되어 반주기 골(옥타브 위 오류)을 먼저 만날 위험이 생기지만 CMNDF의
+    /// 누적 정규화가 그 골을 임계값 위로 띄운다 — 2·3배음이 기음보다 큰 합성 신호(60~800Hz,
+    /// 10Hz 간격)에서도 옥타브 오류 0건이었다 (웹 `yin.ts`, 2026-09-17 실측).
+    ///
+    /// 안드로이드 `YinPitchEstimator.kt`·웹 `yin.ts`와 같은 값이다 — 같은 목소리가 앱과 웹에서
+    /// 다른 곡선이 되면 안 된다.
+    public static let minF0Hz = 60
+    public static let maxF0Hz = 800
 
     /// CMNDF 절대 임계값. 원 논문 권장은 0.1~0.2지만 우리는 0.25로 느슨하게 잡았다.
     ///
@@ -57,8 +75,8 @@ public enum YinPitchEstimator {
     /// 기본 인자를 `AccenturyCore.sampleRate`로 모듈 한정해 적은 이유는 파라미터 이름이
     /// 전역 상수와 같아서다 — 한정 없이 적으면 읽는 사람이 자기 자신을 가리키는 걸로 오해한다.
     public static func estimate(_ chunk: [Int16], sampleRate: Int = AccenturyCore.sampleRate) -> Float? {
-        let tauMin = sampleRate / maxF0Hz // 16kHz 기준 40샘플
-        let tauMax = sampleRate / minF0Hz // 16kHz 기준 200샘플
+        let tauMin = sampleRate / maxF0Hz // 16kHz 기준 20샘플
+        let tauMax = sampleRate / minF0Hz // 16kHz 기준 266샘플
         let window = chunk.count - tauMax // 적분 창: x[j+τ]가 청크를 벗어나지 않는 범위
         if window <= tauMax { return nil }
 
@@ -99,7 +117,7 @@ public enum YinPitchEstimator {
         while tau + 1 <= tauMax && cmndf[tau + 1] < cmndf[tau] { tau += 1 }
 
         // 4단계 - 포물선 보간: 정수 τ 이웃 3점으로 실수 주기를 근사해 양자화 오차를 줄인다.
-        //         대역 경계 τ에서 보간이 대역을 살짝 벗어날 수 있어(예: τ=40 → 400Hz 초과)
+        //         대역 경계 τ에서 보간이 대역을 살짝 벗어날 수 있어(예: τ=20 → 800Hz 초과)
         //         결과를 탐색 대역으로 clamp한다 (Codex 1R).
         let f0 = Float(sampleRate) / parabolicInterpolation(cmndf, tau)
         return min(max(f0, Float(minF0Hz)), Float(maxF0Hz))

@@ -108,9 +108,9 @@ final class CurvePathBuilderTests: XCTestCase {
         let segments = [[CurvePoint(x: 0, y: 0.2), CurvePoint(x: 0.5, y: 0.8), CurvePoint(x: 1, y: 0.4)]]
         let size = CGSize(width: 200, height: 100)
 
-        let first = cache.shapes(for: segments, size: size, filled: true, dotRadius: 3)
-        _ = cache.shapes(for: segments, size: size, filled: true, dotRadius: 3)
-        _ = cache.shapes(for: segments, size: size, filled: true, dotRadius: 3)
+        let first = cache.shapes(for: segments, size: size, filled: true, strokeWidth: 3)
+        _ = cache.shapes(for: segments, size: size, filled: true, strokeWidth: 3)
+        _ = cache.shapes(for: segments, size: size, filled: true, strokeWidth: 3)
 
         XCTAssertEqual(1, first.outlines.count)
         XCTAssertNotNil(first.fill)
@@ -122,11 +122,12 @@ final class CurvePathBuilderTests: XCTestCase {
         let cache = CurveShapeCache()
         let segments = [[CurvePoint(x: 0, y: 0), CurvePoint(x: 1, y: 1)]]
 
-        let first = cache.shapes(for: segments, size: CGSize(width: 100, height: 50), filled: false, dotRadius: 2)
-        let second = cache.shapes(for: segments, size: CGSize(width: 300, height: 50), filled: false, dotRadius: 2)
+        let first = cache.shapes(for: segments, size: CGSize(width: 100, height: 50), filled: false, strokeWidth: 2)
+        let second = cache.shapes(for: segments, size: CGSize(width: 300, height: 50), filled: false, strokeWidth: 2)
 
-        XCTAssertEqual(CGPoint(x: 100, y: 50), elementEnd(first.outlines[0]))
-        XCTAssertEqual(CGPoint(x: 300, y: 50), elementEnd(second.outlines[0]))
+        // y=1은 바닥에서 선 굵기 절반(1)만큼 들어온 49다 (KAN-218 인셋).
+        XCTAssertEqual(CGPoint(x: 100, y: 49), elementEnd(first.outlines[0]))
+        XCTAssertEqual(CGPoint(x: 300, y: 49), elementEnd(second.outlines[0]))
         XCTAssertEqual(2, cache.rebuildCount)
     }
 
@@ -137,20 +138,20 @@ final class CurvePathBuilderTests: XCTestCase {
         let segments = [[CurvePoint(x: 0, y: 0), CurvePoint(x: 1, y: 1)]]
         let size = CGSize(width: 100, height: 100)
 
-        XCTAssertNil(cache.shapes(for: segments, size: size, filled: false, dotRadius: 3).fill)
-        XCTAssertNotNil(cache.shapes(for: segments, size: size, filled: true, dotRadius: 3).fill)
+        XCTAssertNil(cache.shapes(for: segments, size: size, filled: false, strokeWidth: 3).fill)
+        XCTAssertNotNil(cache.shapes(for: segments, size: size, filled: true, strokeWidth: 3).fill)
         XCTAssertEqual(2, cache.rebuildCount)
     }
 
-    /// 고립점 반지름도 키다. 빼 두면 한 캐시를 두 레인이 나눠 쓸 때 점 크기가 샌다 —
-    /// 가이드는 2, 사용자는 3이다.
-    func testShapeCacheRebuildsWhenDotRadiusChanges() {
+    /// 선 굵기도 키다. 빼 두면 한 캐시를 두 레인이 나눠 쓸 때 점 크기(반지름 = 선 굵기)와
+    /// 인셋이 샌다 — 가이드는 2, 사용자는 3이다.
+    func testShapeCacheRebuildsWhenStrokeWidthChanges() {
         let cache = CurveShapeCache()
         let segments = [[CurvePoint(x: 0.5, y: 0.5)]]
         let size = CGSize(width: 100, height: 100)
 
-        let thin = cache.shapes(for: segments, size: size, filled: false, dotRadius: 2)
-        let thick = cache.shapes(for: segments, size: size, filled: false, dotRadius: 3)
+        let thin = cache.shapes(for: segments, size: size, filled: false, strokeWidth: 2)
+        let thick = cache.shapes(for: segments, size: size, filled: false, strokeWidth: 3)
 
         XCTAssertEqual(2, cache.rebuildCount)
         XCTAssertEqual(CGSize(width: 4, height: 4), thin.dots?.boundingRect.size)
@@ -163,8 +164,8 @@ final class CurvePathBuilderTests: XCTestCase {
         let size = CGSize(width: 100, height: 100)
         let grown = [[CurvePoint(x: 0, y: 0), CurvePoint(x: 0.5, y: 0.5), CurvePoint(x: 1, y: 0.2)]]
 
-        let first = cache.shapes(for: [[CurvePoint(x: 0, y: 0), CurvePoint(x: 0.5, y: 0.5)]], size: size, filled: false, dotRadius: 3)
-        let second = cache.shapes(for: grown, size: size, filled: false, dotRadius: 3)
+        let first = cache.shapes(for: [[CurvePoint(x: 0, y: 0), CurvePoint(x: 0.5, y: 0.5)]], size: size, filled: false, strokeWidth: 3)
+        let second = cache.shapes(for: grown, size: size, filled: false, strokeWidth: 3)
 
         XCTAssertEqual(2, cache.rebuildCount)
         // 점이 하나 붙으면 명령도 하나 는다 (Core `smoothPathCommands`의 인과성).
@@ -178,7 +179,7 @@ final class CurvePathBuilderTests: XCTestCase {
             for: [[CurvePoint(x: 0, y: 0), CurvePoint(x: 1, y: 1)]],
             size: CGSize(width: 100, height: 100),
             filled: false,
-            dotRadius: 2
+            strokeWidth: 2
         )
         XCTAssertNil(shapes.fill)
     }
@@ -192,7 +193,7 @@ final class CurvePathBuilderTests: XCTestCase {
             for: [[CurvePoint(x: 0.25, y: 0.5)]],
             size: CGSize(width: 200, height: 80),
             filled: true,
-            dotRadius: 3
+            strokeWidth: 3
         )
         XCTAssertTrue(shapes.outlines.isEmpty)
         // 중심 (50, 40)에 반지름 3짜리 원 하나.
@@ -205,8 +206,8 @@ final class CurvePathBuilderTests: XCTestCase {
         let segments = [[CurvePoint(x: 0.25, y: 0.5)], [CurvePoint(x: 0.75, y: 0.25)]]
         let size = CGSize(width: 200, height: 80)
 
-        let first = cache.shapes(for: segments, size: size, filled: true, dotRadius: 3)
-        let second = cache.shapes(for: segments, size: size, filled: true, dotRadius: 3)
+        let first = cache.shapes(for: segments, size: size, filled: true, strokeWidth: 3)
+        let second = cache.shapes(for: segments, size: size, filled: true, strokeWidth: 3)
 
         XCTAssertEqual(1, cache.rebuildCount)
         XCTAssertTrue(first.outlines.isEmpty)
@@ -217,14 +218,14 @@ final class CurvePathBuilderTests: XCTestCase {
         XCTAssertTrue(first.fill?.isEmpty ?? true)
     }
 
-    /// 반지름이 0이면 찍을 점이 없다 — 넓이 0짜리 원을 그리는 호출을 남기지 않는다.
-    func testZeroDotRadiusLeavesNoDots() {
+    /// 선 굵기가 0이면 점 반지름도 0이라 찍을 점이 없다 — 넓이 0짜리 원을 그리는 호출을 남기지 않는다.
+    func testZeroStrokeWidthLeavesNoDots() {
         let cache = CurveShapeCache()
         let shapes = cache.shapes(
             for: [[CurvePoint(x: 0.25, y: 0.5)]],
             size: CGSize(width: 200, height: 80),
             filled: true,
-            dotRadius: 0
+            strokeWidth: 0
         )
         XCTAssertNil(shapes.dots)
     }
@@ -239,12 +240,52 @@ final class CurvePathBuilderTests: XCTestCase {
             ],
             size: CGSize(width: 100, height: 100),
             filled: true,
-            dotRadius: 3
+            strokeWidth: 3
         )
         XCTAssertEqual(2, shapes.outlines.count)
         // 면은 하나이고 그 안에 하위 경로 둘이 담긴다 (`close` 둘).
         let closes = elements(of: shapes.fill ?? Path()).filter { $0 == .close }
         XCTAssertEqual(2, closes.count)
+    }
+
+    // MARK: - KAN-218 천장·바닥 인셋
+
+    /// 천장(y=0)·바닥(y=1)을 기는 선은 선 굵기 절반만큼 캔버스 안쪽에 놓인다. 캔버스는 자기
+    /// bounds에 그리기를 자르므로 가장자리에 그대로 두면 굵기의 절반이 잘린다.
+    func testCeilingAndFloorLinesAreInsetByHalfTheStroke() {
+        let cache = CurveShapeCache()
+        let size = CGSize(width: 100, height: 40)
+        let shapes = cache.shapes(
+            for: [
+                [CurvePoint(x: 0, y: 0), CurvePoint(x: 1, y: 0)],
+                [CurvePoint(x: 0, y: 1), CurvePoint(x: 1, y: 1)],
+            ],
+            size: size,
+            filled: true,
+            strokeWidth: 3
+        )
+
+        XCTAssertEqual(CGPoint(x: 100, y: 1.5), elementEnd(shapes.outlines[0]))
+        XCTAssertEqual(CGPoint(x: 100, y: 38.5), elementEnd(shapes.outlines[1]))
+        // 채움의 바닥은 들이지 않는다 — 캔버스 바닥(40) 그대로 닫힌다.
+        let fillLines = elements(of: shapes.fill ?? Path()).compactMap { element -> CGPoint? in
+            if case let .line(to) = element { return to }
+            return nil
+        }
+        XCTAssertTrue(fillLines.contains(CGPoint(x: 100, y: 40)))
+        XCTAssertTrue(fillLines.contains(CGPoint(x: 0, y: 40)))
+    }
+
+    /// 가운데(y=0.5)는 인셋 전과 같은 자리다 — 곡선 모양은 천장·바닥 말고는 바뀌지 않는다.
+    func testMiddleStaysWhereItWasAfterInset() {
+        let cache = CurveShapeCache()
+        let shapes = cache.shapes(
+            for: [[CurvePoint(x: 0, y: 0.5), CurvePoint(x: 1, y: 0.5)]],
+            size: CGSize(width: 100, height: 40),
+            filled: false,
+            strokeWidth: 3
+        )
+        XCTAssertEqual(CGPoint(x: 100, y: 20), elementEnd(shapes.outlines[0]))
     }
 
     // MARK: - 헬퍼

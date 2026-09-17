@@ -86,7 +86,9 @@ struct CurveLaneView: View {
             /*
              * 곡선. 위아래 여백은 안드로이드와 같은 값이다 — 위 16은 좌상단 라벨이 곡선 위에
              * 겹치지 않게 비워 두는 자리이고, 아래 4는 굵은 선의 둥근 끝이 레인 경계에 잘리지
-             * 않게 하는 자리다.
+             * 않게 하는 자리다. 단 이 여백은 캔버스 **밖**이라 캔버스 가장자리에 걸린 선을
+             * 구해 주지는 않는다 — `Canvas`는 자기 bounds에 그리기를 자르므로(`insetY` 문서의
+             * 실측) 천장·바닥의 선은 ``CurveShapeCache``가 안쪽으로 들여서 그린다 (KAN-218).
              */
             Canvas(opaque: false, rendersAsynchronously: false) { context, size in
                 draw(&context, size: size)
@@ -128,7 +130,7 @@ struct CurveLaneView: View {
             for: segments,
             size: size,
             filled: isUser,
-            dotRadius: isUser ? userCurveStroke : guideCurveStroke
+            strokeWidth: isUser ? userCurveStroke : guideCurveStroke
         )
 
         // 채움을 먼저 그리고 선을 나중에 그린다 — 순서가 바뀌면 망점이 곡선 위를 덮어
