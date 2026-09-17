@@ -16,6 +16,18 @@ function sine(freqHz: number, { amplitude = 8000 / FULL_SCALE, size = WINDOW_SIZ
   return chunk
 }
 
+/** 기음과 배음을 섞은 신호. `amplitudes[k]`가 (k+1)배음의 원 스케일 진폭이다 */
+function harmonics(f0Hz: number, amplitudes: number[], size = WINDOW_SIZE): Float32Array {
+  const chunk = new Float32Array(size)
+  for (let i = 0; i < size; i++) {
+    const t = (2 * Math.PI * f0Hz * i) / TARGET_SAMPLE_RATE
+    let sum = 0
+    amplitudes.forEach((amplitude, k) => (sum += amplitude * Math.sin((k + 1) * t)))
+    chunk[i] = sum / FULL_SCALE
+  }
+  return chunk
+}
+
 /** -1..+1 샘플의 RMS를 원 스케일로 되돌린 값. 게이트 테스트가 전제를 확인하는 데 쓴다 */
 function rawRms(chunk: Float32Array): number {
   let sum = 0
@@ -51,14 +63,7 @@ describe('YIN F0 추정 (앱 YinPitchEstimatorTest 이식)', () => {
 
   it('배음이 섞여도 기본 주파수를 잡는다 - 옥타브 오류 없음', () => {
     // 실제 목소리처럼 2, 3배음 포함. 단순 autocorrelation이 배음(240Hz)으로 튀던 케이스.
-    const f0Hz = 120
-    const chunk = new Float32Array(WINDOW_SIZE)
-    for (let i = 0; i < WINDOW_SIZE; i++) {
-      const t = (2 * Math.PI * f0Hz * i) / TARGET_SAMPLE_RATE
-      chunk[i] = (5000 * Math.sin(t) + 3000 * Math.sin(2 * t) + 2000 * Math.sin(3 * t)) / FULL_SCALE
-    }
-
-    expect(Math.abs(estimatePitchHz(chunk)! - 120)).toBeLessThanOrEqual(3)
+    expect(Math.abs(estimatePitchHz(harmonics(120, [5000, 3000, 2000]))! - 120)).toBeLessThanOrEqual(3)
   })
 
   it('대역 상한 경계 790Hz도 800Hz를 넘기지 않는다', () => {
@@ -77,12 +82,31 @@ describe('YIN F0 추정 (앱 YinPitchEstimatorTest 이식)', () => {
     // 80~400Hz 대역에서는 450Hz가 2주기 골(τ=71)에 잡혀 225Hz로 나왔다. 감탄·고성이 올라가야
     // 할 선을 아래로 꺾던 원인이다.
     for (const hz of [450, 520, 600]) {
-      const chunk = new Float32Array(WINDOW_SIZE)
-      for (let i = 0; i < WINDOW_SIZE; i++) {
-        const t = (2 * Math.PI * hz * i) / TARGET_SAMPLE_RATE
-        chunk[i] = (5000 * Math.sin(t) + 3000 * Math.sin(2 * t) + 2000 * Math.sin(3 * t)) / FULL_SCALE
-      }
-      expect(Math.abs(estimatePitchHz(chunk)! - hz)).toBeLessThanOrEqual(hz * 0.02)
+      expect(Math.abs(estimatePitchHz(harmonics(hz, [5000, 3000, 2000]))! - hz)).toBeLessThanOrEqual(hz * 0.02)
+    }
+  })
+
+  it('2배음이 기음보다 강해도 옥타브 위로 튀지 않는다 - 새 대역에서 노출된 반주기 골을 2τ 검사가 잡는다', () => {
+    // 기음 3000, 2배음 8000. 반주기 골의 CMNDF가 0.25 아래로 내려와 τ 탐색이 거기서 멈추면
+    // 250Hz가 503Hz로 읽힌다. 옛 대역(τmin=40)은 기음 200Hz 이상의 반주기가 탐색 밖이라 우연히
+    // 보호됐고, 120Hz 같은 남성 음역은 옛 코드도 같은 오류가 있었다.
+    for (const hz of [120, 250, 350]) {
+      expect(Math.abs(estimatePitchHz(harmonics(hz, [3000, 8000]))! - hz)).toBeLessThanOrEqual(hz * 0.02)
+    }
+  })
+
+  it('2·4배음 우세 프로파일도 기음을 잡는다', () => {
+    for (const hz of [100, 200, 300]) {
+      expect(Math.abs(estimatePitchHz(harmonics(hz, [2000, 6000, 1500, 5000]))! - hz)).toBeLessThanOrEqual(
+        hz * 0.02,
+      )
+    }
+  })
+
+  it('진짜 고음은 2τ 검사에 뒤집히지 않는다', () => {
+    // 기음 우세 고음은 2τ 골도 ≈0이라 첫 골과의 차이가 마진(0.1)을 못 넘는다.
+    for (const hz of [450, 600, 780]) {
+      expect(Math.abs(estimatePitchHz(harmonics(hz, [5000, 3000, 2000]))! - hz)).toBeLessThanOrEqual(hz * 0.02)
     }
   })
 
