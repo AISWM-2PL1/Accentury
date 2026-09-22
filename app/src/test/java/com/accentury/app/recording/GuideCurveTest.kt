@@ -97,7 +97,7 @@ class GuideCurveTest {
     @Test
     fun `실문항은 무성 구간을 보간해 240점을 하나도 버리지 않고 그린다`() {
         val values = GuideF0Fixture.REAL.values
-        assertEquals("v102", GuideF0Fixture.ITEM_ID)
+        assertEquals("v100", GuideF0Fixture.ITEM_ID)
         assertEquals(240, values.size)
         assertEquals(14, values.count { it == null })
 

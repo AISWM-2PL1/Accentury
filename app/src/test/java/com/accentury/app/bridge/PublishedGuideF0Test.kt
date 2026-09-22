@@ -1,6 +1,7 @@
 package com.accentury.app.bridge
 
 import com.accentury.app.audio.RecordingEngine
+import com.accentury.app.recording.GuideF0Fixture
 import com.accentury.app.recording.USER_CURVE_WINDOW_SCALE
 import com.accentury.app.recording.guideCurveDisplayPoints
 import com.accentury.app.recording.userCurveWindowMs
@@ -22,7 +23,7 @@ import org.junit.Test
  * 발행본 가이드 곡선 전수 검사 (KAN-194).
  *
  * 픽스처 한 문항(`GuideF0Fixture`)이 대표라면 이 파일은 표본이 아니라 전수다 — 정본 발행본
- * `gn-2026.09.1`의 음성 145문항을 하나씩 브리지 파싱과 곡선 계산에 태워, 실제로 사용자에게
+ * `gn-2026.09.4`(KAN-220 재베이스라인 뒤 운영 V1이 발행하는 유일한 정의)의 음성 145문항을 하나씩 브리지 파싱과 곡선 계산에 태워, 실제로 사용자에게
  * 내려가는 데이터에서 곡선이 버려지는 문항(AC1)과 사용자 창이 폴백으로 주저앉는 문항(AC2)이
  * 0건임을 확인한다. 곡선 규칙 자체는 `GuideCurveTest`·`UserCurveTest`가 덮으므로, 여기서
  * 보는 것은 "그 규칙이 발행본 형태를 견디는가" 하나다.
@@ -133,16 +134,17 @@ class PublishedGuideF0Test {
     }
 
     @Test
-    fun `상한이 실제로 물리는 문항이 29개다 - 자르기가 죽은 코드가 아니다 (KAN-195)`() {
+    fun `상한이 실제로 물리는 문항이 28개다 - 자르기가 죽은 코드가 아니다 (KAN-195)`() {
         /*
          * 앞 검사는 "상한을 넘지 않는다"만 보므로 상한이 실제로 물리는지는 말해 주지 않는다.
-         * 발행본 가이드가 3.18~5.98초라 두 배가 6.36~11.96초이고, 그중 5초를 넘는 29문항만
+         * 발행본 가이드가 3.18~5.98초라 두 배가 6.36~11.96초이고, 그중 5초를 넘는 28문항만
+         * (gn-2026.09.1은 29개였고, gn-2026.09.4에서 문항 3개가 빠지고 3개가 돌아오며 28개가 됐다)
          * 상한에 닿는다 - 그 수를 함께 못박아야 발행본이 바뀐 것을 안다. 이 수가 달라지면
          * 창 규칙을 다시 볼 자리라는 신호다.
          */
         val clamped = voiceItems.mapNotNull { parseVoiceItemStart(it.payload)?.guideF0 }
             .filter { (USER_CURVE_WINDOW_SCALE * it.frameIntervalMs * (it.values.size - 1)) > MAX_DURATION_MS }
-        assertEquals(29, clamped.size)
+        assertEquals(28, clamped.size)
         assertTrue(
             clamped.all { userCurveWindowMs(it.frameIntervalMs, it.values.size, MAX_DURATION_MS) == MAX_DURATION_MS },
         )
@@ -181,12 +183,12 @@ class PublishedGuideF0Test {
         // 곡선만 떼어낸 채 문항을 통과시킨다. 발행 파이프라인이 산출물의 실수를 반올림해
         // 내보내는 결정(2026-09-04)이 없었다면 145문항이 통째로 이 상태였을 것이다.
         // (장난감 값 `10.5`로 같은 경로를 보는 케이스는 `AccenturyBridgeTest`에 있다.)
-        val item = voiceItems.first { it.itemId == "v102" }
+        val item = voiceItems.first { it.itemId == GuideF0Fixture.ITEM_ID }
         val broken = item.payload.replace(""""frameIntervalMs":16,""", """"frameIntervalMs":16.4,""")
         assertTrue("전제: 실수로 바꾼 payload가 원본과 달라야 한다", broken != item.payload)
 
         val start = parseVoiceItemStart(broken)
-        assertEquals("문항 자체는 받아야 한다", "v102", start?.itemId)
+        assertEquals("문항 자체는 받아야 한다", GuideF0Fixture.ITEM_ID, start?.itemId)
         assertNull("실수 frameIntervalMs면 곡선은 버려진다", start?.guideF0)
 
         // 원본(정수)은 같은 payload에서 곡선을 지킨다 — 대조가 성립함을 함께 못박는다.
@@ -202,7 +204,7 @@ class PublishedGuideF0Test {
     private companion object {
         /** 정본 발행본이 담긴 마이그레이션. 레포 루트 기준 경로다 */
         const val MIGRATION_RELATIVE_PATH =
-            "backend/src/main/resources/db/migration/V6__gn_2026_09_1_content.sql"
+            "backend/src/main/resources/db/migration/V1__baseline.sql"
 
         /** 정의 JSON을 감싼 PostgreSQL 달러 인용 구분자 */
         const val DELIMITER = "\$definition\$"
@@ -248,7 +250,7 @@ class PublishedGuideF0Test {
             check(start >= 0 && end >= 0) { "$DELIMITER 구분자로 감싼 정의 JSON이 없다" }
 
             val definition = json.parseToJsonElement(sql.substring(start + DELIMITER.length, end)).jsonObject
-            assertEquals("gn-2026.09.1", definition.getValue("testVersion").jsonPrimitive.content)
+            assertEquals("gn-2026.09.4", definition.getValue("testVersion").jsonPrimitive.content)
 
             val voice = definition.getValue("items").jsonArray
                 .map { it.jsonObject }
