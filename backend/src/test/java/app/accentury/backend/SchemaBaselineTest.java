@@ -67,39 +67,32 @@ class SchemaBaselineTest extends IntegrationTest {
     private TestResultRepository testResultRepository;
 
 
+    /**
+     * 재베이스라인(KAN-220, 2026-09-21) 뒤 운영 마이그레이션은 V1 하나다 - 옛 V2(발행 이관, KAN-26),
+     * V7(공유 웹훅, KAN-164), V12(이용 후기, KAN-211) 등은 전부 V1에 합쳐졌다. 빈 DB에서는 그 V1이
+     * 실제로 실행되어 성공으로 남아야 한다 (baseline-on-migrate가 관여하는 것은 비어 있지 않은
+     * 스키마뿐이라, 여기서 BASELINE 유형이 아니라 SQL 유형으로 기록된다).
+     */
     @Test
     void baseline_마이그레이션이_적용되어_있다() {
         Integer applied = jdbc.queryForObject(
-                "select count(*) from flyway_schema_history where version = '1' and success",
+                "select count(*) from flyway_schema_history where version = '1' and type = 'SQL' and success",
                 Integer.class);
-        assertEquals(1, applied, "V1 baseline이 성공 상태로 기록되어야 한다");
+        assertEquals(1, applied, "V1 baseline이 SQL 유형으로 실행되어 성공 상태로 기록되어야 한다");
     }
 
-    /** 발행 입력 DB 이관 (KAN-26) - 정의와 활성 포인터, 감사 이력이 마이그레이션으로 들어온다. */
+    /**
+     * 운영 마이그레이션은 V1뿐이어야 한다 - 옛 번호(V2~V12)가 되살아나면 재베이스라인 뒤의 기존
+     * DB(baseline 1만 기록)에는 그것이 "적용 안 된 마이그레이션"으로 보여 기동 시 실행되고,
+     * 이미 있는 테이블을 다시 만들다 실패한다. 테스트 픽스처(V899~)는 test 프로파일에만 있다.
+     */
     @Test
-    void 테스트_정의_발행_마이그레이션이_적용되어_있다() {
-        Integer applied = jdbc.queryForObject(
-                "select count(*) from flyway_schema_history where version = '2' and success",
-                Integer.class);
-        assertEquals(1, applied, "V2 발행 마이그레이션이 성공 상태로 기록되어야 한다");
-    }
-
-    /** 카카오 공유 웹훅 집계 (KAN-164) - 카운터와 수신 기록 두 테이블이 V7로 들어온다. */
-    @Test
-    void 공유_웹훅_마이그레이션이_적용되어_있다() {
-        Integer applied = jdbc.queryForObject(
-                "select count(*) from flyway_schema_history where version = '7' and success",
-                Integer.class);
-        assertEquals(1, applied, "V7 공유 웹훅 마이그레이션이 성공 상태로 기록되어야 한다");
-    }
-
-    /** 이용 후기 (KAN-211) - session_feedback 한 테이블이 V12로 들어온다. */
-    @Test
-    void 후기_마이그레이션이_적용되어_있다() {
-        Integer applied = jdbc.queryForObject(
-                "select count(*) from flyway_schema_history where version = '12' and success",
-                Integer.class);
-        assertEquals(1, applied, "V12 후기 마이그레이션이 성공 상태로 기록되어야 한다");
+    void 운영_마이그레이션은_V1_하나다() {
+        List<String> versions = jdbc.queryForList(
+                "select version from flyway_schema_history where success order by installed_rank",
+                String.class);
+        assertEquals(List.of("1", "899", "900", "901"), versions,
+                "운영 마이그레이션 V1 뒤에는 테스트 픽스처(db/testdata)만 와야 한다");
     }
 
     /**
@@ -108,11 +101,6 @@ class SchemaBaselineTest extends IntegrationTest {
      */
     @Test
     void 세트_컬럼은_기본값_1로_들어온다() {
-        Integer applied = jdbc.queryForObject(
-                "select count(*) from flyway_schema_history where version = '5' and success",
-                Integer.class);
-        assertEquals(1, applied, "V5 세트 마이그레이션이 성공 상태로 기록되어야 한다");
-
         // PgJDBC는 Instant를 바인딩하지 못한다 - OffsetDateTime으로 넘긴다.
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
         jdbc.update("insert into test_session (id, token_hash, test_version, score_version, traffic,"
@@ -267,7 +255,7 @@ class SchemaBaselineTest extends IntegrationTest {
         // Map.of가 아니라 ofEntries다 - 테이블이 열한 개가 되면서 Map.of의 쌍 상한(10)을 넘었다 (KAN-211).
         Map<String, Set<String>> expected = Map.ofEntries(
                 Map.entry("test_session", Set.of("pk_test_session", "ux_test_session_token_hash")),
-                // ix_analysis_job_processing은 KAN-167의 부분 인덱스(V4) - 혼잡 판정의 PROCESSING count가 탄다.
+                // ix_analysis_job_processing은 KAN-167의 부분 인덱스(옛 V4, 지금은 V1) - 혼잡 판정의 PROCESSING count가 탄다.
                 Map.entry("analysis_job", Set.of("pk_analysis_job", "ux_analysis_job_idempotency",
                         "ix_analysis_job_session_item", "ix_analysis_job_processing")),
                 Map.entry("vocab_answer", Set.of("pk_vocab_answer", "ux_vocab_answer_session_item")),
@@ -278,11 +266,11 @@ class SchemaBaselineTest extends IntegrationTest {
                 Map.entry("active_test_version", Set.of("pk_active_test_version")),
                 Map.entry("active_version_audit", Set.of("pk_active_version_audit",
                         "ix_active_version_audit_recorded_at")),
-                // KAN-164 카카오 공유 웹훅 (V7) - 수신 기록은 보존 기간 삭제가 received_at으로 탄다.
+                // KAN-164 카카오 공유 웹훅 (옛 V7, 지금은 V1) - 수신 기록은 보존 기간 삭제가 received_at으로 탄다.
                 Map.entry("share_daily_counter", Set.of("pk_share_daily_counter", "ux_share_daily_counter_key")),
                 Map.entry("share_webhook_receipt", Set.of("pk_share_webhook_receipt",
                         "ix_share_webhook_receipt_received_at")),
-                // KAN-211 이용 후기 (V12) - 세션당 하나(유니크)이고, 보존 기간 삭제가 created_at으로 탄다.
+                // KAN-211 이용 후기 (옛 V12, 지금은 V1) - 세션당 하나(유니크)이고, 보존 기간 삭제가 created_at으로 탄다.
                 Map.entry("session_feedback", Set.of("pk_session_feedback",
                         "ux_session_feedback_session", "ix_session_feedback_created_at")));
 

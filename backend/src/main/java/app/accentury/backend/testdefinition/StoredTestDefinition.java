@@ -15,7 +15,7 @@ import java.time.Instant;
  * 다른 문항을 받으면 안 되기 때문이다. 그래서 이 엔티티에는 변경 메서드가 없다.
  * <p>
  * 본문({@link #body})은 정의 JSON 통째다 - {@link TestDefinition}과 1:1로 파싱된다.
- * 문항과 선택지를 별도 테이블로 정규화하지 않은 이유는 마이그레이션 V2의 주석에 적어 두었다.
+ * 문항과 선택지를 별도 테이블로 정규화하지 않은 이유는 마이그레이션 V1의 test_definition 주석에 적어 두었다.
  * {@link #dialect}와 {@link #scoreVersion}은 본문 안에도 있는 값을 꺼내 둔 사본이라, 관리자
  * 목록 조회(§6)가 본문을 파싱하지 않고 답할 수 있다. 사본과 본문의 일치는 기동 시
  * {@link TestDefinitionRegistry}가 강제한다 - 어긋나면 서버가 뜨지 않는다.
