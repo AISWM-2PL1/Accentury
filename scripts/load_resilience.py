@@ -584,7 +584,8 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--base-url", required=True, help="예: https://staging.accentury.app")
     parser.add_argument("--admin-token", default=os.environ.get("ACCENTURY_ADMIN_TOKEN"),
                         help="합성 트래픽 표시 토큰 (환경 변수 ACCENTURY_ADMIN_TOKEN). 로컬이 아니면 필수")
-    parser.add_argument("--test-version", default="gn-2026.08.1", help="정의 조회 GET의 testVersion")
+    parser.add_argument("--test-version", default="gn-2026.09.4",
+                        help="정의 조회 GET의 testVersion (KAN-220 재베이스라인 뒤 운영에 남은 정의는 gn-2026.09.4 하나다)")
     parser.add_argument("--get-rps", type=float, default=25.0, help="정의 조회 초당 건수 (0이면 끔)")
     parser.add_argument("--get-workers", type=int, default=8, help="정의 조회 스레드 수 (합이 --get-rps)")
     parser.add_argument("--examinees", type=int, default=4, help="동시 응시자 스레드 수 (0이면 끔)")

@@ -13,7 +13,14 @@
 기존 정의를 UPDATE하지 않는다 (KAN-26). 이 스크립트는 발행본 JSON을 손으로 고치지 않게
 하려고 있다.
 
-사용
+**KAN-220 재베이스라인 (2026-09-21) 뒤의 파일 배치.** 아래 예시의 --out 파일(옛 V6, V8, V10, V11)은
+전부 삭제됐고, 마지막 발행본 gn-2026.09.4의 INSERT 문은 backend/src/main/resources/db/migration/
+V1__baseline.sql이 바이트 단위 그대로 품고 있다 (스키마 DDL 뒤). 예시는 각 발행본을 어떻게 만들었는지의
+기록으로 남긴다 - 같은 재료로 다시 돌리면 V1 안의 INSERT와 같은 본문이 나와야 한다. 다음 발행은
+V2__<version>.sql부터 다시 번호를 매긴다. V1 파일의 주석에는 달러 인용 구분자 문자열을 적지 않는다 -
+앱, iOS, 웹의 발행본 전수 검사가 파일에서 처음 만나는 구분자 두 개 사이를 정의 JSON으로 읽는다.
+
+사용 (첫 발행, 옛 V6)
     python3 build_definition.py --guide-f0 ~/Downloads/guide_f0_2026-09-04.json \\
         --test-version gn-2026.09.1 --out ../../backend/src/main/resources/db/migration/V6__gn_2026_09_1.sql
 
@@ -316,7 +323,9 @@ def main() -> None:
     parser.add_argument("--score-version", default="sv-0.3")
     parser.add_argument("--dialect", default="GYEONGNAM")
     parser.add_argument("--published-at", default="2026-09-04T00:00:00Z")
-    parser.add_argument("--previous-version", default="gn-2026.08.1")
+    parser.add_argument("--previous-version", default="gn-2026.08.1",
+                        help="첫 실콘텐츠 머리말에서 '대신하는 더미 정의'로 적는 이름 (옛 V6 기록용). "
+                             "--same-content-as, --sentences 재발행의 머리말에는 쓰이지 않는다")
     parser.add_argument("--same-content-as", metavar="TEST_VERSION",
                         help="점수 버전만 바꾼 재발행 - 이 버전의 선택지 순서를 그대로 쓰고 "
                              "머리말을 재발행용으로 바꾼다 (KAN-200)")

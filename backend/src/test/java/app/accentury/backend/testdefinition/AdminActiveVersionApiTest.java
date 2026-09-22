@@ -27,8 +27,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * {@code PUT /admin/v0/active-version}과 {@code GET /admin/v0/test-definitions}의 실행 가능한
  * 명세 (KAN-26, API 명세서 §6).
  * <p>
- * 발행본은 마이그레이션이 넣는다 - 운영과 같은 경로다. 활성 버전은 {@code gn-2026.08.1}이고,
- * 전환할 상대는 테스트 프로파일에만 있는 {@code gn-2026.07.0}이다
+ * 발행본은 마이그레이션이 넣는다 - 운영과 같은 경로다. 활성 버전은 {@code gn-2026.08.1}이고
+ * (KAN-220 재베이스라인 뒤로는 테스트 프로파일의 {@code db/testdata/V899}가 넣고 활성으로 되돌린다),
+ * 전환할 상대는 역시 테스트 프로파일에만 있는 {@code gn-2026.07.0}이다
  * ({@code db/testdata/V900__second_test_definition.sql}).
  * <p>
  * <b>활성 버전을 바꾼 테스트는 반드시 되돌린다</b> ({@link #restoreBaseline}) - 활성 포인터는
@@ -231,9 +232,9 @@ class AdminActiveVersionApiTest extends IntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.activeVersion").value(BASELINE))
                 .andExpect(jsonPath("$.previousVersion").value(OLDER))
-                // 구버전(V900) + baseline + 풀 픽스처 둘(V901, KAN-182) + 정본 콘텐츠(V6) + sv-0.4 재발행(V8)
-                // + 대본 교체 재발행(V10, KAN-210) + 인계본 2차 재발행(V11, KAN-210)
-                .andExpect(jsonPath("$.definitions.length()").value(8))
+                // 구버전(V900) + 더미 baseline(V899) + 풀 픽스처 둘(V901, KAN-182) + 운영 정본 gn-2026.09.4(V1).
+                // gn-2026.09.1~09.3은 KAN-220 재베이스라인으로 파일과 DB 행이 함께 사라졌다.
+                .andExpect(jsonPath("$.definitions.length()").value(5))
                 // 발행 시각 오름차순 - 구버전이 먼저다.
                 .andExpect(jsonPath("$.definitions[0].testVersion").value(OLDER))
                 .andExpect(jsonPath("$.definitions[0].dialect").value("GYEONGNAM"))
@@ -250,29 +251,13 @@ class AdminActiveVersionApiTest extends IntegrationTest {
                 .andExpect(jsonPath("$.definitions[3].testVersion").value("gn-2026.09.t10"))
                 .andExpect(jsonPath("$.definitions[3].voicePoolSize").value(10))
                 .andExpect(jsonPath("$.definitions[3].voiceSetCount").value(2))
-                // 정본 콘텐츠 (V6) - 음성 145 + 어휘 145라 세트 29개다.
-                .andExpect(jsonPath("$.definitions[4].testVersion").value("gn-2026.09.1"))
+                // 운영 정본 (V1, KAN-210 2차 인계본, sv-0.4) - 음성 145 + 어휘 145라 세트 29개다. 운영에서는
+                // 이것이 활성이지만 테스트 프로파일은 V899가 더미로 되돌리므로 여기서는 비활성이다.
+                .andExpect(jsonPath("$.definitions[4].testVersion").value("gn-2026.09.4"))
+                .andExpect(jsonPath("$.definitions[4].scoreVersion").value("sv-0.4"))
                 .andExpect(jsonPath("$.definitions[4].voicePoolSize").value(145))
                 .andExpect(jsonPath("$.definitions[4].voiceSetCount").value(29))
                 .andExpect(jsonPath("$.definitions[4].active").value(false))
-                // 같은 본문에 scoreVersion만 sv-0.4로 바꾼 재발행 (V8, KAN-200).
-                .andExpect(jsonPath("$.definitions[5].testVersion").value("gn-2026.09.2"))
-                .andExpect(jsonPath("$.definitions[5].scoreVersion").value("sv-0.4"))
-                .andExpect(jsonPath("$.definitions[5].voicePoolSize").value(145))
-                .andExpect(jsonPath("$.definitions[5].voiceSetCount").value(29))
-                .andExpect(jsonPath("$.definitions[5].active").value(false))
-                // 음성 대본만 09-01 인계본으로 바꾼 재발행 (V10, KAN-210) - 풀 크기와 세트 수는 그대로다.
-                .andExpect(jsonPath("$.definitions[6].testVersion").value("gn-2026.09.3"))
-                .andExpect(jsonPath("$.definitions[6].scoreVersion").value("sv-0.4"))
-                .andExpect(jsonPath("$.definitions[6].voicePoolSize").value(145))
-                .andExpect(jsonPath("$.definitions[6].voiceSetCount").value(29))
-                .andExpect(jsonPath("$.definitions[6].active").value(false))
-                // 인계본 2차 - 문장 3개가 빠지고 곡선 결측 문장 3개가 돌아와 풀 크기와 세트 수는 그대로다 (V11, KAN-210).
-                .andExpect(jsonPath("$.definitions[7].testVersion").value("gn-2026.09.4"))
-                .andExpect(jsonPath("$.definitions[7].scoreVersion").value("sv-0.4"))
-                .andExpect(jsonPath("$.definitions[7].voicePoolSize").value(145))
-                .andExpect(jsonPath("$.definitions[7].voiceSetCount").value(29))
-                .andExpect(jsonPath("$.definitions[7].active").value(false))
                 // 13KB짜리 본문은 목록에 싣지 않는다 - 문항은 공개 엔드포인트(§3.2)에서 본다.
                 .andExpect(jsonPath("$.definitions[0].body").doesNotExist())
                 .andExpect(header().string("Cache-Control", containsString("no-store")));
@@ -296,14 +281,14 @@ class AdminActiveVersionApiTest extends IntegrationTest {
         try {
             mockMvc.perform(get(DEFINITIONS_URL).header(AdminAuth.TOKEN_HEADER, TOKEN))
                     .andExpect(status().isOk())
-                    // 발행본 8개(V900, baseline, 풀 픽스처 둘, 정본 콘텐츠, sv-0.4 재발행, 대본 교체 재발행 둘) + 이 행 하나.
-                    .andExpect(jsonPath("$.definitions.length()").value(9))
-                    .andExpect(jsonPath("$.definitions[8].testVersion").value(unknown))
+                    // 발행본 5개(V900, 더미 baseline V899, 풀 픽스처 둘, 운영 정본 gn-2026.09.4) + 이 행 하나.
+                    .andExpect(jsonPath("$.definitions.length()").value(6))
+                    .andExpect(jsonPath("$.definitions[5].testVersion").value(unknown))
                     // 사본 컬럼에서 오는 값은 그대로 나온다 - 모르는 것은 세트 관련 두 값뿐이다.
-                    .andExpect(jsonPath("$.definitions[8].dialect").value("GYEONGNAM"))
-                    .andExpect(jsonPath("$.definitions[8].active").value(false))
-                    .andExpect(jsonPath("$.definitions[8].voicePoolSize").value(nullValue()))
-                    .andExpect(jsonPath("$.definitions[8].voiceSetCount").value(nullValue()))
+                    .andExpect(jsonPath("$.definitions[5].dialect").value("GYEONGNAM"))
+                    .andExpect(jsonPath("$.definitions[5].active").value(false))
+                    .andExpect(jsonPath("$.definitions[5].voicePoolSize").value(nullValue()))
+                    .andExpect(jsonPath("$.definitions[5].voiceSetCount").value(nullValue()))
                     // 아는 버전은 종전대로 답한다 - 한 행의 공백이 나머지를 비우지 않는다.
                     .andExpect(jsonPath("$.definitions[1].voicePoolSize").value(5))
                     .andExpect(jsonPath("$.definitions[1].voiceSetCount").value(1));

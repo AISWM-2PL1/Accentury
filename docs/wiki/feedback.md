@@ -2,7 +2,7 @@
 
 결과 화면에서 응시자가 개발팀에 보내는 서술 후기. 2026-09-15 구현 완료(1~4단계).
 
-- 계약·저장: `backend/src/main/java/app/accentury/backend/feedback/`, `V12__session_feedback.sql`
+- 계약·저장: `backend/src/main/java/app/accentury/backend/feedback/`, `V1__baseline.sql`의 `session_feedback` 절(옛 V12, KAN-220 재베이스라인으로 합쳐짐)
 - 화면: `web/src/feedback/`, `web/src/result/ResultScreen.tsx`
 - 방침 반영과 그 근거: [`privacy-policy.md`](privacy-policy.md) (1·4·5·6·11·12항)
 - 계측 규칙: [`analytics.md`](analytics.md) · 슬랙 값 주입: `infra/README.md` 「이용 후기 슬랙 알림」
@@ -218,7 +218,8 @@ law). 보낸 뒤에는 버튼을 한 줄 인사로 바꾼다 — 결과당 1건�
 
 ## 9. 트러블슈팅·함정
 
-- **마이그레이션 번호.** V10·V11을 KAN-210이 가져가 후기 테이블은 **V12**다. 브랜치를 나눠 작업하면
+- **마이그레이션 번호.** V10·V11을 KAN-210이 가져가 후기 테이블은 **V12**였다 (KAN-220 재베이스라인으로
+  2026-09-21 이후 V1 하나에 합쳐졌고, 다음 번호는 V2부터다). 브랜치를 나눠 작업하면
   같은 번호를 두 티켓이 쓰는 일이 생긴다 — 분기 전에도, Dev를 리베이스로 받아올 때도
   `ls db/migration`으로 확인한다.
 - **`Map.of`는 10쌍이 상한이다.** 11번째 인자부터 컴파일이 안 된다. 스냅샷 필드가 늘면

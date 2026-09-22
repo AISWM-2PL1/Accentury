@@ -25,7 +25,8 @@ import java.util.Set;
  * 발행된 테스트 정의의 저장소 (KAN-10, KAN-26, KAN-182).
  * <p>
  * <b>발행 입력은 DB다</b> (2026-08-09 확정, 명세서 §6). 정의는 마이그레이션의 INSERT로 들어오고
- * ({@code db/migration/V2__test_definition_publish.sql}), 활성 버전은 {@link ActiveTestVersion}
+ * ({@code db/migration/V1__baseline.sql} - KAN-220 재베이스라인으로 옛 V2 발행 이관이 여기 합쳐졌다),
+ * 활성 버전은 {@link ActiveTestVersion}
  * 한 행이 가리킨다. 이전의 classpath JSON seed 로드와 파일명 검증은 이 전환으로 폐기됐다 -
  * {@code testVersion} 중복은 이제 DB의 기본 키가 막는다.
  * <p>
