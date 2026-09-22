@@ -684,7 +684,7 @@ ALARM에 머무는 것도 정상이다 (min 1이라 더 줄지 않을 뿐). 이 
 태스크당 기준으로 읽는다. 폴링이 POST라 요청 수가 실제 사용자 수보다 훨씬 크게 잡히므로 목표값을
 바꿀 때는 폴링 주기(`poll-after-ms`, `congested-poll-after-ms`)를 같이 본다.
 
-2026-09-02 staging 실측값이다 (9차 구축, 85개 리소스. 부하 = CloudFront 경유 `GET /v0/tests/gn-2026.08.1`
+2026-09-02 staging 실측값이다 (9차 구축, 85개 리소스. 부하 = CloudFront 경유 `GET /v0/tests/gn-2026.08.1`(당시 활성 버전, KAN-220 뒤에는 gn-2026.09.4만 남았다)
 초당 25건(태스크당 분당 1500건, 목표값의 1.5배), 시각은 KST, 출처는 경보 이력, 스케일링 활동, `describe-tasks`,
 서비스 이벤트, `HealthyHostCount` 분 단위 지표, 컨테이너 로그).
 
@@ -1432,7 +1432,7 @@ end=$(( $(date +%s) + 180 ))
 while [ "$(date +%s)" -lt "$end" ]; do
   for i in $(seq 1 6); do
     curl -s -o /dev/null -w '%{http_code} ' \
-      "https://<staging 도메인>/v0/tests/gn-2026.08.1"
+      "https://<staging 도메인>/v0/tests/gn-2026.09.4"
   done
   echo " @ $(date +%H:%M:%S)"
   sleep 10
@@ -1842,7 +1842,8 @@ aws ec2 describe-security-group-rules --filters Name=group-id,Values="$RDS_SG" \
 옛 V1~V12를 새 `V1__baseline.sql` 하나로 합쳤다 (2026-09-21 결정, 경위는 그 파일 머리 주석과
 `application.yml`의 flyway 주석). 새 파일은 기존 DB에서 실행되지 않는다 - 이력 테이블을 지우면
 `baseline-on-migrate`가 버전 1의 baseline 행만 기록한다. 그래서 기존 DB의 구 정의 행 삭제도 같은
-SQL 세션에서 사람이 한다. 순서가 중요하다.
+SQL 세션에서 사람이 한다. 순서가 중요하다. 이력 표는 지우지 않고 이름을 바꿔 두므로 실패해도 이름을
+되돌리면 구 이미지가 다시 기동한다 (아래 복구 경로, PR #121 리뷰 P1 반영).
 
 1. `PUT /admin/v0/active-version`으로 `gn-2026.09.4`를 활성으로 바꾼다 (이미 09.4면 건너뛴다).
 2. 구 버전을 참조하는 **미만료 세션이 0건**이 될 때까지 기다린다. 미완주 세션은 30분이면 만료
@@ -1856,9 +1857,21 @@ select test_version, count(*) from test_session
 where test_version <> 'gn-2026.09.4' and expires_at > now() group by 1;
 ```
 
-3. 위 통로로 붙어 아래를 한 트랜잭션으로 넣는다. `select` 세 줄의 결과는 티켓 코멘트에 남긴다.
+3. (prod만) 수동 스냅샷을 하나 남긴다. 아래 이름 되돌리기가 1순위 복구 경로라 스냅샷은 그것마저 못
+   쓸 때의 마지막 수단이고, staging은 데이터가 버려도 되는 것이라 생략한다. 스냅샷이 `available`이 될
+   때까지 기다린 뒤 4단계로 간다 (수 분).
+
+```
+DB_ID=$(aws rds describe-db-instances --query "DBInstances[?Endpoint.Address=='$RDS_HOST'].DBInstanceIdentifier | [0]" --output text)
+aws rds create-db-snapshot --db-instance-identifier "$DB_ID" --db-snapshot-identifier "kan220-before-rebaseline-$(date +%Y%m%d%H%M)"
+aws rds wait db-snapshot-available --db-snapshot-identifier "kan220-before-rebaseline-<위 시각>"
+```
+
+4. 위 통로로 붙어 아래를 한 트랜잭션으로 넣는다. `select` 세 줄의 결과는 티켓 코멘트에 남긴다.
    첫 `do` 블록은 2단계의 조건을 다시 확인하는 안전장치다 - 남은 세션이 있으면 예외로 트랜잭션이
-   중단되고 아무것도 지워지지 않는다.
+   중단되고 아무것도 지워지지 않는다. 이력 테이블은 **지우지 않고 이름을 바꾼다** - Flyway는
+   `flyway_schema_history`라는 이름만 찾으므로 이름이 바뀐 표는 없는 것과 같고, 실패하면 이름을
+   되돌리는 것이 곧 복구다. 지우는 정의 행도 같은 이유로 백업 표에 복사해 둔다.
 
 ```
 begin;
@@ -1871,23 +1884,67 @@ select test_version from test_definition order by published_at;
 select version, type, checksum from flyway_schema_history order by installed_rank;
 select test_version, previous_test_version from active_test_version;   -- gn-2026.09.4 여야 한다
 update active_test_version set previous_test_version = null where id = 'CURRENT';
+create table test_definition_kan220_backup as
+  select * from test_definition where test_version <> 'gn-2026.09.4';
 delete from test_definition where test_version <> 'gn-2026.09.4';
-drop table flyway_schema_history;
+alter table flyway_schema_history rename to flyway_schema_history_kan220_backup;
+-- 표 이름을 바꿔도 제약과 인덱스 이름은 그대로 남는다. 두지 않으면 새 이미지의 Flyway가 새 표를 만들 때
+-- "relation flyway_schema_history_pk already exists"로 기동이 막힌다 (2026-09-22 로컬 리허설에서 확인).
+alter table flyway_schema_history_kan220_backup rename constraint flyway_schema_history_pk to flyway_schema_history_kan220_backup_pk;
+alter index flyway_schema_history_s_idx rename to flyway_schema_history_kan220_backup_s_idx;
 commit;
 ```
 
-4. 곧바로 새 이미지를 배포한다 (staging은 Dev 병합의 Image Deploy, prod는 Release 승격과 environment
+5. 곧바로 새 이미지를 배포한다 (staging은 Dev 병합의 Image Deploy, prod는 Release 승격과 environment
    승인). 기동 로그에서 `Successfully baselined schema with version: 1`을 확인하고,
-   `select version, type, success from flyway_schema_history`가 `1 | BASELINE | t` 한 행이면 끝이다.
-5. 스모크(`scripts/e2e_smoke.py`)와 `GET /admin/v0/test-definitions`(gn-2026.09.4 1건, 활성)로 확인한 뒤
-   통로를 닫는다.
+   `select version, type, success from flyway_schema_history`가 `1 | BASELINE | t` 한 행이면 성공이다.
+6. 스모크(`scripts/e2e_smoke.py`)와 `GET /admin/v0/test-definitions`(gn-2026.09.4 1건, 활성)로 확인한 뒤
+   백업 표 둘을 지우고 통로를 닫는다. 백업 표를 남겨 두면 다음 재베이스라인이나 스키마 대조에서 정체
+   모를 표로 보인다.
+
+```
+drop table flyway_schema_history_kan220_backup, test_definition_kan220_backup;
+```
+
+새 이미지가 기동하지 못하면 (복구 경로):
+
+1. 새 태스크 정의로 뜬 태스크가 healthy가 못 되는 동안 구 태스크는 그대로 돈다 - 롤링 배포가 구 태스크를
+   먼저 내리지 않는다. 서비스는 살아 있으니 서두르지 않는다. 다만 이 상태에서 `deploy.yml`의
+   `rollback_backend`(직전 태스크 정의로 update-service)가 돌거나 ECS가 구 태스크를 교체하면, 구 이미지에는
+   `baseline-on-migrate`가 없어 "이력 없는 비어 있지 않은 스키마"에서 기동이 막힌다. 그래서 먼저 DB를
+   되돌린다.
+2. 같은 통로로 아래를 넣는다. 이름을 되돌리면 옛 V1~V12 이력이 그대로라 구 이미지가 다시 기동하고,
+   정의 행을 되돌리면 구 버전 세션 조회도 돌아온다. 새 이미지의 baseline이 이미 기록됐다면(기동은 됐는데
+   스모크가 실패한 경우) 그 새 표부터 지운다.
+
+```
+begin;
+drop table if exists flyway_schema_history;                       -- 새 이미지가 만든 baseline 표가 있을 때만
+alter table flyway_schema_history_kan220_backup rename to flyway_schema_history;
+alter table flyway_schema_history rename constraint flyway_schema_history_kan220_backup_pk to flyway_schema_history_pk;
+alter index flyway_schema_history_kan220_backup_s_idx rename to flyway_schema_history_s_idx;
+insert into test_definition select * from test_definition_kan220_backup;
+commit;
+```
+
+이 두 경로(전환과 복구) 모두 2026-09-22 로컬 postgres:16에서 리허설했다 - 옛 V1~V12를 적용한 DB에서
+전환 SQL 뒤 새 jar가 baseline 1행으로 기동하고, 복구 SQL 뒤 옛 파일 셋으로 `flyway validate`가 12개
+마이그레이션을 통과한다.
+
+3. Image Deploy를 직전 이미지 태그로 다시 실행하거나 `rollback_backend`가 마저 돌게 둔다. 그 뒤 원인을
+   고쳐 4단계부터 다시 한다 (백업 표는 그때 다시 만들어진다 - 남아 있으면 `create table`이 실패하니
+   먼저 지운다).
+4. 스냅샷 복원은 위가 전부 실패했을 때만 쓴다. 복원은 새 인스턴스를 만들어 엔드포인트가 바뀌므로
+   `SPRING_DATASOURCE_URL` SSM 파라미터와 Terraform state까지 손봐야 하는 큰 작업이다.
 
 함정:
 
-- 3단계의 `drop table`부터 새 태스크가 healthy가 될 때까지(약 2분) **구 이미지는 재기동이 안 된다.**
+- 4단계의 이름 바꾸기부터 새 태스크가 healthy가 될 때까지(약 2분) **구 이미지는 재기동이 안 된다.**
   이력 없는 비어 있지 않은 스키마를 구 설정(`baseline-on-migrate` 없음)이 거부하기 때문이고, 서킷
-  브레이커 롤백도 같은 이유로 실패한다. SQL은 배포 트리거 직전에만 넣고 배포 중에는 태스크를 건드리지
-  않는다. 지금 도는 태스크는 Flyway를 다시 돌리지 않으므로 영향이 없다.
+  브레이커 롤백(`deploy.yml`의 `rollback_backend`)도 구 이미지를 다시 띄우려 하므로 같은 자리에서
+  막힌다 - 그때는 위 복구 경로로 이름을 되돌린 뒤 롤백이 마저 돌게 둔다. SQL은 배포 트리거 직전에만
+  넣고 배포 중에는 태스크를 건드리지 않는다. 지금 도는 태스크는 Flyway를 다시 돌리지 않으므로 영향이
+  없다.
 - 구 정의를 지우면 `previous_test_version`이 null이라 롤백 호출이 409를 낸다. 되돌릴 정의도 없다.
   옛 V2 최초 발행 때와 같은 상태다.
 - `baseline-on-migrate`는 이력 테이블이 없고 스키마가 비어 있지 않은 DB를 조용히 V1 적용 상태로

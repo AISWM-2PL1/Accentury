@@ -2,7 +2,7 @@
 
 결과 화면에서 응시자가 개발팀에 보내는 서술 후기. 2026-09-15 구현 완료(1~4단계).
 
-- 계약·저장: `backend/src/main/java/app/accentury/backend/feedback/`, `V12__session_feedback.sql`
+- 계약·저장: `backend/src/main/java/app/accentury/backend/feedback/`, `V1__baseline.sql`의 `session_feedback` 절(옛 V12, KAN-220 재베이스라인으로 합쳐짐)
 - 화면: `web/src/feedback/`, `web/src/result/ResultScreen.tsx`
 - 방침 반영과 그 근거: [`privacy-policy.md`](privacy-policy.md) (1·4·5·6·11·12항)
 - 계측 규칙: [`analytics.md`](analytics.md) · 슬랙 값 주입: `infra/README.md` 「이용 후기 슬랙 알림」
