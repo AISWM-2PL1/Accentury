@@ -28,7 +28,7 @@ AI 서버 없이도 기동한다 (`accentury.analysis.ai-base-url` 미설정 = �
 | --- | --- |
 | 빈 DB (테스트, 새 로컬) | V1이 그대로 실행된다. 이력에 `1 / SQL` 한 행이 남는다 |
 | 옛 V1~V12 이력이 남은 로컬 DB | 체크섬이 어긋나 기동이 막힌다. `docker compose down -v && docker compose up -d`로 리셋한다 (개발 데이터는 버려도 된다) |
-| staging, prod | 운영자가 이력 표의 이름을 바꾸고 구 정의 행을 지운 뒤 배포한다. `baseline-on-migrate`(application.yml)가 V1을 실행하지 않고 baseline 행만 기록한다. 절차와 복구 경로는 infra README "RDS 운영자 접속과 Flyway 재베이스라인 (KAN-220)" 절 |
+| staging, prod | 2026-09-22 전환 완료. 운영자가 이력 표의 이름을 바꾸고 구 정의 행을 지운 뒤 배포했고, 당시 켜 둔 `baseline-on-migrate`가 V1을 실행하지 않고 baseline 행만 기록했다 (이력에 `1 / BASELINE` 한 행). 설정은 전환 뒤 제거했다. 절차와 복구 경로는 infra README "RDS 운영자 접속과 Flyway 재베이스라인 (KAN-220)" 절 |
 
 규칙:
 

@@ -1784,6 +1784,10 @@ SSM 관리 대상이고 VPC 안에 있어 RDS에 닿을 수 있고, 호스트 ip
 ### 임시 통로 열기 (환경당)
 
 1. Mac에 `brew install --cask session-manager-plugin`. `aws ssm start-session`이 이 플러그인을 찾는다.
+   cask는 pkg 설치에 sudo를 요구하므로 sudo 없이 두려면 AWS 번들을 홈에 푼다 (2026-09-22 실제 사용):
+   `curl -sSL -o /tmp/smp.zip https://s3.amazonaws.com/session-manager-downloads/plugin/latest/mac_arm64/sessionmanager-bundle.zip
+   && unzip -q -o /tmp/smp.zip -d ~/.local/lib && ln -sf ~/.local/lib/sessionmanager-bundle/bin/session-manager-plugin ~/.local/bin/`
+   (Intel Mac은 `mac_arm64` 대신 `mac`).
 2. 값을 모은다. `rds_endpoint` 출력은 `host:port` 형태라 뒤의 포트를 뗀다.
 
 ```
@@ -1840,10 +1844,12 @@ aws ec2 describe-security-group-rules --filters Name=group-id,Values="$RDS_SG" \
 ### Flyway 재베이스라인 전환 (KAN-220, 환경당 한 번)
 
 옛 V1~V12를 새 `V1__baseline.sql` 하나로 합쳤다 (2026-09-21 결정, 경위는 그 파일 머리 주석과
-`application.yml`의 flyway 주석). 새 파일은 기존 DB에서 실행되지 않는다 - 이력 테이블을 지우면
-`baseline-on-migrate`가 버전 1의 baseline 행만 기록한다. 그래서 기존 DB의 구 정의 행 삭제도 같은
-SQL 세션에서 사람이 한다. 순서가 중요하다. 이력 표는 지우지 않고 이름을 바꿔 두므로 실패해도 이름을
-되돌리면 구 이미지가 다시 기동한다 (아래 복구 경로, PR #121 리뷰 P1 반영).
+`application.yml`의 flyway 주석). 새 파일은 기존 DB에서 실행되지 않는다 - 이력 테이블을 지우면(이름을
+바꾸면) `baseline-on-migrate: true` + `baseline-version: 1`이 버전 1의 baseline 행만 기록한다. 그래서
+기존 DB의 구 정의 행 삭제도 같은 SQL 세션에서 사람이 한다. 순서가 중요하다. 이력 표는 지우지 않고
+이름을 바꿔 두므로 실패해도 이름을 되돌리면 구 이미지가 다시 기동한다 (아래 복구 경로, PR #121 리뷰
+P1 반영). **두 환경 모두 2026-09-22에 전환을 마쳤고 `baseline-on-migrate`는 그 뒤 제거했다** - 다음
+재베이스라인 때는 그 두 설정을 다시 켠 이미지로 전환하고, 끝나면 다시 지운다.
 
 1. `PUT /admin/v0/active-version`으로 `gn-2026.09.4`를 활성으로 바꾼다 (이미 09.4면 건너뛴다).
 2. 구 버전을 참조하는 **미만료 세션이 0건**이 될 때까지 기다린다. 미완주 세션은 30분이면 만료
@@ -1948,8 +1954,8 @@ commit;
 - 구 정의를 지우면 `previous_test_version`이 null이라 롤백 호출이 409를 낸다. 되돌릴 정의도 없다.
   옛 V2 최초 발행 때와 같은 상태다.
 - `baseline-on-migrate`는 이력 테이블이 없고 스키마가 비어 있지 않은 DB를 조용히 V1 적용 상태로
-  간주한다. 두 환경 전환이 끝나면 이력 테이블이 다시 있으므로 이 설정은 동작하지 않는다 - 제거 여부는
-  그때 결정한다.
+  간주한다. 두 환경 전환이 끝나면 이력 테이블이 다시 있어 동작하지 않으므로 전환 뒤 제거했다
+  (2026-09-22). 전환 중인 이미지에만 켜 둔다.
 - V8 이후 구 이미지 롤백 금지(KAN-200)는 그대로다. 전환 뒤에는 옛 V2~V12를 아는 이미지도 이력이 없어
   기동하지 못한다.
 

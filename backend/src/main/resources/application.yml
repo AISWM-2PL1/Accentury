@@ -32,24 +32,18 @@ spring:
     # ${...}가 들어가도 같은 일이 난다. 치환 기능을 쓰는 마이그레이션이 하나도 없으므로
     # 끄는 편이 안전하다 - 나중에 필요해지면 그 마이그레이션에서만 켤 방법을 찾는다.
     placeholder-replacement: false
-    # 재베이스라인 전환용 (KAN-220, 2026-09-21). 옛 V1~V12를 새 V1 하나로 합쳤는데, 그 전에 만든
-    # DB(staging, prod, 이력이 있는 로컬 DB)의 flyway_schema_history에는 옛 V1~V12가 체크섬과 함께
-    # 남아 있어 새 파일과 대조하면 기동이 막힌다. 그런 DB는 운영자가 이력 테이블을 지운다(KAN-220
-    # 3절). 그러면 "이력 테이블은 없고 스키마는 비어 있지 않은" 상태가 되고, 아래 두 값이 새 V1을
-    # 실행하지 않고 버전 1의 baseline 행만 기록하게 한다. 빈 DB(테스트, 새 로컬)는 이력 테이블을
-    # 새로 만들고 V1을 정상 실행한다 - baseline-on-migrate는 비어 있지 않은 스키마에만 관여한다.
-    # 부작용: 이력 없는 비어 있지 않은 DB를 조용히 V1 적용 상태로 간주한다 (Flyway 기본값은 실패).
-    # 두 환경 전환이 끝나면 이력 테이블이 생겨 이 설정은 더 이상 동작하지 않으니 그때 제거를 검토한다.
-    baseline-on-migrate: true
-    baseline-version: 1
+    # baseline-on-migrate는 두지 않는다. KAN-220 재베이스라인(2026-09-21~22) 때만 baseline-on-migrate: true,
+    # baseline-version: 1을 두어 이력 표 이름을 바꾼 staging, prod가 새 V1을 실행하지 않고 baseline 행만
+    # 기록하게 했고, 두 환경 전환이 끝난 뒤(이력 표가 다시 생겨 동작하지 않게 된 뒤) 제거했다. 남겨 두면
+    # "이력 없는 비어 있지 않은 DB를 조용히 V1 적용 상태로 간주"하는 부작용만 남는다 (Flyway 기본값은
+    # 실패). 다음 재베이스라인 때 다시 켜고, 끝나면 다시 지운다 (infra README KAN-220 절).
   jpa:
     hibernate:
       # 스키마는 Flyway 마이그레이션(db/migration)만 만든다 (KAN-123) - update는 운영 DB를
       # 조용히 변형하고 롤백이 안 된다. validate는 엔티티와 스키마가 어긋나면 기동을 막는다.
       # 옛 V1~V12 이력이 남은 로컬 DB는 새 V1(KAN-220 재베이스라인)과 체크섬이 어긋나 기동이 막히므로
       # 리셋한다: docker compose down -v && docker compose up -d (2026-08-18 확정 - 개발 데이터는
-      # 버려도 된다). ddl-auto가 만든 이력 없는 옛 스키마는 이제 기동이 막히지 않고 baseline-on-migrate가
-      # 조용히 V1 적용 상태로 간주하므로(위 flyway 주석) 그것도 같은 방법으로 리셋한다.
+      # 버려도 된다). ddl-auto가 만든 이력 없는 옛 스키마도 Flyway가 거부하므로 같은 방법으로 리셋한다.
       ddl-auto: validate
     open-in-view: false
   task:

@@ -70,8 +70,8 @@ class SchemaBaselineTest extends IntegrationTest {
     /**
      * 재베이스라인(KAN-220, 2026-09-21) 뒤 운영 마이그레이션은 V1 하나다 - 옛 V2(발행 이관, KAN-26),
      * V7(공유 웹훅, KAN-164), V12(이용 후기, KAN-211) 등은 전부 V1에 합쳐졌다. 빈 DB에서는 그 V1이
-     * 실제로 실행되어 성공으로 남아야 한다 (baseline-on-migrate가 관여하는 것은 비어 있지 않은
-     * 스키마뿐이라, 여기서 BASELINE 유형이 아니라 SQL 유형으로 기록된다).
+     * 실제로 실행되어 SQL 유형으로 남아야 한다 (staging, prod는 전환 때 baseline 행(BASELINE 유형)만
+     * 기록했고 그 설정은 제거됐다 - 빈 DB가 그 경로를 타면 이 단언이 잡는다).
      */
     @Test
     void baseline_마이그레이션이_적용되어_있다() {

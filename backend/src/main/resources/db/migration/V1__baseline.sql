@@ -5,9 +5,10 @@
 -- V1로 되돌리고, gn-2026.09.4 외의 정의(더미 gn-2026.08.1 포함)는 파일과 두 환경 DB 행에서
 -- 모두 지웠다. 더미 정의는 테스트 픽스처로만 남는다 (src/test/resources/db/testdata).
 --
--- 기존 DB(staging, prod, 이력이 있는 로컬 DB)는 이 파일을 실행하지 않는다. 운영자가 이력
--- 테이블(flyway_schema_history)을 지우면 baseline-on-migrate(application.yml)가 버전 1의
--- baseline 행만 기록한다 - 스키마와 데이터는 옛 V1~V12가 만든 상태 그대로다. 그래서 이 파일의
+-- 기존 DB(staging, prod)는 이 파일을 실행하지 않았다. 운영자가 이력 테이블(flyway_schema_history)의
+-- 이름을 바꾸고 당시 application.yml의 baseline-on-migrate가 버전 1의 baseline 행만 기록했다
+-- (2026-09-22 두 환경 전환 완료, 설정은 그 뒤 제거) - 스키마와 데이터는 옛 V1~V12가 만든 상태
+-- 그대로다. 이력이 있는 로컬 DB는 리셋한다 (application.yml 주석). 그래서 이 파일의
 -- DDL은 그 결과와 같아야 하고, 어긋나면 빈 DB(테스트, 새 로컬)와 기존 DB가 갈라진다.
 -- SchemaBaselineTest의 드리프트 가드(컬럼 길이, nullable, 인덱스 집합)와 Hibernate validate가
 -- 그것을 잡는다. ALTER로 더해졌던 컬럼은 기존 DB의 컬럼 순서와 같게 각 테이블 끝에 뒀다.
