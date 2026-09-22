@@ -14,7 +14,7 @@ npm run dev        # --host 포함 — 에뮬레이터가 10.0.2.2:5173으로 �
 - **브라우저 단독 확인**: `http://localhost:5173/`을 그냥 열면 된다. 브리지 객체도 `?bridge=` 파라미터도 없으면
   웹 단독 실행으로 판정해(KAN-31, `bridge.ts`의 `isStandaloneWeb`) 스큐 게이트를 건너뛰고 인트로가 뜬다.
   앱 안(WebView)을 흉내 내려면 `?bridge=1`을 붙인다 — 그때는 스큐 판정이 도로 켜진다.
-- **문항 진행 화면(KAN-99) 확인**: `http://localhost:5173/?bridge=1&screen=test&testVersion=gn-2026.08.1`.
+- **문항 진행 화면(KAN-99) 확인**: `http://localhost:5173/?bridge=1&screen=test&testVersion=gn-2026.09.4`.
   `?screen=test`는 문항 진행 화면의 정식 진입 쿼리다(KAN-100, `App.tsx`) — 앱도 웹 단독 실행도
   같은 쿼리로 들어오고, 이 URL을 직접 여는 것은 그 화면만 따로 보는 개발 통로다. 정의는
   `VITE_API_BASE`(기본 `http://10.0.2.2:8080`)에서 `GET /v0/tests/{testVersion}`으로 받아온다 —

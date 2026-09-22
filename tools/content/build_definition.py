@@ -323,7 +323,9 @@ def main() -> None:
     parser.add_argument("--score-version", default="sv-0.3")
     parser.add_argument("--dialect", default="GYEONGNAM")
     parser.add_argument("--published-at", default="2026-09-04T00:00:00Z")
-    parser.add_argument("--previous-version", default="gn-2026.08.1")
+    parser.add_argument("--previous-version", default="gn-2026.08.1",
+                        help="첫 실콘텐츠 머리말에서 '대신하는 더미 정의'로 적는 이름 (옛 V6 기록용). "
+                             "--same-content-as, --sentences 재발행의 머리말에는 쓰이지 않는다")
     parser.add_argument("--same-content-as", metavar="TEST_VERSION",
                         help="점수 버전만 바꾼 재발행 - 이 버전의 선택지 순서를 그대로 쓰고 "
                              "머리말을 재발행용으로 바꾼다 (KAN-200)")

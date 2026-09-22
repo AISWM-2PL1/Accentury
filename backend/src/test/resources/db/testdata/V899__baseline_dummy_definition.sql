@@ -14,7 +14,6 @@
 -- guideF0의 곡선과 허용 밴드는 KAN-17 미착수 상태의 임시 더미이고, scriptKey가 없어 실모델로
 -- 채점할 수 없다 (TestDefinition 주석). 달러 인용($definition$)을 쓰는 것은 본문에 작은따옴표가
 -- 들어 있어서다 - 어휘 문항의 "'정구지'는 표준어로 무엇일까요?" 같은 문구다.
--- 달라져 발행본 불변성을 눈으로 확인할 수 없다.
 insert into test_definition (test_version, dialect, score_version, body, published_at)
 values ('gn-2026.08.1', 'GYEONGNAM', 'sv-0.3', $definition${
   "testVersion": "gn-2026.08.1",
