@@ -1772,6 +1772,131 @@ ai 컨테이너 로그(KAN-203)는 요금이 수집량에 붙는다. 이 컨테�
 `CloudWatchMetricsConfigTest`가 이름 목록이 내보내기 필터를 통과하는지까지 본다.
 
 
+## RDS 운영자 접속과 Flyway 재베이스라인 (KAN-220)
+
+평시에는 RDS에 사람이 붙을 길이 없다. RDS SG는 backend-sg에서 오는 5432만 받고
+(`modules/network/main.tf`의 `rds_from_backend`), ECS Exec은 켜지 않기로 했으며(KAN-165, 설계 결정
+기록), bastion도 없다. 그래서 KAN-220(2026-09-21)처럼 Flyway 이력 테이블을 지우는 일이 생기면
+아래 임시 통로를 열었다가 닫는다. 통로는 AI 호스트를 경유하는 SSM 포트 포워딩이다 - 호스트는
+SSM 관리 대상이고 VPC 안에 있어 RDS에 닿을 수 있고, 호스트 iptables의 egress 가드는 컨테이너에만
+걸려 있어(`ai-egress-guard.sh`) 호스트 자신의 5432 연결은 막히지 않는다.
+
+### 임시 통로 열기 (환경당)
+
+1. Mac에 `brew install --cask session-manager-plugin`. `aws ssm start-session`이 이 플러그인을 찾는다.
+2. 값을 모은다. `rds_endpoint` 출력은 `host:port` 형태라 뒤의 포트를 뗀다.
+
+```
+ENV=staging   # 또는 prod
+cd infra/envs/$ENV
+RDS_HOST=$(terraform output -raw rds_endpoint); RDS_HOST=${RDS_HOST%:*}
+SECRET_ARN=$(terraform output -raw rds_master_user_secret_arn)
+ASG=$(terraform output -raw ai_asg_name)
+cd -
+RDS_SG=$(aws ec2 describe-security-groups --filters Name=group-name,Values=accentury-$ENV-rds-sg \
+  --query 'SecurityGroups[0].GroupId' --output text)
+AI_SG=$(aws ec2 describe-security-groups --filters Name=group-name,Values=accentury-$ENV-ai-sg \
+  --query 'SecurityGroups[0].GroupId' --output text)
+AI_ID=$(aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$ASG" \
+  --query 'AutoScalingGroups[0].Instances[?LifecycleState==`InService`].InstanceId | [0]' --output text)
+```
+
+3. RDS SG에 ai-sg 출처 5432 인바운드를 임시로 더한다. 규칙에 이름 태그를 붙여 두면 닫을 때 찾기 쉽다.
+   Terraform은 인바운드 규칙을 개별 리소스(`aws_vpc_security_group_ingress_rule`)로 관리하므로
+   다음 apply가 이 규칙을 지워 주지 않는다 - 반드시 손으로 닫는다.
+
+```
+aws ec2 authorize-security-group-ingress --group-id "$RDS_SG" --protocol tcp --port 5432 \
+  --source-group "$AI_SG" \
+  --tag-specifications 'ResourceType=security-group-rule,Tags=[{Key=Name,Value=temp-operator-psql}]'
+```
+
+4. 포트 포워딩을 연다. 이 명령은 터미널 하나를 점유하니 별도 창에서 띄운다.
+
+```
+aws ssm start-session --target "$AI_ID" \
+  --document-name AWS-StartPortForwardingSessionToRemoteHost \
+  --parameters "host=$RDS_HOST,portNumber=5432,localPortNumber=15432"
+```
+
+5. 비밀번호는 Mac에서 관리형 시크릿을 읽는다. SSM `send-command` 인자로 보내지 않는다 - 명령 이력에
+   30일 남는다. 사용자와 DB 이름은 둘 다 `accentury`다 (`modules/data/main.tf`).
+
+```
+PGPASSWORD=$(aws secretsmanager get-secret-value --secret-id "$SECRET_ARN" \
+  --query SecretString --output text | python3 -c 'import json,sys; print(json.load(sys.stdin)["password"])')
+docker run --rm -it -e PGPASSWORD="$PGPASSWORD" postgres:16 \
+  psql -h host.docker.internal -p 15432 -U accentury accentury
+```
+
+6. 닫기. 포트 포워딩 창을 끝내고 규칙을 지운 뒤 없어졌는지 본다.
+
+```
+aws ec2 revoke-security-group-ingress --group-id "$RDS_SG" --protocol tcp --port 5432 --source-group "$AI_SG"
+aws ec2 describe-security-group-rules --filters Name=group-id,Values="$RDS_SG" \
+  --query 'SecurityGroupRules[?!IsEgress].[ReferencedGroupInfo.GroupId,FromPort]' --output text
+```
+
+### Flyway 재베이스라인 전환 (KAN-220, 환경당 한 번)
+
+옛 V1~V12를 새 `V1__baseline.sql` 하나로 합쳤다 (2026-09-21 결정, 경위는 그 파일 머리 주석과
+`application.yml`의 flyway 주석). 새 파일은 기존 DB에서 실행되지 않는다 - 이력 테이블을 지우면
+`baseline-on-migrate`가 버전 1의 baseline 행만 기록한다. 그래서 기존 DB의 구 정의 행 삭제도 같은
+SQL 세션에서 사람이 한다. 순서가 중요하다.
+
+1. `PUT /admin/v0/active-version`으로 `gn-2026.09.4`를 활성으로 바꾼다 (이미 09.4면 건너뛴다).
+2. 구 버전을 참조하는 **미만료 세션이 0건**이 될 때까지 기다린다. 미완주 세션은 30분이면 만료
+   정리되지만, 완주 세션은 결과 조회를 위해 완료 시점부터 24시간 산다(`TestSession.markCompleted`,
+   명세서 §5.5). 결과 조회(`ResultService`)와 상태 조회(`AnalysisStatusService`)가 세션의 버전으로
+   정의를 찾으므로, 그 세션이 살아 있는 동안 정의를 지우면 그 사용자의 결과 화면이 404가 된다
+   (Codex 리뷰 P2). 전환 직후에 완주가 있었으면 최대 24시간이다. 아래 조회가 빈 결과여야 한다.
+
+```
+select test_version, count(*) from test_session
+where test_version <> 'gn-2026.09.4' and expires_at > now() group by 1;
+```
+
+3. 위 통로로 붙어 아래를 한 트랜잭션으로 넣는다. `select` 세 줄의 결과는 티켓 코멘트에 남긴다.
+   첫 `do` 블록은 2단계의 조건을 다시 확인하는 안전장치다 - 남은 세션이 있으면 예외로 트랜잭션이
+   중단되고 아무것도 지워지지 않는다.
+
+```
+begin;
+do $$ begin
+  if exists (select 1 from test_session where test_version <> 'gn-2026.09.4' and expires_at > now()) then
+    raise exception '구 버전을 참조하는 미만료 세션이 남아 있다 - 2단계로 돌아간다';
+  end if;
+end $$;
+select test_version from test_definition order by published_at;
+select version, type, checksum from flyway_schema_history order by installed_rank;
+select test_version, previous_test_version from active_test_version;   -- gn-2026.09.4 여야 한다
+update active_test_version set previous_test_version = null where id = 'CURRENT';
+delete from test_definition where test_version <> 'gn-2026.09.4';
+drop table flyway_schema_history;
+commit;
+```
+
+4. 곧바로 새 이미지를 배포한다 (staging은 Dev 병합의 Image Deploy, prod는 Release 승격과 environment
+   승인). 기동 로그에서 `Successfully baselined schema with version: 1`을 확인하고,
+   `select version, type, success from flyway_schema_history`가 `1 | BASELINE | t` 한 행이면 끝이다.
+5. 스모크(`scripts/e2e_smoke.py`)와 `GET /admin/v0/test-definitions`(gn-2026.09.4 1건, 활성)로 확인한 뒤
+   통로를 닫는다.
+
+함정:
+
+- 3단계의 `drop table`부터 새 태스크가 healthy가 될 때까지(약 2분) **구 이미지는 재기동이 안 된다.**
+  이력 없는 비어 있지 않은 스키마를 구 설정(`baseline-on-migrate` 없음)이 거부하기 때문이고, 서킷
+  브레이커 롤백도 같은 이유로 실패한다. SQL은 배포 트리거 직전에만 넣고 배포 중에는 태스크를 건드리지
+  않는다. 지금 도는 태스크는 Flyway를 다시 돌리지 않으므로 영향이 없다.
+- 구 정의를 지우면 `previous_test_version`이 null이라 롤백 호출이 409를 낸다. 되돌릴 정의도 없다.
+  옛 V2 최초 발행 때와 같은 상태다.
+- `baseline-on-migrate`는 이력 테이블이 없고 스키마가 비어 있지 않은 DB를 조용히 V1 적용 상태로
+  간주한다. 두 환경 전환이 끝나면 이력 테이블이 다시 있으므로 이 설정은 동작하지 않는다 - 제거 여부는
+  그때 결정한다.
+- V8 이후 구 이미지 롤백 금지(KAN-200)는 그대로다. 전환 뒤에는 옛 V2~V12를 아는 이미지도 이력이 없어
+  기동하지 못한다.
+
+
 ## 환경별 값 차이 (KAN-129)
 
 Terraform 입력의 차이는 `diff -r infra/envs/staging infra/envs/prod`가 전부다
@@ -1964,6 +2089,9 @@ terraform destroy
   진단은 로그와 서비스 이벤트, 지표로 충분하다. 태스크 안에서 재현해야 하면 서비스에
   `enable_execute_command = true`와 태스크 역할의 ssmmessages 4종을 더해 새 배포를 강제한다
   (fargate/main.tf 주석).
+  DB에 사람이 SQL을 넣어야 할 때는 ECS Exec 대신 AI 호스트 경유 SSM 포트 포워딩과 임시 SG 규칙을
+  쓴다 (KAN-220, 2026-09-21 - "RDS 운영자 접속과 Flyway 재베이스라인" 절). 상시 통로(bastion,
+  ECS Exec)는 여전히 두지 않는다.
 - **배포 역할의 태스크 정의 권한 범위 (KAN-165)**: AWS 서비스 권한 레퍼런스 기준
   RegisterTaskDefinition만 리소스 수준 권한을 지원해 이 환경 패밀리로 좁혔다. Describe와 Deregister와
   List는 `*`뿐이라 staging 역할이 prod 리비전을 deregister할 수 있는 표면이 남는데, 삭제가 아니라
