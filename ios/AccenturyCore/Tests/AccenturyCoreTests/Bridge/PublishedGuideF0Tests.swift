@@ -5,7 +5,7 @@ import XCTest
 /// 1:1 이식본 (7개).
 ///
 /// 픽스처 한 문항(``GuideF0Fixture``)이 대표라면 이 파일은 표본이 아니라 전수다 — 정본 발행본
-/// `gn-2026.09.1`의 음성 145문항을 하나씩 브리지 파싱과 곡선 계산에 태워, 실제로 사용자에게
+/// `gn-2026.09.4`(KAN-220 재베이스라인 뒤 운영 V1이 발행하는 유일한 정의)의 음성 145문항을 하나씩 브리지 파싱과 곡선 계산에 태워, 실제로 사용자에게
 /// 내려가는 데이터에서 곡선이 버려지는 문항(AC1)과 사용자 창이 폴백으로 주저앉는 문항(AC2)이
 /// 0건임을 확인한다. 곡선 규칙 자체는 ``GuideCurveTests``·``UserCurveTests``가 덮으므로, 여기서
 /// 보는 것은 "그 규칙이 발행본 형태를 견디는가" 하나다.
@@ -119,11 +119,12 @@ final class PublishedGuideF0Tests: XCTestCase {
         })
     }
 
-    /// `상한이 실제로 물리는 문항이 29개다 - 자르기가 죽은 코드가 아니다 (KAN-195)`
-    func testTheClampActuallyBitesOn29Items() {
+    /// `상한이 실제로 물리는 문항이 28개다 - 자르기가 죽은 코드가 아니다 (KAN-195)`
+    func testTheClampActuallyBitesOn28Items() {
         /*
          * 앞 검사는 "상한을 넘지 않는다"만 보므로 상한이 실제로 물리는지는 말해 주지 않는다.
-         * 발행본 가이드가 3.18~5.98초라 두 배가 6.36~11.96초이고, 그중 5초를 넘는 29문항만
+         * 발행본 가이드가 3.18~5.98초라 두 배가 6.36~11.96초이고, 그중 5초를 넘는 28문항만
+         * (gn-2026.09.1은 29개였고, gn-2026.09.4에서 문항 3개가 빠지고 3개가 돌아오며 28개가 됐다)
          * 상한에 닿는다 - 그 수를 함께 못박아야 발행본이 바뀐 것을 안다. 이 수가 달라지면
          * 창 규칙을 다시 볼 자리라는 신호다.
          */
@@ -133,7 +134,7 @@ final class PublishedGuideF0Tests: XCTestCase {
                 Int64((userCurveWindowScale * Double($0.frameIntervalMs) * Double($0.values.count - 1)).rounded())
                     > Self.maxDurationMs
             }
-        XCTAssertEqual(29, clamped.count)
+        XCTAssertEqual(28, clamped.count)
         XCTAssertTrue(clamped.allSatisfy {
             userCurveWindowMs(
                 frameIntervalMs: $0.frameIntervalMs,
@@ -201,7 +202,7 @@ final class PublishedGuideF0Tests: XCTestCase {
 
     /// 정본 발행본이 담긴 마이그레이션. 레포 루트 기준 경로다
     private static let migrationRelativePath =
-        "backend/src/main/resources/db/migration/V6__gn_2026_09_1_content.sql"
+        "backend/src/main/resources/db/migration/V1__baseline.sql"
 
     /// 정의 JSON을 감싼 PostgreSQL 달러 인용 구분자
     private static let delimiter = "$definition$"
@@ -275,7 +276,7 @@ final class PublishedGuideF0Tests: XCTestCase {
               let items = definition["items"] as? [[String: Any]] else {
             throw LoadFailure.malformed("정의 JSON을 객체로 읽지 못했다")
         }
-        guard definition["testVersion"] as? String == "gn-2026.09.1" else {
+        guard definition["testVersion"] as? String == "gn-2026.09.4" else {
             throw LoadFailure.malformed("정본 발행본이 아니다: testVersion=\(definition["testVersion"] ?? "없음")")
         }
 

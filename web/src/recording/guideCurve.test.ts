@@ -88,7 +88,7 @@ describe('발행본 실문항 곡선 (KAN-194)', () => {
   const points = guideCurveDisplayPoints(values)
 
   it('무성 구간을 보간해 240점을 하나도 버리지 않고 그린다', () => {
-    expect(REAL_GUIDE_F0_ITEM.itemId).toBe('v102')
+    expect(REAL_GUIDE_F0_ITEM.itemId).toBe('v100')
     expect(values.length).toBe(240)
     expect(values.filter((value) => value === null).length).toBe(14)
     // 앞뒤 가장자리가 유성이라 첫 프레임부터 끝 프레임까지 다 들어온다 - 중간 null은

@@ -102,7 +102,7 @@ final class GuideCurveTests: XCTestCase {
     /// `실문항은 무성 구간을 보간해 240점을 하나도 버리지 않고 그린다`
     func testRealItemDrawsAll240PointsInterpolatingTheUnvoicedRun() {
         let values = GuideF0Fixture.real.values
-        XCTAssertEqual("v102", GuideF0Fixture.itemId)
+        XCTAssertEqual("v100", GuideF0Fixture.itemId)
         XCTAssertEqual(240, values.count)
         XCTAssertEqual(14, values.filter { $0 == nil }.count)
 

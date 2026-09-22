@@ -2,7 +2,7 @@
  * 발행본 가이드 곡선 전수 검사 (KAN-194).
  *
  * 픽스처 한 문항(`guideF0Fixture.ts`)이 대표라면 이 파일은 표본이 아니라 전수다 — 정본
- * 발행본 `gn-2026.09.1`의 음성 145문항을 하나씩 곡선 계산에 태워, 실제로 사용자에게
+ * 발행본 `gn-2026.09.4`(KAN-220 재베이스라인 뒤 운영 V1이 발행하는 유일한 정의)의 음성 145문항을 하나씩 곡선 계산에 태워, 실제로 사용자에게
  * 내려가는 데이터에서 곡선이 버려지는 문항(AC1)과 사용자 창이 폴백으로 주저앉는
  * 문항(AC2)이 0건임을 확인한다. 곡선 규칙 자체는 `guideCurve.test.ts`·`userCurve.test.ts`가
  * 덮으므로, 여기서 보는 것은 "그 규칙이 발행본 형태를 견디는가" 하나다.
@@ -26,7 +26,7 @@ import { USER_CURVE_WINDOW_SCALE, userCurveWindowMs } from './userCurve'
 /** 정본 발행본이 담긴 마이그레이션. cwd가 아니라 이 파일 위치를 기준으로 잡는다 */
 const MIGRATION_PATH = resolve(
   dirname(fileURLToPath(import.meta.url)),
-  '../../../backend/src/main/resources/db/migration/V6__gn_2026_09_1_content.sql',
+  '../../../backend/src/main/resources/db/migration/V1__baseline.sql',
 )
 
 /** 정의 JSON을 감싼 PostgreSQL 달러 인용 구분자 */
@@ -66,7 +66,7 @@ function loadPublishedVoiceItems(): PublishedVoiceItem[] {
     testVersion: string
     items: PublishedItem[]
   }
-  expect(definition.testVersion).toBe('gn-2026.09.1')
+  expect(definition.testVersion).toBe('gn-2026.09.4')
   return definition.items.filter((item): item is PublishedVoiceItem => item.type === 'VOICE')
 }
 
@@ -94,7 +94,7 @@ function violations(
  * (백엔드 `TestDefinition.VOICE_MAX_DURATION_MS`) 이 검사도 같은 값을 놓고 본다.
  *
  * **이 값은 BE 레포에 있어 여기서 참조할 수 없다 — 손으로 맞춘 사본이다.** 서버가 상한을
- * 올리면 실제로는 아무 문항도 안 잘리는데 이 검사는 여전히 "29개가 물린다"를 통과시킨다.
+ * 올리면 실제로는 아무 문항도 안 잘리는데 이 검사는 여전히 "28개가 물린다"를 통과시킨다.
  * 그 드리프트를 여기서 잡을 방법이 없으므로, 상한을 바꾸는 BE 변경은 이 상수도 함께 고쳐야
  * 한다. 앱·iOS 쪽 같은 검사는 `RecordingEngine`의 실제 상수를 참조하므로 이 문제가 없다.
  */
@@ -103,7 +103,7 @@ const VOICE_MAX_DURATION_MS = 10_000
 /** 가이드를 쓸 수 없을 때의 창 길이. 어느 문항도 여기로 떨어지면 안 된다 */
 const FALLBACK_WINDOW_MS = userCurveWindowMs(null, null, VOICE_MAX_DURATION_MS)
 
-describe('발행본 gn-2026.09.1 가이드 곡선 전수 검사 (KAN-194)', () => {
+describe('발행본 gn-2026.09.4 가이드 곡선 전수 검사 (KAN-194, KAN-220 재베이스라인 뒤 V1)', () => {
   it('음성 문항이 145개다', () => {
     expect(voiceItems.length).toBe(145)
   })
@@ -152,18 +152,19 @@ describe('발행본 gn-2026.09.1 가이드 곡선 전수 검사 (KAN-194)', () =
     ).toEqual([])
   })
 
-  it('상한이 실제로 물리는 문항이 29개다 - 자르기가 죽은 코드가 아니다 (KAN-195)', () => {
+  it('상한이 실제로 물리는 문항이 28개다 - 자르기가 죽은 코드가 아니다 (KAN-195)', () => {
     /*
      * 앞 검사는 "상한을 넘지 않는다"만 보므로 상한이 실제로 물리는지는 말해 주지 않는다.
-     * 발행본 가이드가 3.18~5.98초라 두 배가 6.36~11.96초이고, 그중 5초를 넘는 29문항만
+     * 발행본 가이드가 3.18~5.98초라 두 배가 6.36~11.96초이고, 그중 5초를 넘는 28문항만
      * 상한에 닿는다 - 그 수를 함께 못박아야 발행본이 바뀐 것을 안다. 이 수가 달라지면
-     * 창 규칙을 다시 볼 자리라는 신호다.
+     * 창 규칙을 다시 볼 자리라는 신호다. (gn-2026.09.1은 29개였고, gn-2026.09.4에서 문항
+     * 3개가 빠지고 3개가 돌아오며 28개가 됐다 - KAN-220 재베이스라인 뒤 V1 기준.)
      */
     const clamped = voiceItems.filter((item) => {
       const { frameIntervalMs, values } = item.guideF0
       return USER_CURVE_WINDOW_SCALE * frameIntervalMs * (values.length - 1) > VOICE_MAX_DURATION_MS
     })
-    expect(clamped.length).toBe(29)
+    expect(clamped.length).toBe(28)
     expect(
       clamped.every(
         (item) =>
