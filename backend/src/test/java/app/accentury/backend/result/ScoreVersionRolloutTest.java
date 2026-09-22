@@ -39,7 +39,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * sv-0.4 전환의 실행 가능한 명세 (KAN-200 AC - 발행과 활성 전환).
  * <p>
- * 점수 버전 전환은 새 정의({@code gn-2026.09.2}, V8) 발행 + 활성 전환이다 (§5.4). 전환 뒤
+ * 점수 버전 전환은 새 정의(sv-0.4의 {@code gn-2026.09.4} - 첫 재발행은 옛 V8 {@code gn-2026.09.2}였고
+ * KAN-220 재베이스라인 뒤 남은 sv-0.4 정의는 V1의 gn-2026.09.4다) 발행 + 활성 전환이다 (§5.4). 전환 뒤
  * 새 세션은 sv-0.4로 집계되고, 전환 전에 만든 세션은 생성 시점에 고정한 sv-0.3으로 그대로
  * 집계되어야 한다. 두 버전이 같은 날 섞여도 {@code daily_counter}는 scoreVersion 축으로
  * 따로 쌓인다 (KAN-106).
@@ -53,10 +54,10 @@ class ScoreVersionRolloutTest extends IntegrationTest {
     /** 마이그레이션이 최초 활성으로 지정한 버전 (sv-0.3). */
     private static final String BASELINE = "gn-2026.08.1";
 
-    /** gn-2026.09.1의 본문에 scoreVersion만 sv-0.4로 바꾼 재발행 (V8). */
-    private static final String REISSUE = "gn-2026.09.2";
+    /** sv-0.4 정의 - 운영 V1이 발행하는 유일한 정의 (KAN-210 2차 인계본, 어휘는 gn-2026.09.1과 같다). */
+    private static final String REISSUE = "gn-2026.09.4";
 
-    /** 재발행 세트 1의 어휘 정답 (gn-2026.09.1과 같다 - e2e_smoke.py EXPECTED_VOCABULARY 근거). */
+    /** 세트 1의 어휘 정답 (gn-2026.09.1부터 선택지 시드가 같아 그대로다 - e2e_smoke.py EXPECTED_VOCABULARY 근거). */
     private static final Map<String, String> REISSUE_SET1_CORRECT =
             Map.of("w1", "w1b", "w2", "w2c", "w3", "w3a", "w4", "w4a", "w5", "w5c");
 

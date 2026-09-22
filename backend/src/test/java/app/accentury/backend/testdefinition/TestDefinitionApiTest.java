@@ -159,10 +159,14 @@ class TestDefinitionApiTest extends IntegrationTest {
         assertEquals(List.of("v6", "w1", "v7", "w2", "v8", "w3", "v9", "w4", "v10", "w5"), ids);
     }
 
-    // === 2026-09-04 정본 콘텐츠 (V6) - 음성 145 + 어휘 145 = 세트 29개 ===
+    // === 정본 콘텐츠 (운영 V1의 gn-2026.09.4) - 음성 145 + 어휘 145 = 세트 29개 ===
 
-    /** KAN-17 가이드 곡선과 KAN-159 문장으로 만든 정본 발행본. 어휘도 세트마다 갈린다. */
-    private static final String CONTENT = "/v0/tests/gn-2026.09.1";
+    /**
+     * KAN-17 가이드 곡선과 KAN-159 문장으로 만든 정본 발행본. 어휘도 세트마다 갈린다. 처음 발행된
+     * gn-2026.09.1(옛 V6)부터 인계본 2차 gn-2026.09.4까지 풀 크기와 세트 수는 같고, KAN-220
+     * 재베이스라인 뒤 운영 마이그레이션에 남은 정의는 gn-2026.09.4 하나다.
+     */
+    private static final String CONTENT = "/v0/tests/gn-2026.09.4";
 
     @Test
     void 정본_콘텐츠는_세트가_29개이고_어휘도_세트마다_다르다() throws Exception {
